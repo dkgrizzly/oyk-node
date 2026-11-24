@@ -41,19 +41,7 @@ cmake --build build -j
 
 ## Initial Configuration
 
-Copy the example configuration files from `configs/` into one of the automatic search locations:
-
-1. `~/.oyk/node.cfg` *(checked first)*
-2. `/etc/oyk/node.cfg` *(checked second)*
-3. `./node.cfg` *(checked last)*
-
-```bash
-mkdir -p ~/.oyk
-cp configs/node.cfg ~/.oyk/node.cfg
-cp configs/banlist.cfg ~/.oyk/banlist.cfg
-```
-
-Edit `~/.oyk/node.cfg` to set your licensed amateur radio `callsign`, `alias`, and radio interfaces.
+See [Configuration Reference](configuration.md) for config file search locations, starter templates in `configs/`, radio interface setup, logging, and `banlist.cfg`.
 
 ## Running
 

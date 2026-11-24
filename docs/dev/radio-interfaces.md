@@ -39,6 +39,7 @@ public:
    });
    ```
 5. Add the new `.cpp` file to `oyknode_core` in `CMakeLists.txt`.
+6. Configure the new driver in `node.cfg` using an `[interface <id>]` section with `type = <your-type>`.
 
 No changes are required in `NodeEngine`, `NcursesUI`, or `Gtk2UI` — active connection counts, MHEARD, last 5 new callsigns heard, ban enforcement, and cross-port `CONNECT` work automatically.
 

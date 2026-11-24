@@ -13,7 +13,15 @@ When `-c` / `--config` is not passed, `oyk-node` checks for `node.cfg` in strict
 
 If none exist, built-in defaults are used (`N0CALL-7`, alias `OYKNOD`, AXUDP on `0.0.0.0:10093`).
 
-Starter templates are in `configs/node.cfg` and `configs/banlist.cfg`.
+Starter templates are in [configs/node.cfg](../../configs/node.cfg) and [configs/banlist.cfg](../../configs/banlist.cfg).
+
+To install starter configs for the current user:
+
+```bash
+mkdir -p ~/.oyk
+cp configs/node.cfg ~/.oyk/node.cfg
+cp configs/banlist.cfg ~/.oyk/banlist.cfg
+```
 
 ## Line-Ending Rules
 
@@ -63,7 +71,7 @@ Used by `consolelevel` and `[logfiles]`. Accepts hex (`0x..`), binary (`0b..`), 
 
 ### `[logfiles]`
 
-Maps filenames stored under `logpath` to severity bitmasks:
+Maps filenames stored under `logpath` to severity bitmasks (accepts `0x..`, `0b..`, decimal, or pipe/comma-separated names like `ERROR|WARNING|INFO|KICK|BAN`):
 
 ```ini
 [logfiles]
@@ -72,13 +80,16 @@ appeals.log = 0x40   # Default: APPEAL (callsign, timestamp, <=140-char ASCII ap
 # debug.log = 0x80   # Optional verbose debug log
 ```
 
-Set a file to `0` (`SILENT`) to disable writing to it.
+If omitted from `[logfiles]`, `node.log` defaults to `0x37` (`ERROR|WARNING|INFO|KICK|BAN`) and `appeals.log` defaults to `0x40` (`APPEAL`). Set a file to `0` (`SILENT`) to disable writing to it.
+
+When `log_rotate_daily = true`, active log files rotate automatically at calendar day rollover (and stale previous-day files rotate at startup) to `<file>.YYYYMMDD` on POSIX/Windows (or 8.3-safe `MMDD<3ch>.LOG` on MS-DOS).
 
 ### `[interface <id>]`
 
 Define one or more radio/transport ports, each with a unique `<id>`:
 
 #### AXUDP (`type = axudp`)
+UDP AX.25 transport with CRC-16-CCITT FCS, static/broadcast peers, and dynamic peer auto-learning (compatible with LinBPQ, BPQ32, Direwolf, JNOS, `ax25ipd`):
 ```ini
 [interface axudp0]
 type = axudp
@@ -86,21 +97,25 @@ description = Primary AXUDP Link
 bind_host = 0.0.0.0
 bind_port = 10093
 auto_learn = true
+# Peer formats: CALLSIGN@host:port, CALLSIGN host:port, or host:port (broadcast)
 peer = W1AW-7@192.168.1.50:10093
 peer = 127.0.0.1:10094
 ```
 
 #### AXIP (`type = axip`, IP protocol 93 / RFC 1226)
+Raw IPv4 protocol `93` encapsulation with CRC-16-CCITT FCS and peer auto-learning. On Linux, requires root or `CAP_NET_RAW` (`sudo setcap cap_net_raw+ep ./build/oyk-node`):
 ```ini
 [interface axip0]
 type = axip
 description = AXIP Backbone
 bind_host = 0.0.0.0
 auto_learn = true
+# Peer formats: CALLSIGN@host, CALLSIGN host, or host (broadcast)
 peer = W1AW-7@198.51.100.10
 ```
 
 #### KISS Serial (`type = kiss-serial`)
+KISS TNC over raw 8N1 serial TTY/PTY (`baud` supports 1200–230400; `kiss_port` 0–15; optional TNC init parameters `txdelay`, `persistence`, `slottime`, `txtail`, `fullduplex`):
 ```ini
 [interface kiss0]
 type = kiss-serial
@@ -111,9 +126,12 @@ kiss_port = 0
 txdelay = 30
 persistence = 63
 slottime = 10
+# txtail = 5
+# fullduplex = 0
 ```
 
 #### KISS TCP/IP (`type = kiss-tcp`)
+KISS over TCP/IP in `client` mode (e.g. Direwolf port 8001, with auto-reconnect) or `server` mode (supports the same optional KISS TNC init parameters as `kiss-serial`):
 ```ini
 [interface direwolf0]
 type = kiss-tcp
@@ -126,6 +144,7 @@ reconnect_ms = 3000
 ```
 
 #### Incoming Telnet (`type = telnet`)
+Incoming-only Telnet console with RFC 854/858 IAC handling and callsign login (outbound `CONNECT` onto a `telnet` port is rejected with `DM`):
 ```ini
 [interface telnet0]
 type = telnet
@@ -162,3 +181,5 @@ B4DCAL=20261102-130105,20271102-130105,0b0000,Banned for abusive language.
   - Bit 2 (`0b0100` / `0x04`): User has already used their appeal
   - Bit 3 (`0b1000` / `0x08`): Hard ban (no further connections after initial notification)
 - **Field 4**: Ban reason displayed to the user (commas inside the reason are preserved).
+
+See [Ban Behavior & Appeals Workflow](operator-guide.md#ban-behavior--appeals-workflow) in the Operator Guide for full details on how unnotified, soft-banned, and hard-banned sessions behave at runtime.
