@@ -78,7 +78,7 @@ void print_clipped(int y, int x, int max_w, const std::string& text) {
 NcursesUI::NcursesUI(node::NodeEngine& engine, std::atomic<bool>* external_stop_flag)
     : engine_(engine),
       external_stop_flag_(external_stop_flag),
-      status_message_("Ready. Use 1-4 or Left/Right + Enter to select a menu action.") {}
+      status_message_("Ready. Press F10 or M to open the Node menu.") {}
 
 void NcursesUI::set_status(const std::string& msg) {
     status_message_ = msg;
@@ -95,7 +95,7 @@ void NcursesUI::run() {
         init_pair(CP_OK, COLOR_GREEN, -1);
         init_pair(CP_WARN, COLOR_YELLOW, -1);
         init_pair(CP_DANGER, COLOR_RED, -1);
-        init_pair(CP_MENU, COLOR_WHITE, COLOR_BLACK);
+        init_pair(CP_MENU, COLOR_BLACK, COLOR_WHITE);
         init_pair(CP_MENU_SEL, COLOR_BLACK, COLOR_CYAN);
         init_pair(CP_BORDER, COLOR_CYAN, -1);
     }
@@ -110,49 +110,46 @@ void NcursesUI::run() {
         draw_screen(snap);
 
         int ch = getch();
-        if (ch == ERR) {
-            continue;
-        }
-        if (ch == KEY_RESIZE) {
+        if (ch == ERR || ch == KEY_RESIZE) {
             continue;
         }
 
         switch (ch) {
-            case KEY_LEFT:
-                selected_menu_ = (selected_menu_ + 3) % 4;
-                break;
-            case KEY_RIGHT:
-            case '\t':
-                selected_menu_ = (selected_menu_ + 1) % 4;
-                break;
+            case KEY_F(10):
+            case 'm':
+            case 'M':
+            case 'n':
+            case 'N':
             case '\n':
             case '\r':
             case KEY_ENTER:
-                handle_menu_action(static_cast<MenuAction>(selected_menu_), should_exit);
+                open_node_menu(should_exit);
                 break;
-            case '1':
             case 'a':
             case 'A':
-                selected_menu_ = 0;
-                handle_menu_action(MenuAction::AllowDenyIncoming, should_exit);
+                engine_.set_accept_incoming(true);
+                set_status("New incoming connections are now ALLOWED.");
                 break;
-            case '2':
+            case 'd':
+            case 'D':
+                engine_.set_accept_incoming(false);
+                set_status("New incoming connections are now DENIED.");
+                break;
             case 't':
             case 'T':
-                selected_menu_ = 1;
-                handle_menu_action(MenuAction::TerminateConnection, should_exit);
+                modal_terminate_connection();
                 break;
-            case '3':
             case 'b':
             case 'B':
-                selected_menu_ = 2;
-                handle_menu_action(MenuAction::BanCallsign, should_exit);
+                modal_ban_callsign();
                 break;
-            case '4':
             case 'q':
             case 'Q':
-                selected_menu_ = 3;
-                handle_menu_action(MenuAction::ExitNode, should_exit);
+            case 'x':
+            case 'X':
+                if (modal_confirm_exit()) {
+                    should_exit = true;
+                }
                 break;
             default:
                 break;
@@ -198,21 +195,22 @@ void NcursesUI::draw_screen(const node::NodeSnapshot& snap) {
                  snap.node_callsign.c_str(),
                  snap.total_active_connections,
                  snap.accept_incoming ? "ALLOWED" : "DENIED");
-        mvprintw(4, 0, "Keys: [1] Allow/Deny  [2] Terminate  [3] Ban  [4] Exit");
+        mvprintw(4, 0, "Press F10 or M for Node menu.");
         refresh();
         return;
     }
 
-    draw_header(snap, cols);
+    draw_menu_bar(cols);
+    draw_header(snap, 1, cols);
 
     // Vertical layout:
-    // Row 0: Header bar
-    // Rows 1..(top_h): Interfaces (left) + Last 5 New Callsigns Heard (right)
+    // Row 0: Top menu bar (Node)
+    // Row 1: Header status bar
+    // Rows 2..(1+top_h): Interfaces (left) + Last 5 New Callsigns Heard (right)
     // Middle: Active Connections & Banned Summary
     // Lower: Activity Log
-    // Row rows-2: Status message
-    // Row rows-1: Menu bar
-    const int avail_h = rows - 3; // exclude header (1) + status (1) + menu (1)
+    // Row rows-1: Status message
+    const int avail_h = rows - 3; // exclude menu bar (1) + header (1) + status (1)
     const int top_h = std::max(8, std::min(10, avail_h / 3 + 1));
     const int mid_h = std::max(5, (avail_h - top_h) / 2);
     const int bot_h = std::max(4, avail_h - top_h - mid_h);
@@ -220,25 +218,47 @@ void NcursesUI::draw_screen(const node::NodeSnapshot& snap) {
     const int right_w = std::max(34, std::min(44, cols * 42 / 100));
     const int left_w = cols - right_w;
 
-    draw_interfaces_pane(snap, 1, 0, top_h, left_w);
-    draw_new_callsigns_pane(snap, 1, left_w, top_h, right_w);
-    draw_sessions_pane(snap, 1 + top_h, 0, mid_h, cols);
-    draw_log_pane(snap, 1 + top_h + mid_h, 0, bot_h, cols);
+    draw_interfaces_pane(snap, 2, 0, top_h, left_w);
+    draw_new_callsigns_pane(snap, 2, left_w, top_h, right_w);
+    draw_sessions_pane(snap, 2 + top_h, 0, mid_h, cols);
+    draw_log_pane(snap, 2 + top_h + mid_h, 0, bot_h, cols);
 
-    // Status message line
+    // Status message line at bottom (no bottom buttons)
     if (has_colors_) attron(COLOR_PAIR(CP_WARN));
-    print_clipped(rows - 2, 1, cols - 2, status_message_);
+    print_clipped(rows - 1, 1, cols - 2, status_message_);
     if (has_colors_) attroff(COLOR_PAIR(CP_WARN));
 
-    draw_menu_bar(rows - 1, cols);
     refresh();
 }
 
-void NcursesUI::draw_header(const node::NodeSnapshot& snap, int cols) {
+void NcursesUI::draw_menu_bar(int cols) {
+    if (has_colors_) attron(COLOR_PAIR(CP_MENU));
+    else attron(A_REVERSE);
+
+    mvhline(0, 0, ' ', cols);
+
+    if (has_colors_) attron(COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+    else attron(A_BOLD);
+    mvaddnstr(0, 1, " Node ", std::max(0, cols - 1));
+    if (has_colors_) attroff(COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+    else attroff(A_BOLD);
+
+    if (has_colors_) attron(COLOR_PAIR(CP_MENU));
+    const std::string hint = "F10 / M: Menu ";
+    if (cols > static_cast<int>(hint.size()) + 10) {
+        mvaddnstr(0, cols - static_cast<int>(hint.size()), hint.c_str(),
+                  static_cast<int>(hint.size()));
+    }
+
+    if (has_colors_) attroff(COLOR_PAIR(CP_MENU));
+    else attroff(A_REVERSE);
+}
+
+void NcursesUI::draw_header(const node::NodeSnapshot& snap, int y, int cols) {
     if (has_colors_) attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
     else attron(A_REVERSE | A_BOLD);
 
-    mvhline(0, 0, ' ', cols);
+    mvhline(y, 0, ' ', cols);
 
     std::ostringstream left;
     left << " OYK PACKET NODE: " << snap.node_callsign;
@@ -247,7 +267,7 @@ void NcursesUI::draw_header(const node::NodeSnapshot& snap, int cols) {
     }
     left << "  |  Up: " << format_duration(snap.uptime_seconds)
          << "  |  Active: " << snap.total_active_connections;
-    print_clipped(0, 0, cols - 24, left.str());
+    print_clipped(y, 0, cols - 24, left.str());
 
     if (has_colors_) attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
     else attroff(A_REVERSE | A_BOLD);
@@ -260,7 +280,7 @@ void NcursesUI::draw_header(const node::NodeSnapshot& snap, int cols) {
     } else {
         attron(A_REVERSE | A_BOLD);
     }
-    mvaddnstr(0, bx, badge.c_str(), cols - bx);
+    mvaddnstr(y, bx, badge.c_str(), cols - bx);
     if (has_colors_) {
         attroff(COLOR_PAIR(snap.accept_incoming ? CP_OK : CP_DANGER) | A_BOLD | A_REVERSE);
     } else {
@@ -403,116 +423,92 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
     }
 }
 
-void NcursesUI::draw_menu_bar(int y, int cols) {
-    static const char* ITEMS[4] = {
-        "[1] Allow/Deny Incoming",
-        "[2] Terminate Connection",
-        "[3] Ban/Unban Callsign",
-        "[4] Exit Node"
+void NcursesUI::open_node_menu(bool& should_exit) {
+    static const char* ITEMS[5] = {
+        " [A] Allow Incoming Connections ",
+        " [D] Deny Incoming Connections  ",
+        " [T] Terminate Connection...    ",
+        " [B] Ban / Unban Callsign...    ",
+        " [X] Exit                       "
     };
+    // Row offsets inside menu window (with visual separators after Deny and Ban)
+    static const int ITEM_ROWS[5] = { 1, 2, 4, 5, 7 };
 
-    if (has_colors_) attron(COLOR_PAIR(CP_MENU));
-    mvhline(y, 0, ' ', cols);
-    if (has_colors_) attroff(COLOR_PAIR(CP_MENU));
-
-    int x = 1;
-    for (int i = 0; i < 4; ++i) {
-        std::string label = std::string(" ") + ITEMS[i] + " ";
-        if (x >= cols) break;
-        if (i == selected_menu_) {
-            if (has_colors_) attron(COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
-            else attron(A_REVERSE | A_BOLD);
-        } else {
-            if (has_colors_) attron(COLOR_PAIR(CP_MENU));
-        }
-        mvaddnstr(y, x, label.c_str(), cols - x);
-        if (i == selected_menu_) {
-            if (has_colors_) attroff(COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
-            else attroff(A_REVERSE | A_BOLD);
-        } else {
-            if (has_colors_) attroff(COLOR_PAIR(CP_MENU));
-        }
-        x += static_cast<int>(label.size()) + 1;
-    }
-}
-
-void NcursesUI::handle_menu_action(MenuAction action, bool& should_exit) {
-    switch (action) {
-        case MenuAction::AllowDenyIncoming:
-            modal_allow_deny_incoming();
-            break;
-        case MenuAction::TerminateConnection:
-            modal_terminate_connection();
-            break;
-        case MenuAction::BanCallsign:
-            modal_ban_callsign();
-            break;
-        case MenuAction::ExitNode:
-            if (modal_confirm_exit()) {
-                should_exit = true;
-            }
-            break;
-    }
-}
-
-void NcursesUI::modal_allow_deny_incoming() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(56, cols - 4);
-    int h = 9;
-    int y = std::max(1, (rows - h) / 2);
-    int x = std::max(1, (cols - w) / 2);
+    const int w = std::min(36, cols - 2);
+    const int h = 9;
+    if (rows < h + 2 || w < 24) return;
 
-    WINDOW* win = newwin(h, w, y, x);
+    WINDOW* win = newwin(h, w, 1, 1);
     if (!win) return;
     keypad(win, TRUE);
     wtimeout(win, 200);
 
-    int choice = engine_.accept_incoming() ? 0 : 1; // 0 = Allow, 1 = Deny
-    while (true) {
+    int sel = 0;
+    int chosen = -1;
+    while (chosen < 0) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
 
         werase(win);
         box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Incoming Connections Policy ");
-        mvwprintw(win, 2, 2, "Current status: %s",
-                  engine_.accept_incoming() ? "ALLOWED" : "DENIED");
+        mvwhline(win, 3, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 6, 1, ACS_HLINE, w - 2);
 
-        const char* opts[2] = {
-            " [A] Allow new incoming connections ",
-            " [D] Deny new incoming connections  "
-        };
-        for (int i = 0; i < 2; ++i) {
-            if (i == choice) wattron(win, A_REVERSE | A_BOLD);
-            mvwaddnstr(win, 4 + i, 3, opts[i], w - 6);
-            if (i == choice) wattroff(win, A_REVERSE | A_BOLD);
+        for (int i = 0; i < 5; ++i) {
+            if (i == sel) wattron(win, A_REVERSE | A_BOLD);
+            mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
+            if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
         }
-        mvwaddnstr(win, h - 2, 2, "Up/Down + Enter, A/D, or Esc to cancel", w - 4);
         wrefresh(win);
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
-        if (ch == 27) break; // Esc
-        if (ch == KEY_UP || ch == KEY_DOWN) {
-            choice = 1 - choice;
-        } else if (ch == 'a' || ch == 'A') {
-            engine_.set_accept_incoming(true);
-            set_status("New incoming connections are now ALLOWED.");
-            break;
-        } else if (ch == 'd' || ch == 'D') {
-            engine_.set_accept_incoming(false);
-            set_status("New incoming connections are now DENIED.");
-            break;
+        if (ch == 27 || ch == KEY_F(10)) break;
+        if (ch == KEY_UP) {
+            sel = (sel + 4) % 5;
+        } else if (ch == KEY_DOWN) {
+            sel = (sel + 1) % 5;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-            bool allow = (choice == 0);
-            engine_.set_accept_incoming(allow);
-            set_status(allow ? "New incoming connections are now ALLOWED."
-                             : "New incoming connections are now DENIED.");
-            break;
+            chosen = sel;
+        } else if (ch == 'a' || ch == 'A') {
+            chosen = 0;
+        } else if (ch == 'd' || ch == 'D') {
+            chosen = 1;
+        } else if (ch == 't' || ch == 'T') {
+            chosen = 2;
+        } else if (ch == 'b' || ch == 'B') {
+            chosen = 3;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 4;
         }
     }
 
     delwin(win);
+
+    switch (chosen) {
+        case 0:
+            engine_.set_accept_incoming(true);
+            set_status("New incoming connections are now ALLOWED.");
+            break;
+        case 1:
+            engine_.set_accept_incoming(false);
+            set_status("New incoming connections are now DENIED.");
+            break;
+        case 2:
+            modal_terminate_connection();
+            break;
+        case 3:
+            modal_ban_callsign();
+            break;
+        case 4:
+            if (modal_confirm_exit()) {
+                should_exit = true;
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 void NcursesUI::modal_terminate_connection() {
@@ -773,8 +769,8 @@ void NcursesUI::modal_ban_callsign() {
 bool NcursesUI::modal_confirm_exit() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(56, cols - 4);
-    int h = 7;
+    int w = std::min(40, cols - 4);
+    int h = 6;
     int y = std::max(1, (rows - h) / 2);
     int x = std::max(1, (cols - w) / 2);
 
@@ -793,10 +789,13 @@ bool NcursesUI::modal_confirm_exit() {
         auto snap = engine_.snapshot();
         werase(win);
         box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Exit Packet Node ");
-        mvwprintw(win, 2, 2, "Disconnect %zu active session(s) and exit cleanly?",
-                  snap.total_active_connections);
-        mvwaddnstr(win, 4, 2, "Press [Y] to exit cleanly, or [N]/Esc to stay.", w - 4);
+        mvwprintw(win, 0, 2, " Exit ");
+        if (snap.total_active_connections > 0) {
+            mvwprintw(win, 2, 2, "Exit node? (%zu active)", snap.total_active_connections);
+        } else {
+            mvwprintw(win, 2, 2, "Exit node?");
+        }
+        mvwaddnstr(win, 3, 2, "[Y] Yes   [N] No", w - 4);
         wrefresh(win);
 
         int ch = wgetch(win);

@@ -205,34 +205,17 @@ gboolean on_timer_tick(gpointer user_data) {
     return TRUE;
 }
 
-void on_allow_deny_clicked(GtkWidget*, gpointer user_data) {
+void on_allow_incoming_clicked(GtkWidget*, gpointer user_data) {
     auto* st = static_cast<GtkAppState*>(user_data);
-    GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Incoming Connections Policy",
-        GTK_WINDOW(st->window),
-        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
-        "Allow Incoming", 1,
-        "Deny Incoming", 2,
-        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-        static_cast<const char*>(nullptr));
+    st->engine->set_accept_incoming(true);
+    set_status_text(st, "New incoming connections are now ALLOWED.");
+    refresh_ui(st);
+}
 
-    std::string info = std::string("Current policy: ") +
-                       (st->engine->accept_incoming() ? "ALLOWED" : "DENIED") +
-                       "\n\nChoose whether to allow or deny new incoming connections:";
-    GtkWidget* lbl = gtk_label_new(info.c_str());
-    gtk_misc_set_padding(GTK_MISC(lbl), 12, 12);
-    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
-    gtk_widget_show_all(dlg);
-
-    gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
-    if (resp == 1) {
-        st->engine->set_accept_incoming(true);
-        set_status_text(st, "New incoming connections are now ALLOWED.");
-    } else if (resp == 2) {
-        st->engine->set_accept_incoming(false);
-        set_status_text(st, "New incoming connections are now DENIED.");
-    }
-    gtk_widget_destroy(dlg);
+void on_deny_incoming_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    st->engine->set_accept_incoming(false);
+    set_status_text(st, "New incoming connections are now DENIED.");
     refresh_ui(st);
 }
 
@@ -416,15 +399,16 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
 
 bool confirm_and_exit(GtkAppState* st) {
     auto snap = st->engine->snapshot();
-    std::string msg = "Disconnect " + std::to_string(snap.total_active_connections) +
-                      " active session(s) and exit cleanly?";
+    std::string msg = (snap.total_active_connections > 0)
+                          ? ("Exit node? (" + std::to_string(snap.total_active_connections) + " active)")
+                          : "Exit node?";
     GtkWidget* dlg = gtk_message_dialog_new(
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_MESSAGE_QUESTION,
         GTK_BUTTONS_YES_NO,
         "%s", msg.c_str());
-    gtk_window_set_title(GTK_WINDOW(dlg), "Exit OYK Packet Node");
+    gtk_window_set_title(GTK_WINDOW(dlg), "Exit");
     gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
     if (resp == GTK_RESPONSE_YES) {
@@ -465,27 +449,32 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* root_vbox = gtk_vbox_new(FALSE, 4);
     gtk_container_add(GTK_CONTAINER(st.window), root_vbox);
 
-    // Menu bar
+    // Menu bar (matching Windows, ncurses, and DOS menus)
     GtkWidget* menubar = gtk_menu_bar_new();
     GtkWidget* node_menu = gtk_menu_new();
     GtkWidget* node_root = gtk_menu_item_new_with_mnemonic("_Node");
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(node_root), node_menu);
 
-    GtkWidget* mi_allow = gtk_menu_item_new_with_mnemonic("_Allow / Deny Incoming...");
+    GtkWidget* mi_allow = gtk_menu_item_new_with_mnemonic("_Allow Incoming Connections");
+    GtkWidget* mi_deny  = gtk_menu_item_new_with_mnemonic("_Deny Incoming Connections");
+    GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
-    GtkWidget* mi_sep   = gtk_separator_menu_item_new();
-    GtkWidget* mi_exit  = gtk_menu_item_new_with_mnemonic("E_xit Node");
+    GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
+    GtkWidget* mi_exit  = gtk_menu_item_new_with_mnemonic("E_xit");
 
-    g_signal_connect(mi_allow, "activate", G_CALLBACK(on_allow_deny_clicked), &st);
+    g_signal_connect(mi_allow, "activate", G_CALLBACK(on_allow_incoming_clicked), &st);
+    g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
 
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_allow);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_deny);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_exit);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), node_root);
     gtk_box_pack_start(GTK_BOX(root_vbox), menubar, FALSE, FALSE, 0);
@@ -574,30 +563,11 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_widget_set_size_request(log_frame, -1, 150);
     gtk_box_pack_start(GTK_BOX(root_vbox), log_frame, TRUE, TRUE, 2);
 
-    // Status message line
+    // Status message line (menu bar at top; no redundant bottom buttons)
     st.status_label = gtk_label_new("Ready.");
     gtk_misc_set_alignment(GTK_MISC(st.status_label), 0.0f, 0.5f);
-    gtk_misc_set_padding(GTK_MISC(st.status_label), 6, 2);
+    gtk_misc_set_padding(GTK_MISC(st.status_label), 6, 4);
     gtk_box_pack_start(GTK_BOX(root_vbox), st.status_label, FALSE, FALSE, 0);
-
-    // Bottom Action Button Bar matching the ncurses menu
-    GtkWidget* btn_hbox = gtk_hbox_new(TRUE, 6);
-    gtk_container_set_border_width(GTK_CONTAINER(btn_hbox), 6);
-    GtkWidget* b_allow = gtk_button_new_with_label("Allow / Deny Incoming");
-    GtkWidget* b_term  = gtk_button_new_with_label("Terminate Connection");
-    GtkWidget* b_ban   = gtk_button_new_with_label("Ban / Unban Callsign");
-    GtkWidget* b_exit  = gtk_button_new_with_label("Exit Node");
-
-    g_signal_connect(b_allow, "clicked", G_CALLBACK(on_allow_deny_clicked), &st);
-    g_signal_connect(b_term,  "clicked", G_CALLBACK(on_terminate_clicked), &st);
-    g_signal_connect(b_ban,   "clicked", G_CALLBACK(on_ban_clicked), &st);
-    g_signal_connect(b_exit,  "clicked", G_CALLBACK(on_exit_clicked), &st);
-
-    gtk_box_pack_start(GTK_BOX(btn_hbox), b_allow, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(btn_hbox), b_term,  TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(btn_hbox), b_ban,   TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(btn_hbox), b_exit,  TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(root_vbox), btn_hbox, FALSE, FALSE, 0);
 
     refresh_ui(&st);
     guint timer_id = g_timeout_add(250, on_timer_tick, &st);

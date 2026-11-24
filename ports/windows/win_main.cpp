@@ -289,10 +289,9 @@ static OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static void layout_controls(HWND hwnd, int cw, int ch) {
+static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     const int pad = 6;
     const int hdr_h = 20;
-    const int btn_h = 26;
     const int st_h = 18;
     const int badge_w = 140;
 
@@ -300,7 +299,7 @@ static void layout_controls(HWND hwnd, int cw, int ch) {
     MoveWindow(g_ctl_badge, cw - badge_w - pad, pad, badge_w, hdr_h, TRUE);
 
     int body_y = pad + hdr_h + pad;
-    int body_h = ch - body_y - btn_h - st_h - pad * 4;
+    int body_h = ch - body_y - st_h - pad * 3;
     if (body_h < 120) body_h = 120;
 
     int top_h = body_h / 3;
@@ -314,15 +313,8 @@ static void layout_controls(HWND hwnd, int cw, int ch) {
     MoveWindow(g_ctl_sessions, pad, body_y + top_h + pad, cw - pad * 2, mid_h, TRUE);
     MoveWindow(g_ctl_logs, pad, body_y + top_h + mid_h + pad * 2, cw - pad * 2, bot_h, TRUE);
 
-    int st_y = ch - btn_h - st_h - pad * 2;
+    int st_y = ch - st_h - pad;
     MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, TRUE);
-
-    int btn_y = ch - btn_h - pad;
-    int bw = (cw - pad * 5) / 4;
-    MoveWindow(GetDlgItem(hwnd, IDC_BTN_INCOMING),  pad,               btn_y, bw, btn_h, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_BTN_TERMINATE), pad * 2 + bw,      btn_y, bw, btn_h, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_BTN_BAN),       pad * 3 + bw * 2,  btn_y, bw, btn_h, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_BTN_EXIT),      pad * 4 + bw * 3,  btn_y, bw, btn_h, TRUE);
 }
 
 static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -343,15 +335,6 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                        0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_LOG_LIST), g_hinst, NULL);
             g_ctl_status = CreateWindowA("STATIC", g_status_msg, WS_CHILD | WS_VISIBLE,
                                          0, 0, 100, 18, hwnd, reinterpret_cast<HMENU>(IDC_STATUS_TEXT), g_hinst, NULL);
-
-            CreateWindowA("BUTTON", "Allow / Deny Incoming", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 100, 24, hwnd, reinterpret_cast<HMENU>(IDC_BTN_INCOMING), g_hinst, NULL);
-            CreateWindowA("BUTTON", "Terminate Connection", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 100, 24, hwnd, reinterpret_cast<HMENU>(IDC_BTN_TERMINATE), g_hinst, NULL);
-            CreateWindowA("BUTTON", "Ban / Unban Callsign", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 100, 24, hwnd, reinterpret_cast<HMENU>(IDC_BTN_BAN), g_hinst, NULL);
-            CreateWindowA("BUTTON", "Exit Node", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 100, 24, hwnd, reinterpret_cast<HMENU>(IDC_BTN_EXIT), g_hinst, NULL);
 
             SendMessageA(g_ctl_ifaces, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
             SendMessageA(g_ctl_heard, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
@@ -384,32 +367,30 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_node.set_accept_incoming(0);
                 set_status("New incoming connections are now DENIED.");
                 refresh_gui();
-            } else if (id == IDM_TOGGLE_INCOMING || id == IDC_BTN_INCOMING) {
-                g_node.set_accept_incoming(!g_node.accept_incoming());
-                set_status(g_node.accept_incoming()
-                               ? "New incoming connections are now ALLOWED."
-                               : "New incoming connections are now DENIED.");
-                refresh_gui();
-            } else if (id == IDM_TERMINATE || id == IDC_BTN_TERMINATE) {
+            } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {
                     set_status("No active connections to terminate.");
                 } else {
                     DialogBoxA(g_hinst, MAKEINTRESOURCEA(IDD_TERMINATE), hwnd, TerminateDlgProc);
                     refresh_gui();
                 }
-            } else if (id == IDM_BAN || id == IDC_BTN_BAN) {
+            } else if (id == IDM_BAN) {
                 DialogBoxA(g_hinst, MAKEINTRESOURCEA(IDD_BAN), hwnd, BanDlgProc);
                 refresh_gui();
-            } else if (id == IDM_EXIT || id == IDC_BTN_EXIT) {
+            } else if (id == IDM_EXIT) {
                 PostMessageA(hwnd, WM_CLOSE, 0, 0);
             }
             return 0;
         }
         case WM_CLOSE: {
-            char msg_buf[96];
-            sprintf(msg_buf, "Disconnect %d active session(s) and exit cleanly?",
-                    g_node.total_active_connections());
-            if (MessageBoxA(hwnd, msg_buf, "Exit OYK Packet Node", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            char msg_buf[64];
+            int active = g_node.total_active_connections();
+            if (active > 0) {
+                sprintf(msg_buf, "Exit node? (%d active)", active);
+            } else {
+                strcpy(msg_buf, "Exit node?");
+            }
+            if (MessageBoxA(hwnd, msg_buf, "Exit", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 DestroyWindow(hwnd);
             }
             return 0;

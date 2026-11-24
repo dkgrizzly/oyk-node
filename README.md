@@ -19,11 +19,11 @@ A simple, modular Amateur Radio AX.25 Packet Node written in modern C++20 with a
   - Live table of all radio interfaces showing the **number of active connections on each interface** and RX/TX packet counts.
   - **Last 5 new callsigns heard** (distinct stations as first heard, newest first, with port and timestamp).
   - Live active connections list and scrolling node activity log.
-  - Interactive menu bar (`1`-`4` or arrow keys + `Enter`):
-    1. **Allow / Deny** new incoming connections
-    2. **Terminate** a specific active connection
-    3. **Ban / Unban** a callsign (base callsign bans all SSIDs; `CALL-N` bans a specific SSID; immediately disconnects active matching sessions)
-    4. **Exit** the program cleanly (sends `DISC` to active sessions and restores terminal state)
+  - Top `Node` menu bar (`F10` / `M` / `Enter` or direct hotkeys `A`/`D`/`T`/`B`/`X`), matching the GTK+ 2.0, Windows, and MS-DOS interfaces:
+    - **Allow / Deny** incoming connections
+    - **Terminate** a specific active connection
+    - **Ban / Unban** a callsign (base callsign bans all SSIDs; `CALL-N` bans a specific SSID; immediately disconnects active matching sessions)
+    - **Exit**
 
 ## Dependencies
 

@@ -14,7 +14,7 @@ BEGIN
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
         MENUITEM SEPARATOR
-        MENUITEM "E&xit Node",                   IDM_EXIT
+        MENUITEM "E&xit",                        IDM_EXIT
     END
 END
 

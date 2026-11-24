@@ -36,7 +36,7 @@ static OykEms4 g_ems;
 static volatile int g_break_flag = 0;
 static int g_axudp_iface_idx = -1;
 static oyk_u16 g_axudp_port = 10093;
-static char g_status_line[78] = "Ready. Press [1] Allow/Deny  [2] Term  [3] Ban  [4] Exit";
+static char g_status_line[78] = "Ready. Press F10 or M to open the Node menu.";
 
 static void __interrupt __far ctrl_break_handler() {
     g_break_flag = 1;
@@ -81,21 +81,26 @@ static void render_dos_screen() {
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
 
-    /* Row 0: Header bar */
+    /* Row 0: Top Menu Bar (matching GUI and ncurses menu bar) */
+    vid_puts(0, 0,  0x70, "", 80);
+    vid_puts(0, 1,  0x30, " Node ", 6);
+    vid_puts(0, 65, 0x70, "F10 / M: Menu ", 15);
+
+    /* Row 1: Header bar */
     sprintf(line, " OYK PACKET NODE (DOS): %-9s | Up:%lus | Conn:%d | EMS:%s",
             call_s,
             static_cast<unsigned long>(g_node.uptime_seconds()),
             g_node.total_active_connections(),
             g_ems.available() ? "4.0" : "NO ");
-    vid_puts(0, 0, 0x1F, line, 61);
-    vid_puts(0, 61, g_node.accept_incoming() ? 0x2F : 0x4F,
+    vid_puts(1, 0, 0x1F, line, 61);
+    vid_puts(1, 61, g_node.accept_incoming() ? 0x2F : 0x4F,
              g_node.accept_incoming() ? " [INCOMING: ALLOW] " : " [INCOMING: DENY]  ", 19);
 
-    /* Rows 1..7: Interfaces (left 0..43) + Last 5 New Callsigns Heard (right 44..79) */
-    vid_puts(1, 0,  0x0B, "Radio Interfaces (Active Conn)              ", 44);
-    vid_puts(1, 44, 0x0B, "Last 5 New Callsigns Heard          ", 36);
-    vid_puts(2, 0,  0x0F, "Port     Type    Conn Status         RX/TX  ", 44);
-    vid_puts(2, 44, 0x0F, "#  Callsign   Port     Heard        ", 36);
+    /* Rows 2..8: Interfaces (left 0..43) + Last 5 New Callsigns Heard (right 44..79) */
+    vid_puts(2, 0,  0x0B, "Radio Interfaces (Active Conn)              ", 44);
+    vid_puts(2, 44, 0x0B, "Last 5 New Callsigns Heard          ", 36);
+    vid_puts(3, 0,  0x0F, "Port     Type    Conn Status         RX/TX  ", 44);
+    vid_puts(3, 44, 0x0F, "#  Callsign   Port     Heard        ", 36);
 
     for (int i = 0; i < 5; ++i) {
         if (i < g_node.iface_count()) {
@@ -104,28 +109,28 @@ static void render_dos_screen() {
                     r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                     static_cast<unsigned long>(r.rx_frames),
                     static_cast<unsigned long>(r.tx_frames));
-            vid_puts(3 + i, 0, r.running ? 0x0A : 0x0C, line, 44);
+            vid_puts(4 + i, 0, r.running ? 0x0A : 0x0C, line, 44);
         } else {
-            vid_puts(3 + i, 0, 0x07, "", 44);
+            vid_puts(4 + i, 0, 0x07, "", 44);
         }
 
         if (i < g_node.new_heard_count()) {
             const OykNewHeard& nh = g_node.new_heard(i);
             sprintf(line, "%d. %-10.10s %-8.8s %-8.8s",
                     i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-            vid_puts(3 + i, 44, 0x07, line, 36);
+            vid_puts(4 + i, 44, 0x07, line, 36);
         } else {
-            vid_puts(3 + i, 44, 0x08, (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", 36);
+            vid_puts(4 + i, 44, 0x08, (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", 36);
         }
     }
 
-    /* Rows 8..14: Active Connections */
+    /* Rows 9..15: Active Connections */
     sprintf(line, "Active Connections (%d) | Banned: %d",
             g_node.total_active_connections(), g_node.ban_count());
-    vid_puts(8, 0, 0x0B, line, 80);
-    vid_puts(9, 0, 0x0F, "ID   Callsign   Port     Since    Mode", 80);
-    int row = 10;
-    for (int i = 0; i < g_node.max_sessions() && row < 15; ++i) {
+    vid_puts(9, 0, 0x0B, line, 80);
+    vid_puts(10, 0, 0x0F, "ID   Callsign   Port     Since    Mode", 80);
+    int row = 11;
+    for (int i = 0; i < g_node.max_sessions() && row < 16; ++i) {
         const OykSession& s = g_node.session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
             char cs[12];
@@ -137,24 +142,19 @@ static void render_dos_screen() {
             vid_puts(row++, 0, 0x07, line, 80);
         }
     }
-    while (row < 15) vid_puts(row++, 0, 0x07, "", 80);
+    while (row < 16) vid_puts(row++, 0, 0x07, "", 80);
 
-    /* Rows 15..22: Node Activity Log */
-    vid_puts(15, 0, 0x0B, "Node Activity Log", 80);
+    /* Rows 16..23: Node Activity Log */
+    vid_puts(16, 0, 0x0B, "Node Activity Log", 80);
     int total_logs = g_node.console_log_count();
     int start = (total_logs > 7) ? (total_logs - 7) : 0;
     for (int r = 0; r < 7; ++r) {
         int idx = start + r;
-        vid_puts(16 + r, 0, 0x07, (idx < total_logs) ? g_node.console_log_line(idx) : "", 80);
+        vid_puts(17 + r, 0, 0x07, (idx < total_logs) ? g_node.console_log_line(idx) : "", 80);
     }
 
-    /* Row 23: Status message */
-    vid_puts(23, 0, 0x0E, g_status_line, 80);
-
-    /* Row 24: Menu bar */
-    vid_puts(24, 0, 0x30,
-             " [1] Allow/Deny Incoming  [2] Terminate Conn  [3] Ban/Unban  [4] Exit Node ",
-             80);
+    /* Row 24: Status message line (no bottom button bar) */
+    vid_puts(24, 0, 0x0E, g_status_line, 80);
 }
 
 /* ==================== mTCP AXUDP Transport Bridge ==================== */
@@ -197,12 +197,13 @@ static int dos_tx_callback(int iface_idx, const OykFrame* frame,
 }
 
 static void prompt_line(const char* prompt, char* out, int max_len) {
-    vid_puts(23, 0, 0x4F, prompt, 80);
+    vid_puts(24, 0, 0x4F, prompt, 80);
     int len = 0;
     out[0] = '\0';
     int pcol = static_cast<int>(strlen(prompt));
     while (1) {
         int ch = getch();
+        if (ch == 0 || ch == 0xE0) { getch(); continue; }
         if (ch == 27) { out[0] = '\0'; return; }
         if (ch == '\r' || ch == '\n') { out[len] = '\0'; return; }
         if ((ch == 8 || ch == 127) && len > 0) {
@@ -211,7 +212,102 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
             out[len++] = static_cast<char>(ch);
             out[len] = '\0';
         }
-        vid_puts(23, pcol, 0x4F, out, 80 - pcol);
+        vid_puts(24, pcol, 0x4F, out, 80 - pcol);
+    }
+}
+
+static int confirm_dos_exit() {
+    char prompt[48], yn[4];
+    int active = g_node.total_active_connections();
+    if (active > 0) {
+        sprintf(prompt, "Exit node? (%d active) [Y/N]: ", active);
+    } else {
+        strcpy(prompt, "Exit node? [Y/N]: ");
+    }
+    prompt_line(prompt, yn, sizeof(yn));
+    return (yn[0] == 'y' || yn[0] == 'Y') ? 1 : 0;
+}
+
+static void run_dos_menu_action(int chosen, int* running) {
+    if (chosen == 0) {
+        g_node.set_accept_incoming(1);
+        strcpy(g_status_line, "New incoming connections are now ALLOWED.");
+    } else if (chosen == 1) {
+        g_node.set_accept_incoming(0);
+        strcpy(g_status_line, "New incoming connections are now DENIED.");
+    } else if (chosen == 2) {
+        char id_buf[12];
+        prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
+        if (id_buf[0]) {
+            g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
+                                     g_status_line, sizeof(g_status_line));
+        }
+    } else if (chosen == 3) {
+        char call_buf[16];
+        prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
+        if (call_buf[0] == '-') {
+            g_node.unban_callsign(call_buf + 1, g_status_line, sizeof(g_status_line));
+        } else if (call_buf[0]) {
+            g_node.ban_callsign(call_buf, OYK_BAN_APPEAL_ALLOWED,
+                                "Banned by DOS sysop.", "permanent",
+                                g_status_line, sizeof(g_status_line));
+        }
+    } else if (chosen == 4) {
+        if (confirm_dos_exit()) {
+            *running = 0;
+        }
+    }
+}
+
+static void open_dos_node_menu(int* running) {
+    static const char* ITEMS[5] = {
+        " [A] Allow Incoming Connections ",
+        " [D] Deny Incoming Connections  ",
+        " [T] Terminate Connection...    ",
+        " [B] Ban / Unban Callsign...    ",
+        " [X] Exit                       "
+    };
+    static const int ITEM_ROWS[5] = { 2, 3, 5, 6, 8 };
+
+    int sel = 0;
+    int chosen = -1;
+    while (chosen < 0 && !g_break_flag) {
+        vid_puts(1, 1, 0x70, "+--------------------------------+", 34);
+        vid_puts(4, 1, 0x70, "+--------------------------------+", 34);
+        vid_puts(7, 1, 0x70, "+--------------------------------+", 34);
+        vid_puts(9, 1, 0x70, "+--------------------------------+", 34);
+        for (int i = 0; i < 5; ++i) {
+            vid_puts(ITEM_ROWS[i], 1, 0x70, "|", 1);
+            vid_puts(ITEM_ROWS[i], 2, (i == sel) ? 0x1F : 0x70, ITEMS[i], 32);
+            vid_puts(ITEM_ROWS[i], 34, 0x70, "|", 1);
+        }
+
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72) sel = (sel + 4) % 5;      /* Up arrow */
+            else if (ext == 80) sel = (sel + 1) % 5; /* Down arrow */
+            else if (ext == 68) break;               /* F10 closes menu */
+        } else if (ch == 27) {
+            break;
+        } else if (ch == '\r' || ch == '\n') {
+            chosen = sel;
+        } else if (ch == 'a' || ch == 'A') {
+            chosen = 0;
+        } else if (ch == 'd' || ch == 'D') {
+            chosen = 1;
+        } else if (ch == 't' || ch == 'T') {
+            chosen = 2;
+        } else if (ch == 'b' || ch == 'B') {
+            chosen = 3;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 4;
+        }
+    }
+
+    render_dos_screen();
+    if (chosen >= 0) {
+        run_dos_menu_action(chosen, running);
     }
 }
 
@@ -306,32 +402,23 @@ int main(int argc, char* argv[]) {
 
         if (kbhit()) {
             int ch = getch();
-            if (ch == '1' || ch == 'a' || ch == 'A') {
-                g_node.set_accept_incoming(!g_node.accept_incoming());
-                strcpy(g_status_line, g_node.accept_incoming()
-                           ? "Incoming connections ALLOWED."
-                           : "Incoming connections DENIED.");
-            } else if (ch == '2' || ch == 't' || ch == 'T') {
-                char id_buf[12];
-                prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
-                if (id_buf[0]) {
-                    g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
-                                             g_status_line, sizeof(g_status_line));
+            if (ch == 0 || ch == 0xE0) {
+                int ext = getch();
+                if (ext == 68) { /* F10 */
+                    open_dos_node_menu(&running);
                 }
-            } else if (ch == '3' || ch == 'b' || ch == 'B') {
-                char call_buf[16];
-                prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
-                if (call_buf[0] == '-') {
-                    g_node.unban_callsign(call_buf + 1, g_status_line, sizeof(g_status_line));
-                } else if (call_buf[0]) {
-                    g_node.ban_callsign(call_buf, OYK_BAN_APPEAL_ALLOWED,
-                                        "Banned by DOS sysop.", "permanent",
-                                        g_status_line, sizeof(g_status_line));
-                }
-            } else if (ch == '4' || ch == 'q' || ch == 'Q') {
-                char yn[4];
-                prompt_line("Exit node cleanly? [Y/N]: ", yn, sizeof(yn));
-                if (yn[0] == 'y' || yn[0] == 'Y') running = 0;
+            } else if (ch == 'm' || ch == 'M' || ch == 'n' || ch == 'N' || ch == '\r' || ch == '\n') {
+                open_dos_node_menu(&running);
+            } else if (ch == 'a' || ch == 'A') {
+                run_dos_menu_action(0, &running);
+            } else if (ch == 'd' || ch == 'D') {
+                run_dos_menu_action(1, &running);
+            } else if (ch == 't' || ch == 'T') {
+                run_dos_menu_action(2, &running);
+            } else if (ch == 'b' || ch == 'B') {
+                run_dos_menu_action(3, &running);
+            } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                run_dos_menu_action(4, &running);
             }
             render_dos_screen();
         }
