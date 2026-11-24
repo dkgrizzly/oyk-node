@@ -11,3 +11,7 @@ logs/
 *.swp
 *.swo
 *~
+*.zip
+*.img
+*.ima
+ports/dos/freedos/

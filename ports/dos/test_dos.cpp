@@ -81,22 +81,25 @@ static void test_dos_ems4() {
 }
 
 static void test_dos_daily_rotation() {
-    OykConfig cfg;
-    oyk_config_init_default(&cfg);
-    strcpy(cfg.log_path, "drot");
-    strcpy(cfg.banlist_path, "drotban.cfg");
+    OykConfig* cfg = new OykConfig;
+    oyk_config_init_default(cfg);
+    strcpy(cfg->log_path, "drot");
+    strcpy(cfg->banlist_path, "drotban.cfg");
 
-    OykPortableNode node;
+    OykPortableNode* node = new OykPortableNode;
     char err[64];
-    /* Day 1: 2026-11-24 12:00:00 UTC-ish */
-    node.set_now_override(1795521600L);
-    CHECK(node.init(&cfg, NULL, NULL, err, sizeof(err)), "DOS node init for rotation test");
-    node.log_message(OYK_LOG_INFO, "Day1 DOS log line");
+    /* Day 1: 2026-11-24 12:00:00 */
+    node->set_now_override(1795521600L);
+    CHECK(node->init(cfg, NULL, NULL, err, sizeof(err)), "DOS node init for rotation test");
+    node->log_message(OYK_LOG_INFO, "Day1 DOS log line");
 
     /* Day 2: +86400 seconds -> triggers daily rotation */
-    node.set_now_override(1795521600L + 86400L);
-    node.log_message(OYK_LOG_INFO, "Day2 DOS log line");
-    node.shutdown();
+    node->set_now_override(1795521600L + 86400L);
+    node->log_message(OYK_LOG_INFO, "Day2 DOS log line");
+    node->shutdown();
+
+    delete node;
+    delete cfg;
 
     FILE* fp = fopen("drot\\node.log", "rb");
     if (!fp) fp = fopen("drot/node.log", "rb");

@@ -78,17 +78,17 @@ static void test_portable_eol_and_config() {
                    "logpath = " OYK_T_PNODE_LOGS "\n"
                    "banlist = " OYK_T_PNODE_BAN "\r\n");
 
-    OykConfig cfg;
+    OykConfig* cfg = new OykConfig;
     char err[96];
-    assert(oyk_config_load(cfg_mixed, &cfg, err, sizeof(err)));
-    assert(cfg.has_detected_eol == 1);
-    assert(cfg.line_ending == OYK_EOL_CRLF);
-    assert(strcmp(cfg.callsign.base, "K7DOS") == 0 && cfg.callsign.ssid == 7);
-    assert(strcmp(cfg.alias.base, "DOSNOD") == 0);
+    assert(oyk_config_load(cfg_mixed, cfg, err, sizeof(err)));
+    assert(cfg->has_detected_eol == 1);
+    assert(cfg->line_ending == OYK_EOL_CRLF);
+    assert(strcmp(cfg->callsign.base, "K7DOS") == 0 && cfg->callsign.ssid == 7);
+    assert(strcmp(cfg->alias.base, "DOSNOD") == 0);
 
     /* Saving node.cfg back must use uniform CRLF (no lone LF or lone CR) */
     const char* cfg_saved = OYK_T_CFG_SAVED;
-    assert(oyk_config_save(&cfg, cfg_saved));
+    assert(oyk_config_save(cfg, cfg_saved));
     size_t slen = 0;
     char* sraw = load_raw_file(cfg_saved, &slen);
     int found = 0, mixed = 0;
@@ -99,14 +99,15 @@ static void test_portable_eol_and_config() {
     /* 2. CR-only config file read & write-back preserves CR */
     const char* cfg_cr = OYK_T_CFG_CR;
     write_raw_file(cfg_cr, "[node]\rcallsign = W1MAC\r");
-    assert(oyk_config_load(cfg_cr, &cfg, err, sizeof(err)));
-    assert(cfg.line_ending == OYK_EOL_CR);
-    assert(oyk_config_save(&cfg, cfg_cr));
+    assert(oyk_config_load(cfg_cr, cfg, err, sizeof(err)));
+    assert(cfg->line_ending == OYK_EOL_CR);
+    assert(oyk_config_save(cfg, cfg_cr));
     sraw = load_raw_file(cfg_cr, &slen);
     assert(oyk_detect_first_eol(sraw, slen, OYK_EOL_LF, &found, &mixed) == OYK_EOL_CR);
     assert(found == 1 && mixed == 0);
     free(sraw);
 
+    delete cfg;
     remove(cfg_mixed);
     remove(cfg_saved);
     remove(cfg_cr);
@@ -149,18 +150,18 @@ static void test_portable_ax25_kiss_and_bans() {
                    "B4DCAL=20261102-130105,20271102-130105,0b1001,Banned for abusive language.\n"
                    "M1XED=20261102-130105,permanent,0x01,Mixed EOL test.\r\n");
 
-    OykConfig cfg;
+    OykConfig* cfg = new OykConfig;
     char err[96];
-    assert(oyk_config_load(cfg_path, &cfg, err, sizeof(err)));
-    assert(cfg.line_ending == OYK_EOL_CRLF);
+    assert(oyk_config_load(cfg_path, cfg, err, sizeof(err)));
+    assert(cfg->line_ending == OYK_EOL_CRLF);
 
-    MockTxLog txlog;
-    memset(&txlog, 0, sizeof(txlog));
-    OykPortableNode node;
-    node.set_now_override(1795540000L); /* 2026-11-24 */
-    assert(node.init(&cfg, mock_tx, &txlog, err, sizeof(err)));
+    MockTxLog* txlog = new MockTxLog;
+    memset(txlog, 0, sizeof(*txlog));
+    OykPortableNode* node = new OykPortableNode;
+    node->set_now_override(1795540000L); /* 2026-11-24 */
+    assert(node->init(cfg, mock_tx, txlog, err, sizeof(err)));
     /* Mixed EOL in banlist.cfg was overridden by node.cfg's first EOL (CRLF)! */
-    assert(node.banlist_line_ending() == OYK_EOL_CRLF);
+    assert(node->banlist_line_ending() == OYK_EOL_CRLF);
 
     /* B4DCAL connects (unnotified hard ban + appeal allowed): receives UA + restricted notice */
     OykFrame sabm;
@@ -169,10 +170,10 @@ static void test_portable_ax25_kiss_and_bans() {
     oyk_parse_callsign("B4DCAL", &sabm.src);
     sabm.is_command = 1;
     sabm.control = 0x3FU;
-    node.on_rx_frame(0, &sabm, 0x7F000001UL, 10093, 0);
-    assert(txlog.count >= 2);
-    assert(oyk_frame_type(&txlog.frames[0]) == OYK_FT_UA);
-    assert(oyk_frame_type(&txlog.frames[1]) == OYK_FT_I);
+    node->on_rx_frame(0, &sabm, 0x7F000001UL, 10093, 0);
+    assert(txlog->count >= 2);
+    assert(oyk_frame_type(&txlog->frames[0]) == OYK_FT_UA);
+    assert(oyk_frame_type(&txlog->frames[1]) == OYK_FT_I);
 
     /* Submit appeal with control chars -> logged and disconnected */
     OykFrame ifr;
@@ -186,12 +187,12 @@ static void test_portable_ax25_kiss_and_bans() {
     const char* app = "\x07Sorry about that!\r";
     ifr.info_len = static_cast<oyk_u16>(strlen(app));
     memcpy(ifr.info, app, ifr.info_len);
-    txlog.count = 0;
-    node.on_rx_frame(0, &ifr, 0x7F000001UL, 10093, 0);
+    txlog->count = 0;
+    node->on_rx_frame(0, &ifr, 0x7F000001UL, 10093, 0);
 
     int saw_disc = 0;
-    for (int i = 0; i < txlog.count; ++i) {
-        if (oyk_frame_type(&txlog.frames[i]) == OYK_FT_DISC) saw_disc = 1;
+    for (int i = 0; i < txlog->count; ++i) {
+        if (oyk_frame_type(&txlog->frames[i]) == OYK_FT_DISC) saw_disc = 1;
     }
     assert(saw_disc == 1);
 
@@ -204,11 +205,14 @@ static void test_portable_ax25_kiss_and_bans() {
     free(braw);
 
     /* Second SABM from hard-banned B4DCAL -> immediate DM */
-    txlog.count = 0;
-    node.on_rx_frame(0, &sabm, 0x7F000001UL, 10093, 0);
-    assert(txlog.count == 1 && oyk_frame_type(&txlog.frames[0]) == OYK_FT_DM);
+    txlog->count = 0;
+    node->on_rx_frame(0, &sabm, 0x7F000001UL, 10093, 0);
+    assert(txlog->count == 1 && oyk_frame_type(&txlog->frames[0]) == OYK_FT_DM);
 
-    node.shutdown();
+    node->shutdown();
+    delete node;
+    delete txlog;
+    delete cfg;
     remove(cfg_path);
     remove(ban_path);
     remove(OYK_T_LOG_NODE);

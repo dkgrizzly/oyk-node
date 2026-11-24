@@ -37,22 +37,24 @@ wmake -f makefile all MTCP_DIR=$HOME/mTCP CPU=-1
 
 `run_qemu_tests.sh` runs `testdos.exe` headlessly inside `qemu-system-i386` using `mtools` (`mformat`, `mcopy`, `mtype`) — no root privileges, no loop mounts, and no X11 display required.
 
-### 1. Provide a Minimal FreeDOS Boot Floppy Image
-Download a FreeDOS 1.3 Floppy Edition boot image (e.g. `x86BOOT.img`, 1.44MB) — optionally with `JEMM386.EXE` / `FDAPM.COM` included to test LIM EMS 4.0 and instant ACPI poweroff.
+### 1. Run Standalone (Auto-Offers FreeDOS Download)
+When run interactively without `--boot-img`, the script offers to download the official FreeDOS 1.4 Floppy Edition archive into `ports/dos/freedos/` (excluded via `.gitignore`) and extract `x86BOOT.img` automatically:
 
-### 2. Run Standalone
 ```bash
-./ports/dos/run_qemu_tests.sh \
-    --test-exe ports/dos/testdos.exe \
-    --boot-img /path/to/freedos_boot.img
+./ports/dos/run_qemu_tests.sh
 ```
 
-### 3. Or Run via CMake + CTest
+Or download non-interactively in one step:
+
 ```bash
-cmake -B build \
-    -DBUILD_MSDOS_PORT=ON \
-    -DMTCP_DIR=$HOME/mTCP \
-    -DFREEDOS_BOOT_IMG=/path/to/freedos_boot.img
+./ports/dos/run_qemu_tests.sh --download-freedos
+```
+
+### 2. Or Run via CMake + CTest
+Once `ports/dos/freedos/x86BOOT.img` exists (or via `-DFREEDOS_BOOT_IMG=...`):
+
+```bash
+cmake -B build -DBUILD_MSDOS_PORT=ON -DMTCP_DIR=$HOME/mTCP
 cmake --build build --target oyk-dos-tests-build
 ctest --test-dir build -R oyk_dos_qemu_tests --output-on-failure -V
 ```

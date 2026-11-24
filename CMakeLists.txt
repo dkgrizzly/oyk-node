@@ -290,15 +290,19 @@ if(BUILD_TESTS AND NOT WIN32)
     # Optional headless 16-bit MS-DOS unit tests in qemu-system-i386
     if(BUILD_MSDOS_PORT)
         find_program(QEMU_I386_EXE qemu-system-i386)
-        if(QEMU_I386_EXE AND FREEDOS_BOOT_IMG)
-            message(STATUS "Enabling oyk_dos_qemu_tests via ${QEMU_I386_EXE} (boot: ${FREEDOS_BOOT_IMG})")
+        set(_dos_boot_img "${FREEDOS_BOOT_IMG}")
+        if(NOT _dos_boot_img AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ports/dos/freedos/x86BOOT.img")
+            set(_dos_boot_img "${CMAKE_CURRENT_SOURCE_DIR}/ports/dos/freedos/x86BOOT.img")
+        endif()
+        if(QEMU_I386_EXE AND _dos_boot_img)
+            message(STATUS "Enabling oyk_dos_qemu_tests via ${QEMU_I386_EXE} (boot: ${_dos_boot_img})")
             add_test(NAME oyk_dos_qemu_tests
                 COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos/run_qemu_tests.sh
                         --test-exe ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos/testdos.exe
-                        --boot-img ${FREEDOS_BOOT_IMG}
+                        --boot-img ${_dos_boot_img}
             )
         else()
-            message(STATUS "Skipping oyk_dos_qemu_tests (set -DFREEDOS_BOOT_IMG=/path/to/freedos.img with qemu-system-i386 installed)")
+            message(STATUS "Skipping oyk_dos_qemu_tests (run ports/dos/run_qemu_tests.sh --download-freedos or pass -DFREEDOS_BOOT_IMG=...)")
         endif()
     endif()
 endif()
