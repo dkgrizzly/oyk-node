@@ -52,16 +52,16 @@ MTCP_OBJS = &
 all: oyknode.exe testdos.exe
 
 dos_main.obj: dos_main.cpp ems.hpp ../compat/oyk_portable.hpp
-    $(CC) $(CFLAGS_MTCP) dos_main.cpp
+    $(CC) $(CFLAGS_MTCP) -fo=dos_main.obj dos_main.cpp
 
 ems.obj: ems.cpp ems.hpp ../compat/oyk_portable.hpp
-    $(CC) $(CFLAGS_COMMON) ems.cpp
+    $(CC) $(CFLAGS_COMMON) -fo=ems.obj ems.cpp
 
 oyk_portable.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=oyk_portable.obj ../compat/oyk_portable.cpp
 
 test_dos.obj: test_dos.cpp ems.hpp ../compat/oyk_portable.hpp
-    $(CC) $(CFLAGS_COMMON) test_dos.cpp
+    $(CC) $(CFLAGS_COMMON) -fo=test_dos.obj test_dos.cpp
 
 test_portable_dos.obj: ../../tests/test_portable.cpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -DOYK_PORTABLE_TESTS_AS_LIBRARY -fo=test_portable_dos.obj ../../tests/test_portable.cpp

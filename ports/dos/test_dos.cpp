@@ -25,12 +25,14 @@ extern int oyk_run_portable_tests();
 
 static int g_failures = 0;
 
-#define CHECK(cond, label) do { \
-    if (!(cond)) { \
-        printf("[FAIL] %s (line %d)\n", (label), __LINE__); \
-        ++g_failures; \
-    } \
-} while (0)
+static void check_cond(int cond, const char* label, int line) {
+    if (!cond) {
+        printf("[FAIL] %s (line %d)\n", label, line);
+        ++g_failures;
+    }
+}
+
+#define CHECK(cond, label) check_cond((cond) ? 1 : 0, (label), __LINE__)
 
 static void test_dos_16bit_types_and_eol() {
     CHECK(sizeof(oyk_u8) == 1, "sizeof(oyk_u8) == 1");

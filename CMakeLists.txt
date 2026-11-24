@@ -109,11 +109,13 @@ if(BUILD_MSDOS_PORT)
         HINTS
             "$ENV{WATCOM}/binl64"
             "$ENV{WATCOM}/binl"
+            "/opt/watcom/binl64"
+            "/opt/watcom/binl"
             "$ENV{HOME}/open-watcom-v2/rel/binl64"
             "$ENV{HOME}/open-watcom-v2/rel/binl"
     )
     if(NOT WMAKE_EXE)
-        message(FATAL_ERROR "BUILD_MSDOS_PORT requires OpenWatcom 'wmake' in PATH, WATCOM, or ~/open-watcom-v2/rel/binl64")
+        message(FATAL_ERROR "BUILD_MSDOS_PORT requires OpenWatcom 'wmake' in PATH, WATCOM, /opt/watcom/binl64, or ~/open-watcom-v2/rel/binl64")
     endif()
     set(_mtcp_arg "")
     if(MTCP_DIR)
@@ -131,11 +133,19 @@ if(BUILD_MSDOS_PORT)
     )
 endif()
 
-# Optional 16-bit Windows 3.1 (OpenWatcom 1.9) target - built only if requested
+# Optional 16-bit Windows 3.1 (OpenWatcom 1.9/v2) target - built only if requested
 if(BUILD_WIN16_PORT)
-    find_program(WMAKE_EXE wmake)
+    find_program(WMAKE_EXE wmake
+        HINTS
+            "$ENV{WATCOM}/binl64"
+            "$ENV{WATCOM}/binl"
+            "/opt/watcom/binl64"
+            "/opt/watcom/binl"
+            "$ENV{HOME}/open-watcom-v2/rel/binl64"
+            "$ENV{HOME}/open-watcom-v2/rel/binl"
+    )
     if(NOT WMAKE_EXE)
-        message(FATAL_ERROR "BUILD_WIN16_PORT requires OpenWatcom 1.9 'wmake' in PATH")
+        message(FATAL_ERROR "BUILD_WIN16_PORT requires OpenWatcom 'wmake' in PATH, WATCOM, or /opt/watcom/binl64")
     endif()
     add_custom_target(oyk-node-win16
         COMMAND ${WMAKE_EXE} -f makefile.win16
