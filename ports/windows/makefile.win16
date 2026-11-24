@@ -1,16 +1,27 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 KR4OYK - David Kuder
 
-# OpenWatcom 1.9 WMAKE Makefile for 16-bit Windows 3.1 (Win16 + Winsock 1.1)
+# OpenWatcom v2 / 1.9 WMAKE Makefile for 16-bit Windows 3.1 (Win16 + Winsock 1.1)
 #
-# Usage:
+# Usage (Linux with OpenWatcom in /opt/watcom):
+#   export WATCOM=/opt/watcom
+#   export PATH=$WATCOM/binl64:$PATH
 #   wmake -f makefile.win16
+
+!ifndef WATCOM_DIR
+!ifdef %WATCOM
+WATCOM_DIR = $(%WATCOM)
+!else
+WATCOM_DIR = /opt/watcom
+!endif
+!endif
 
 CC  = wpp
 RC  = wrc
 LD  = wlink
 
-CFLAGS = -2 -ml -zw -os -bt=windows -wx -zq -I../compat
+WIN_INC = -I$(WATCOM_DIR)/h -I$(WATCOM_DIR)/h/win
+CFLAGS  = -2 -ml -zw -os -bt=windows -wx -zq $(WIN_INC) -I../compat
 
 OBJS = win_main.obj oyk_portable.obj
 
@@ -23,11 +34,15 @@ oyk_portable.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS) -fo=oyk_portable.obj ../compat/oyk_portable.cpp
 
 oyk_win.res: oyk_win.rc resource.h
-    $(RC) -bt=windows -r -fo=oyk_win.res oyk_win.rc
+    $(RC) -bt=windows -q -r -i=$(WATCOM_DIR)/h/win -fo=oyk_win.res oyk_win.rc
 
 oykw16.exe: $(OBJS) oyk_win.res
     $(LD) system windows option heapsize=16384,stack=8192 name oykw16.exe file { $(OBJS) } library winsock.lib
-    $(RC) -bt=windows oyk_win.res oykw16.exe
+    $(RC) -bt=windows -q oyk_win.res oykw16.exe
 
 clean: .SYMBOLIC
-    rm -f *.obj *.res *.err *.map oykw16.exe
+!ifdef __UNIX__
+    rm -f *.o *.obj *.res *.err *.map oykw16.exe
+!else
+    del *.obj *.res *.err *.map oykw16.exe
+!endif

@@ -117,23 +117,33 @@ if(BUILD_MSDOS_PORT)
     if(NOT WMAKE_EXE)
         message(FATAL_ERROR "BUILD_MSDOS_PORT requires OpenWatcom 'wmake' in PATH, WATCOM, /opt/watcom/binl64, or ~/open-watcom-v2/rel/binl64")
     endif()
+    get_filename_component(_ow_dos_bin "${WMAKE_EXE}" DIRECTORY)
+    get_filename_component(_ow_dos_root "${_ow_dos_bin}" DIRECTORY)
     set(_mtcp_arg "")
     if(MTCP_DIR)
         set(_mtcp_arg "MTCP_DIR=${MTCP_DIR}")
     endif()
     add_custom_target(oyk-node-dos
-        COMMAND ${WMAKE_EXE} -f makefile oyknode.exe ${_mtcp_arg}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "WATCOM=${_ow_dos_root}"
+                "PATH=${_ow_dos_bin}:$ENV{PATH}"
+                "INCLUDE=${_ow_dos_root}/h"
+                ${WMAKE_EXE} -f makefile oyknode.exe ${_mtcp_arg}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos
         COMMENT "Building MS-DOS (8088/V20 + mTCP) executable with OpenWatcom"
     )
     add_custom_target(oyk-dos-tests-build
-        COMMAND ${WMAKE_EXE} -f makefile testdos.exe
+        COMMAND ${CMAKE_COMMAND} -E env
+                "WATCOM=${_ow_dos_root}"
+                "PATH=${_ow_dos_bin}:$ENV{PATH}"
+                "INCLUDE=${_ow_dos_root}/h"
+                ${WMAKE_EXE} -f makefile testdos.exe
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos
         COMMENT "Building 16-bit MS-DOS unit test executable (testdos.exe) with OpenWatcom"
     )
 endif()
 
-# Optional 16-bit Windows 3.1 (OpenWatcom 1.9/v2) target - built only if requested
+# Optional 16-bit Windows 3.1 (OpenWatcom v2/1.9) target - built only if requested
 if(BUILD_WIN16_PORT)
     find_program(WMAKE_EXE wmake
         HINTS
@@ -147,10 +157,16 @@ if(BUILD_WIN16_PORT)
     if(NOT WMAKE_EXE)
         message(FATAL_ERROR "BUILD_WIN16_PORT requires OpenWatcom 'wmake' in PATH, WATCOM, or /opt/watcom/binl64")
     endif()
+    get_filename_component(_ow_win16_bin "${WMAKE_EXE}" DIRECTORY)
+    get_filename_component(_ow_win16_root "${_ow_win16_bin}" DIRECTORY)
     add_custom_target(oyk-node-win16
-        COMMAND ${WMAKE_EXE} -f makefile.win16
+        COMMAND ${CMAKE_COMMAND} -E env
+                "WATCOM=${_ow_win16_root}"
+                "PATH=${_ow_win16_bin}:$ENV{PATH}"
+                "INCLUDE=${_ow_win16_root}/h:${_ow_win16_root}/h/win"
+                ${WMAKE_EXE} -f makefile.win16 WATCOM_DIR=${_ow_win16_root}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/windows
-        COMMENT "Building 16-bit Windows 3.1 executable with OpenWatcom 1.9"
+        COMMENT "Building 16-bit Windows 3.1 executable (oykw16.exe) with OpenWatcom"
     )
 endif()
 
@@ -246,12 +262,20 @@ if(BUILD_WINDOWS_PORT)
                 HINTS
                     "$ENV{WATCOM}/binl64"
                     "$ENV{WATCOM}/binl"
+                    "/opt/watcom/binl64"
+                    "/opt/watcom/binl"
                     "$ENV{HOME}/open-watcom-v2/rel/binl64"
                     "$ENV{HOME}/open-watcom-v2/rel/binl"
             )
             if(WMAKE_EXE)
+                get_filename_component(_ow_win32_bin "${WMAKE_EXE}" DIRECTORY)
+                get_filename_component(_ow_win32_root "${_ow_win32_bin}" DIRECTORY)
                 add_custom_target(oyk-node-win32 ALL
-                    COMMAND ${WMAKE_EXE} -f makefile.win32
+                    COMMAND ${CMAKE_COMMAND} -E env
+                            "WATCOM=${_ow_win32_root}"
+                            "PATH=${_ow_win32_bin}:$ENV{PATH}"
+                            "INCLUDE=${_ow_win32_root}/h:${_ow_win32_root}/h/nt"
+                            ${WMAKE_EXE} -f makefile.win32 WATCOM_DIR=${_ow_win32_root}
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/windows
                     COMMENT "Building 32-bit Windows executable with OpenWatcom"
                 )

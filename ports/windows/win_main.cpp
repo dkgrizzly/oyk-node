@@ -5,12 +5,12 @@
  * OYK Amateur Radio Packet Node - Native Windows GUI Port
  *
  * Compatible with:
- *   - 16-bit Windows 3.1 (OpenWatcom 1.9, Winsock 1.1)
+ *   - 16-bit Windows 3.1 (OpenWatcom v2/1.9, Winsock 1.1)
  *   - 32-bit Windows 95, 98, ME & Windows NT 3.51 through Windows 11 (x86)
  *   - 64-bit Windows XP x64 through Windows 11 (x64)
  *
- * Uses pure classic Win16/Win32 USER/GDI + Winsock 1.1 APIs (no Vista+ dependencies).
- * Layout mirrors the Linux ncurses and GTK+ 2.0 interfaces.
+ * Uses classic Win16/Win32 USER/GDI + Winsock 1.1 APIs (no Vista+ dependencies).
+ * Layout mirrors the Linux ncurses, GTK+ 2.0, and MS-DOS interfaces.
  */
 
 #include <windows.h>
@@ -23,16 +23,30 @@
 #include "resource.h"
 
 #if defined(_WIN32) || defined(_WIN64)
-  #define OYK_DLG_RET  INT_PTR CALLBACK
-  #define OYK_WND_RET  LRESULT CALLBACK
+  #define OYK_DLG_RET         INT_PTR CALLBACK
+  #define OYK_WND_RET         LRESULT CALLBACK
   #define OYK_CMD_ID(wp, lp)  LOWORD(wp)
+  #define OYK_HMENU(id)       ((HMENU)(INT_PTR)(id))
+  #define OYK_HBRUSH(idx)     ((HBRUSH)(INT_PTR)(idx))
+  #define OYK_WPARAM_H(h)     ((WPARAM)(h))
+  #define OYK_LPARAM_STR(s)   ((LPARAM)(LPCSTR)(s))
 #else
   /* 16-bit Windows 3.1 */
-  #define OYK_DLG_RET  BOOL FAR PASCAL
-  #define OYK_WND_RET  LRESULT FAR PASCAL
-  #define OYK_CMD_ID(wp, lp)  (wp)
+  #define OYK_DLG_RET         BOOL FAR PASCAL __export
+  #define OYK_WND_RET         LRESULT FAR PASCAL __export
+  #define OYK_CMD_ID(wp, lp)  ((WORD)(wp))
+  #define OYK_HMENU(id)       ((HMENU)(id))
+  #define OYK_HBRUSH(idx)     ((HBRUSH)(idx))
+  #define OYK_WPARAM_H(h)     ((WPARAM)(h))
+  #define OYK_LPARAM_STR(s)   ((LPARAM)(LPSTR)(s))
   #ifndef INVALID_SOCKET
-    #define INVALID_SOCKET ((SOCKET)(~0))
+    #define INVALID_SOCKET    ((SOCKET)(~0))
+  #endif
+  #ifndef BST_CHECKED
+    #define BST_CHECKED       1
+  #endif
+  #ifndef MAKEWORD
+    #define MAKEWORD(a, b)    ((WORD)(((BYTE)(a)) | (((WORD)((BYTE)(b))) << 8)))
   #endif
 #endif
 
@@ -92,7 +106,7 @@ static void pump_winsock() {
         tv.tv_usec = 0;
         if (select(0, &rfds, NULL, NULL, &tv) <= 0) break;
 
-        oyk_u8 buf[1024];
+        static oyk_u8 buf[1024];
         struct sockaddr_in src;
         int slen = sizeof(src);
         int n = recvfrom(g_axudp_sock, reinterpret_cast<char*>(buf),
@@ -101,7 +115,7 @@ static void pump_winsock() {
         if (n <= 2) break;
         if (!oyk_verify_fcs(buf, static_cast<size_t>(n))) continue;
 
-        OykFrame frame;
+        static OykFrame frame;
         if (!oyk_ax25_decode(buf, static_cast<size_t>(n - 2), &frame)) continue;
 
         g_node.on_rx_frame(g_axudp_iface_idx, &frame,
@@ -115,7 +129,7 @@ static void pump_winsock() {
 static void set_status(const char* text) {
     strncpy(g_status_msg, text, sizeof(g_status_msg) - 1);
     g_status_msg[sizeof(g_status_msg) - 1] = '\0';
-    if (g_ctl_status) SetWindowTextA(g_ctl_status, g_status_msg);
+    if (g_ctl_status) SetWindowText(g_ctl_status, g_status_msg);
 }
 
 static void refresh_gui() {
@@ -128,37 +142,37 @@ static void refresh_gui() {
             static_cast<unsigned long>(g_node.uptime_seconds()),
             g_node.total_active_connections(),
             g_node.ban_count());
-    SetWindowTextA(g_ctl_header, buf);
+    SetWindowText(g_ctl_header, buf);
 
-    SetWindowTextA(g_ctl_badge, g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
+    SetWindowText(g_ctl_badge, g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
 
     /* Radio Interfaces (active connections per interface) */
-    SendMessageA(g_ctl_ifaces, LB_RESETCONTENT, 0, 0);
-    SendMessageA(g_ctl_ifaces, LB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>("Port      Type     Conn  Status          RX/TX"));
+    SendMessage(g_ctl_ifaces, LB_RESETCONTENT, 0, 0);
+    SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0,
+                OYK_LPARAM_STR("Port      Type     Conn  Status          RX/TX"));
     for (int i = 0; i < g_node.iface_count(); ++i) {
         const OykIfaceRuntime& r = g_node.iface(i);
         sprintf(buf, "%-9.9s %-8.8s %-5d %-15.15s %lu/%lu",
                 r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                 static_cast<unsigned long>(r.rx_frames),
                 static_cast<unsigned long>(r.tx_frames));
-        SendMessageA(g_ctl_ifaces, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
+        SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
     }
 
     /* Last 5 New Callsigns Heard */
-    SendMessageA(g_ctl_heard, LB_RESETCONTENT, 0, 0);
-    SendMessageA(g_ctl_heard, LB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>("#  Callsign   Port      Heard"));
+    SendMessage(g_ctl_heard, LB_RESETCONTENT, 0, 0);
+    SendMessage(g_ctl_heard, LB_ADDSTRING, 0,
+                OYK_LPARAM_STR("#  Callsign   Port      Heard"));
     for (int i = 0; i < g_node.new_heard_count(); ++i) {
         const OykNewHeard& nh = g_node.new_heard(i);
         sprintf(buf, "%d. %-10.10s %-9.9s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-        SendMessageA(g_ctl_heard, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
+        SendMessage(g_ctl_heard, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
     }
 
     /* Active Connections */
-    SendMessageA(g_ctl_sessions, LB_RESETCONTENT, 0, 0);
-    SendMessageA(g_ctl_sessions, LB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>("ID    Callsign    Port      Since     Mode"));
+    SendMessage(g_ctl_sessions, LB_RESETCONTENT, 0, 0);
+    SendMessage(g_ctl_sessions, LB_ADDSTRING, 0,
+                OYK_LPARAM_STR("ID    Callsign    Port      Since     Mode"));
     for (int i = 0; i < g_node.max_sessions(); ++i) {
         const OykSession& s = g_node.session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
@@ -168,7 +182,7 @@ static void refresh_gui() {
                     static_cast<unsigned long>(s.id), cs,
                     g_node.iface(s.iface_idx).cfg.id, s.since_hms,
                     s.restricted_ban ? "BAN NOTICE" : "NODE SHELL");
-            SendMessageA(g_ctl_sessions, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
+            SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
         }
     }
 
@@ -176,18 +190,18 @@ static void refresh_gui() {
     int log_n = g_node.console_log_count();
     if (log_n != g_last_log_count) {
         g_last_log_count = log_n;
-        SendMessageA(g_ctl_logs, LB_RESETCONTENT, 0, 0);
+        SendMessage(g_ctl_logs, LB_RESETCONTENT, 0, 0);
         for (int i = 0; i < log_n; ++i) {
-            SendMessageA(g_ctl_logs, LB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(g_node.console_log_line(i)));
+            SendMessage(g_ctl_logs, LB_ADDSTRING, 0,
+                        OYK_LPARAM_STR(g_node.console_log_line(i)));
         }
         if (log_n > 0) {
-            SendMessageA(g_ctl_logs, LB_SETTOPINDEX, static_cast<WPARAM>(log_n - 1), 0);
+            SendMessage(g_ctl_logs, LB_SETTOPINDEX, static_cast<WPARAM>(log_n - 1), 0);
         }
     }
 }
 
-static OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static oyk_u32 s_ids[OYK_MAX_SESSIONS];
     static int s_count = 0;
@@ -203,17 +217,17 @@ static OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
                     sprintf(row, "#%lu  %s on %s", static_cast<unsigned long>(s.id),
                             cs, g_node.iface(s.iface_idx).cfg.id);
-                    SendMessageA(lb, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(row));
+                    SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
                     s_ids[s_count++] = s.id;
                 }
             }
-            if (s_count > 0) SendMessageA(lb, LB_SETCURSEL, 0, 0);
+            if (s_count > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
             return TRUE;
         }
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDOK) {
-                int sel = static_cast<int>(SendDlgItemMessageA(hdlg, IDC_TERM_LIST, LB_GETCURSEL, 0, 0));
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TERM_LIST, LB_GETCURSEL, 0, 0));
                 if (sel >= 0 && sel < s_count) {
                     char fb[96];
                     g_node.terminate_session(s_ids[sel], fb, sizeof(fb));
@@ -233,22 +247,22 @@ static OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static void fill_ban_listbox(HWND lb) {
-    SendMessageA(lb, LB_RESETCONTENT, 0, 0);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
     for (int i = 0; i < g_node.ban_count(); ++i) {
         const OykBanEntry& e = g_node.ban_entry(i);
         char row[140];
         sprintf(row, "%-10s [%s] (%s) %s",
                 e.key, (e.flags & OYK_BAN_HARD_BAN) ? "HARD" : "SOFT",
                 e.lift_at, e.reason);
-        SendMessageA(lb, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(row));
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
     }
 }
 
-static OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
         case WM_INITDIALOG:
-            SetDlgItemTextA(hdlg, IDC_BAN_REASON, "Banned by sysop.");
+            SetDlgItemText(hdlg, IDC_BAN_REASON, "Banned by sysop.");
             CheckDlgButton(hdlg, IDC_BAN_APPEAL, BST_CHECKED);
             fill_ban_listbox(GetDlgItem(hdlg, IDC_BAN_LIST));
             return TRUE;
@@ -256,23 +270,23 @@ static OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_BAN_ADD) {
                 char call[16], reason[96], fb[96];
-                GetDlgItemTextA(hdlg, IDC_BAN_CALL, call, sizeof(call));
-                GetDlgItemTextA(hdlg, IDC_BAN_REASON, reason, sizeof(reason));
+                GetDlgItemText(hdlg, IDC_BAN_CALL, call, sizeof(call));
+                GetDlgItemText(hdlg, IDC_BAN_REASON, reason, sizeof(reason));
                 oyk_u32 flags = 0;
                 if (IsDlgButtonChecked(hdlg, IDC_BAN_HARD)) flags |= OYK_BAN_HARD_BAN;
                 if (IsDlgButtonChecked(hdlg, IDC_BAN_APPEAL)) flags |= OYK_BAN_APPEAL_ALLOWED;
                 if (g_node.ban_callsign(call, flags, reason, "permanent", fb, sizeof(fb))) {
-                    SetDlgItemTextA(hdlg, IDC_BAN_CALL, "");
+                    SetDlgItemText(hdlg, IDC_BAN_CALL, "");
                     set_status(fb);
                     fill_ban_listbox(GetDlgItem(hdlg, IDC_BAN_LIST));
                 } else {
-                    MessageBoxA(hdlg, fb, "Ban Error", MB_OK | MB_ICONEXCLAMATION);
+                    MessageBox(hdlg, fb, "Ban Error", MB_OK | MB_ICONEXCLAMATION);
                 }
                 return TRUE;
             }
             if (id == IDC_BAN_REMOVE) {
                 HWND lb = GetDlgItem(hdlg, IDC_BAN_LIST);
-                int sel = static_cast<int>(SendMessageA(lb, LB_GETCURSEL, 0, 0));
+                int sel = static_cast<int>(SendMessage(lb, LB_GETCURSEL, 0, 0));
                 if (sel >= 0 && sel < g_node.ban_count()) {
                     char fb[96];
                     g_node.unban_callsign(g_node.ban_entry(sel).key, fb, sizeof(fb));
@@ -319,29 +333,29 @@ static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, TRUE);
 }
 
-static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
-            g_mono_font = static_cast<HFONT>(GetStockObject(OEM_FIXED_FONT));
-            g_ctl_header = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE,
-                                         0, 0, 100, 20, hwnd, reinterpret_cast<HMENU>(IDC_HEADER_TEXT), g_hinst, NULL);
-            g_ctl_badge = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_CENTER | WS_BORDER,
-                                        0, 0, 100, 20, hwnd, reinterpret_cast<HMENU>(IDC_INCOMING_BADGE), g_hinst, NULL);
-            g_ctl_ifaces = CreateWindowA("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                                         0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_IFACE_LIST), g_hinst, NULL);
-            g_ctl_heard = CreateWindowA("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                                        0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_HEARD_LIST), g_hinst, NULL);
-            g_ctl_sessions = CreateWindowA("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                                           0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_SESSION_LIST), g_hinst, NULL);
-            g_ctl_logs = CreateWindowA("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                                       0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_LOG_LIST), g_hinst, NULL);
-            g_ctl_status = CreateWindowA("STATIC", g_status_msg, WS_CHILD | WS_VISIBLE,
-                                         0, 0, 100, 18, hwnd, reinterpret_cast<HMENU>(IDC_STATUS_TEXT), g_hinst, NULL);
+            g_mono_font = (HFONT)GetStockObject(OEM_FIXED_FONT);
+            g_ctl_header = CreateWindow("STATIC", "", WS_CHILD | WS_VISIBLE,
+                                        0, 0, 100, 20, hwnd, OYK_HMENU(IDC_HEADER_TEXT), g_hinst, NULL);
+            g_ctl_badge = CreateWindow("STATIC", "", WS_CHILD | WS_VISIBLE | SS_CENTER | WS_BORDER,
+                                       0, 0, 100, 20, hwnd, OYK_HMENU(IDC_INCOMING_BADGE), g_hinst, NULL);
+            g_ctl_ifaces = CreateWindow("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                        0, 0, 100, 100, hwnd, OYK_HMENU(IDC_IFACE_LIST), g_hinst, NULL);
+            g_ctl_heard = CreateWindow("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                       0, 0, 100, 100, hwnd, OYK_HMENU(IDC_HEARD_LIST), g_hinst, NULL);
+            g_ctl_sessions = CreateWindow("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                          0, 0, 100, 100, hwnd, OYK_HMENU(IDC_SESSION_LIST), g_hinst, NULL);
+            g_ctl_logs = CreateWindow("LISTBOX", "", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                      0, 0, 100, 100, hwnd, OYK_HMENU(IDC_LOG_LIST), g_hinst, NULL);
+            g_ctl_status = CreateWindow("STATIC", g_status_msg, WS_CHILD | WS_VISIBLE,
+                                        0, 0, 100, 18, hwnd, OYK_HMENU(IDC_STATUS_TEXT), g_hinst, NULL);
 
-            SendMessageA(g_ctl_ifaces, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
-            SendMessageA(g_ctl_heard, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
-            SendMessageA(g_ctl_sessions, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
-            SendMessageA(g_ctl_logs, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
+            SendMessage(g_ctl_ifaces, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendMessage(g_ctl_heard, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendMessage(g_ctl_sessions, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendMessage(g_ctl_logs, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
 
             SetTimer(hwnd, 1, 50, NULL);  /* Network pump */
             SetTimer(hwnd, 2, 250, NULL); /* GUI refresh */
@@ -373,14 +387,14 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (g_node.total_active_connections() == 0) {
                     set_status("No active connections to terminate.");
                 } else {
-                    DialogBoxA(g_hinst, MAKEINTRESOURCEA(IDD_TERMINATE), hwnd, TerminateDlgProc);
+                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINATE), hwnd, (DLGPROC)TerminateDlgProc);
                     refresh_gui();
                 }
             } else if (id == IDM_BAN) {
-                DialogBoxA(g_hinst, MAKEINTRESOURCEA(IDD_BAN), hwnd, BanDlgProc);
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
                 refresh_gui();
             } else if (id == IDM_EXIT) {
-                PostMessageA(hwnd, WM_CLOSE, 0, 0);
+                PostMessage(hwnd, WM_CLOSE, 0, 0);
             }
             return 0;
         }
@@ -392,7 +406,7 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else {
                 strcpy(msg_buf, "Exit node?");
             }
-            if (MessageBoxA(hwnd, msg_buf, "Exit", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (MessageBox(hwnd, msg_buf, "Exit", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 DestroyWindow(hwnd);
             }
             return 0;
@@ -403,7 +417,7 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PostQuitMessage(0);
             return 0;
     }
-    return DefWindowProcA(hwnd, msg, wp, lp);
+    return DefWindowProc(hwnd, msg, wp, lp);
 }
 
 static void resolve_win_config(char* out, size_t out_sz) {
@@ -428,11 +442,11 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
 
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(1, 1), &wsa) != 0) {
-        MessageBoxA(NULL, "Failed to initialize Winsock 1.1.", "OYK Packet Node", MB_OK | MB_ICONSTOP);
+        MessageBox(NULL, "Failed to initialize Winsock 1.1.", "OYK Packet Node", MB_OK | MB_ICONSTOP);
         return 1;
     }
 
-    OykConfig cfg;
+    static OykConfig cfg;
     char cfg_path[128], err[96];
     cfg_path[0] = '\0';
     if (cmdline && cmdline[0]) {
@@ -444,7 +458,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
 
     if (cfg_path[0]) {
         if (!oyk_config_load(cfg_path, &cfg, err, sizeof(err))) {
-            MessageBoxA(NULL, err, "OYK Config Error", MB_OK | MB_ICONSTOP);
+            MessageBox(NULL, err, "OYK Config Error", MB_OK | MB_ICONSTOP);
             WSACleanup();
             return 1;
         }
@@ -453,7 +467,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 
     if (!g_node.init(&cfg, win_tx_callback, NULL, err, sizeof(err))) {
-        MessageBoxA(NULL, err, "OYK Init Error", MB_OK | MB_ICONSTOP);
+        MessageBox(NULL, err, "OYK Init Error", MB_OK | MB_ICONSTOP);
         WSACleanup();
         return 1;
     }
@@ -462,7 +476,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     for (int i = 0; i < g_node.iface_count(); ++i) {
         if (strcmp(g_node.iface(i).cfg.type, "axudp") == 0) {
             g_axudp_iface_idx = i;
-            oyk_u16 port = g_node.iface(i).cfg.port ? g_node.iface(i).cfg.port : 10093;
+            oyk_u16 port = g_node.iface(i).cfg.port ? g_node.iface(i).cfg.port : static_cast<oyk_u16>(10093);
             g_axudp_sock = socket(AF_INET, SOCK_DGRAM, 0);
             if (g_axudp_sock != INVALID_SOCKET) {
                 u_long nb = 1;
@@ -485,18 +499,18 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 
     if (!hprev) {
-        WNDCLASSA wc;
+        WNDCLASS wc;
         memset(&wc, 0, sizeof(wc));
         wc.lpfnWndProc = MainWndProc;
         wc.hInstance = hinst;
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
-        wc.lpszMenuName = MAKEINTRESOURCEA(IDR_MAINMENU);
+        wc.hbrBackground = OYK_HBRUSH(COLOR_BTNFACE + 1);
+        wc.lpszMenuName = MAKEINTRESOURCE(IDR_MAINMENU);
         wc.lpszClassName = "OYKNodeWinClass";
-        RegisterClassA(&wc);
+        RegisterClass(&wc);
     }
 
-    g_hwnd_main = CreateWindowA(
+    g_hwnd_main = CreateWindow(
         "OYKNodeWinClass",
         "OYK Amateur Radio Packet Node",
         WS_OVERLAPPEDWINDOW,
@@ -507,9 +521,9 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     UpdateWindow(g_hwnd_main);
 
     MSG msg;
-    while (GetMessageA(&msg, NULL, 0, 0) > 0) {
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
-        DispatchMessageA(&msg);
+        DispatchMessage(&msg);
     }
 
     g_node.shutdown();
