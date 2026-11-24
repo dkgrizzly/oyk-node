@@ -264,6 +264,7 @@ static void telnet_process_clean_byte(WinTelnetClient* c, oyk_u8 b) {
         c->line_buf[c->line_len] = '\0';
 
         if (c->stage == TSTAGE_LOGIN) {
+            telnet_send_str(c->sock, "\r\n");
             OykCallsign parsed;
             int ok = oyk_parse_callsign(c->line_buf, &parsed);
             c->line_len = 0;
@@ -307,6 +308,7 @@ static void telnet_process_clean_byte(WinTelnetClient* c, oyk_u8 b) {
         }
 
         if (c->stage == TSTAGE_CONNECTED) {
+            telnet_send_str(c->sock, "\r\n");
             static char line_copy[260];
             int llen = c->line_len;
             if (llen > 254) llen = 254;

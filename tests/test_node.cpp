@@ -820,10 +820,12 @@ void test_telnet_end_to_end() {
     assert(snap.interfaces[1].id == "axudp0" && snap.interfaces[1].active_connections == 0);
     assert(!snap.last_new_callsigns.empty() && snap.last_new_callsigns[0].callsign == "W1TEL");
 
-    // 2. Run PORTS command over Telnet
-    const std::string ports_cmd = "PORTS\r\n";
+    // 2. Run PORTS command over Telnet using CR-only line ending (e.g. PuTTY)
+    // Verify Telnet sends a leading CRLF before the response so the prompt line is not overwritten
+    const std::string ports_cmd = "PORTS\r";
     assert(send(cfd, ports_cmd.data(), ports_cmd.size(), 0) == static_cast<ssize_t>(ports_cmd.size()));
     std::string ports_out = tcp_recv_until(cfd, "K7OYK-7> ");
+    assert(ports_out.size() >= 2 && ports_out[0] == '\r' && ports_out[1] == '\n');
     assert(ports_out.find("telnet0") != std::string::npos);
     assert(ports_out.find("axudp0") != std::string::npos);
 

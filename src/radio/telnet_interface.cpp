@@ -292,6 +292,7 @@ void TelnetInterface::process_clean_byte(TelnetClient& client, uint8_t b,
         if (b == '\r') client.last_was_cr = true;
 
         if (client.stage == ClientStage::LoginPrompt) {
+            send_text_fd(client.fd, "\r\n");
             std::string entered = client.line_buf;
             client.line_buf.clear();
 
@@ -329,6 +330,7 @@ void TelnetInterface::process_clean_byte(TelnetClient& client, uint8_t b,
         }
 
         if (client.stage == ClientStage::Connected) {
+            send_text_fd(client.fd, "\r\n");
             std::string line = client.line_buf + "\r";
             client.line_buf.clear();
 
