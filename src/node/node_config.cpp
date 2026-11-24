@@ -1,0 +1,354 @@
+#include "oyk/node/node_config.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <pwd.h>
+#include <sstream>
+#include <unistd.h>
+
+namespace oyk::node {
+
+namespace {
+
+std::string resolve_home_dir() {
+    if (const char* home = std::getenv("HOME"); home && home[0] != '\0') {
+        return std::string(home);
+    }
+    if (passwd* pw = getpwuid(getuid()); pw && pw->pw_dir && pw->pw_dir[0] != '\0') {
+        return std::string(pw->pw_dir);
+    }
+    return {};
+}
+
+std::string expand_tilde(const std::string& path) {
+    if (path.empty() || path[0] != '~') return path;
+    if (path.size() == 1 || path[1] == '/') {
+        std::string home = resolve_home_dir();
+        if (!home.empty()) {
+            if (home.back() == '/' && path.size() > 1) {
+                return home + path.substr(2);
+            }
+            return home + path.substr(1);
+        }
+    }
+    return path;
+}
+
+std::string trim(std::string_view sv) {
+    std::size_t start = 0;
+    while (start < sv.size() && std::isspace(static_cast<unsigned char>(sv[start]))) {
+        ++start;
+    }
+    std::size_t end = sv.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(sv[end - 1]))) {
+        --end;
+    }
+    return std::string(sv.substr(start, end - start));
+}
+
+std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+bool parse_bool(const std::string& v, bool fallback) {
+    auto lv = to_lower(v);
+    if (lv == "1" || lv == "true" || lv == "yes" || lv == "on") return true;
+    if (lv == "0" || lv == "false" || lv == "no" || lv == "off") return false;
+    return fallback;
+}
+
+} // namespace
+
+std::string NodeConfig::resolved_banlist_path() const {
+    namespace fs = std::filesystem;
+    if (!banlist_path.empty()) {
+        std::string expanded = expand_tilde(banlist_path);
+        fs::path p(expanded);
+        if (p.is_absolute() || source_path.empty()) {
+            return p.string();
+        }
+        fs::path cfg_dir = fs::path(source_path).parent_path();
+        if (cfg_dir.empty()) {
+            return p.string();
+        }
+        return (cfg_dir / p).string();
+    }
+
+    if (!source_path.empty()) {
+        fs::path cfg_dir = fs::path(source_path).parent_path();
+        if (!cfg_dir.empty()) {
+            return (cfg_dir / "banlist.cfg").string();
+        }
+    }
+    return "./banlist.cfg";
+}
+
+NodeConfig NodeConfig::make_default() {
+    NodeConfig cfg;
+    radio::RadioInterfaceConfig axudp;
+    axudp.id = "axudp0";
+    axudp.type = "axudp";
+    axudp.description = "Primary AXUDP Interface";
+    axudp.params["bind_host"] = "0.0.0.0";
+    axudp.params["bind_port"] = "10093";
+    axudp.params["auto_learn"] = "true";
+    cfg.interfaces.push_back(std::move(axudp));
+    return cfg;
+}
+
+std::vector<std::string> NodeConfig::default_search_paths() {
+    std::vector<std::string> paths;
+    std::string home = resolve_home_dir();
+    if (!home.empty()) {
+        if (home.back() == '/') {
+            paths.push_back(home + ".oyk/node.cfg");
+        } else {
+            paths.push_back(home + "/.oyk/node.cfg");
+        }
+    }
+    paths.push_back("/etc/oyk/node.cfg");
+    paths.push_back("./node.cfg");
+    return paths;
+}
+
+std::optional<std::string> NodeConfig::find_default_config(
+    const std::vector<std::string>& search_paths) {
+    namespace fs = std::filesystem;
+    for (const auto& path : search_paths) {
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec) || ec) {
+            continue;
+        }
+        std::ifstream probe(path);
+        if (probe.is_open()) {
+            return path;
+        }
+    }
+    return std::nullopt;
+}
+
+bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::string& error_out) {
+    std::string raw_bytes;
+    if (!core::read_file_binary(path, raw_bytes)) {
+        error_out = "Unable to open config file: " + path;
+        return false;
+    }
+
+    NodeConfig cfg;
+    cfg.source_path = path;
+    core::LineEndingInfo eol_info = core::inspect_line_endings(raw_bytes);
+    cfg.line_ending = eol_info.first;
+    cfg.has_detected_line_ending = eol_info.found_any;
+
+    std::string current_section;
+    radio::RadioInterfaceConfig* current_iface = nullptr;
+
+    auto lines = core::split_lines_any_eol(raw_bytes);
+    int line_num = 0;
+    for (std::string raw_line : lines) {
+        ++line_num;
+        // Strip inline comments starting with '#' or ';'
+        auto hash_pos = raw_line.find('#');
+        if (hash_pos != std::string::npos) {
+            raw_line = raw_line.substr(0, hash_pos);
+        }
+        auto semi_pos = raw_line.find(';');
+        if (semi_pos != std::string::npos) {
+            raw_line = raw_line.substr(0, semi_pos);
+        }
+
+        std::string line = trim(raw_line);
+        if (line.empty()) continue;
+
+        if (line.front() == '[' && line.back() == ']') {
+            std::string sec = trim(line.substr(1, line.size() - 2));
+            std::string lower_sec = to_lower(sec);
+            if (lower_sec == "node") {
+                current_section = "node";
+                current_iface = nullptr;
+            } else if (lower_sec == "logfiles") {
+                current_section = "logfiles";
+                current_iface = nullptr;
+            } else if (lower_sec.rfind("interface", 0) == 0) {
+                std::string rest = trim(sec.substr(9));
+                // Allow "[interface axudp0]" or "[interface:axudp0]"
+                if (!rest.empty() && rest.front() == ':') {
+                    rest = trim(rest.substr(1));
+                }
+                if (rest.empty()) {
+                    error_out = "Config line " + std::to_string(line_num) +
+                                ": interface section requires an ID (e.g. [interface axudp0])";
+                    return false;
+                }
+                current_section = "interface";
+                radio::RadioInterfaceConfig iface;
+                iface.id = rest;
+                cfg.interfaces.push_back(std::move(iface));
+                current_iface = &cfg.interfaces.back();
+            } else {
+                error_out = "Config line " + std::to_string(line_num) +
+                            ": unknown section [" + sec + "]";
+                return false;
+            }
+            continue;
+        }
+
+        auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            error_out = "Config line " + std::to_string(line_num) + ": expected key = value";
+            return false;
+        }
+        std::string raw_key = trim(line.substr(0, eq));
+        std::string key = to_lower(raw_key);
+        std::string val = trim(line.substr(eq + 1));
+
+        if (current_section == "node" || current_section.empty()) {
+            if (key == "callsign") {
+                auto parsed = ax25::Callsign::parse(val);
+                if (!parsed) {
+                    error_out = "Config line " + std::to_string(line_num) +
+                                ": invalid callsign '" + val + "'";
+                    return false;
+                }
+                cfg.callsign = *parsed;
+            } else if (key == "alias") {
+                if (val.empty()) {
+                    cfg.alias = ax25::Callsign{};
+                } else {
+                    auto parsed = ax25::Callsign::parse(val);
+                    if (!parsed) {
+                        error_out = "Config line " + std::to_string(line_num) +
+                                    ": invalid alias '" + val + "'";
+                        return false;
+                    }
+                    cfg.alias = *parsed;
+                }
+            } else if (key == "info" || key == "info_text") {
+                cfg.info_text = val;
+            } else if (key == "logpath") {
+                cfg.logging.log_path = expand_tilde(val);
+            } else if (key == "consolelevel") {
+                uint32_t mask = 0;
+                if (!parse_log_mask(val, mask)) {
+                    error_out = "Config line " + std::to_string(line_num) +
+                                ": invalid consolelevel '" + val + "'";
+                    return false;
+                }
+                cfg.logging.console_level = mask;
+            } else if (key == "log_rotate_daily") {
+                cfg.logging.rotate_daily = parse_bool(val, true);
+            } else if (key == "banlist") {
+                cfg.banlist_path = val;
+            } else if (key == "accept_incoming") {
+                cfg.accept_incoming_default = parse_bool(val, true);
+            } else if (key == "paclen") {
+                cfg.paclen = static_cast<std::size_t>(std::clamp(std::stoi(val), 32, 256));
+            } else if (key == "maxframe") {
+                cfg.maxframe = static_cast<uint8_t>(std::clamp(std::stoi(val), 1, 7));
+            } else if (key == "t1_ms") {
+                cfg.t1_ms = static_cast<uint32_t>(std::max(250, std::stoi(val)));
+            } else if (key == "n2_retries") {
+                cfg.n2_retries = static_cast<uint8_t>(std::clamp(std::stoi(val), 1, 20));
+            } else if (key == "idle_timeout_sec") {
+                cfg.idle_timeout_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+            } else if (key == "beacon_interval_sec") {
+                cfg.beacon_interval_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+            } else if (key == "ban") {
+                if (!val.empty()) {
+                    cfg.banned_callsigns.push_back(val);
+                }
+            }
+        } else if (current_section == "logfiles") {
+            uint32_t mask = 0;
+            if (!parse_log_mask(val, mask)) {
+                error_out = "Config line " + std::to_string(line_num) +
+                            ": invalid log level mask '" + val + "' for file '" + raw_key + "'";
+                return false;
+            }
+            cfg.logging.log_files[raw_key] = mask;
+        } else if (current_section == "interface" && current_iface != nullptr) {
+            if (key == "type") {
+                current_iface->type = to_lower(val);
+            } else if (key == "description") {
+                current_iface->description = val;
+            } else if (key == "peer") {
+                if (!val.empty()) {
+                    current_iface->peers.push_back(val);
+                }
+            } else {
+                current_iface->params[key] = val;
+            }
+        }
+    }
+
+    if (cfg.interfaces.empty()) {
+        cfg.interfaces = make_default().interfaces;
+    }
+
+    out = std::move(cfg);
+    return true;
+}
+
+bool NodeConfig::save_to_file(const std::string& path) const {
+    const std::string target = path.empty() ? source_path : path;
+    if (target.empty()) return false;
+
+    std::vector<std::string> lines;
+    lines.push_back("[node]");
+    lines.push_back("callsign = " + callsign.str());
+    if (alias.valid()) {
+        lines.push_back("alias = " + alias.str());
+    }
+    lines.push_back("info = " + info_text);
+    lines.push_back("accept_incoming = " + std::string(accept_incoming_default ? "true" : "false"));
+    lines.push_back("paclen = " + std::to_string(paclen));
+    lines.push_back("maxframe = " + std::to_string(static_cast<int>(maxframe)));
+    lines.push_back("t1_ms = " + std::to_string(t1_ms));
+    lines.push_back("n2_retries = " + std::to_string(static_cast<int>(n2_retries)));
+    lines.push_back("idle_timeout_sec = " + std::to_string(idle_timeout_sec));
+    lines.push_back("beacon_interval_sec = " + std::to_string(beacon_interval_sec));
+    lines.push_back("logpath = " + logging.log_path);
+    {
+        std::ostringstream oss;
+        oss << "consolelevel = 0x" << std::hex << logging.console_level;
+        lines.push_back(oss.str());
+    }
+    lines.push_back("log_rotate_daily = " + std::string(logging.rotate_daily ? "true" : "false"));
+    if (!banlist_path.empty()) {
+        lines.push_back("banlist = " + banlist_path);
+    }
+
+    if (!logging.log_files.empty()) {
+        lines.push_back("");
+        lines.push_back("[logfiles]");
+        for (const auto& [fname, mask] : logging.log_files) {
+            std::ostringstream oss;
+            oss << fname << " = 0x" << std::hex << mask;
+            lines.push_back(oss.str());
+        }
+    }
+
+    for (const auto& iface : interfaces) {
+        lines.push_back("");
+        lines.push_back("[interface " + iface.id + "]");
+        lines.push_back("type = " + iface.type);
+        if (!iface.description.empty()) {
+            lines.push_back("description = " + iface.description);
+        }
+        for (const auto& [k, v] : iface.params) {
+            lines.push_back(k + " = " + v);
+        }
+        for (const auto& peer : iface.peers) {
+            lines.push_back("peer = " + peer);
+        }
+    }
+
+    return core::write_lines_binary(target, lines, line_ending);
+}
+
+} // namespace oyk::node

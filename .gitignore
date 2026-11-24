@@ -1,0 +1,13 @@
+build/
+build-*/
+logs/
+*.o
+*.a
+*.obj
+*.res
+*.err
+*.map
+*.exe
+*.swp
+*.swo
+*~

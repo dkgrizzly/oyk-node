@@ -1,0 +1,25 @@
+# CMake target for 32-bit and 64-bit Windows native GUI builds
+# Compatible with Windows 95..ME, Windows NT 3.51..Windows 11 (MinGW-w64 or MSVC)
+
+add_executable(oyk-node-win WIN32
+    win_main.cpp
+    oyk_win.rc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_portable.cpp
+)
+
+target_include_directories(oyk-node-win
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../compat
+)
+
+target_link_libraries(oyk-node-win
+    PRIVATE
+        wsock32
+        user32
+        gdi32
+)
+
+if(MSVC)
+    target_compile_definitions(oyk-node-win PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()

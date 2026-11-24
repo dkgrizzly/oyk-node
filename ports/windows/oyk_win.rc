@@ -1,0 +1,49 @@
+#include <windows.h>
+#include "resource.h"
+
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&Node"
+    BEGIN
+        MENUITEM "&Allow Incoming Connections",  IDM_ALLOW_INCOMING
+        MENUITEM "&Deny Incoming Connections",   IDM_DENY_INCOMING
+        MENUITEM SEPARATOR
+        MENUITEM "&Terminate Connection...",     IDM_TERMINATE
+        MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit Node",                   IDM_EXIT
+    END
+END
+
+IDD_TERMINATE DIALOG 20, 20, 260, 140
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Terminate Active Connection"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Select an active connection to terminate:", -1, 8, 8, 244, 10
+    LISTBOX         IDC_TERM_LIST, 8, 22, 244, 88, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    DEFPUSHBUTTON   "Terminate", IDOK, 134, 118, 56, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 196, 118, 56, 14
+END
+
+IDD_BAN DIALOG 20, 20, 290, 205
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Ban / Unban Callsign (banlist.cfg)"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Callsign:", -1, 8, 10, 40, 10
+    EDITTEXT        IDC_BAN_CALL, 52, 8, 84, 12, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Hard Ban", IDC_BAN_HARD, 146, 9, 55, 10, BS_AUTOCHECKBOX | WS_TABSTOP
+    CHECKBOX        "Appeal Allowed", IDC_BAN_APPEAL, 206, 9, 76, 10, BS_AUTOCHECKBOX | WS_TABSTOP
+
+    LTEXT           "Reason:", -1, 8, 28, 40, 10
+    EDITTEXT        IDC_BAN_REASON, 52, 26, 230, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    PUSHBUTTON      "&Ban Callsign", IDC_BAN_ADD, 52, 44, 72, 14
+    PUSHBUTTON      "&Unban Selected", IDC_BAN_REMOVE, 132, 44, 76, 14
+
+    LTEXT           "Active Bans:", -1, 8, 64, 120, 10
+    LISTBOX         IDC_BAN_LIST, 8, 76, 274, 100, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+
+    DEFPUSHBUTTON   "Close", IDCANCEL, 226, 184, 56, 14
+END

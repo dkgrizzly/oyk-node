@@ -1,0 +1,30 @@
+# OpenWatcom 1.9 WMAKE Makefile for 16-bit Windows 3.1 (Win16 + Winsock 1.1)
+#
+# Usage:
+#   wmake -f makefile.win16
+
+CC  = wpp
+RC  = wrc
+LD  = wlink
+
+CFLAGS = -2 -ml -zw -os -bt=windows -wx -zq -I..\compat
+
+OBJS = win_main.obj oyk_portable.obj
+
+all: oykw16.exe
+
+win_main.obj: win_main.cpp resource.h ..\compat\oyk_portable.hpp
+    $(CC) $(CFLAGS) win_main.cpp
+
+oyk_portable.obj: ..\compat\oyk_portable.cpp ..\compat\oyk_portable.hpp
+    $(CC) $(CFLAGS) ..\compat\oyk_portable.cpp
+
+oyk_win.res: oyk_win.rc resource.h
+    $(RC) -bt=windows -r -fo=oyk_win.res oyk_win.rc
+
+oykw16.exe: $(OBJS) oyk_win.res
+    $(LD) system windows option heapsize=16384,stack=8192 name oykw16.exe file { $(OBJS) } library winsock.lib
+    $(RC) -bt=windows oyk_win.res oykw16.exe
+
+clean: .SYMBOLIC
+    rm -f *.obj *.res *.err *.map oykw16.exe

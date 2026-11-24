@@ -1,0 +1,29 @@
+# OpenWatcom 1.9 WMAKE Makefile for 32-bit Windows (Windows 95..ME & Windows NT 3.51..11)
+#
+# Usage:
+#   wmake -f makefile.win32
+
+CC  = wpp386
+RC  = wrc
+LD  = wlink
+
+CFLAGS = -3s -os -bt=nt -wx -zq -I..\compat
+
+OBJS = win_main32.obj oyk_portable32.obj
+
+all: oykw32.exe
+
+win_main32.obj: win_main.cpp resource.h ..\compat\oyk_portable.hpp
+    $(CC) $(CFLAGS) -fo=win_main32.obj win_main.cpp
+
+oyk_portable32.obj: ..\compat\oyk_portable.cpp ..\compat\oyk_portable.hpp
+    $(CC) $(CFLAGS) -fo=oyk_portable32.obj ..\compat\oyk_portable.cpp
+
+oyk_win32.res: oyk_win.rc resource.h
+    $(RC) -bt=nt -r -fo=oyk_win32.res oyk_win.rc
+
+oykw32.exe: $(OBJS) oyk_win32.res
+    $(LD) system nt_win name oykw32.exe file { $(OBJS) } library wsock32.lib resource oyk_win32.res
+
+clean: .SYMBOLIC
+    rm -f *.obj *.res *.err *.map oykw32.exe
