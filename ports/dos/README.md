@@ -15,10 +15,10 @@ This port builds `oyknode.exe` and the 16-bit unit test binary `testdos.exe` for
 
 ## Building on Linux with OpenWatcom v2
 
-Once `~/open-watcom-v2` finishes building:
+Assuming OpenWatcom v2 is installed in `/opt/watcom` and Michael Brutman's `mTCP` repository is cloned to `~/mTCP` (where upstream stores `TCPINC/`, `TCPLIB/`, and `INCLUDE/` under `src/`):
 
 ```bash
-export WATCOM=$HOME/open-watcom-v2/rel
+export WATCOM=/opt/watcom
 export PATH=$WATCOM/binl64:$PATH
 export INCLUDE=$WATCOM/h
 
@@ -26,12 +26,14 @@ export INCLUDE=$WATCOM/h
 cd ports/dos
 wmake -f makefile testdos.exe
 
-# Build full MS-DOS packet node linked with ~/mTCP:
+# Build full MS-DOS packet node linked with ~/mTCP/src:
 wmake -f makefile oyknode.exe MTCP_DIR=$HOME/mTCP
 
 # Optional NEC V20 optimization:
 wmake -f makefile all MTCP_DIR=$HOME/mTCP CPU=-1
 ```
+
+On case-sensitive Linux filesystems, `makefile` automatically creates a temporary `mtcp_inc/` symlink directory (excluded via `.gitignore`) mapping lowercase/mixed-case `#include` names used inside mTCP's headers (`types.h`, `Global.Cfg`, etc.) to the uppercase files in `~/mTCP/src/TCPINC/` without modifying `~/mTCP`.
 
 ## Running 16-Bit MS-DOS Unit Tests in `qemu-system-i386`
 

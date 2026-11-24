@@ -15,3 +15,5 @@ logs/
 *.img
 *.ima
 ports/dos/freedos/
+ports/dos/mtcp_inc/
+ports/dos/mtcp_inc_stamp

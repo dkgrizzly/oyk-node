@@ -193,7 +193,7 @@ static int dos_tx_callback(int iface_idx, const OykFrame* frame,
 
     IpAddr_t dst_ip;
     memcpy(dst_ip, &peer_ip, 4);
-    return (Udp::sendUdp(dst_ip, g_axudp_port, peer_port, static_cast<uint16_t>(n), raw, 1) == 0) ? 1 : 0;
+    return (Udp::sendUdp(dst_ip, g_axudp_port, peer_port, static_cast<uint16_t>(n), raw, 0) == 0) ? 1 : 0;
 }
 
 static void prompt_line(const char* prompt, char* out, int max_len) {
@@ -328,7 +328,7 @@ static void resolve_dos_config_path(char* out, size_t out_sz) {
 }
 
 int main(int argc, char* argv[]) {
-    OykConfig cfg;
+    static OykConfig cfg;
     char cfg_path[128];
     char err[96];
     cfg_path[0] = '\0';
