@@ -188,6 +188,7 @@ static void refresh_gui() {
 }
 
 static OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
     static oyk_u32 s_ids[OYK_MAX_SESSIONS];
     static int s_count = 0;
 
@@ -244,6 +245,7 @@ static void fill_ban_listbox(HWND lb) {
 }
 
 static OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
     switch (msg) {
         case WM_INITDIALOG:
             SetDlgItemTextA(hdlg, IDC_BAN_REASON, "Banned by sysop.");
@@ -405,10 +407,11 @@ static OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static void resolve_win_config(char* out, size_t out_sz) {
+    if (!out || out_sz < 20) return;
     const char* home = getenv("USERPROFILE");
     if (!home || !home[0]) home = getenv("HOME");
     FILE* fp = NULL;
-    if (home && home[0]) {
+    if (home && home[0] && strlen(home) + 16 < out_sz) {
         sprintf(out, "%s\\.oyk\\node.cfg", home);
         fp = fopen(out, "rb");
         if (fp) { fclose(fp); return; }

@@ -23,8 +23,17 @@ cd ports\windows
 wmake -f makefile.win32
 ```
 
-### Windows 32-bit / 64-bit via CMake (only built when requested)
+### Windows 32-bit / 64-bit via CMake on Linux (MinGW-w64) or Windows (MSVC/MinGW)
+
+On Linux with `mingw-w64` installed (`x86_64-w64-mingw32-g++` and/or `i686-w64-mingw32-g++`), CMake automatically detects both cross-compilers and produces standalone `build/oykw64.exe` and `build/oykw32.exe` executables when `BUILD_WINDOWS_PORT=ON`:
+
 ```bash
-cmake -B build-win -DBUILD_WINDOWS_PORT=ON -DBUILD_NCURSES_UI=OFF -DBUILD_GTK2_UI=OFF
-cmake --build build-win --target oyk-node-win
+cmake -B build -DBUILD_WINDOWS_PORT=ON
+cmake --build build --target oyk-node-win
+```
+
+Or build an individual target:
+```bash
+cmake --build build --target oyk-node-win64   # produces build/oykw64.exe
+cmake --build build --target oyk-node-win32   # produces build/oykw32.exe
 ```

@@ -144,21 +144,114 @@ if(BUILD_WIN16_PORT)
     )
 endif()
 
-# Optional 32/64-bit Windows native GUI target - built only if requested
+# Optional 32/64-bit Windows native GUI targets - built only if requested
 if(BUILD_WINDOWS_PORT)
     if(WIN32)
         add_subdirectory(ports/windows)
     else()
-        find_program(WMAKE_EXE wmake)
-        if(WMAKE_EXE)
-            add_custom_target(oyk-node-win32
-                COMMAND ${WMAKE_EXE} -f makefile.win32
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/windows
-                COMMENT "Building 32-bit Windows executable with OpenWatcom 1.9"
+        set(_win_targets "")
+
+        find_program(MINGW64_CXX x86_64-w64-mingw32-g++)
+        find_program(MINGW64_WINDRES x86_64-w64-mingw32-windres)
+        if(MINGW64_CXX AND MINGW64_WINDRES)
+            message(STATUS "Found MinGW-w64 64-bit (${MINGW64_CXX}): enabling oyk-node-win64 (oykw64.exe)")
+            set(_win64_res "${CMAKE_CURRENT_BINARY_DIR}/oyk_win64.res")
+            set(_win64_exe "${CMAKE_CURRENT_BINARY_DIR}/oykw64.exe")
+            add_custom_command(
+                OUTPUT "${_win64_res}"
+                COMMAND ${MINGW64_WINDRES}
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
+                        -i "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
+                        -O coff -o "${_win64_res}"
+                DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                COMMENT "Compiling 64-bit Windows resources (oyk_win64.res)"
             )
-        else()
-            message(FATAL_ERROR "BUILD_WINDOWS_PORT requires a Windows CMake toolchain (MinGW/MSVC) or OpenWatcom 'wmake'")
+            add_custom_command(
+                OUTPUT "${_win64_exe}"
+                COMMAND ${MINGW64_CXX}
+                        -std=c++98 -Os -fno-exceptions -fno-rtti -Wall -Wextra
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
+                        "${_win64_res}"
+                        -o "${_win64_exe}"
+                        -mwindows -static -lwsock32 -luser32 -lgdi32
+                DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
+                    "${_win64_res}"
+                COMMENT "Building 64-bit Windows GUI executable (oykw64.exe)"
+            )
+            add_custom_target(oyk-node-win64 ALL DEPENDS "${_win64_exe}")
+            list(APPEND _win_targets oyk-node-win64)
         endif()
+
+        find_program(MINGW32_CXX i686-w64-mingw32-g++)
+        find_program(MINGW32_WINDRES i686-w64-mingw32-windres)
+        if(MINGW32_CXX AND MINGW32_WINDRES)
+            message(STATUS "Found MinGW-w64 32-bit (${MINGW32_CXX}): enabling oyk-node-win32 (oykw32.exe)")
+            set(_win32_res "${CMAKE_CURRENT_BINARY_DIR}/oyk_win32.res")
+            set(_win32_exe "${CMAKE_CURRENT_BINARY_DIR}/oykw32.exe")
+            add_custom_command(
+                OUTPUT "${_win32_res}"
+                COMMAND ${MINGW32_WINDRES}
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
+                        -i "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
+                        -O coff -o "${_win32_res}"
+                DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                COMMENT "Compiling 32-bit Windows resources (oyk_win32.res)"
+            )
+            add_custom_command(
+                OUTPUT "${_win32_exe}"
+                COMMAND ${MINGW32_CXX}
+                        -std=c++98 -Os -fno-exceptions -fno-rtti -Wall -Wextra
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
+                        "${_win32_res}"
+                        -o "${_win32_exe}"
+                        -mwindows -static -lwsock32 -luser32 -lgdi32
+                DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
+                    "${_win32_res}"
+                COMMENT "Building 32-bit Windows GUI executable (oykw32.exe)"
+            )
+            add_custom_target(oyk-node-win32 ALL DEPENDS "${_win32_exe}")
+            list(APPEND _win_targets oyk-node-win32)
+        endif()
+
+        if(NOT _win_targets)
+            find_program(WMAKE_EXE wmake
+                HINTS
+                    "$ENV{WATCOM}/binl64"
+                    "$ENV{WATCOM}/binl"
+                    "$ENV{HOME}/open-watcom-v2/rel/binl64"
+                    "$ENV{HOME}/open-watcom-v2/rel/binl"
+            )
+            if(WMAKE_EXE)
+                add_custom_target(oyk-node-win32 ALL
+                    COMMAND ${WMAKE_EXE} -f makefile.win32
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ports/windows
+                    COMMENT "Building 32-bit Windows executable with OpenWatcom"
+                )
+                list(APPEND _win_targets oyk-node-win32)
+            else()
+                message(FATAL_ERROR "BUILD_WINDOWS_PORT requires MinGW-w64 (x86_64-w64-mingw32-g++ / i686-w64-mingw32-g++), a Windows CMake toolchain, or OpenWatcom 'wmake'")
+            endif()
+        endif()
+
+        add_custom_target(oyk-node-win DEPENDS ${_win_targets})
     endif()
 endif()
 

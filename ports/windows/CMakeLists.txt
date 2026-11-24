@@ -25,4 +25,7 @@ target_link_libraries(oyk-node-win
 
 if(MSVC)
     target_compile_definitions(oyk-node-win PRIVATE _CRT_SECURE_NO_WARNINGS)
+elseif(MINGW)
+    target_compile_options(oyk-node-win PRIVATE -std=c++98 -Os -fno-exceptions -fno-rtti -Wall -Wextra)
+    target_link_options(oyk-node-win PRIVATE -static)
 endif()
