@@ -6,6 +6,7 @@
  * Define OYK_PORTABLE_TESTS_AS_LIBRARY to call oyk_run_portable_tests() from another main().
  */
 #include "oyk_portable.hpp"
+#include "oyk_yapp.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -21,6 +22,8 @@
   #define OYK_T_PNODE_LOGS  "tlogs"
   #define OYK_T_LOG_NODE    "tlogs\\node.log"
   #define OYK_T_LOG_APPEALS "tlogs\\appeals.log"
+  #define OYK_T_YAPP_ROOT   "tinc"
+  #define OYK_T_YAPP_SRC    "tysrc.txt"
 #else
   #define OYK_T_CFG_MIXED   "/tmp/oyk_port_mixed.cfg"
   #define OYK_T_CFG_SAVED   "/tmp/oyk_port_saved.cfg"
@@ -30,6 +33,8 @@
   #define OYK_T_PNODE_LOGS  "/tmp/oyk_pnode_logs"
   #define OYK_T_LOG_NODE    "/tmp/oyk_pnode_logs/node.log"
   #define OYK_T_LOG_APPEALS "/tmp/oyk_pnode_logs/appeals.log"
+  #define OYK_T_YAPP_ROOT   "/tmp/oyk_port_incoming"
+  #define OYK_T_YAPP_SRC    "/tmp/oyk_port_yapp_src.txt"
 #endif
 
 static char* load_raw_file(const char* path, size_t* len_out) {
@@ -266,9 +271,137 @@ static void test_portable_ax25_kiss_and_bans() {
     printf("[PASS] test_portable_ax25_kiss_and_bans\n");
 }
 
+struct PortableYappPipe {
+    OykYappSession* peer;
+    int overwrite_allow;
+    int overwrite_calls;
+};
+
+static int yapp_pipe_send(const oyk_u8* data, size_t len, void* ctx) {
+    PortableYappPipe* pipe = static_cast<PortableYappPipe*>(ctx);
+    oyk_u8 plain[32];
+    oyk_yapp_feed_bytes(pipe->peer, data, len, plain, sizeof(plain));
+    return 1;
+}
+
+static int yapp_test_overwrite(const char* /*path*/, const char* /*fname*/, void* ctx) {
+    PortableYappPipe* pipe = static_cast<PortableYappPipe*>(ctx);
+    pipe->overwrite_calls++;
+    return pipe->overwrite_allow;
+}
+
+static void test_portable_yapp_and_local_terminal() {
+    /* 1. Filename sanitization & path traversal protection */
+    assert(oyk_yapp_is_safe_filename("important-file.txt") == 1);
+    assert(oyk_yapp_is_safe_filename("TEST123.BIN") == 1);
+    assert(oyk_yapp_is_safe_filename("../evil.txt") == 0);
+    assert(oyk_yapp_is_safe_filename("..\\evil.txt") == 0);
+    assert(oyk_yapp_is_safe_filename("a/../b.txt") == 0);
+    assert(oyk_yapp_is_safe_filename("sub/file.txt") == 0);
+    assert(oyk_yapp_is_safe_filename("sub\\file.txt") == 0);
+    assert(oyk_yapp_is_safe_filename("C:autoexec.bat") == 0);
+    assert(oyk_yapp_is_safe_filename(".hidden") == 0);
+    assert(oyk_yapp_is_safe_filename("CON") == 0);
+    assert(oyk_yapp_is_safe_filename("COM1.TXT") == 0);
+
+    /* 2. Peer spec parsing & incoming/<CALL-SSID>/<file> resolution */
+    char p_call[16];
+    oyk_u32 p_ip = 0;
+    oyk_u16 p_port = 0;
+    assert(oyk_parse_peer_spec("N0CALL-11@192.168.1.50:10093", p_call, sizeof(p_call),
+                               &p_ip, &p_port, 10093) == 1);
+    assert(strcmp(p_call, "N0CALL-11") == 0 && p_port == 10093 && p_ip != 0);
+
+    OykCallsign remote;
+    assert(oyk_parse_callsign("N0CALL-11", &remote) == 1);
+    char out_path[180], out_dir[120];
+    assert(oyk_yapp_resolve_incoming_path("incoming", &remote, "important-file.txt",
+                                          out_path, sizeof(out_path),
+                                          out_dir, sizeof(out_dir)) == 1);
+    assert(strstr(out_path, "important-file.txt") != NULL);
+    assert(oyk_yapp_resolve_incoming_path("incoming", &remote, "../escape.txt",
+                                          out_path, sizeof(out_path),
+                                          out_dir, sizeof(out_dir)) == 0);
+
+    /* 3. End-to-end YAPP-C transfer + overwrite decline & approve + traversal rejection */
+    write_raw_file(OYK_T_YAPP_SRC, "Hello YAPP-C packet radio world! 73 de N0CALL-11.\r\n");
+
+    OykYappSession* tx_y = new OykYappSession;
+    OykYappSession* rx_y = new OykYappSession;
+    PortableYappPipe tx_pipe;
+    PortableYappPipe rx_pipe;
+    tx_pipe.peer = rx_y; tx_pipe.overwrite_allow = 0; tx_pipe.overwrite_calls = 0;
+    rx_pipe.peer = tx_y; rx_pipe.overwrite_allow = 0; rx_pipe.overwrite_calls = 0;
+
+    oyk_yapp_init(tx_y, OYK_T_YAPP_ROOT, yapp_pipe_send, &tx_pipe, NULL, NULL);
+    oyk_yapp_init(rx_y, OYK_T_YAPP_ROOT, yapp_pipe_send, &rx_pipe, yapp_test_overwrite, &rx_pipe);
+    oyk_yapp_set_remote(rx_y, &remote);
+
+    /* Remove any stale test output first */
+    const char* src_base = strrchr(OYK_T_YAPP_SRC, '/');
+    src_base = src_base ? (src_base + 1) : OYK_T_YAPP_SRC;
+    char saved_path[180], saved_dir[120];
+    assert(oyk_yapp_resolve_incoming_path(OYK_T_YAPP_ROOT, &remote, src_base,
+                                          saved_path, sizeof(saved_path),
+                                          saved_dir, sizeof(saved_dir)) == 1);
+    remove(saved_path);
+
+    char err[64];
+    assert(oyk_yapp_start_send(tx_y, OYK_T_YAPP_SRC, err, sizeof(err)) == 1);
+    assert(tx_y->state == OYK_YAPP_COMPLETE);
+    assert(rx_y->state == OYK_YAPP_COMPLETE);
+    assert(rx_y->yappc == 1);
+    assert(rx_pipe.overwrite_calls == 0);
+
+    size_t got_len = 0;
+    char* got = load_raw_file(saved_path, &got_len);
+    assert(strcmp(got, "Hello YAPP-C packet radio world! 73 de N0CALL-11.\r\n") == 0);
+    free(got);
+
+    /* Second transfer with overwrite_allow=0 MUST NOT overwrite existing file */
+    write_raw_file(OYK_T_YAPP_SRC, "MODIFIED CONTENT");
+    oyk_yapp_reset(rx_y);
+    assert(oyk_yapp_start_send(tx_y, OYK_T_YAPP_SRC, err, sizeof(err)) == 1);
+    assert(rx_pipe.overwrite_calls == 1);
+    assert(rx_y->state == OYK_YAPP_ABORTED);
+    got = load_raw_file(saved_path, &got_len);
+    assert(strcmp(got, "Hello YAPP-C packet radio world! 73 de N0CALL-11.\r\n") == 0);
+    free(got);
+
+    /* Third transfer with overwrite_allow=1 updates the file */
+    rx_pipe.overwrite_allow = 1;
+    oyk_yapp_reset(rx_y);
+    assert(oyk_yapp_start_send(tx_y, OYK_T_YAPP_SRC, err, sizeof(err)) == 1);
+    assert(rx_pipe.overwrite_calls == 2);
+    assert(rx_y->state == OYK_YAPP_COMPLETE);
+    got = load_raw_file(saved_path, &got_len);
+    assert(strcmp(got, "MODIFIED CONTENT") == 0);
+    free(got);
+
+    /* Crafted YAPP header with path traversal MUST be rejected */
+    oyk_yapp_reset(rx_y);
+    const oyk_u8 init_pkt[2] = { OYK_YAPP_ENQ, 0x01U };
+    oyk_u8 dummy[8];
+    oyk_yapp_feed_bytes(rx_y, init_pkt, 2, dummy, sizeof(dummy));
+    const char* bad_hdr = "../evil.txt\0" "5\0";
+    oyk_u8 soh_pkt[20];
+    soh_pkt[0] = OYK_YAPP_SOH;
+    soh_pkt[1] = 14;
+    memcpy(soh_pkt + 2, bad_hdr, 14);
+    oyk_yapp_feed_bytes(rx_y, soh_pkt, 16, dummy, sizeof(dummy));
+    assert(rx_y->state == OYK_YAPP_ERROR);
+
+    remove(saved_path);
+    remove(OYK_T_YAPP_SRC);
+    delete tx_y;
+    delete rx_y;
+    printf("[PASS] test_portable_yapp_and_local_terminal\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
+    test_portable_yapp_and_local_terminal();
     return 0;
 }
 

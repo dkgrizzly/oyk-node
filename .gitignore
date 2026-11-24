@@ -1,6 +1,7 @@
 build/
 build-*/
 logs/
+incoming/
 *.o
 *.a
 *.obj

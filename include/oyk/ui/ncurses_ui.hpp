@@ -31,6 +31,8 @@ private:
     void draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int h, int w);
 
     void open_node_menu(bool& should_exit);
+    void modal_local_terminal();
+    bool modal_file_selector(const std::string& title, std::string& selected_path_out);
     void modal_terminate_connection();
     void modal_ban_callsign();
     bool modal_confirm_exit();

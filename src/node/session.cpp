@@ -266,7 +266,7 @@ SessionEvents Session::on_frame(const ax25::Frame& frame) {
                 vr_ = static_cast<uint8_t>((vr_ + 1) & 0x07);
                 ev.rx_data.insert(ev.rx_data.end(), frame.info.begin(), frame.info.end());
 
-                if (bridged_session_id_ == 0) {
+                if (bridged_session_id_ == 0 && mode_ != SessionMode::LocalTerminal) {
                     for (uint8_t b : frame.info) {
                         char c = static_cast<char>(b);
                         if (c == '\r' || c == '\n') {

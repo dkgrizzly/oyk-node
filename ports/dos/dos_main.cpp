@@ -12,9 +12,11 @@
  */
 
 #include "../compat/oyk_portable.hpp"
+#include "../compat/oyk_yapp.hpp"
 #include "ems.hpp"
 
 #include <conio.h>
+#include <direct.h>
 #include <dos.h>
 #include <i86.h>
 #include <stdio.h>
@@ -138,7 +140,7 @@ static void render_dos_screen() {
             sprintf(line, "#%-3lu %-10.10s %-8.8s %-8.8s %s",
                     static_cast<unsigned long>(s.id), cs,
                     g_node.iface(s.iface_idx).cfg.id, s.since_hms,
-                    s.restricted_ban ? "BAN NOTICE" : "NODE SHELL");
+                    s.restricted_ban ? "BAN NOTICE" : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"));
             vid_puts(row++, 0, 0x07, line, 80);
         }
     }
@@ -228,6 +230,419 @@ static int confirm_dos_exit() {
     return (yn[0] == 'y' || yn[0] == 'Y') ? 1 : 0;
 }
 
+/* ==================== DOS Local Terminal, YAPP & Commander File Selector ==================== */
+
+#define DOS_TERM_MAX_LINES 48
+#define DOS_FS_MAX_ENTRIES 128
+
+struct DosFsEntry {
+    char name[14];
+    int is_dir;
+    oyk_u32 size;
+};
+
+static oyk_u32 g_dterm_sid = 0;
+static int g_dterm_connected = 0;
+static int g_dterm_connecting = 0;
+static OykCallsign g_dterm_remote;
+static OykYappSession g_dterm_yapp;
+static char g_dterm_lines[DOS_TERM_MAX_LINES][80];
+static int g_dterm_line_count = 0;
+static char g_dterm_curline[80];
+static int g_dterm_curline_len = 0;
+static char g_dterm_last_yapp[128];
+
+static void dterm_push_line(const char* s) {
+    if (!s) return;
+    if (g_dterm_line_count < DOS_TERM_MAX_LINES) {
+        strncpy(g_dterm_lines[g_dterm_line_count], s, 79);
+        g_dterm_lines[g_dterm_line_count][79] = '\0';
+        g_dterm_line_count++;
+    } else {
+        for (int i = 1; i < DOS_TERM_MAX_LINES; ++i) {
+            memcpy(g_dterm_lines[i - 1], g_dterm_lines[i], 80);
+        }
+        strncpy(g_dterm_lines[DOS_TERM_MAX_LINES - 1], s, 79);
+        g_dterm_lines[DOS_TERM_MAX_LINES - 1][79] = '\0';
+    }
+}
+
+static int dos_yapp_send_cb(const oyk_u8* data, size_t len, void* /*ctx*/) {
+    if (g_dterm_sid == 0 || !g_dterm_connected) return 0;
+    return g_node.send_local_bytes(g_dterm_sid, data, len);
+}
+
+static int dos_yapp_overwrite_cb(const char* target_path, const char* /*filename*/, void* /*ctx*/) {
+    char prompt[80];
+    sprintf(prompt, "Overwrite %.48s? [Y/N]: ", target_path);
+    vid_puts(24, 0, 0x4F, prompt, 80);
+    while (!g_break_flag) {
+        PACKET_PROCESS_SINGLE;
+        Arp::driveArp();
+        Tcp::drivePackets();
+        if (kbhit()) {
+            int ch = getch();
+            if (ch == 0 || ch == 0xE0) { getch(); continue; }
+            if (ch == 'y' || ch == 'Y') return 1;
+            if (ch == 'n' || ch == 'N' || ch == 27) return 0;
+        }
+    }
+    return 0;
+}
+
+static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
+                                    const oyk_u8* data, size_t len,
+                                    const char* reason, void* /*ctx*/) {
+    if (sid != g_dterm_sid) return;
+    if (event_type == 1) {
+        g_dterm_connecting = 0;
+        g_dterm_connected = 1;
+        char cs[16], msg[64];
+        oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+        sprintf(msg, "*** Connected to %s", cs);
+        dterm_push_line(msg);
+    } else if (event_type == 2 && data && len > 0) {
+        static oyk_u8 plain[256];
+        size_t pn = oyk_yapp_feed_bytes(&g_dterm_yapp, data, len, plain, sizeof(plain));
+        for (size_t i = 0; i < pn; ++i) {
+            oyk_u8 ch = plain[i];
+            if (ch == '\r' || ch == '\n') {
+                if (g_dterm_curline_len > 0 || ch == '\r') {
+                    g_dterm_curline[g_dterm_curline_len] = '\0';
+                    dterm_push_line(g_dterm_curline);
+                    g_dterm_curline_len = 0;
+                }
+            } else if (ch >= 0x20U && ch < 0x7FU) {
+                if (g_dterm_curline_len < 78) {
+                    g_dterm_curline[g_dterm_curline_len++] = static_cast<char>(ch);
+                }
+            }
+        }
+        if (g_dterm_yapp.status[0] && strcmp(g_dterm_yapp.status, g_dterm_last_yapp) != 0) {
+            strncpy(g_dterm_last_yapp, g_dterm_yapp.status, sizeof(g_dterm_last_yapp) - 1);
+            g_dterm_last_yapp[sizeof(g_dterm_last_yapp) - 1] = '\0';
+            char line[80];
+            sprintf(line, "*** %.74s", g_dterm_last_yapp);
+            dterm_push_line(line);
+        }
+    } else if (event_type == 3) {
+        g_dterm_sid = 0;
+        g_dterm_connecting = 0;
+        g_dterm_connected = 0;
+        oyk_yapp_reset(&g_dterm_yapp);
+        char msg[80];
+        sprintf(msg, "*** Disconnected (%.56s)", reason ? reason : "Closed");
+        dterm_push_line(msg);
+    }
+}
+
+static int dos_fs_cmp(const void* a, const void* b) {
+    const DosFsEntry* ea = static_cast<const DosFsEntry*>(a);
+    const DosFsEntry* eb = static_cast<const DosFsEntry*>(b);
+    if (ea->is_dir != eb->is_dir) return eb->is_dir - ea->is_dir;
+    if (strcmp(ea->name, "..") == 0) return -1;
+    if (strcmp(eb->name, "..") == 0) return 1;
+    return strcmp(ea->name, eb->name);
+}
+
+static int dos_fs_load(DosFsEntry* list, int cap) {
+    int count = 0;
+    struct find_t ff;
+    unsigned rc = _dos_findfirst("*.*", _A_SUBDIR | _A_NORMAL | _A_RDONLY | _A_ARCH, &ff);
+    while (rc == 0 && count < cap) {
+        if (strcmp(ff.name, ".") != 0) {
+            DosFsEntry* e = &list[count++];
+            strncpy(e->name, ff.name, sizeof(e->name) - 1);
+            e->name[sizeof(e->name) - 1] = '\0';
+            e->is_dir = (ff.attrib & _A_SUBDIR) ? 1 : 0;
+            e->size = static_cast<oyk_u32>(ff.size);
+        }
+        rc = _dos_findnext(&ff);
+    }
+    if (count > 1) {
+        qsort(list, static_cast<size_t>(count), sizeof(DosFsEntry), dos_fs_cmp);
+    }
+    return count;
+}
+
+/* Single-pane Norton Commander / Midnight Commander file selector */
+static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
+    static DosFsEntry entries[DOS_FS_MAX_ENTRIES];
+    static char orig_dir[128];
+    static char cur_dir[128];
+
+    if (!getcwd(orig_dir, sizeof(orig_dir))) strcpy(orig_dir, ".");
+    strcpy(cur_dir, orig_dir);
+
+    int count = dos_fs_load(entries, DOS_FS_MAX_ENTRIES);
+    int sel = 0;
+    int top = 0;
+    int picked = 0;
+    const int panel_x = 8;
+    const int panel_w = 64;
+    const int list_y = 4;
+    const int list_h = 16;
+
+    while (!g_break_flag) {
+        PACKET_PROCESS_SINGLE;
+        Arp::driveArp();
+        Tcp::drivePackets();
+
+        if (sel >= count) sel = (count > 0) ? (count - 1) : 0;
+        if (sel < top) top = sel;
+        if (sel >= top + list_h) top = sel - list_h + 1;
+
+        /* Draw Norton Commander single-pane blue box */
+        char hdr[66];
+        sprintf(hdr, "+-- %-58.58s+", title ? title : "Select File");
+        vid_puts(1, panel_x, 0x1F, hdr, panel_w);
+        if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
+        sprintf(hdr, "| %-60.60s |", cur_dir);
+        vid_puts(2, panel_x, 0x1B, hdr, panel_w);
+        vid_puts(3, panel_x, 0x1F, "+--------------------------------------------------------------+", panel_w);
+
+        for (int i = 0; i < list_h; ++i) {
+            int idx = top + i;
+            if (idx < count) {
+                const DosFsEntry& e = entries[idx];
+                char sz_s[12];
+                if (e.is_dir) {
+                    strcpy(sz_s, "[DIR]");
+                } else if (e.size >= 1024UL) {
+                    sprintf(sz_s, "%luK", static_cast<unsigned long>(e.size / 1024UL));
+                } else {
+                    sprintf(sz_s, "%luB", static_cast<unsigned long>(e.size));
+                }
+                char row[66];
+                sprintf(row, " %-46.46s %11s ", e.name, sz_s);
+                oyk_u8 attr = (idx == sel) ? 0x30 : (e.is_dir ? 0x1E : 0x1F);
+                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
+                vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
+                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            } else {
+                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
+                vid_puts(list_y + i, panel_x + 1, 0x1F, "", panel_w - 2);
+                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            }
+        }
+        vid_puts(list_y + list_h, panel_x, 0x1F,
+                 "+--------------------------------------------------------------+", panel_w);
+        vid_puts(list_y + list_h + 1, panel_x, 0x30,
+                 " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel              ", panel_w);
+
+        if (!kbhit()) continue;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72 && sel > 0) --sel;                      /* Up */
+            else if (ext == 80 && sel + 1 < count) ++sel;         /* Down */
+            else if (ext == 73) sel = (sel > list_h) ? (sel - list_h) : 0; /* PgUp */
+            else if (ext == 81) sel = (sel + list_h < count) ? (sel + list_h) : (count > 0 ? count - 1 : 0); /* PgDn */
+            else if (ext == 71) sel = 0;                          /* Home */
+            else if (ext == 79 && count > 0) sel = count - 1;     /* End */
+        } else if (ch == 27) {
+            break;
+        } else if (ch == 8) {
+            if (chdir("..") == 0) {
+                count = dos_fs_load(entries, DOS_FS_MAX_ENTRIES);
+                sel = 0;
+                top = 0;
+            }
+        } else if ((ch == '\r' || ch == '\n') && count > 0) {
+            const DosFsEntry& e = entries[sel];
+            if (e.is_dir) {
+                if (chdir(e.name) == 0) {
+                    count = dos_fs_load(entries, DOS_FS_MAX_ENTRIES);
+                    sel = 0;
+                    top = 0;
+                }
+            } else {
+                if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
+                size_t dlen = strlen(cur_dir);
+                if (dlen > 0 && cur_dir[dlen - 1] == '\\') {
+                    if (dlen + strlen(e.name) + 1 <= out_sz) {
+                        sprintf(out_path, "%s%s", cur_dir, e.name);
+                        picked = 1;
+                    }
+                } else if (dlen + 1 + strlen(e.name) + 1 <= out_sz) {
+                    sprintf(out_path, "%s\\%s", cur_dir, e.name);
+                    picked = 1;
+                }
+                break;
+            }
+        }
+    }
+
+    chdir(orig_dir);
+    return picked;
+}
+
+static void render_dos_terminal(const char* input_buf) {
+    char hdr[82];
+    if (g_dterm_connected) {
+        char cs[16];
+        oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+        sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (YAPP ready)", cs);
+    } else if (g_dterm_connecting) {
+        char cs[16];
+        oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+        sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s...", cs);
+    } else {
+        strcpy(hdr, " LOCAL TERMINAL | DISCONNECTED (Press F2 to Connect)");
+    }
+    vid_puts(0, 0, 0x1F, hdr, 80);
+
+    int body_h = 21;
+    int start = (g_dterm_line_count > body_h) ? (g_dterm_line_count - body_h) : 0;
+    for (int r = 0; r < body_h; ++r) {
+        int idx = start + r;
+        vid_puts(1 + r, 0, 0x07, (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", 80);
+    }
+
+    char bar[82];
+    if (g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
+        sprintf(bar, " %.56s (%lu/%lu B)", g_dterm_yapp.status,
+                static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
+                static_cast<unsigned long>(g_dterm_yapp.total_bytes));
+    } else {
+        strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  Esc:Monitor ");
+    }
+    vid_puts(22, 0, 0x30, bar, 80);
+
+    char in_row[82];
+    sprintf(in_row, "> %.77s", input_buf);
+    vid_puts(23, 0, 0x0F, in_row, 80);
+    vid_puts(24, 0, 0x0E, "Downloads save to incoming\\<CALL-SSID>\\<file>", 80);
+}
+
+static void run_dos_local_terminal() {
+    g_dterm_sid = 0;
+    g_dterm_connected = 0;
+    g_dterm_connecting = 0;
+    g_dterm_line_count = 0;
+    g_dterm_curline_len = 0;
+    g_dterm_last_yapp[0] = '\0';
+    oyk_yapp_init(&g_dterm_yapp, "incoming",
+                  dos_yapp_send_cb, NULL,
+                  dos_yapp_overwrite_cb, NULL);
+    g_node.set_local_event_callback(dos_local_term_event_cb, NULL);
+
+    dterm_push_line("*** OYK MS-DOS Local Packet Terminal (YAPP / YAPP-C enabled)");
+    dterm_push_line("*** Press F2 to connect (CALLSIGN or CALLSIGN@ip:port)");
+    dterm_push_line("*** Press F3 for Norton Commander file selector (YAPP upload)");
+
+    static char in_buf[160];
+    int in_len = 0;
+    in_buf[0] = '\0';
+    clockTicks_t last_draw = 0;
+
+    while (!g_break_flag) {
+        PACKET_PROCESS_SINGLE;
+        Arp::driveArp();
+        Tcp::drivePackets();
+        g_node.tick();
+
+        if (Timer_diff(last_draw, TIMER_GET_CURRENT()) >= TIMER_MS_TO_TICKS(100)) {
+            render_dos_terminal(in_buf);
+            last_draw = TIMER_GET_CURRENT();
+        }
+
+        if (!kbhit()) continue;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 60) { /* F2: Connect */
+                if (g_axudp_iface_idx < 0) {
+                    dterm_push_line("*** No AXUDP interface active.");
+                } else {
+                    char target[64], err[64];
+                    prompt_line("Connect CALL[@ip:port] (Esc=cancel): ", target, sizeof(target));
+                    if (target[0]) {
+                        if (g_dterm_sid != 0) g_node.close_local_terminal(g_dterm_sid);
+                        oyk_u32 sid = 0;
+                        if (g_node.open_local_terminal(g_axudp_iface_idx, target, &sid,
+                                                       &g_dterm_remote, err, sizeof(err))) {
+                            g_dterm_sid = sid;
+                            g_dterm_connecting = 1;
+                            g_dterm_connected = 0;
+                            oyk_yapp_reset(&g_dterm_yapp);
+                            oyk_yapp_set_remote(&g_dterm_yapp, &g_dterm_remote);
+                            g_dterm_last_yapp[0] = '\0';
+                            char cs[16], msg[72];
+                            oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+                            sprintf(msg, "*** Connecting to %s...", cs);
+                            dterm_push_line(msg);
+                        } else {
+                            char msg[80];
+                            sprintf(msg, "*** Connect error: %.56s", err);
+                            dterm_push_line(msg);
+                        }
+                    }
+                }
+            } else if (ext == 61) { /* F3: YAPP Upload */
+                if (!g_dterm_connected || g_dterm_sid == 0) {
+                    dterm_push_line("*** Connect to a remote node first (F2).");
+                } else {
+                    static char chosen[160];
+                    if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
+                        char err[64];
+                        if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
+                            char msg[80];
+                            sprintf(msg, "*** YAPP error: %.58s", err);
+                            dterm_push_line(msg);
+                        } else {
+                            char msg[80];
+                            sprintf(msg, "*** %.74s", g_dterm_yapp.status);
+                            dterm_push_line(msg);
+                        }
+                    }
+                }
+            } else if (ext == 62) { /* F4: Disconnect */
+                if (g_dterm_sid != 0) {
+                    oyk_yapp_cancel(&g_dterm_yapp, "Disconnected");
+                    g_node.close_local_terminal(g_dterm_sid);
+                }
+            } else if (ext == 64) { /* F6: Abort YAPP */
+                oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
+                dterm_push_line("*** YAPP transfer aborted.");
+            }
+            render_dos_terminal(in_buf);
+        } else if (ch == 27) {
+            break;
+        } else if (ch == '\r' || ch == '\n') {
+            in_buf[in_len] = '\0';
+            char echo[80];
+            sprintf(echo, "> %.77s", in_buf);
+            dterm_push_line(echo);
+            if (g_dterm_connected && g_dterm_sid != 0) {
+                in_buf[in_len++] = '\r';
+                g_node.send_local_bytes(g_dterm_sid, reinterpret_cast<const oyk_u8*>(in_buf),
+                                        static_cast<size_t>(in_len));
+            } else {
+                dterm_push_line("*** Not connected. Press F2 to connect.");
+            }
+            in_len = 0;
+            in_buf[0] = '\0';
+            render_dos_terminal(in_buf);
+        } else if ((ch == 8 || ch == 127) && in_len > 0) {
+            in_buf[--in_len] = '\0';
+            render_dos_terminal(in_buf);
+        } else if (ch >= 32 && ch < 127 && in_len < 76) {
+            in_buf[in_len++] = static_cast<char>(ch);
+            in_buf[in_len] = '\0';
+            render_dos_terminal(in_buf);
+        }
+    }
+
+    if (g_dterm_sid != 0) {
+        oyk_yapp_reset(&g_dterm_yapp);
+        g_node.close_local_terminal(g_dterm_sid);
+    }
+    g_node.set_local_event_callback(NULL, NULL);
+    vid_clear(0x07);
+    strcpy(g_status_line, "Returned from Local Terminal.");
+}
+
 static void run_dos_menu_action(int chosen, int* running) {
     if (chosen == 0) {
         g_node.set_accept_incoming(1);
@@ -236,13 +651,15 @@ static void run_dos_menu_action(int chosen, int* running) {
         g_node.set_accept_incoming(0);
         strcpy(g_status_line, "New incoming connections are now DENIED.");
     } else if (chosen == 2) {
+        run_dos_local_terminal();
+    } else if (chosen == 3) {
         char id_buf[12];
         prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
         if (id_buf[0]) {
             g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
                                      g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 3) {
+    } else if (chosen == 4) {
         char call_buf[16];
         prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
         if (call_buf[0] == '-') {
@@ -252,7 +669,7 @@ static void run_dos_menu_action(int chosen, int* running) {
                                 "Banned by DOS sysop.", "permanent",
                                 g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 4) {
+    } else if (chosen == 5) {
         if (confirm_dos_exit()) {
             *running = 0;
         }
@@ -260,23 +677,24 @@ static void run_dos_menu_action(int chosen, int* running) {
 }
 
 static void open_dos_node_menu(int* running) {
-    static const char* ITEMS[5] = {
+    static const char* ITEMS[6] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
+        " [L] Local Terminal...          ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
-    static const int ITEM_ROWS[5] = { 2, 3, 5, 6, 8 };
+    static const int ITEM_ROWS[6] = { 2, 3, 5, 6, 7, 9 };
 
     int sel = 0;
     int chosen = -1;
     while (chosen < 0 && !g_break_flag) {
         vid_puts(1, 1, 0x70, "+--------------------------------+", 34);
         vid_puts(4, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(7, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(9, 1, 0x70, "+--------------------------------+", 34);
-        for (int i = 0; i < 5; ++i) {
+        vid_puts(8, 1, 0x70, "+--------------------------------+", 34);
+        vid_puts(10, 1, 0x70, "+--------------------------------+", 34);
+        for (int i = 0; i < 6; ++i) {
             vid_puts(ITEM_ROWS[i], 1, 0x70, "|", 1);
             vid_puts(ITEM_ROWS[i], 2, (i == sel) ? 0x1F : 0x70, ITEMS[i], 32);
             vid_puts(ITEM_ROWS[i], 34, 0x70, "|", 1);
@@ -285,8 +703,8 @@ static void open_dos_node_menu(int* running) {
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72) sel = (sel + 4) % 5;      /* Up arrow */
-            else if (ext == 80) sel = (sel + 1) % 5; /* Down arrow */
+            if (ext == 72) sel = (sel + 5) % 6;      /* Up arrow */
+            else if (ext == 80) sel = (sel + 1) % 6; /* Down arrow */
             else if (ext == 68) break;               /* F10 closes menu */
         } else if (ch == 27) {
             break;
@@ -296,12 +714,14 @@ static void open_dos_node_menu(int* running) {
             chosen = 0;
         } else if (ch == 'd' || ch == 'D') {
             chosen = 1;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'l' || ch == 'L') {
             chosen = 2;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 3;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 4;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 5;
         }
     }
 
@@ -413,12 +833,14 @@ int main(int argc, char* argv[]) {
                 run_dos_menu_action(0, &running);
             } else if (ch == 'd' || ch == 'D') {
                 run_dos_menu_action(1, &running);
-            } else if (ch == 't' || ch == 'T') {
+            } else if (ch == 'l' || ch == 'L') {
                 run_dos_menu_action(2, &running);
-            } else if (ch == 'b' || ch == 'B') {
+            } else if (ch == 't' || ch == 'T') {
                 run_dos_menu_action(3, &running);
-            } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+            } else if (ch == 'b' || ch == 'B') {
                 run_dos_menu_action(4, &running);
+            } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                run_dos_menu_action(5, &running);
             }
             render_dos_screen();
         }

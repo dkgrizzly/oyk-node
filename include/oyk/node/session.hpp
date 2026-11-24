@@ -28,7 +28,8 @@ enum class SessionDirection {
 
 enum class SessionMode {
     Normal,
-    RestrictedBan
+    RestrictedBan,
+    LocalTerminal
 };
 
 struct SessionParams {
@@ -76,6 +77,7 @@ public:
     void set_bridged_session_id(uint64_t other_id) noexcept { bridged_session_id_ = other_id; }
 
     SessionMode mode() const noexcept { return mode_; }
+    void set_local_terminal() noexcept { mode_ = SessionMode::LocalTerminal; }
     void set_restricted_ban(std::string ban_key, bool appeal_eligible) {
         mode_ = SessionMode::RestrictedBan;
         ban_key_ = std::move(ban_key);

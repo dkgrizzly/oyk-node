@@ -118,6 +118,12 @@ struct OykFrame {
     oyk_u8 info[OYK_MAX_FRAME_INFO];
 };
 
+struct OykPeerEntry {
+    char callsign[12]; /* Empty string = wildcard/default peer */
+    oyk_u32 ip;        /* Network byte order IPv4 */
+    oyk_u16 port;
+};
+
 struct OykIfaceConfig {
     char id[16];
     char type[16];       /* "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" */
@@ -128,6 +134,8 @@ struct OykIfaceConfig {
     oyk_u32 baud;
     oyk_u8 kiss_port;
     int server_mode;
+    int peer_count;
+    OykPeerEntry peers[OYK_MAX_PEERS];
 };
 
 struct OykLogFileEntry {
@@ -180,6 +188,7 @@ struct OykMHeard {
 
 enum OykSessState {
     OYK_SESS_FREE = 0,
+    OYK_SESS_CONNECTING,
     OYK_SESS_CONNECTED,
     OYK_SESS_DISCONNECTING
 };
@@ -189,10 +198,11 @@ struct OykSession {
     int iface_idx;
     OykCallsign local_call;
     OykCallsign remote_call;
-    oyk_u32 peer_ip;      /* IPv4 in host or network order (opaque to core) */
+    oyk_u32 peer_ip;      /* IPv4 in network byte order */
     oyk_u16 peer_port;
     oyk_u16 peer_handle;  /* e.g. socket index for Telnet/KISS */
     OykSessState state;
+    int is_local_term;    /* 1 = local operator outbound terminal (raw binary pass-through) */
     int restricted_ban;
     int appeal_eligible;
     char ban_key[12];
@@ -222,6 +232,14 @@ typedef int (*OykTxCallback)(int iface_idx,
                              oyk_u16 peer_handle,
                              void* user_ctx);
 
+/* Local terminal event callback: event_type 1=connected, 2=rx_bytes, 3=closed */
+typedef void (*OykLocalEventCallback)(oyk_u32 session_id,
+                                      int event_type,
+                                      const oyk_u8* data,
+                                      size_t len,
+                                      const char* reason,
+                                      void* user_ctx);
+
 /* KISS framing helpers */
 struct OykKissDecoder {
     int in_frame;
@@ -241,6 +259,11 @@ OykLineEnding oyk_detect_first_eol(const char* buf, size_t len,
 int oyk_parse_callsign(const char* text, OykCallsign* out);
 void oyk_format_callsign(const OykCallsign* call, char* out, size_t out_sz);
 int oyk_callsign_eq(const OykCallsign* a, const OykCallsign* b);
+/* Parse dotted-quad IPv4 into network-byte-order oyk_u32; returns 1 on success. */
+int oyk_parse_ipv4(const char* text, oyk_u32* net_ip_out);
+/* Parse "CALLSIGN@ip:port", "CALLSIGN ip:port", or "ip:port" peer spec. */
+int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
+                        oyk_u32* net_ip_out, oyk_u16* port_out, oyk_u16 default_port);
 
 oyk_u16 oyk_crc16_fcs(const oyk_u8* data, size_t len);
 int oyk_verify_fcs(const oyk_u8* data, size_t total_len);
@@ -296,6 +319,16 @@ public:
                      const char* lift_spec, char* msg_out, size_t msg_sz);
     int unban_callsign(const char* call_spec, char* msg_out, size_t msg_sz);
 
+    /* Local operator outbound terminal (supports raw binary YAPP + interactive text) */
+    void set_local_event_callback(OykLocalEventCallback cb, void* ctx);
+    int find_peer_for_call(int iface_idx, const OykCallsign* call,
+                           oyk_u32* ip_out, oyk_u16* port_out) const;
+    int open_local_terminal(int iface_idx, const char* target_spec,
+                            oyk_u32* sess_id_out, OykCallsign* resolved_call_out,
+                            char* err_out, size_t err_sz);
+    int send_local_bytes(oyk_u32 session_id, const oyk_u8* data, size_t len);
+    int close_local_terminal(oyk_u32 session_id);
+
     /* Query helpers for DOS TUI & Win16/Win32/Win64 GUIs */
     const OykConfig& config() const { return cfg_; }
     int iface_count() const { return iface_count_; }
@@ -337,6 +370,8 @@ private:
     OykConfig cfg_;
     OykTxCallback tx_cb_;
     void* tx_ctx_;
+    OykLocalEventCallback local_cb_;
+    void* local_ctx_;
     time_t started_at_;
     time_t fixed_now_;
     int accept_incoming_;

@@ -126,6 +126,22 @@ public:
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }
 
+    // Local operator packet terminal (outbound AX.25 binary-safe stream, supports YAPP)
+    struct LocalTerminalCallbacks {
+        std::function<void(uint64_t session_id)> on_connected;
+        std::function<void(uint64_t session_id, const std::vector<uint8_t>& bytes)> on_rx_bytes;
+        std::function<void(uint64_t session_id, const std::string& reason)> on_closed;
+    };
+
+    bool open_local_terminal(const std::string& port_spec,
+                             const std::string& target_call_str,
+                             LocalTerminalCallbacks callbacks,
+                             uint64_t& session_id_out,
+                             ax25::Callsign* resolved_call_out,
+                             std::string& error_out);
+    bool send_local_terminal_bytes(uint64_t session_id, const std::vector<uint8_t>& data);
+    bool close_local_terminal(uint64_t session_id);
+
     // For tests/diagnostics
     radio::RadioInterface* find_interface(const std::string& id) const;
 
@@ -141,16 +157,27 @@ private:
         std::string line;
     };
 
+    struct PendingLocalEvent {
+        uint64_t session_id = 0;
+        bool connected = false;
+        bool closed = false;
+        std::string close_reason;
+        std::vector<uint8_t> rx_bytes;
+        LocalTerminalCallbacks callbacks;
+    };
+
     void on_radio_frame(const ax25::Frame& frame, const radio::RadioFrameMeta& meta);
     void timer_loop();
     void dispatch_tx(const std::vector<PendingTx>& pending);
+    void dispatch_local_events(const std::vector<PendingLocalEvent>& events);
     void queue_session_frames(Session& sess,
                               const std::vector<ax25::Frame>& frames,
                               std::vector<PendingTx>& pending);
     void process_session_events(Session& sess,
                                 SessionEvents& ev,
                                 std::vector<PendingTx>& pending,
-                                std::vector<PendingCommand>& pending_cmds);
+                                std::vector<PendingCommand>& pending_cmds,
+                                std::vector<PendingLocalEvent>& pending_local);
     void execute_pending_commands(const std::vector<PendingCommand>& pending_cmds);
     void handle_restricted_ban_line_locked(Session& sess,
                                            const std::string& line,
@@ -192,6 +219,7 @@ private:
     std::map<std::string, radio::RadioInterface*> iface_by_id_;
 
     std::map<uint64_t, std::unique_ptr<Session>> sessions_;
+    std::map<uint64_t, LocalTerminalCallbacks> local_callbacks_;
 
     // Heard tracking
     std::set<std::string> seen_callsigns_;

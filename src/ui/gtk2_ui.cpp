@@ -2,12 +2,15 @@
 // Copyright (C) 2026 KR4OYK - David Kuder
 
 #include "oyk/ui/gtk2_ui.hpp"
+#include "oyk/protocol/yapp.hpp"
 
 #include <gtk/gtk.h>
 
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -160,8 +163,10 @@ void refresh_ui(GtkAppState* st) {
         std::string since_str = format_hms(s.connected_at);
         std::string role = (s.mode == node::SessionMode::RestrictedBan)
                                ? "BAN NOTICE"
-                               : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
-                                                       : "NODE SHELL");
+                               : (s.mode == node::SessionMode::LocalTerminal)
+                                     ? "LOCAL TERM"
+                                     : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
+                                                             : "NODE SHELL");
         gtk_list_store_append(st->session_store, &iter);
         gtk_list_store_set(st->session_store, &iter,
                            0, id_str.c_str(),
@@ -217,6 +222,346 @@ void on_deny_incoming_clicked(GtkWidget*, gpointer user_data) {
     st->engine->set_accept_incoming(false);
     set_status_text(st, "New incoming connections are now DENIED.");
     refresh_ui(st);
+}
+
+struct GtkTermWindowState {
+    node::NodeEngine* engine = nullptr;
+    GtkWidget* win = nullptr;
+    GtkWidget* port_combo = nullptr;
+    GtkWidget* call_entry = nullptr;
+    GtkWidget* btn_connect = nullptr;
+    GtkWidget* btn_disc = nullptr;
+    GtkWidget* btn_upload = nullptr;
+    GtkWidget* btn_abort = nullptr;
+    GtkWidget* text_view = nullptr;
+    GtkTextBuffer* text_buf = nullptr;
+    GtkWidget* input_entry = nullptr;
+    GtkWidget* progress_bar = nullptr;
+    guint timer_id = 0;
+
+    std::mutex mtx;
+    uint64_t sid = 0;
+    bool connected = false;
+    bool connecting = false;
+    std::string port_id;
+    ax25::Callsign remote_call{"UNKNOWN", 0};
+    std::string pending_text;
+    protocol::YappSession yapp{"incoming"};
+    std::string last_yapp_status;
+    bool overwrite_prompt_open = false;
+};
+
+void gtk_term_append_text_ui(GtkTermWindowState* ts, const std::string& text) {
+    if (!ts || !ts->text_buf || text.empty()) return;
+    GtkTextIter end_iter;
+    gtk_text_buffer_get_end_iter(ts->text_buf, &end_iter);
+    gtk_text_buffer_insert(ts->text_buf, &end_iter, text.c_str(), -1);
+    gtk_text_buffer_get_end_iter(ts->text_buf, &end_iter);
+    GtkTextMark* mark = gtk_text_buffer_create_mark(ts->text_buf, nullptr, &end_iter, FALSE);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(ts->text_view), mark, 0.0, FALSE, 0.0, 1.0);
+    gtk_text_buffer_delete_mark(ts->text_buf, mark);
+}
+
+gboolean on_gtk_term_tick(gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    std::string chunk;
+    protocol::YappProgress yp;
+    bool is_conn = false;
+    bool is_connecting = false;
+    std::string overwrite_path;
+
+    {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        if (!ts->pending_text.empty()) {
+            chunk.swap(ts->pending_text);
+        }
+        yp = ts->yapp.progress();
+        is_conn = ts->connected;
+        is_connecting = ts->connecting;
+        if (ts->yapp.awaiting_overwrite() && !ts->overwrite_prompt_open) {
+            overwrite_path = yp.target_path;
+            ts->overwrite_prompt_open = true;
+        }
+    }
+
+    if (!chunk.empty()) {
+        gtk_term_append_text_ui(ts, chunk);
+    }
+
+    gtk_widget_set_sensitive(ts->btn_connect, (!is_conn && !is_connecting) ? TRUE : FALSE);
+    gtk_widget_set_sensitive(ts->btn_disc, (is_conn || is_connecting) ? TRUE : FALSE);
+    gtk_widget_set_sensitive(ts->btn_upload, (is_conn && !ts->yapp.is_active()) ? TRUE : FALSE);
+    gtk_widget_set_sensitive(ts->btn_abort, ts->yapp.is_active() ? TRUE : FALSE);
+
+    if (yp.state == protocol::YappState::Idle) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ts->progress_bar), 0.0);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar),
+                                  is_conn ? ("Connected to " + ts->remote_call.str() + " (YAPP ready)").c_str()
+                                          : (is_connecting ? "Connecting..." : "Disconnected"));
+    } else {
+        double frac = (yp.total_bytes > 0)
+                          ? std::min(1.0, static_cast<double>(yp.bytes_transferred) / static_cast<double>(yp.total_bytes))
+                          : (yp.state == protocol::YappState::Complete ? 1.0 : 0.0);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ts->progress_bar), frac);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar), yp.status_message.c_str());
+    }
+
+    if (!overwrite_path.empty()) {
+        GtkWidget* md = gtk_message_dialog_new(
+            GTK_WINDOW(ts->win),
+            static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+            GTK_MESSAGE_WARNING,
+            GTK_BUTTONS_YES_NO,
+            "File already exists:\n%s\n\nOverwrite existing file?",
+            overwrite_path.c_str());
+        gtk_window_set_title(GTK_WINDOW(md), "YAPP Overwrite Confirmation");
+        gint resp = gtk_dialog_run(GTK_DIALOG(md));
+        gtk_widget_destroy(md);
+
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        ts->overwrite_prompt_open = false;
+        ts->yapp.resolve_overwrite(resp == GTK_RESPONSE_YES);
+        auto yp2 = ts->yapp.progress();
+        if (!yp2.status_message.empty() && yp2.status_message != ts->last_yapp_status) {
+            ts->last_yapp_status = yp2.status_message;
+            ts->pending_text += "*** " + yp2.status_message + "\n";
+        }
+    }
+
+    return TRUE;
+}
+
+void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    gchar* port_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(ts->port_combo));
+    std::string port = port_raw ? port_raw : "";
+    if (port_raw) g_free(port_raw);
+    std::string target = gtk_entry_get_text(GTK_ENTRY(ts->call_entry));
+    if (port.empty() || target.empty()) {
+        gtk_term_append_text_ui(ts, "*** Select a port and enter a target callsign.\n");
+        return;
+    }
+
+    node::NodeEngine::LocalTerminalCallbacks cbs;
+    cbs.on_connected = [ts](uint64_t sid) {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        if (ts->sid != sid) return;
+        ts->connecting = false;
+        ts->connected = true;
+        ts->pending_text += "*** Connected to " + ts->remote_call.str() + " via " + ts->port_id + "\n";
+    };
+    cbs.on_rx_bytes = [ts](uint64_t sid, const std::vector<uint8_t>& bytes) {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        if (ts->sid != sid) return;
+        std::vector<uint8_t> plain;
+        ts->yapp.feed_bytes(bytes.data(), bytes.size(), plain);
+        for (uint8_t b : plain) {
+            if (b == '\r') ts->pending_text.push_back('\n');
+            else if (b == '\n' || (b >= 0x20 && b < 0x7F)) ts->pending_text.push_back(static_cast<char>(b));
+        }
+        auto yp = ts->yapp.progress();
+        if (!yp.status_message.empty() && yp.status_message != ts->last_yapp_status) {
+            ts->last_yapp_status = yp.status_message;
+            ts->pending_text += "*** " + yp.status_message + "\n";
+        }
+    };
+    cbs.on_closed = [ts](uint64_t sid, const std::string& reason) {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        if (ts->sid != sid) return;
+        ts->sid = 0;
+        ts->connecting = false;
+        ts->connected = false;
+        ts->yapp.reset();
+        ts->pending_text += "*** Disconnected (" + reason + ")\n";
+    };
+
+    uint64_t sid = 0;
+    ax25::Callsign resolved;
+    std::string err;
+    if (ts->engine->open_local_terminal(port, target, std::move(cbs), sid, &resolved, err)) {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        ts->sid = sid;
+        ts->connecting = true;
+        ts->connected = false;
+        ts->port_id = port;
+        ts->remote_call = resolved;
+        ts->yapp.set_remote_callsign(resolved);
+        ts->pending_text += "*** Connecting to " + resolved.str() + " on " + port + "...\n";
+    } else {
+        gtk_term_append_text_ui(ts, "*** Connect error: " + err + "\n");
+    }
+}
+
+void on_gtk_term_disconnect(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    uint64_t sid = 0;
+    {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        sid = ts->sid;
+        ts->yapp.cancel("Disconnected");
+    }
+    if (sid != 0) ts->engine->close_local_terminal(sid);
+}
+
+void on_gtk_term_upload(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    GtkWidget* fc = gtk_file_chooser_dialog_new(
+        "YAPP Upload - Select File",
+        GTK_WINDOW(ts->win),
+        GTK_FILE_CHOOSER_ACTION_OPEN,
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
+        static_cast<const char*>(nullptr));
+    if (gtk_dialog_run(GTK_DIALOG(fc)) == GTK_RESPONSE_ACCEPT) {
+        gchar* fname = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fc));
+        if (fname) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            std::string err;
+            if (!ts->yapp.start_send(fname, err)) {
+                ts->pending_text += "*** YAPP upload error: " + err + "\n";
+            } else {
+                ts->last_yapp_status = ts->yapp.progress().status_message;
+                ts->pending_text += "*** " + ts->last_yapp_status + "\n";
+            }
+            g_free(fname);
+        }
+    }
+    gtk_widget_destroy(fc);
+}
+
+void on_gtk_term_abort_yapp(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    std::lock_guard<std::mutex> lk(ts->mtx);
+    ts->yapp.cancel("Cancelled by user");
+    ts->pending_text += "*** YAPP transfer cancelled.\n";
+}
+
+void on_gtk_term_send_line(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    std::string line = gtk_entry_get_text(GTK_ENTRY(ts->input_entry));
+    gtk_entry_set_text(GTK_ENTRY(ts->input_entry), "");
+    uint64_t sid = 0;
+    bool is_conn = false;
+    {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        sid = ts->sid;
+        is_conn = ts->connected;
+    }
+    gtk_term_append_text_ui(ts, "> " + line + "\n");
+    if (is_conn && sid != 0) {
+        std::string wire = line + "\r";
+        std::vector<uint8_t> bytes(wire.begin(), wire.end());
+        ts->engine->send_local_terminal_bytes(sid, bytes);
+    } else {
+        gtk_term_append_text_ui(ts, "*** Not connected.\n");
+    }
+}
+
+void on_gtk_term_destroy(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    if (ts->timer_id != 0) {
+        g_source_remove(ts->timer_id);
+        ts->timer_id = 0;
+    }
+    uint64_t sid = 0;
+    {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        sid = ts->sid;
+        ts->sid = 0;
+        ts->yapp.reset();
+    }
+    if (sid != 0) ts->engine->close_local_terminal(sid);
+    delete ts;
+}
+
+void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    auto* ts = new GtkTermWindowState();
+    ts->engine = st->engine;
+    ts->yapp.set_send_callback([ts](const std::vector<uint8_t>& pkt) {
+        if (ts->sid != 0) {
+            ts->engine->send_local_terminal_bytes(ts->sid, pkt);
+        }
+    });
+
+    ts->win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(ts->win), "OYK Local Packet Terminal (YAPP)");
+    gtk_window_set_default_size(GTK_WINDOW(ts->win), 720, 480);
+    gtk_window_set_transient_for(GTK_WINDOW(ts->win), GTK_WINDOW(st->window));
+    g_signal_connect(ts->win, "destroy", G_CALLBACK(on_gtk_term_destroy), ts);
+
+    GtkWidget* vbox = gtk_vbox_new(FALSE, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(vbox), 6);
+    gtk_container_add(GTK_CONTAINER(ts->win), vbox);
+
+    GtkWidget* top_bar = gtk_hbox_new(FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(top_bar), gtk_label_new("Port:"), FALSE, FALSE, 2);
+    ts->port_combo = gtk_combo_box_new_text();
+    auto snap = st->engine->snapshot();
+    int active_idx = 0;
+    int idx = 0;
+    for (const auto& iface : snap.interfaces) {
+        gtk_combo_box_append_text(GTK_COMBO_BOX(ts->port_combo), iface.id.c_str());
+        if (iface.type != "telnet" && active_idx == 0) active_idx = idx;
+        ++idx;
+    }
+    if (idx > 0) gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), active_idx);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->port_combo, FALSE, FALSE, 2);
+
+    gtk_box_pack_start(GTK_BOX(top_bar), gtk_label_new("Callsign:"), FALSE, FALSE, 2);
+    ts->call_entry = gtk_entry_new();
+    gtk_entry_set_width_chars(GTK_ENTRY(ts->call_entry), 20);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->call_entry, TRUE, TRUE, 2);
+
+    ts->btn_connect = gtk_button_new_with_label("Connect");
+    ts->btn_disc = gtk_button_new_with_label("Disconnect");
+    ts->btn_upload = gtk_button_new_with_label("YAPP Upload...");
+    ts->btn_abort = gtk_button_new_with_label("Abort YAPP");
+    g_signal_connect(ts->btn_connect, "clicked", G_CALLBACK(on_gtk_term_connect), ts);
+    g_signal_connect(ts->btn_disc, "clicked", G_CALLBACK(on_gtk_term_disconnect), ts);
+    g_signal_connect(ts->btn_upload, "clicked", G_CALLBACK(on_gtk_term_upload), ts);
+    g_signal_connect(ts->btn_abort, "clicked", G_CALLBACK(on_gtk_term_abort_yapp), ts);
+    g_signal_connect(ts->call_entry, "activate", G_CALLBACK(on_gtk_term_connect), ts);
+
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_connect, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_disc, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_upload, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_abort, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), top_bar, FALSE, FALSE, 2);
+
+    ts->text_view = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(ts->text_view), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(ts->text_view), GTK_WRAP_CHAR);
+    PangoFontDescription* mono = pango_font_description_from_string("Monospace 9");
+    gtk_widget_modify_font(ts->text_view, mono);
+    pango_font_description_free(mono);
+    ts->text_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ts->text_view));
+
+    GtkWidget* sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(sc), ts->text_view);
+    gtk_box_pack_start(GTK_BOX(vbox), sc, TRUE, TRUE, 2);
+
+    ts->progress_bar = gtk_progress_bar_new();
+    gtk_box_pack_start(GTK_BOX(vbox), ts->progress_bar, FALSE, FALSE, 2);
+
+    GtkWidget* in_bar = gtk_hbox_new(FALSE, 4);
+    ts->input_entry = gtk_entry_new();
+    GtkWidget* btn_send = gtk_button_new_with_label("Send");
+    g_signal_connect(ts->input_entry, "activate", G_CALLBACK(on_gtk_term_send_line), ts);
+    g_signal_connect(btn_send, "clicked", G_CALLBACK(on_gtk_term_send_line), ts);
+    gtk_box_pack_start(GTK_BOX(in_bar), ts->input_entry, TRUE, TRUE, 2);
+    gtk_box_pack_start(GTK_BOX(in_bar), btn_send, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), in_bar, FALSE, FALSE, 2);
+
+    gtk_term_append_text_ui(
+        ts,
+        "*** Local Packet Terminal (YAPP / YAPP-C enabled)\n"
+        "*** Incoming files save to incoming/<CALLSIGN-SSID>/<filename>\n"
+        "*** Enter target callsign (or CALLSIGN@ip:port) and click Connect.\n");
+
+    ts->timer_id = g_timeout_add(50, on_gtk_term_tick, ts);
+    gtk_widget_show_all(ts->win);
 }
 
 void on_terminate_clicked(GtkWidget*, gpointer user_data) {
@@ -458,6 +803,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_allow = gtk_menu_item_new_with_mnemonic("_Allow Incoming Connections");
     GtkWidget* mi_deny  = gtk_menu_item_new_with_mnemonic("_Deny Incoming Connections");
     GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
+    GtkWidget* mi_lterm = gtk_menu_item_new_with_mnemonic("_Local Terminal...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
     GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
@@ -465,6 +811,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
 
     g_signal_connect(mi_allow, "activate", G_CALLBACK(on_allow_incoming_clicked), &st);
     g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
+    g_signal_connect(mi_lterm, "activate", G_CALLBACK(on_local_terminal_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
@@ -472,6 +819,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_allow);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_deny);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_lterm);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);

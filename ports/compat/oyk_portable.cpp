@@ -290,6 +290,78 @@ int oyk_callsign_eq(const OykCallsign* a, const OykCallsign* b) {
     return (a->ssid == b->ssid) && (strcmp(a->base, b->base) == 0);
 }
 
+int oyk_parse_ipv4(const char* text, oyk_u32* net_ip_out) {
+    if (!text || !text[0] || !net_ip_out) return 0;
+    oyk_u8 oct[4];
+    const char* p = text;
+    for (int i = 0; i < 4; ++i) {
+        if (!isdigit(static_cast<unsigned char>(*p))) return 0;
+        unsigned long v = 0;
+        while (isdigit(static_cast<unsigned char>(*p))) {
+            v = v * 10UL + static_cast<unsigned long>(*p - '0');
+            if (v > 255UL) return 0;
+            ++p;
+        }
+        oct[i] = static_cast<oyk_u8>(v);
+        if (i < 3) {
+            if (*p != '.') return 0;
+            ++p;
+        }
+    }
+    if (*p != '\0') return 0;
+    oyk_u32 ip = 0;
+    memcpy(&ip, oct, 4);
+    *net_ip_out = ip;
+    return 1;
+}
+
+int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
+                        oyk_u32* net_ip_out, oyk_u16* port_out, oyk_u16 default_port) {
+    if (!spec || !net_ip_out || !port_out) return 0;
+    char buf[96];
+    safe_copy(buf, sizeof(buf), spec);
+    trim_inplace(buf);
+    if (!buf[0]) return 0;
+
+    if (call_out && call_sz > 0) call_out[0] = '\0';
+
+    char* host_part = buf;
+    char* at = strchr(buf, '@');
+    char* sp = strchr(buf, ' ');
+    if (at) {
+        *at = '\0';
+        trim_inplace(buf);
+        OykCallsign c;
+        if (!oyk_parse_callsign(buf, &c)) return 0;
+        if (call_out && call_sz > 0) oyk_format_callsign(&c, call_out, call_sz);
+        host_part = at + 1;
+    } else if (sp) {
+        *sp = '\0';
+        trim_inplace(buf);
+        OykCallsign c;
+        if (!oyk_parse_callsign(buf, &c)) return 0;
+        if (call_out && call_sz > 0) oyk_format_callsign(&c, call_out, call_sz);
+        host_part = sp + 1;
+    }
+    trim_inplace(host_part);
+
+    oyk_u16 port = default_port ? default_port : static_cast<oyk_u16>(10093);
+    char* colon = strchr(host_part, ':');
+    if (colon) {
+        *colon = '\0';
+        long pv = atol(colon + 1);
+        if (pv <= 0L || pv > 65535L) return 0;
+        port = static_cast<oyk_u16>(pv);
+    }
+    trim_inplace(host_part);
+
+    oyk_u32 ip = 0;
+    if (!oyk_parse_ipv4(host_part, &ip)) return 0;
+    *net_ip_out = ip;
+    *port_out = port;
+    return 1;
+}
+
 oyk_u16 oyk_crc16_fcs(const oyk_u8* data, size_t len) {
     oyk_u16 crc = 0xFFFFU;
     for (size_t i = 0; i < len; ++i) {
@@ -773,6 +845,16 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if->kiss_port = static_cast<oyk_u8>(atoi(v) & 0x0F);
             } else if (stricmp_ascii(k, "mode") == 0) {
                 cur_if->server_mode = (stricmp_ascii(v, "server") == 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "peer") == 0) {
+                if (cur_if->peer_count < OYK_MAX_PEERS) {
+                    OykPeerEntry pe;
+                    memset(&pe, 0, sizeof(pe));
+                    if (oyk_parse_peer_spec(v, pe.callsign, sizeof(pe.callsign),
+                                            &pe.ip, &pe.port,
+                                            cur_if->port ? cur_if->port : static_cast<oyk_u16>(10093))) {
+                        cur_if->peers[cur_if->peer_count++] = pe;
+                    }
+                }
             }
         }
     }
@@ -848,7 +930,8 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
 /* ==================== OykPortableNode ==================== */
 
 OykPortableNode::OykPortableNode()
-    : tx_cb_(NULL), tx_ctx_(NULL), started_at_(0), fixed_now_(0),
+    : tx_cb_(NULL), tx_ctx_(NULL), local_cb_(NULL), local_ctx_(NULL),
+      started_at_(0), fixed_now_(0),
       accept_incoming_(1), next_session_id_(1), iface_count_(0),
       mheard_count_(0), new_heard_count_(0),
       banlist_eol_(oyk_platform_default_eol()),
@@ -963,6 +1046,177 @@ void OykPortableNode::finish_shutdown() {
 void OykPortableNode::shutdown() {
     begin_shutdown();
     finish_shutdown();
+}
+
+void OykPortableNode::set_local_event_callback(OykLocalEventCallback cb, void* ctx) {
+    local_cb_ = cb;
+    local_ctx_ = ctx;
+}
+
+int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
+                                        oyk_u32* ip_out, oyk_u16* port_out) const {
+    if (iface_idx < 0 || iface_idx >= iface_count_ || !call || !ip_out || !port_out) return 0;
+    const OykIfaceConfig& ic = ifaces_[iface_idx].cfg;
+    char full[12];
+    oyk_format_callsign(call, full, sizeof(full));
+
+    int wildcard = -1;
+    for (int i = 0; i < ic.peer_count; ++i) {
+        if (ic.peers[i].callsign[0] == '\0') {
+            if (wildcard < 0) wildcard = i;
+        } else if (stricmp_ascii(ic.peers[i].callsign, full) == 0) {
+            *ip_out = ic.peers[i].ip;
+            *port_out = ic.peers[i].port;
+            return 1;
+        }
+    }
+    if (wildcard >= 0) {
+        *ip_out = ic.peers[wildcard].ip;
+        *port_out = ic.peers[wildcard].port;
+        return 1;
+    }
+    return 0;
+}
+
+int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
+                                         oyk_u32* sess_id_out, OykCallsign* resolved_call_out,
+                                         char* err_out, size_t err_sz) {
+    if (iface_idx < 0 || iface_idx >= iface_count_) {
+        safe_copy(err_out, err_sz, "Invalid interface");
+        return 0;
+    }
+    if (!target_spec || !target_spec[0]) {
+        safe_copy(err_out, err_sz, "Target callsign required");
+        return 0;
+    }
+
+    OykCallsign target;
+    oyk_u32 peer_ip = 0;
+    oyk_u16 peer_port = 0;
+
+    char spec_copy[96];
+    safe_copy(spec_copy, sizeof(spec_copy), target_spec);
+    trim_inplace(spec_copy);
+
+    if (strchr(spec_copy, '@') != NULL || strchr(spec_copy, ' ') != NULL) {
+        char call_s[16];
+        oyk_u16 def_p = ifaces_[iface_idx].cfg.port ? ifaces_[iface_idx].cfg.port : static_cast<oyk_u16>(10093);
+        if (!oyk_parse_peer_spec(spec_copy, call_s, sizeof(call_s), &peer_ip, &peer_port, def_p) ||
+            !call_s[0] || !oyk_parse_callsign(call_s, &target)) {
+            safe_copy(err_out, err_sz, "Use CALLSIGN or CALLSIGN@ip:port");
+            return 0;
+        }
+    } else {
+        if (!oyk_parse_callsign(spec_copy, &target)) {
+            safe_copy(err_out, err_sz, "Invalid target callsign");
+            return 0;
+        }
+        if (!find_peer_for_call(iface_idx, &target, &peer_ip, &peer_port)) {
+            safe_copy(err_out, err_sz, "No peer IP for callsign (use CALL@ip:port)");
+            return 0;
+        }
+    }
+
+    if (is_for_node(&target)) {
+        safe_copy(err_out, err_sz, "Cannot connect to self");
+        return 0;
+    }
+
+    OykSession* sess = NULL;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].state == OYK_SESS_FREE) {
+            sess = &sessions_[i];
+            break;
+        }
+    }
+    if (!sess) {
+        safe_copy(err_out, err_sz, "No free session slots");
+        return 0;
+    }
+
+    time_t now_t = now_time();
+    memset(sess, 0, sizeof(*sess));
+    sess->id = next_session_id_++;
+    sess->iface_idx = iface_idx;
+    sess->local_call = cfg_.callsign;
+    sess->remote_call = target;
+    sess->peer_ip = peer_ip;
+    sess->peer_port = peer_port;
+    sess->state = OYK_SESS_CONNECTING;
+    sess->is_local_term = 1;
+    oyk_format_now_hms(now_t, sess->since_hms, sizeof(sess->since_hms));
+    sess->last_activity = now_t;
+
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    sabm.dst = target;
+    sabm.src = cfg_.callsign;
+    sabm.is_command = 1;
+    sabm.control = 0x3FU; /* SABM P=1 */
+    if (tx_cb_ && tx_cb_(iface_idx, &sabm, peer_ip, peer_port, 0, tx_ctx_)) {
+        ifaces_[iface_idx].tx_frames++;
+    }
+
+    if (sess_id_out) *sess_id_out = sess->id;
+    if (resolved_call_out) *resolved_call_out = target;
+
+    char cs[12], msg[80];
+    oyk_format_callsign(&target, cs, sizeof(cs));
+    sprintf(msg, "Local terminal #%lu connecting to %s on %s",
+            static_cast<unsigned long>(sess->id), cs, ifaces_[iface_idx].cfg.id);
+    log_message(OYK_LOG_INFO, msg);
+    return 1;
+}
+
+int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, size_t len) {
+    if (!tx_cb_ || !data || len == 0) return 0;
+    OykSession* sess = NULL;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].id == session_id && sessions_[i].is_local_term &&
+            sessions_[i].state == OYK_SESS_CONNECTED) {
+            sess = &sessions_[i];
+            break;
+        }
+    }
+    if (!sess) return 0;
+
+    size_t pos = 0;
+    while (pos < len) {
+        size_t chunk = len - pos;
+        if (chunk > 220) chunk = 220;
+        OykFrame f;
+        memset(&f, 0, sizeof(f));
+        f.dst = sess->remote_call;
+        f.src = sess->local_call;
+        f.is_command = 1;
+        f.control = static_cast<oyk_u8>(((sess->vs & 0x07U) << 1) | ((sess->vr & 0x07U) << 5));
+        f.has_pid = 1;
+        f.pid = 0xF0U;
+        f.info_len = static_cast<oyk_u16>(chunk);
+        memcpy(f.info, data + pos, chunk);
+        sess->vs = static_cast<oyk_u8>((sess->vs + 1) & 0x07U);
+        if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
+            ifaces_[sess->iface_idx].tx_frames++;
+        }
+        pos += chunk;
+    }
+    sess->last_activity = now_time();
+    return 1;
+}
+
+int OykPortableNode::close_local_terminal(oyk_u32 session_id) {
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].id == session_id && sessions_[i].is_local_term &&
+            sessions_[i].state != OYK_SESS_FREE) {
+            send_disc(&sessions_[i]);
+            sessions_[i].state = OYK_SESS_FREE;
+            if (local_cb_) {
+                local_cb_(session_id, 3, NULL, 0, "Disconnected", local_ctx_);
+            }
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void OykPortableNode::set_iface_status(int iface_idx, int running, const char* status_text) {
@@ -1450,6 +1704,25 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     sess->peer_ip = peer_ip;
     sess->peer_port = peer_port;
 
+    if (sess->state == OYK_SESS_CONNECTING) {
+        if (ft == OYK_FT_UA) {
+            sess->state = OYK_SESS_CONNECTED;
+            sess->vs = 0;
+            sess->vr = 0;
+            if (sess->is_local_term && local_cb_) {
+                local_cb_(sess->id, 1, NULL, 0, "Connected", local_ctx_);
+            }
+        } else if (ft == OYK_FT_DM || ft == OYK_FT_DISC) {
+            oyk_u32 sid = sess->id;
+            int was_local = sess->is_local_term;
+            sess->state = OYK_SESS_FREE;
+            if (was_local && local_cb_) {
+                local_cb_(sid, 3, NULL, 0, (ft == OYK_FT_DM) ? "Connection refused (DM)" : "Disconnected", local_ctx_);
+            }
+        }
+        return;
+    }
+
     if (ft == OYK_FT_DISC) {
         OykFrame ua;
         memset(&ua, 0, sizeof(ua));
@@ -1461,12 +1734,22 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
             tx_cb_(iface_idx, &ua, peer_ip, peer_port, peer_handle, tx_ctx_);
             ifaces_[iface_idx].tx_frames++;
         }
+        oyk_u32 sid = sess->id;
+        int was_local = sess->is_local_term;
         sess->state = OYK_SESS_FREE;
+        if (was_local && local_cb_) {
+            local_cb_(sid, 3, NULL, 0, "Disconnected by remote", local_ctx_);
+        }
         return;
     }
 
     if (ft == OYK_FT_DM || (ft == OYK_FT_UA && sess->state == OYK_SESS_DISCONNECTING)) {
+        oyk_u32 sid = sess->id;
+        int was_local = sess->is_local_term;
         sess->state = OYK_SESS_FREE;
+        if (was_local && local_cb_) {
+            local_cb_(sid, 3, NULL, 0, "Disconnected", local_ctx_);
+        }
         return;
     }
 
@@ -1483,6 +1766,13 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
             if (tx_cb_) {
                 tx_cb_(iface_idx, &rr, peer_ip, peer_port, peer_handle, tx_ctx_);
                 ifaces_[iface_idx].tx_frames++;
+            }
+
+            if (sess->is_local_term) {
+                if (local_cb_ && frame->info_len > 0) {
+                    local_cb_(sess->id, 2, frame->info, frame->info_len, NULL, local_ctx_);
+                }
+                return;
             }
 
             for (oyk_u16 i = 0; i < frame->info_len; ++i) {

@@ -54,8 +54,8 @@ CFG_DEF        = -DCFG_H="oyk_mtcp.cfg"
 CFLAGS_MTCP     = $(CPU) -ml -os -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
 CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
 
-NODE_OBJS = dos_main.obj ems.obj oyk_portable.obj
-TEST_OBJS = test_dos.obj test_portable_dos.obj ems.obj oyk_portable.obj
+NODE_OBJS = dos_main.obj ems.obj oyk_portable.obj oyk_yapp.obj
+TEST_OBJS = test_dos.obj test_portable_dos.obj ems.obj oyk_portable.obj oyk_yapp.obj
 
 MTCP_OBJS = &
     mtcp_packet.obj &
@@ -81,7 +81,7 @@ mtcp_inc_stamp: .SYMBOLIC
     @%null
 !endif
 
-dos_main.obj: mtcp_inc_stamp dos_main.cpp oyk_mtcp.cfg ems.hpp ../compat/oyk_portable.hpp
+dos_main.obj: mtcp_inc_stamp dos_main.cpp oyk_mtcp.cfg ems.hpp ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp
     $(CC) $(CFLAGS_MTCP) -fo=dos_main.obj dos_main.cpp
 
 ems.obj: ems.cpp ems.hpp ../compat/oyk_portable.hpp
@@ -89,6 +89,9 @@ ems.obj: ems.cpp ems.hpp ../compat/oyk_portable.hpp
 
 oyk_portable.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=oyk_portable.obj ../compat/oyk_portable.cpp
+
+oyk_yapp.obj: ../compat/oyk_yapp.cpp ../compat/oyk_yapp.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=oyk_yapp.obj ../compat/oyk_yapp.cpp
 
 test_dos.obj: test_dos.cpp ems.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=test_dos.obj test_dos.cpp

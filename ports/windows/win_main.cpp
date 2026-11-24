@@ -16,12 +16,14 @@
 
 #include <windows.h>
 #include <winsock.h>
+#include <commdlg.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../compat/oyk_portable.hpp"
+#include "../compat/oyk_yapp.hpp"
 #include "resource.h"
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -130,6 +132,17 @@ static WinIfaceNet g_ifaces[OYK_MAX_INTERFACES];
 static WinTelnetClient g_telnet_clients[OYK_MAX_TELNET_CLIENTS];
 static int g_last_log_count = -1;
 static char g_status_msg[128] = "Ready.";
+
+/* Local Terminal + YAPP state (static for Win16 stack safety) */
+static HWND g_lterm_hwnd = NULL;
+static oyk_u32 g_lterm_sid = 0;
+static int g_lterm_connected = 0;
+static int g_lterm_connecting = 0;
+static OykCallsign g_lterm_remote;
+static OykYappSession g_lterm_yapp;
+static char g_lterm_curline[260];
+static int g_lterm_curline_len = 0;
+static char g_lterm_last_yapp_st[128];
 
 static int win_strieq(const char* a, const char* b) {
     if (!a || !b) return 0;
@@ -667,7 +680,7 @@ static void refresh_gui() {
             sprintf(buf, "#%-4lu %-11.11s %-9.9s %-9.9s %s",
                     static_cast<unsigned long>(s.id), cs,
                     g_node.iface(s.iface_idx).cfg.id, s.since_hms,
-                    s.restricted_ban ? "BAN NOTICE" : "NODE SHELL");
+                    s.restricted_ban ? "BAN NOTICE" : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"));
             SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
         }
     }
@@ -791,6 +804,258 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+/* ==================== Local Terminal & YAPP Dialog ==================== */
+
+static void lterm_append_line(const char* line) {
+    if (!g_lterm_hwnd || !line) return;
+    HWND lb = GetDlgItem(g_lterm_hwnd, IDC_LTERM_OUTPUT);
+    if (!lb) return;
+    int cnt = static_cast<int>(SendMessage(lb, LB_GETCOUNT, 0, 0));
+    while (cnt >= 300) {
+        SendMessage(lb, LB_DELETESTRING, 0, 0);
+        --cnt;
+    }
+    SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(line));
+    cnt = static_cast<int>(SendMessage(lb, LB_GETCOUNT, 0, 0));
+    if (cnt > 0) {
+        SendMessage(lb, LB_SETTOPINDEX, static_cast<WPARAM>(cnt - 1), 0);
+    }
+}
+
+static void lterm_update_status() {
+    if (!g_lterm_hwnd) return;
+    char st[160];
+    if (g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
+        sprintf(st, "%.100s (%lu/%lu B)", g_lterm_yapp.status,
+                static_cast<unsigned long>(g_lterm_yapp.bytes_transferred),
+                static_cast<unsigned long>(g_lterm_yapp.total_bytes));
+    } else if (g_lterm_connected) {
+        char cs[16];
+        oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
+        sprintf(st, "Connected to %s (YAPP ready)", cs);
+    } else if (g_lterm_connecting) {
+        char cs[16];
+        oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
+        sprintf(st, "Connecting to %s...", cs);
+    } else {
+        strcpy(st, "Disconnected (YAPP saves to incoming\\<CALL-SSID>\\)");
+    }
+    SetDlgItemText(g_lterm_hwnd, IDC_LTERM_STATUS, st);
+    EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_CONNECT), (!g_lterm_connected && !g_lterm_connecting) ? TRUE : FALSE);
+    EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_DISC), (g_lterm_connected || g_lterm_connecting) ? TRUE : FALSE);
+    EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_UPLOAD),
+                 (g_lterm_connected && !oyk_yapp_is_active(&g_lterm_yapp)) ? TRUE : FALSE);
+    EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_ABORT),
+                 oyk_yapp_is_active(&g_lterm_yapp) ? TRUE : FALSE);
+}
+
+static int win_yapp_send_cb(const oyk_u8* data, size_t len, void* /*ctx*/) {
+    if (g_lterm_sid == 0 || !g_lterm_connected) return 0;
+    return g_node.send_local_bytes(g_lterm_sid, data, len);
+}
+
+static int win_yapp_overwrite_cb(const char* target_path, const char* /*filename*/, void* /*ctx*/) {
+    static char prompt[320];
+    sprintf(prompt, "File already exists:\n%s\n\nOverwrite existing file?", target_path);
+    HWND owner = g_lterm_hwnd ? g_lterm_hwnd : g_hwnd_main;
+    return (MessageBox(owner, prompt, "YAPP Overwrite Confirmation",
+                       MB_YESNO | MB_ICONEXCLAMATION) == IDYES) ? 1 : 0;
+}
+
+static void win_local_term_event_cb(oyk_u32 sid, int event_type,
+                                    const oyk_u8* data, size_t len,
+                                    const char* reason, void* /*ctx*/) {
+    if (sid != g_lterm_sid) return;
+    if (event_type == 1) {
+        g_lterm_connecting = 0;
+        g_lterm_connected = 1;
+        char cs[16], msg[80];
+        oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
+        sprintf(msg, "*** Connected to %s", cs);
+        lterm_append_line(msg);
+        lterm_update_status();
+    } else if (event_type == 2 && data && len > 0) {
+        static oyk_u8 plain[512];
+        size_t pn = oyk_yapp_feed_bytes(&g_lterm_yapp, data, len, plain, sizeof(plain));
+        for (size_t i = 0; i < pn; ++i) {
+            oyk_u8 ch = plain[i];
+            if (ch == '\r' || ch == '\n') {
+                if (g_lterm_curline_len > 0 || ch == '\r') {
+                    g_lterm_curline[g_lterm_curline_len] = '\0';
+                    lterm_append_line(g_lterm_curline);
+                    g_lterm_curline_len = 0;
+                }
+            } else if (ch >= 0x20U && ch < 0x7FU) {
+                if (g_lterm_curline_len < static_cast<int>(sizeof(g_lterm_curline) - 1)) {
+                    g_lterm_curline[g_lterm_curline_len++] = static_cast<char>(ch);
+                }
+            }
+        }
+        if (g_lterm_yapp.status[0] && strcmp(g_lterm_yapp.status, g_lterm_last_yapp_st) != 0) {
+            strncpy(g_lterm_last_yapp_st, g_lterm_yapp.status, sizeof(g_lterm_last_yapp_st) - 1);
+            g_lterm_last_yapp_st[sizeof(g_lterm_last_yapp_st) - 1] = '\0';
+            char line[160];
+            sprintf(line, "*** %s", g_lterm_last_yapp_st);
+            lterm_append_line(line);
+        }
+        lterm_update_status();
+    } else if (event_type == 3) {
+        g_lterm_sid = 0;
+        g_lterm_connecting = 0;
+        g_lterm_connected = 0;
+        oyk_yapp_reset(&g_lterm_yapp);
+        char msg[96];
+        sprintf(msg, "*** Disconnected (%s)", reason ? reason : "Closed");
+        lterm_append_line(msg);
+        lterm_update_status();
+    }
+}
+
+OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    static int s_iface_map[OYK_MAX_INTERFACES];
+    static int s_iface_cnt = 0;
+
+    switch (msg) {
+        case WM_INITDIALOG: {
+            g_lterm_hwnd = hdlg;
+            g_lterm_sid = 0;
+            g_lterm_connected = 0;
+            g_lterm_connecting = 0;
+            g_lterm_curline_len = 0;
+            g_lterm_last_yapp_st[0] = '\0';
+            oyk_yapp_init(&g_lterm_yapp, "incoming",
+                          win_yapp_send_cb, NULL,
+                          win_yapp_overwrite_cb, NULL);
+            g_node.set_local_event_callback(win_local_term_event_cb, NULL);
+
+            SendDlgItemMessage(hdlg, IDC_LTERM_OUTPUT, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+
+            HWND cb = GetDlgItem(hdlg, IDC_LTERM_PORT);
+            s_iface_cnt = 0;
+            for (int i = 0; i < g_node.iface_count() && s_iface_cnt < OYK_MAX_INTERFACES; ++i) {
+                if (g_ifaces[i].kind == WIN_IF_AXUDP) {
+                    SendMessage(cb, CB_ADDSTRING, 0, OYK_LPARAM_STR(g_node.iface(i).cfg.id));
+                    s_iface_map[s_iface_cnt++] = i;
+                }
+            }
+            if (s_iface_cnt > 0) SendMessage(cb, CB_SETCURSEL, 0, 0);
+
+            lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled)");
+            lterm_append_line("*** Downloads save to incoming\\<CALL-SSID>\\<file>");
+            lterm_append_line("*** Enter CALLSIGN (or CALLSIGN@ip:port) and click Connect.");
+            lterm_update_status();
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_LTERM_CONNECT) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_LTERM_PORT, CB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= s_iface_cnt) {
+                    lterm_append_line("*** No AXUDP radio interface available.");
+                    return TRUE;
+                }
+                char target[96], err[96];
+                GetDlgItemText(hdlg, IDC_LTERM_TARGET, target, sizeof(target));
+                oyk_u32 sid = 0;
+                if (g_node.open_local_terminal(s_iface_map[sel], target, &sid, &g_lterm_remote, err, sizeof(err))) {
+                    g_lterm_sid = sid;
+                    g_lterm_connecting = 1;
+                    g_lterm_connected = 0;
+                    oyk_yapp_reset(&g_lterm_yapp);
+                    oyk_yapp_set_remote(&g_lterm_yapp, &g_lterm_remote);
+                    g_lterm_last_yapp_st[0] = '\0';
+                    char cs[16], line[96];
+                    oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
+                    sprintf(line, "*** Connecting to %s on %s...", cs, g_node.iface(s_iface_map[sel]).cfg.id);
+                    lterm_append_line(line);
+                } else {
+                    char line[128];
+                    sprintf(line, "*** Connect error: %s", err);
+                    lterm_append_line(line);
+                }
+                lterm_update_status();
+                return TRUE;
+            }
+            if (id == IDC_LTERM_DISC) {
+                if (g_lterm_sid != 0) {
+                    oyk_yapp_cancel(&g_lterm_yapp, "Disconnected");
+                    g_node.close_local_terminal(g_lterm_sid);
+                }
+                lterm_update_status();
+                return TRUE;
+            }
+            if (id == IDC_LTERM_UPLOAD) {
+                if (!g_lterm_connected || g_lterm_sid == 0) {
+                    lterm_append_line("*** Connect to a remote node before uploading.");
+                    return TRUE;
+                }
+                static OPENFILENAME ofn;
+                static char file_buf[260];
+                file_buf[0] = '\0';
+                memset(&ofn, 0, sizeof(ofn));
+                ofn.lStructSize = sizeof(OPENFILENAME);
+                ofn.hwndOwner = hdlg;
+                ofn.lpstrFilter = "All Files (*.*)\0*.*\0";
+                ofn.lpstrFile = file_buf;
+                ofn.nMaxFile = sizeof(file_buf);
+                ofn.lpstrTitle = "YAPP Upload - Select File";
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+                if (GetOpenFileName(&ofn)) {
+                    char err[96];
+                    if (!oyk_yapp_start_send(&g_lterm_yapp, file_buf, err, sizeof(err))) {
+                        char line[128];
+                        sprintf(line, "*** YAPP upload error: %s", err);
+                        lterm_append_line(line);
+                    } else {
+                        strncpy(g_lterm_last_yapp_st, g_lterm_yapp.status, sizeof(g_lterm_last_yapp_st) - 1);
+                        char line[160];
+                        sprintf(line, "*** %s", g_lterm_yapp.status);
+                        lterm_append_line(line);
+                    }
+                    lterm_update_status();
+                }
+                return TRUE;
+            }
+            if (id == IDC_LTERM_ABORT) {
+                oyk_yapp_cancel(&g_lterm_yapp, "Cancelled by user");
+                lterm_append_line("*** YAPP transfer aborted.");
+                lterm_update_status();
+                return TRUE;
+            }
+            if (id == IDC_LTERM_SEND || id == IDOK) {
+                static char in_buf[224];
+                GetDlgItemText(hdlg, IDC_LTERM_INPUT, in_buf, sizeof(in_buf) - 2);
+                SetDlgItemText(hdlg, IDC_LTERM_INPUT, "");
+                char echo[240];
+                sprintf(echo, "> %s", in_buf);
+                lterm_append_line(echo);
+                if (g_lterm_connected && g_lterm_sid != 0) {
+                    size_t n = strlen(in_buf);
+                    in_buf[n++] = '\r';
+                    in_buf[n] = '\0';
+                    g_node.send_local_bytes(g_lterm_sid, reinterpret_cast<const oyk_u8*>(in_buf), n);
+                } else {
+                    lterm_append_line("*** Not connected.");
+                }
+                return TRUE;
+            }
+            if (id == IDCANCEL) {
+                if (g_lterm_sid != 0) {
+                    oyk_yapp_reset(&g_lterm_yapp);
+                    g_node.close_local_terminal(g_lterm_sid);
+                }
+                g_node.set_local_event_callback(NULL, NULL);
+                g_lterm_hwnd = NULL;
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
 static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     const int pad = 6;
     const int hdr_h = 20;
@@ -868,6 +1133,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (id == IDM_DENY_INCOMING) {
                 g_node.set_accept_incoming(0);
                 set_status("New incoming connections are now DENIED.");
+                refresh_gui();
+            } else if (id == IDM_TERMINAL) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL), hwnd, (DLGPROC)TerminalDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {

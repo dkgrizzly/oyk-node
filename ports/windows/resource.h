@@ -8,6 +8,7 @@
 #define IDR_MAINMENU        101
 #define IDM_ALLOW_INCOMING  201
 #define IDM_DENY_INCOMING   202
+#define IDM_TERMINAL        203
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -33,5 +34,17 @@
 #define IDC_BAN_LIST        415
 #define IDC_BAN_ADD         416
 #define IDC_BAN_REMOVE      417
+
+#define IDD_TERMINAL        420
+#define IDC_LTERM_PORT      421
+#define IDC_LTERM_TARGET    422
+#define IDC_LTERM_CONNECT   423
+#define IDC_LTERM_DISC      424
+#define IDC_LTERM_UPLOAD    425
+#define IDC_LTERM_ABORT     426
+#define IDC_LTERM_OUTPUT    427
+#define IDC_LTERM_STATUS    428
+#define IDC_LTERM_INPUT     429
+#define IDC_LTERM_SEND      430
 
 #endif /* OYK_WIN_RESOURCE_H */

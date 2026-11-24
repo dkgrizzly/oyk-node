@@ -15,6 +15,7 @@
 #include "oyk/radio/kiss_serial_interface.hpp"
 #include "oyk/radio/kiss_tcp_interface.hpp"
 #include "oyk/radio/telnet_interface.hpp"
+#include "oyk/protocol/yapp.hpp"
 
 #include <arpa/inet.h>
 #include <cassert>
@@ -1360,6 +1361,248 @@ void test_config_line_ending_preservation() {
     std::cout << "[PASS] test_config_line_ending_preservation\n";
 }
 
+void test_local_terminal_and_yapp() {
+    namespace fs = std::filesystem;
+
+    // 1. Filename sanitization & path traversal protection
+    assert(protocol::is_safe_yapp_filename("important-file.txt"));
+    assert(protocol::is_safe_yapp_filename("bulletin_01.bin"));
+    assert(!protocol::is_safe_yapp_filename("../important-file.txt"));
+    assert(!protocol::is_safe_yapp_filename("..\\important-file.txt"));
+    assert(!protocol::is_safe_yapp_filename("foo/../bar.txt"));
+    assert(!protocol::is_safe_yapp_filename("sub/file.txt"));
+    assert(!protocol::is_safe_yapp_filename("sub\\file.txt"));
+    assert(!protocol::is_safe_yapp_filename("C:\\Windows\\system.ini"));
+    assert(!protocol::is_safe_yapp_filename(".env"));
+    assert(!protocol::is_safe_yapp_filename("CON"));
+    assert(!protocol::is_safe_yapp_filename("COM1.txt"));
+
+    ax25::Callsign remote_call("N0CALL", 11);
+    auto resolved = protocol::resolve_yapp_incoming_path("incoming", remote_call, "important-file.txt");
+    assert(resolved == fs::path("incoming") / "N0CALL-11" / "important-file.txt");
+    assert(protocol::resolve_yapp_incoming_path("incoming", remote_call, "../escape.txt").empty());
+    assert(protocol::resolve_yapp_incoming_path("incoming", remote_call, "..\\escape.txt").empty());
+
+    // 2. End-to-end Local Terminal outbound session + bidirectional YAPP-C transfer over AXUDP
+    const fs::path tmp_root = "/tmp/oyk_test_yapp_e2e";
+    fs::remove_all(tmp_root);
+    fs::create_directories(tmp_root);
+    const fs::path incoming_dir = tmp_root / "incoming";
+    const fs::path remote_in_dir = tmp_root / "remote_incoming";
+    const fs::path upload_src = tmp_root / "upload-test.bin";
+    const fs::path download_src = tmp_root / "important-file.txt";
+
+    // Write binary payload with all byte values (0x00..0xFF) to prove binary AX.25 + YAPP-C safety
+    {
+        std::vector<uint8_t> bin_data(300);
+        for (std::size_t i = 0; i < bin_data.size(); ++i) {
+            bin_data[i] = static_cast<uint8_t>(i & 0xFFu);
+        }
+        std::FILE* fp = std::fopen(upload_src.c_str(), "wb");
+        assert(fp != nullptr);
+        assert(std::fwrite(bin_data.data(), 1, bin_data.size(), fp) == bin_data.size());
+        std::fclose(fp);
+    }
+    {
+        const std::string text = "Important packet radio bulletin from N0CALL-11!\r\n73!\r\n";
+        std::FILE* fp = std::fopen(download_src.c_str(), "wb");
+        assert(fp != nullptr);
+        assert(std::fwrite(text.data(), 1, text.size(), fp) == text.size());
+        std::fclose(fp);
+    }
+
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign("K7OYK", 7);
+    cfg.t1_ms = 300;
+    cfg.logging.log_path = (tmp_root / "logs").string();
+    cfg.banlist_path = (tmp_root / "banlist.cfg").string();
+    radio::RadioInterfaceConfig ax_cfg;
+    ax_cfg.id = "axudp0";
+    ax_cfg.type = "axudp";
+    ax_cfg.params["bind_host"] = "127.0.0.1";
+    ax_cfg.params["bind_port"] = "0";
+    cfg.interfaces = {ax_cfg};
+
+    node::NodeEngine engine(cfg);
+    std::string err;
+    assert(engine.start(err));
+    auto* ax0 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("axudp0"));
+    assert(ax0 != nullptr);
+
+    TestAxudpClient remote_node(remote_call, ax0->bound_port());
+    assert(ax0->add_peer("N0CALL-11", "127.0.0.1", remote_node.local_port()));
+
+    std::mutex term_mtx;
+    bool local_connected = false;
+    bool local_closed = false;
+    protocol::YappSession local_yapp(incoming_dir);
+    local_yapp.set_remote_callsign(remote_call);
+    uint64_t local_sid = 0;
+
+    local_yapp.set_send_callback([&](const std::vector<uint8_t>& pkt) {
+        engine.send_local_terminal_bytes(local_sid, pkt);
+    });
+
+    node::NodeEngine::LocalTerminalCallbacks cbs;
+    cbs.on_connected = [&](uint64_t) {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_connected = true;
+    };
+    cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& bytes) {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        std::vector<uint8_t> plain;
+        local_yapp.feed_bytes(bytes.data(), bytes.size(), plain);
+    };
+    cbs.on_closed = [&](uint64_t, const std::string&) {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_closed = true;
+    };
+
+    ax25::Callsign resolved_c;
+    assert(engine.open_local_terminal("axudp0", "N0CALL-11", std::move(cbs), local_sid, &resolved_c, err));
+    assert(resolved_c == remote_call);
+
+    auto sabm = remote_node.recv(1000);
+    assert(sabm.has_value() && sabm->type() == ax25::FrameType::SABM);
+    remote_node.send(ax25::Frame::make_ua(cfg.callsign, remote_call, true));
+
+    auto wait_until = [](auto pred, int timeout_ms = 1500) {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (pred()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return pred();
+    };
+
+    assert(wait_until([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_connected;
+    }));
+
+    // Remote YAPP helper over AXUDP I-frames
+    uint8_t rem_vs = 0;
+    uint8_t rem_vr = 0;
+    protocol::YappSession remote_yapp(remote_in_dir);
+    remote_yapp.set_remote_callsign(cfg.callsign);
+    remote_yapp.set_send_callback([&](const std::vector<uint8_t>& pkt) {
+        std::size_t pos = 0;
+        while (pos < pkt.size()) {
+            std::size_t chunk = std::min<std::size_t>(200, pkt.size() - pos);
+            std::vector<uint8_t> seg(pkt.begin() + static_cast<std::ptrdiff_t>(pos),
+                                     pkt.begin() + static_cast<std::ptrdiff_t>(pos + chunk));
+            remote_node.send(ax25::Frame::make_i(cfg.callsign, remote_call, rem_vs, rem_vr, seg, false));
+            rem_vs = static_cast<uint8_t>((rem_vs + 1) & 0x07u);
+            pos += chunk;
+        }
+    });
+
+    auto pump_remote = [&](auto done_pred, int timeout_ms = 2000) {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (!done_pred() && std::chrono::steady_clock::now() < deadline) {
+            auto f = remote_node.recv(30);
+            if (!f) continue;
+            if (f->type() == ax25::FrameType::I && f->ns() == rem_vr) {
+                rem_vr = static_cast<uint8_t>((rem_vr + 1) & 0x07u);
+                remote_node.send(ax25::Frame::make_rr(cfg.callsign, remote_call, rem_vr, false, false));
+                std::vector<uint8_t> plain;
+                remote_yapp.feed_bytes(f->info.data(), f->info.size(), plain);
+            }
+        }
+        return done_pred();
+    };
+
+    // 2a. Local Terminal uploads binary file to remote node via YAPP-C
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        assert(local_yapp.start_send(upload_src, err));
+    }
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.progress().state == protocol::YappState::Complete &&
+               remote_yapp.progress().state == protocol::YappState::Complete;
+    }));
+    const fs::path rem_saved = remote_in_dir / "K7OYK-7" / "upload-test.bin";
+    assert(fs::exists(rem_saved) && fs::file_size(rem_saved) == 300);
+
+    // 2b. Remote node N0CALL-11 sends important-file.txt -> local terminal saves to incoming/N0CALL-11/important-file.txt
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_yapp.reset();
+    }
+    remote_yapp.reset();
+    assert(remote_yapp.start_send(download_src, err));
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.progress().state == protocol::YappState::Complete &&
+               remote_yapp.progress().state == protocol::YappState::Complete;
+    }));
+    const fs::path local_saved = incoming_dir / "N0CALL-11" / "important-file.txt";
+    assert(fs::exists(local_saved));
+    std::string content1;
+    assert(core::read_file_binary(local_saved.string(), content1));
+    assert(content1 == "Important packet radio bulletin from N0CALL-11!\r\n73!\r\n");
+
+    // 2c. Remote sends important-file.txt again -> pauses in RecvAwaitOverwrite; declining preserves original!
+    {
+        const std::string new_txt = "OVERWRITTEN!\r\n";
+        std::FILE* fp = std::fopen(download_src.c_str(), "wb");
+        assert(fp != nullptr);
+        assert(std::fwrite(new_txt.data(), 1, new_txt.size(), fp) == new_txt.size());
+        std::fclose(fp);
+    }
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_yapp.reset();
+    }
+    remote_yapp.reset();
+    assert(remote_yapp.start_send(download_src, err));
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.awaiting_overwrite();
+    }));
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_yapp.resolve_overwrite(false);
+    }
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.progress().state == protocol::YappState::Aborted &&
+               remote_yapp.progress().state == protocol::YappState::Aborted;
+    }));
+    std::string content_after_decline;
+    assert(core::read_file_binary(local_saved.string(), content_after_decline));
+    assert(content_after_decline == content1);
+
+    // 2d. Remote sends important-file.txt a third time -> approving overwrite replaces file!
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_yapp.reset();
+    }
+    remote_yapp.reset();
+    assert(remote_yapp.start_send(download_src, err));
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.awaiting_overwrite();
+    }));
+    {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        local_yapp.resolve_overwrite(true);
+    }
+    assert(pump_remote([&]() {
+        std::lock_guard<std::mutex> lk(term_mtx);
+        return local_yapp.progress().state == protocol::YappState::Complete;
+    }));
+    std::string content_after_allow;
+    assert(core::read_file_binary(local_saved.string(), content_after_allow));
+    assert(content_after_allow == "OVERWRITTEN!\r\n");
+
+    assert(engine.close_local_terminal(local_sid));
+    engine.stop();
+    fs::remove_all(tmp_root);
+    std::cout << "[PASS] test_local_terminal_and_yapp\n";
+}
+
 } // namespace
 
 int main() {
@@ -1376,6 +1619,7 @@ int main() {
     test_banlist_format_and_flags();
     test_restricted_ban_and_appeal_sessions();
     test_config_line_ending_preservation();
+    test_local_terminal_and_yapp();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }
