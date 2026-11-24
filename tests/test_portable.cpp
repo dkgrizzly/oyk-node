@@ -96,11 +96,19 @@ static void test_portable_eol_and_config() {
     assert(found == 1 && mixed == 0);
     free(sraw);
 
-    /* 2. CR-only config file read & write-back preserves CR */
+    /* 2. CR-only config file read & write-back preserves CR and interface default ports */
     const char* cfg_cr = OYK_T_CFG_CR;
-    write_raw_file(cfg_cr, "[node]\rcallsign = W1MAC\r");
+    write_raw_file(cfg_cr,
+                   "[node]\rcallsign = W1MAC\r"
+                   "[interface axudp0]\rtype = axudp\r"
+                   "[interface telnet0]\rtype = telnet\r"
+                   "[interface telnet1]\rtype = telnet\rbind_port = 8023\r");
     assert(oyk_config_load(cfg_cr, cfg, err, sizeof(err)));
     assert(cfg->line_ending == OYK_EOL_CR);
+    assert(cfg->iface_count == 3);
+    assert(cfg->ifaces[0].port == 10093);
+    assert(cfg->ifaces[1].port == 8010);
+    assert(cfg->ifaces[2].port == 8023);
     assert(oyk_config_save(cfg, cfg_cr));
     sraw = load_raw_file(cfg_cr, &slen);
     assert(oyk_detect_first_eol(sraw, slen, OYK_EOL_LF, &found, &mixed) == OYK_EOL_CR);

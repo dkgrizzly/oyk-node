@@ -714,7 +714,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     memset(cur_if, 0, sizeof(*cur_if));
                     safe_copy(cur_if->id, sizeof(cur_if->id), idp);
                     safe_copy(cur_if->host, sizeof(cur_if->host), "0.0.0.0");
-                    cur_if->port = 10093;
+                    cur_if->port = 0;
                     cur_if->baud = 9600;
                     section = 2;
                 }
@@ -778,6 +778,18 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
     }
 
     free(raw);
+
+    for (int i = 0; i < cfg->iface_count; ++i) {
+        if (cfg->ifaces[i].port == 0) {
+            if (stricmp_ascii(cfg->ifaces[i].type, "telnet") == 0) {
+                cfg->ifaces[i].port = 8010;
+            } else if (stricmp_ascii(cfg->ifaces[i].type, "kiss-tcp") == 0) {
+                cfg->ifaces[i].port = 8001;
+            } else if (stricmp_ascii(cfg->ifaces[i].type, "axudp") == 0) {
+                cfg->ifaces[i].port = 10093;
+            }
+        }
+    }
 
     if (cfg->iface_count == 0) {
         cfg->iface_count = 1;

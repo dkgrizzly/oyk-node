@@ -10,11 +10,13 @@
  *   - 64-bit Windows XP x64 through Windows 11 (x64)
  *
  * Uses classic Win16/Win32 USER/GDI + Winsock 1.1 APIs (no Vista+ dependencies).
+ * Supports AXUDP (UDP) and incoming Telnet (TCP, RFC 854) interfaces.
  * Layout mirrors the Linux ncurses, GTK+ 2.0, and MS-DOS interfaces.
  */
 
 #include <windows.h>
 #include <winsock.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +52,66 @@
   #endif
 #endif
 
+#ifndef INADDR_NONE
+  #define INADDR_NONE         0xFFFFFFFFUL
+#endif
+
+#define OYK_MAX_TELNET_CLIENTS 12
+
+/* RFC 854 Telnet command bytes */
+#define OYK_TELNET_IAC     255U
+#define OYK_TELNET_DONT    254U
+#define OYK_TELNET_DO      253U
+#define OYK_TELNET_WONT    252U
+#define OYK_TELNET_WILL    251U
+#define OYK_TELNET_SB      250U
+#define OYK_TELNET_SE      240U
+#define OYK_TELNET_OPT_SGA   3U
+
+enum WinIfaceKind {
+    WIN_IF_NONE = 0,
+    WIN_IF_AXUDP,
+    WIN_IF_TELNET
+};
+
+struct WinIfaceNet {
+    WinIfaceKind kind;
+    SOCKET sock;
+};
+
+enum TelnetStage {
+    TSTAGE_LOGIN = 0,
+    TSTAGE_CONNECTING,
+    TSTAGE_CONNECTED
+};
+
+enum TelnetIacState {
+    TIAC_NORMAL = 0,
+    TIAC_IAC,
+    TIAC_OPT,
+    TIAC_SUBNEG,
+    TIAC_SUBNEG_IAC
+};
+
+struct WinTelnetClient {
+    int in_use;
+    SOCKET sock;
+    int iface_idx;
+    oyk_u16 handle;
+    oyk_u32 peer_ip;
+    oyk_u16 peer_port;
+    TelnetStage stage;
+    TelnetIacState iac_state;
+    oyk_u8 iac_cmd;
+    int last_was_cr;
+    int login_attempts;
+    OykCallsign callsign;
+    oyk_u8 vs;
+    oyk_u8 vr;
+    int line_len;
+    char line_buf[256];
+};
+
 static HINSTANCE g_hinst = NULL;
 static HWND g_hwnd_main = NULL;
 static HWND g_ctl_header = NULL;
@@ -62,65 +124,450 @@ static HWND g_ctl_status = NULL;
 static HFONT g_mono_font = NULL;
 
 static OykPortableNode g_node;
-static SOCKET g_axudp_sock = INVALID_SOCKET;
-static int g_axudp_iface_idx = -1;
+static WinIfaceNet g_ifaces[OYK_MAX_INTERFACES];
+static WinTelnetClient g_telnet_clients[OYK_MAX_TELNET_CLIENTS];
 static int g_last_log_count = -1;
 static char g_status_msg[128] = "Ready.";
 
-/* ==================== Winsock 1.1 AXUDP Pump ==================== */
+static int win_strieq(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (toupper(static_cast<unsigned char>(*a)) !=
+            toupper(static_cast<unsigned char>(*b))) {
+            return 0;
+        }
+        ++a;
+        ++b;
+    }
+    return (*a == '\0' && *b == '\0') ? 1 : 0;
+}
+
+static int resolve_bind_addr(const char* host, unsigned long* addr_out) {
+    if (!host || !host[0] || strcmp(host, "0.0.0.0") == 0 || strcmp(host, "*") == 0) {
+        *addr_out = INADDR_ANY;
+        return 1;
+    }
+    unsigned long ip = inet_addr(host);
+    if (ip == INADDR_NONE) return 0;
+    *addr_out = ip;
+    return 1;
+}
+
+/* ==================== Winsock 1.1 Telnet & AXUDP Helpers ==================== */
+
+static void telnet_send_raw(SOCKET sock, const void* data, int len) {
+    if (sock == INVALID_SOCKET || !data || len <= 0) return;
+    const char* ptr = static_cast<const char*>(data);
+    int sent = 0;
+    while (sent < len) {
+        int n = send(sock, ptr + sent, len - sent, 0);
+        if (n > 0) {
+            sent += n;
+        } else {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(sock, &wfds);
+                struct timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 100000;
+                if (select(0, NULL, &wfds, NULL, &tv) > 0) continue;
+            }
+            break;
+        }
+    }
+}
+
+static void telnet_send_str(SOCKET sock, const char* s) {
+    if (!s || !s[0]) return;
+    telnet_send_raw(sock, s, static_cast<int>(strlen(s)));
+}
+
+static void telnet_close_client(WinTelnetClient* c) {
+    if (!c || !c->in_use) return;
+    if (c->sock != INVALID_SOCKET) {
+        closesocket(c->sock);
+        c->sock = INVALID_SOCKET;
+    }
+    c->in_use = 0;
+}
+
+static WinTelnetClient* telnet_find_client(int iface_idx, oyk_u16 handle, const OykCallsign* dst) {
+    if (handle >= 1 && handle <= OYK_MAX_TELNET_CLIENTS) {
+        WinTelnetClient* c = &g_telnet_clients[handle - 1];
+        if (c->in_use && c->iface_idx == iface_idx) return c;
+    }
+    if (dst) {
+        for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+            WinTelnetClient* c = &g_telnet_clients[i];
+            if (c->in_use && c->iface_idx == iface_idx &&
+                c->stage != TSTAGE_LOGIN && oyk_callsign_eq(&c->callsign, dst)) {
+                return c;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void telnet_accept_client(int iface_idx, SOCKET listen_sock) {
+    struct sockaddr_in peer;
+    int peer_len = sizeof(peer);
+    SOCKET cfd = accept(listen_sock, reinterpret_cast<struct sockaddr*>(&peer), &peer_len);
+    if (cfd == INVALID_SOCKET) return;
+
+    int one = 1;
+    setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one));
+    u_long nb = 1;
+    ioctlsocket(cfd, FIONBIO, &nb);
+
+    int slot = -1;
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        if (!g_telnet_clients[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        telnet_send_str(cfd, "*** Server busy (too many telnet connections).\r\n");
+        closesocket(cfd);
+        return;
+    }
+
+    WinTelnetClient* c = &g_telnet_clients[slot];
+    memset(c, 0, sizeof(*c));
+    c->in_use = 1;
+    c->sock = cfd;
+    c->iface_idx = iface_idx;
+    c->handle = static_cast<oyk_u16>(slot + 1);
+    c->peer_ip = static_cast<oyk_u32>(peer.sin_addr.s_addr);
+    c->peer_port = ntohs(peer.sin_port);
+    c->stage = TSTAGE_LOGIN;
+    c->iac_state = TIAC_NORMAL;
+
+    char node_s[16], banner[128];
+    oyk_format_callsign(&g_node.config().callsign, node_s, sizeof(node_s));
+    sprintf(banner, "OYK Packet Node Telnet Access (%s)\r\nCallsign: ", node_s);
+    telnet_send_str(c->sock, banner);
+}
+
+static void telnet_process_clean_byte(WinTelnetClient* c, oyk_u8 b) {
+    if (!c->in_use) return;
+
+    /* Collapse Telnet NVT CR-LF and CR-NUL to a single line submission */
+    if (c->last_was_cr) {
+        c->last_was_cr = 0;
+        if (b == '\n' || b == '\0') return;
+    }
+
+    if (b == '\r' || b == '\n') {
+        if (b == '\r') c->last_was_cr = 1;
+        c->line_buf[c->line_len] = '\0';
+
+        if (c->stage == TSTAGE_LOGIN) {
+            OykCallsign parsed;
+            int ok = oyk_parse_callsign(c->line_buf, &parsed);
+            c->line_len = 0;
+            c->line_buf[0] = '\0';
+
+            if (!ok) {
+                c->login_attempts++;
+                if (c->login_attempts >= 3) {
+                    telnet_send_str(c->sock, "Too many invalid attempts. Goodbye.\r\n");
+                    telnet_close_client(c);
+                } else {
+                    telnet_send_str(c->sock, "Invalid callsign. Callsign: ");
+                }
+                return;
+            }
+
+            /* Reject duplicate simultaneous callsign on this Telnet interface */
+            for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+                WinTelnetClient* o = &g_telnet_clients[i];
+                if (o != c && o->in_use && o->iface_idx == c->iface_idx &&
+                    o->stage != TSTAGE_LOGIN && oyk_callsign_eq(&o->callsign, &parsed)) {
+                    telnet_send_str(c->sock, "*** Callsign already connected on this telnet port.\r\n");
+                    telnet_close_client(c);
+                    return;
+                }
+            }
+
+            c->callsign = parsed;
+            c->stage = TSTAGE_CONNECTING;
+            c->vs = 0;
+            c->vr = 0;
+
+            static OykFrame sabm;
+            memset(&sabm, 0, sizeof(sabm));
+            sabm.dst = g_node.config().callsign;
+            sabm.src = c->callsign;
+            sabm.is_command = 1;
+            sabm.control = 0x3FU; /* SABM P=1 */
+            g_node.on_rx_frame(c->iface_idx, &sabm, c->peer_ip, c->peer_port, c->handle);
+            return;
+        }
+
+        if (c->stage == TSTAGE_CONNECTED) {
+            static char line_copy[260];
+            int llen = c->line_len;
+            if (llen > 254) llen = 254;
+            memcpy(line_copy, c->line_buf, static_cast<size_t>(llen));
+            line_copy[llen++] = '\r';
+            line_copy[llen] = '\0';
+            c->line_len = 0;
+            c->line_buf[0] = '\0';
+
+            int pos = 0;
+            while (pos < llen && c->in_use && c->stage == TSTAGE_CONNECTED) {
+                int chunk = llen - pos;
+                if (chunk > 200) chunk = 200;
+                static OykFrame ifr;
+                memset(&ifr, 0, sizeof(ifr));
+                ifr.dst = g_node.config().callsign;
+                ifr.src = c->callsign;
+                ifr.is_command = 1;
+                ifr.control = static_cast<oyk_u8>(((c->vs & 0x07U) << 1) | ((c->vr & 0x07U) << 5));
+                ifr.has_pid = 1;
+                ifr.pid = 0xF0U;
+                ifr.info_len = static_cast<oyk_u16>(chunk);
+                memcpy(ifr.info, line_copy + pos, static_cast<size_t>(chunk));
+                c->vs = static_cast<oyk_u8>((c->vs + 1) & 0x07U);
+                g_node.on_rx_frame(c->iface_idx, &ifr, c->peer_ip, c->peer_port, c->handle);
+                pos += chunk;
+            }
+        }
+        return;
+    }
+
+    if (b == '\b' || b == 0x7FU) {
+        if (c->line_len > 0) c->line_len--;
+        return;
+    }
+
+    if (b >= 0x20U && b < 0x7FU) {
+        if (c->line_len < static_cast<int>(sizeof(c->line_buf) - 2)) {
+            c->line_buf[c->line_len++] = static_cast<char>(b);
+        }
+    }
+}
+
+static void telnet_feed_bytes(WinTelnetClient* c, const oyk_u8* data, int len) {
+    for (int i = 0; i < len && c->in_use; ++i) {
+        oyk_u8 b = data[i];
+        switch (c->iac_state) {
+            case TIAC_NORMAL:
+                if (b == OYK_TELNET_IAC) {
+                    c->iac_state = TIAC_IAC;
+                } else {
+                    telnet_process_clean_byte(c, b);
+                }
+                break;
+            case TIAC_IAC:
+                if (b == OYK_TELNET_IAC) {
+                    c->iac_state = TIAC_NORMAL;
+                } else if (b == OYK_TELNET_WILL || b == OYK_TELNET_WONT ||
+                           b == OYK_TELNET_DO || b == OYK_TELNET_DONT) {
+                    c->iac_cmd = b;
+                    c->iac_state = TIAC_OPT;
+                } else if (b == OYK_TELNET_SB) {
+                    c->iac_state = TIAC_SUBNEG;
+                } else {
+                    c->iac_state = TIAC_NORMAL;
+                }
+                break;
+            case TIAC_OPT: {
+                if (c->iac_cmd == OYK_TELNET_WILL) {
+                    oyk_u8 resp[3];
+                    resp[0] = OYK_TELNET_IAC;
+                    resp[1] = (b == OYK_TELNET_OPT_SGA) ? OYK_TELNET_DO : OYK_TELNET_DONT;
+                    resp[2] = b;
+                    telnet_send_raw(c->sock, resp, 3);
+                } else if (c->iac_cmd == OYK_TELNET_DO) {
+                    oyk_u8 resp[3];
+                    resp[0] = OYK_TELNET_IAC;
+                    resp[1] = (b == OYK_TELNET_OPT_SGA) ? OYK_TELNET_WILL : OYK_TELNET_WONT;
+                    resp[2] = b;
+                    telnet_send_raw(c->sock, resp, 3);
+                }
+                c->iac_state = TIAC_NORMAL;
+                break;
+            }
+            case TIAC_SUBNEG:
+                if (b == OYK_TELNET_IAC) c->iac_state = TIAC_SUBNEG_IAC;
+                break;
+            case TIAC_SUBNEG_IAC:
+                if (b == OYK_TELNET_SE) {
+                    c->iac_state = TIAC_NORMAL;
+                } else if (b != OYK_TELNET_IAC) {
+                    c->iac_state = TIAC_SUBNEG;
+                }
+                break;
+        }
+    }
+}
 
 static int win_tx_callback(int iface_idx, const OykFrame* frame,
                            oyk_u32 peer_ip, oyk_u16 peer_port,
-                           oyk_u16 /*peer_handle*/, void* /*ctx*/) {
-    if (iface_idx != g_axudp_iface_idx || g_axudp_sock == INVALID_SOCKET) return 0;
-    if (peer_ip == 0 || peer_port == 0) return 0;
+                           oyk_u16 peer_handle, void* /*ctx*/) {
+    if (iface_idx < 0 || iface_idx >= OYK_MAX_INTERFACES || !frame) return 0;
 
-    oyk_u8 raw[320];
-    size_t n = oyk_ax25_encode(frame, raw, sizeof(raw) - 2);
-    if (n == 0) return 0;
-    oyk_u16 fcs = oyk_crc16_fcs(raw, n);
-    raw[n++] = static_cast<oyk_u8>(fcs & 0xFFU);
-    raw[n++] = static_cast<oyk_u8>((fcs >> 8) & 0xFFU);
+    if (g_ifaces[iface_idx].kind == WIN_IF_AXUDP) {
+        SOCKET sock = g_ifaces[iface_idx].sock;
+        if (sock == INVALID_SOCKET || peer_ip == 0 || peer_port == 0) return 0;
 
-    struct sockaddr_in dst;
-    memset(&dst, 0, sizeof(dst));
-    dst.sin_family = AF_INET;
-    dst.sin_addr.s_addr = peer_ip;
-    dst.sin_port = htons(peer_port);
+        static oyk_u8 raw[320];
+        size_t n = oyk_ax25_encode(frame, raw, sizeof(raw) - 2);
+        if (n == 0) return 0;
+        oyk_u16 fcs = oyk_crc16_fcs(raw, n);
+        raw[n++] = static_cast<oyk_u8>(fcs & 0xFFU);
+        raw[n++] = static_cast<oyk_u8>((fcs >> 8) & 0xFFU);
 
-    int sent = sendto(g_axudp_sock, reinterpret_cast<const char*>(raw),
-                      static_cast<int>(n), 0,
-                      reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst));
-    return (sent == static_cast<int>(n)) ? 1 : 0;
+        struct sockaddr_in dst;
+        memset(&dst, 0, sizeof(dst));
+        dst.sin_family = AF_INET;
+        dst.sin_addr.s_addr = peer_ip;
+        dst.sin_port = htons(peer_port);
+
+        int sent = sendto(sock, reinterpret_cast<const char*>(raw),
+                          static_cast<int>(n), 0,
+                          reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst));
+        return (sent == static_cast<int>(n)) ? 1 : 0;
+    }
+
+    if (g_ifaces[iface_idx].kind == WIN_IF_TELNET) {
+        OykFrameType ft = oyk_frame_type(frame);
+        if (ft == OYK_FT_UI) return 1;
+
+        WinTelnetClient* c = telnet_find_client(iface_idx, peer_handle, &frame->dst);
+        if (!c) return 0;
+
+        switch (ft) {
+            case OYK_FT_UA:
+                if (c->stage == TSTAGE_CONNECTING) {
+                    c->stage = TSTAGE_CONNECTED;
+                }
+                return 1;
+            case OYK_FT_DM:
+                telnet_send_str(c->sock,
+                                "\r\n*** Connection rejected (banned or incoming disabled).\r\n");
+                telnet_close_client(c);
+                return 1;
+            case OYK_FT_DISC:
+                telnet_send_str(c->sock, "\r\n*** Disconnected.\r\n");
+                telnet_close_client(c);
+                return 1;
+            case OYK_FT_I: {
+                static char out[600];
+                int opos = 0;
+                for (oyk_u16 i = 0; i < frame->info_len && opos < static_cast<int>(sizeof(out) - 2); ++i) {
+                    char ch = static_cast<char>(frame->info[i]);
+                    if (ch == '\r') {
+                        out[opos++] = '\r';
+                        if (i + 1 >= frame->info_len || frame->info[i + 1] != '\n') {
+                            out[opos++] = '\n';
+                        }
+                    } else {
+                        out[opos++] = ch;
+                    }
+                }
+                telnet_send_raw(c->sock, out, opos);
+                c->vr = static_cast<oyk_u8>((((frame->control >> 1) & 0x07U) + 1U) & 0x07U);
+                return 1;
+            }
+            case OYK_FT_RR:
+            case OYK_FT_RNR:
+            case OYK_FT_REJ:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
+    return 0;
 }
 
 static void pump_winsock() {
-    if (g_axudp_sock == INVALID_SOCKET || g_axudp_iface_idx < 0) return;
+    static oyk_u8 buf[1024];
+    static OykFrame frame;
 
-    for (int iter = 0; iter < 16; ++iter) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(g_axudp_sock, &rfds);
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 0;
-        if (select(0, &rfds, NULL, NULL, &tv) <= 0) break;
+    /* 1. Pump all AXUDP and Telnet listening sockets */
+    for (int idx = 0; idx < g_node.iface_count() && idx < OYK_MAX_INTERFACES; ++idx) {
+        SOCKET sock = g_ifaces[idx].sock;
+        if (sock == INVALID_SOCKET) continue;
 
-        static oyk_u8 buf[1024];
-        struct sockaddr_in src;
-        int slen = sizeof(src);
-        int n = recvfrom(g_axudp_sock, reinterpret_cast<char*>(buf),
-                         sizeof(buf), 0,
-                         reinterpret_cast<struct sockaddr*>(&src), &slen);
-        if (n <= 2) break;
-        if (!oyk_verify_fcs(buf, static_cast<size_t>(n))) continue;
+        if (g_ifaces[idx].kind == WIN_IF_AXUDP) {
+            for (int iter = 0; iter < 16; ++iter) {
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(sock, &rfds);
+                struct timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 0;
+                if (select(0, &rfds, NULL, NULL, &tv) <= 0) break;
 
-        static OykFrame frame;
-        if (!oyk_ax25_decode(buf, static_cast<size_t>(n - 2), &frame)) continue;
+                struct sockaddr_in src;
+                int slen = sizeof(src);
+                int n = recvfrom(sock, reinterpret_cast<char*>(buf),
+                                 sizeof(buf), 0,
+                                 reinterpret_cast<struct sockaddr*>(&src), &slen);
+                if (n <= 2) break;
+                if (!oyk_verify_fcs(buf, static_cast<size_t>(n))) continue;
+                if (!oyk_ax25_decode(buf, static_cast<size_t>(n - 2), &frame)) continue;
 
-        g_node.on_rx_frame(g_axudp_iface_idx, &frame,
-                           static_cast<oyk_u32>(src.sin_addr.s_addr),
-                           ntohs(src.sin_port), 0);
+                g_node.on_rx_frame(idx, &frame,
+                                   static_cast<oyk_u32>(src.sin_addr.s_addr),
+                                   ntohs(src.sin_port), 0);
+            }
+        } else if (g_ifaces[idx].kind == WIN_IF_TELNET) {
+            for (int iter = 0; iter < 4; ++iter) {
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(sock, &rfds);
+                struct timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 0;
+                if (select(0, &rfds, NULL, NULL, &tv) <= 0) break;
+                telnet_accept_client(idx, sock);
+            }
+        }
+    }
+
+    /* 2. Pump connected Telnet client sockets */
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        WinTelnetClient* c = &g_telnet_clients[i];
+        if (!c->in_use || c->sock == INVALID_SOCKET) continue;
+
+        for (int iter = 0; iter < 8 && c->in_use; ++iter) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(c->sock, &rfds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 0;
+            if (select(0, &rfds, NULL, NULL, &tv) <= 0) break;
+
+            int n = recv(c->sock, reinterpret_cast<char*>(buf), sizeof(buf), 0);
+            if (n > 0) {
+                telnet_feed_bytes(c, buf, n);
+            } else {
+                if (n < 0 && WSAGetLastError() == WSAEWOULDBLOCK) break;
+                int notify_disc = (c->stage != TSTAGE_LOGIN) ? 1 : 0;
+                int if_idx = c->iface_idx;
+                OykCallsign cs = c->callsign;
+                oyk_u32 pip = c->peer_ip;
+                oyk_u16 pport = c->peer_port;
+                oyk_u16 hdl = c->handle;
+                telnet_close_client(c);
+                if (notify_disc) {
+                    memset(&frame, 0, sizeof(frame));
+                    frame.dst = g_node.config().callsign;
+                    frame.src = cs;
+                    frame.is_command = 1;
+                    frame.control = 0x53U; /* DISC P=1 */
+                    g_node.on_rx_frame(if_idx, &frame, pip, pport, hdl);
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -437,6 +884,107 @@ static void resolve_win_config(char* out, size_t out_sz) {
     out[0] = '\0';
 }
 
+static void init_win_interfaces() {
+    for (int i = 0; i < OYK_MAX_INTERFACES; ++i) {
+        g_ifaces[i].kind = WIN_IF_NONE;
+        g_ifaces[i].sock = INVALID_SOCKET;
+    }
+    memset(g_telnet_clients, 0, sizeof(g_telnet_clients));
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        g_telnet_clients[i].sock = INVALID_SOCKET;
+    }
+
+    for (int i = 0; i < g_node.iface_count() && i < OYK_MAX_INTERFACES; ++i) {
+        const OykIfaceConfig& ic = g_node.iface(i).cfg;
+
+        if (win_strieq(ic.type, "axudp")) {
+            unsigned long bind_ip = INADDR_ANY;
+            if (!resolve_bind_addr(ic.host, &bind_ip)) {
+                g_node.set_iface_status(i, 0, "BAD HOST");
+                continue;
+            }
+            oyk_u16 port = ic.port ? ic.port : static_cast<oyk_u16>(10093);
+            SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+            if (s == INVALID_SOCKET) {
+                g_node.set_iface_status(i, 0, "SOCK ERR");
+                continue;
+            }
+            int reuse = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+            u_long nb = 1;
+            ioctlsocket(s, FIONBIO, &nb);
+
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = bind_ip;
+            addr.sin_port = htons(port);
+            if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+                g_ifaces[i].kind = WIN_IF_AXUDP;
+                g_ifaces[i].sock = s;
+                char st[32];
+                sprintf(st, "UP :%u", static_cast<unsigned int>(port));
+                g_node.set_iface_status(i, 1, st);
+            } else {
+                closesocket(s);
+                g_node.set_iface_status(i, 0, "BIND ERR");
+            }
+        } else if (win_strieq(ic.type, "telnet")) {
+            unsigned long bind_ip = INADDR_ANY;
+            if (!resolve_bind_addr(ic.host, &bind_ip)) {
+                g_node.set_iface_status(i, 0, "BAD HOST");
+                continue;
+            }
+            oyk_u16 port = ic.port ? ic.port : static_cast<oyk_u16>(8010);
+            SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s == INVALID_SOCKET) {
+                g_node.set_iface_status(i, 0, "SOCK ERR");
+                continue;
+            }
+            int reuse = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = bind_ip;
+            addr.sin_port = htons(port);
+            if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 &&
+                listen(s, 8) == 0) {
+                u_long nb = 1;
+                ioctlsocket(s, FIONBIO, &nb);
+                g_ifaces[i].kind = WIN_IF_TELNET;
+                g_ifaces[i].sock = s;
+                char st[32], log_msg[96];
+                sprintf(st, "UP :%u", static_cast<unsigned int>(port));
+                g_node.set_iface_status(i, 1, st);
+                sprintf(log_msg, "Telnet interface %s listening on %s:%u",
+                        ic.id, ic.host[0] ? ic.host : "0.0.0.0",
+                        static_cast<unsigned int>(port));
+                g_node.log_message(OYK_LOG_INFO, log_msg);
+            } else {
+                closesocket(s);
+                g_node.set_iface_status(i, 0, "BIND ERR");
+            }
+        } else {
+            g_node.set_iface_status(i, 0, "UNSUPPORTED");
+        }
+    }
+}
+
+static void shutdown_win_interfaces() {
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        telnet_close_client(&g_telnet_clients[i]);
+    }
+    for (int i = 0; i < OYK_MAX_INTERFACES; ++i) {
+        if (g_ifaces[i].sock != INVALID_SOCKET) {
+            closesocket(g_ifaces[i].sock);
+            g_ifaces[i].sock = INVALID_SOCKET;
+        }
+        g_ifaces[i].kind = WIN_IF_NONE;
+    }
+}
+
 int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     g_hinst = hinst;
 
@@ -472,31 +1020,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         return 1;
     }
 
-    /* Bind first AXUDP interface on Winsock 1.1 */
-    for (int i = 0; i < g_node.iface_count(); ++i) {
-        if (strcmp(g_node.iface(i).cfg.type, "axudp") == 0) {
-            g_axudp_iface_idx = i;
-            oyk_u16 port = g_node.iface(i).cfg.port ? g_node.iface(i).cfg.port : static_cast<oyk_u16>(10093);
-            g_axudp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-            if (g_axudp_sock != INVALID_SOCKET) {
-                u_long nb = 1;
-                ioctlsocket(g_axudp_sock, FIONBIO, &nb);
-                struct sockaddr_in addr;
-                memset(&addr, 0, sizeof(addr));
-                addr.sin_family = AF_INET;
-                addr.sin_addr.s_addr = INADDR_ANY;
-                addr.sin_port = htons(port);
-                if (bind(g_axudp_sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-                    char st[32];
-                    sprintf(st, "UP :%u", static_cast<unsigned int>(port));
-                    g_node.set_iface_status(i, 1, st);
-                } else {
-                    g_node.set_iface_status(i, 0, "BIND ERR");
-                }
-            }
-            break;
-        }
-    }
+    init_win_interfaces();
 
     if (!hprev) {
         WNDCLASS wc;
@@ -527,10 +1051,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 
     g_node.shutdown();
-    if (g_axudp_sock != INVALID_SOCKET) {
-        closesocket(g_axudp_sock);
-        g_axudp_sock = INVALID_SOCKET;
-    }
+    shutdown_win_interfaces();
     WSACleanup();
     return static_cast<int>(msg.wParam);
 }
