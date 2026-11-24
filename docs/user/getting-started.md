@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+
 # Getting Started with oyk-node
 
 **oyk-node** is a modular Amateur Radio AX.25 Packet Node supporting multiple radio/transport interfaces (`axudp`, `axip`, `kiss-serial`, `kiss-tcp`, and incoming `telnet`), configurable severity logging with daily rotation, persistent ban/appeal handling, and native operator interfaces across Linux, MS-DOS, and Windows.

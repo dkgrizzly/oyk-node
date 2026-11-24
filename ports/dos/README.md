@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+
 # MS-DOS Port (IBM XT 8088 / NEC V20, 640KB RAM + Optional EMS 4.0)
 
 This port builds `oyknode.exe` and the 16-bit unit test binary `testdos.exe` for real-mode MS-DOS using **OpenWatcom v2** (or **OpenWatcom 1.9**) and **Michael Brutman's mTCP** TCP/IP stack.

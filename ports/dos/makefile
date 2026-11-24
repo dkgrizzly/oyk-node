@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
 # OpenWatcom v2 / 1.9 WMAKE Makefile for OYK Packet Node (MS-DOS / IBM XT 8088 / NEC V20)
 #
 # Works on both Linux hosts (open-watcom-v2 binl64/binl) and DOS/Windows hosts.

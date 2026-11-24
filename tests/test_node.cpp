@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 KR4OYK - David Kuder
+
 #include "oyk/ax25/callsign.hpp"
 #include "oyk/ax25/crc.hpp"
 #include "oyk/ax25/frame.hpp"

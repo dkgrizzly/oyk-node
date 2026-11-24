@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 KR4OYK - David Kuder */
+
 /*
  * OYK Amateur Radio Packet Node - Native Windows GUI Port
  *

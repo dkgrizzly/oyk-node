@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+
 # Windows Native GUI Ports (16-bit, 32-bit, and 64-bit)
 
 A single native WinAPI codebase (`win_main.cpp` + `oyk_win.rc`) built on `ports/compat/oyk_portable.{hpp,cpp}` and **Winsock 1.1** (`WINSOCK.DLL` / `wsock32.lib`), providing the same operator layout as the Linux ncurses and GTK+ 2.0 interfaces across:

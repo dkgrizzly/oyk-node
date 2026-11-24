@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 KR4OYK - David Kuder */
+
 /* Strict C++98 test suite for the portable MS-DOS / Win16 / Win32 / Win64 core.
  * Uses 8.3 FAT-safe relative paths on MS-DOS and /tmp paths on POSIX.
  * Define OYK_PORTABLE_TESTS_AS_LIBRARY to call oyk_run_portable_tests() from another main().

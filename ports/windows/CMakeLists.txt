@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
 # CMake target for 32-bit and 64-bit Windows native GUI builds
 # Compatible with Windows 95..ME, Windows NT 3.51..Windows 11 (MinGW-w64 or MSVC)
 

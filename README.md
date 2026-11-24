@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+
 # oyk-node
 
 A simple, modular Amateur Radio AX.25 Packet Node written in modern C++20 with an `ncurses` local operator console.
@@ -117,6 +120,8 @@ Severity bitmask flags:
   - [Architecture Overview](docs/dev/architecture.md)
   - [Implementing Radio Interfaces](docs/dev/radio-interfaces.md)
   - [Porting & Testing Guide](docs/dev/porting-and-testing.md)
+  - [AI Use Disclosure](docs/dev/ai-disclosure.md)
+  - [Agent & Contributor Guidelines](AGENTS.md)
 - **Specifications & Standards**:
   - [Project Specification](docs/specs/oyk-node-spec.md)
   - [Referenced Standards & RFCs](docs/specs/README.md)
@@ -127,8 +132,12 @@ Severity bitmask flags:
 2. Register your driver factory with `oyk::radio::InterfaceRegistry::instance().register_type("kiss-tcp", ...)`.
 3. Add an `[interface <id>]` section with `type = kiss-tcp` to your config file.
 
+## AI Use Disclosure
+
+Portions of this project's source code, tests, build files, and documentation were developed with the assistance of AI coding tools under human direction, review, and verification. See [docs/dev/ai-disclosure.md](docs/dev/ai-disclosure.md) and [AGENTS.md](AGENTS.md) for details.
+
 ## License
 
-Copyright (C) 2026 KR4OYK - David Kuder.
+Copyright (C) 2026 KR4OYK - David Kuder. See [AUTHORS](AUTHORS).
 
 This project is licensed under the **GNU General Public License v3.0** (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full license text.
