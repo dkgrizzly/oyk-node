@@ -174,18 +174,53 @@ void NodeEngine::stop() {
     }
 
     std::vector<PendingTx> pending;
+    bool had_active = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        for (auto& [id, sess] : sessions_) {
+        accept_incoming_ = false;
+        const std::string signoff = "\r*** Node shutting down. 73 de " + config_.callsign.str() + "\r";
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            Session* sess = it->second.get();
             if (sess && sess->is_active()) {
+                had_active = true;
+                sess->set_bridged_session_id(0);
+                if (sess->state() == SessionState::Connected) {
+                    auto msg_ev = sess->queue_text(signoff);
+                    queue_session_frames(*sess, msg_ev.tx_frames, pending);
+                }
                 auto ev = sess->initiate_disconnect("Node shutting down");
                 queue_session_frames(*sess, ev.tx_frames, pending);
+                if (sess->state() == SessionState::Closed) {
+                    it = sessions_.erase(it);
+                    continue;
+                }
             }
+            ++it;
         }
-        sessions_.clear();
         log_msg(LOG_INFO, "Node shutting down");
     }
     dispatch_tx(pending);
+
+    // Give active peers a brief window to receive the 73 sign-off + DISC and acknowledge with UA
+    if (had_active) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+        while (std::chrono::steady_clock::now() < deadline) {
+            bool any_open = false;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                for (const auto& [id, sess] : sessions_) {
+                    if (sess && sess->is_active()) {
+                        any_open = true;
+                        break;
+                    }
+                }
+            }
+            if (!any_open) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
 
     if (timer_thread_.joinable()) {
         timer_thread_.join();
@@ -194,6 +229,7 @@ void NodeEngine::stop() {
     std::vector<radio::RadioInterface*> to_stop;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        sessions_.clear();
         for (auto& iface : interfaces_) {
             to_stop.push_back(iface.get());
         }

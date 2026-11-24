@@ -448,8 +448,12 @@ void test_node_axudp_end_to_end() {
     std::string disc_notice = caller.recv_all_text(cfg.callsign, caller_vr, 150);
     assert(disc_notice.find("Disconnected from N9REM") != std::string::npos);
 
-    // 8. Clean shutdown disconnects remaining active sessions
+    // 8. Clean shutdown sends 73 sign-off and disconnects remaining active sessions
     engine.stop();
+    auto shutdown_signoff = caller.recv(500);
+    assert(shutdown_signoff.has_value() && shutdown_signoff->type() == ax25::FrameType::I);
+    std::string signoff_txt(shutdown_signoff->info.begin(), shutdown_signoff->info.end());
+    assert(signoff_txt.find("73 de K7OYK-7") != std::string::npos);
     auto shutdown_disc = caller.recv(500);
     assert(shutdown_disc.has_value() && shutdown_disc->type() == ax25::FrameType::DISC);
 
@@ -888,7 +892,42 @@ void test_telnet_end_to_end() {
     std::string refused = ax_caller.recv_all_text(cfg.callsign, cvr, 200);
     assert(refused.find("Connection refused") != std::string::npos);
 
-    engine.stop();
+    // 7. Graceful shutdown with active Telnet + AXUDP connections sends 73 sign-off and DISC
+    int cfd_shut = tcp_connect();
+    (void)tcp_recv_until(cfd_shut, "Callsign: ");
+    const std::string shut_login = "W4SHU\r";
+    assert(send(cfd_shut, shut_login.data(), shut_login.size(), 0) == static_cast<ssize_t>(shut_login.size()));
+    std::string shut_welcome = tcp_recv_until(cfd_shut, "K7OYK-7> ");
+    assert(shut_welcome.find("Connected to K7OYK-7") != std::string::npos);
+
+    std::thread stop_thr([&]() { engine.stop(); });
+
+    std::string shut_tel = tcp_recv_until(cfd_shut, "Disconnected", 1000);
+    assert(shut_tel.find("Node shutting down. 73 de K7OYK-7") != std::string::npos);
+    assert(shut_tel.find("Disconnected") != std::string::npos);
+    close(cfd_shut);
+
+    // AXUDP peer also receives 73 sign-off I-frame and DISC, and replies UA
+    bool ax_got_73 = false;
+    bool ax_got_disc = false;
+    auto ax_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while ((!ax_got_73 || !ax_got_disc) && std::chrono::steady_clock::now() < ax_deadline) {
+        auto f = ax_caller.recv(100);
+        if (!f) continue;
+        if (f->type() == ax25::FrameType::I) {
+            std::string txt(f->info.begin(), f->info.end());
+            if (txt.find("73 de K7OYK-7") != std::string::npos) ax_got_73 = true;
+            ax_caller.send(ax25::Frame::make_rr(cfg.callsign, ax_caller.call(),
+                                                static_cast<uint8_t>((f->ns() + 1) & 0x07),
+                                                false, false));
+        } else if (f->type() == ax25::FrameType::DISC) {
+            ax_got_disc = true;
+            ax_caller.send(ax25::Frame::make_ua(cfg.callsign, ax_caller.call(), f->pf()));
+        }
+    }
+    assert(ax_got_73 && ax_got_disc);
+    stop_thr.join();
+
     std::filesystem::remove_all(cfg.logging.log_path);
     std::filesystem::remove(cfg.banlist_path);
     std::cout << "[PASS] test_telnet_end_to_end\n";

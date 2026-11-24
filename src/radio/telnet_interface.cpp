@@ -219,6 +219,8 @@ void TelnetInterface::stop() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& [fd, _] : clients_by_fd_) {
+            send_text_fd(fd, "\r\n*** Node shutting down. 73 de " + node_callsign_.str() + "\r\n");
+            shutdown(fd, SHUT_WR);
             close(fd);
         }
         clients_by_fd_.clear();
@@ -612,6 +614,7 @@ bool TelnetInterface::send_frame(const ax25::Frame& frame,
                         });
                         wake_needed = true;
                         fd_by_endpoint_.erase(client.endpoint);
+                        shutdown(client.fd, SHUT_WR);
                         close(client.fd);
                         clients_by_fd_.erase(it);
                         client_count_.store(clients_by_fd_.size());

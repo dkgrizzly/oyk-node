@@ -217,7 +217,45 @@ static void test_portable_ax25_kiss_and_bans() {
     node->on_rx_frame(0, &sabm, 0x7F000001UL, 10093, 0);
     assert(txlog->count == 1 && oyk_frame_type(&txlog->frames[0]) == OYK_FT_DM);
 
-    node->shutdown();
+    /* Graceful shutdown with an active normal session sends 73 sign-off + DISC, clears on UA */
+    OykFrame sabm2;
+    memset(&sabm2, 0, sizeof(sabm2));
+    oyk_parse_callsign("K7XT-7", &sabm2.dst);
+    oyk_parse_callsign("W1GOOD", &sabm2.src);
+    sabm2.is_command = 1;
+    sabm2.control = 0x3FU;
+    txlog->count = 0;
+    node->on_rx_frame(0, &sabm2, 0x7F000001UL, 10093, 0);
+    assert(node->total_active_connections() == 1);
+
+    txlog->count = 0;
+    assert(node->begin_shutdown() == 1);
+    assert(node->disconnecting_count() == 1);
+    int saw_73 = 0;
+    saw_disc = 0;
+    for (int i = 0; i < txlog->count; ++i) {
+        if (oyk_frame_type(&txlog->frames[i]) == OYK_FT_I) {
+            char txt[260];
+            size_t ilen = txlog->frames[i].info_len;
+            if (ilen >= sizeof(txt)) ilen = sizeof(txt) - 1;
+            memcpy(txt, txlog->frames[i].info, ilen);
+            txt[ilen] = '\0';
+            if (strstr(txt, "73 de K7XT-7") != NULL) saw_73 = 1;
+        } else if (oyk_frame_type(&txlog->frames[i]) == OYK_FT_DISC) {
+            saw_disc = 1;
+        }
+    }
+    assert(saw_73 == 1 && saw_disc == 1);
+
+    OykFrame ua_reply;
+    memset(&ua_reply, 0, sizeof(ua_reply));
+    ua_reply.dst = sabm2.dst;
+    ua_reply.src = sabm2.src;
+    ua_reply.is_response = 1;
+    ua_reply.control = 0x73U;
+    node->on_rx_frame(0, &ua_reply, 0x7F000001UL, 10093, 0);
+    assert(node->disconnecting_count() == 0);
+    node->finish_shutdown();
     delete node;
     delete txlog;
     delete cfg;

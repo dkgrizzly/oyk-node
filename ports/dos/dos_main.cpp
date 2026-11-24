@@ -429,7 +429,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    g_node.shutdown();
+    if (g_node.begin_shutdown() > 0) {
+        clockTicks_t shut_start = TIMER_GET_CURRENT();
+        while (g_node.disconnecting_count() > 0 &&
+               Timer_diff(shut_start, TIMER_GET_CURRENT()) < TIMER_MS_TO_TICKS(1000)) {
+            PACKET_PROCESS_SINGLE;
+            Arp::driveArp();
+            Tcp::drivePackets();
+        }
+    }
+    g_node.finish_shutdown();
     if (g_axudp_iface_idx >= 0) {
         Udp::unregisterCallback(g_axudp_port);
     }

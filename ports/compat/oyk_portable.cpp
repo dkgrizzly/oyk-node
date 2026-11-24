@@ -925,14 +925,44 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
     return 1;
 }
 
-void OykPortableNode::shutdown() {
+int OykPortableNode::begin_shutdown() {
+    accept_incoming_ = 0;
+    char node_s[16], signoff[80];
+    oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
+    sprintf(signoff, "\r*** Node shutting down. 73 de %s\r", node_s);
+
+    int count = 0;
     for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
         if (sessions_[i].state == OYK_SESS_CONNECTED) {
+            send_text(&sessions_[i], signoff);
             send_disc(&sessions_[i]);
+            sessions_[i].state = OYK_SESS_DISCONNECTING;
+            ++count;
+        }
+    }
+    return count;
+}
+
+int OykPortableNode::disconnecting_count() const {
+    int count = 0;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].state == OYK_SESS_DISCONNECTING) ++count;
+    }
+    return count;
+}
+
+void OykPortableNode::finish_shutdown() {
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].state != OYK_SESS_FREE) {
             sessions_[i].state = OYK_SESS_FREE;
         }
     }
     log_message(OYK_LOG_INFO, "Node shutting down cleanly");
+}
+
+void OykPortableNode::shutdown() {
+    begin_shutdown();
+    finish_shutdown();
 }
 
 void OykPortableNode::set_iface_status(int iface_idx, int running, const char* status_text) {

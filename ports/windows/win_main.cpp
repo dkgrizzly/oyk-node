@@ -82,7 +82,8 @@ struct WinIfaceNet {
 enum TelnetStage {
     TSTAGE_LOGIN = 0,
     TSTAGE_CONNECTING,
-    TSTAGE_CONNECTED
+    TSTAGE_CONNECTED,
+    TSTAGE_CLOSING
 };
 
 enum TelnetIacState {
@@ -101,6 +102,7 @@ struct WinTelnetClient {
     oyk_u32 peer_ip;
     oyk_u16 peer_port;
     TelnetStage stage;
+    int close_ticks;
     TelnetIacState iac_state;
     oyk_u8 iac_cmd;
     int last_was_cr;
@@ -192,16 +194,29 @@ static void telnet_close_client(WinTelnetClient* c) {
     c->in_use = 0;
 }
 
+static void telnet_begin_close(WinTelnetClient* c) {
+    if (!c || !c->in_use) return;
+    if (c->stage == TSTAGE_CLOSING) return;
+    if (c->sock != INVALID_SOCKET) {
+        shutdown(c->sock, 1); /* SD_SEND: flush queued bytes and send TCP FIN */
+        c->stage = TSTAGE_CLOSING;
+        c->close_ticks = 0;
+    } else {
+        c->in_use = 0;
+    }
+}
+
 static WinTelnetClient* telnet_find_client(int iface_idx, oyk_u16 handle, const OykCallsign* dst) {
     if (handle >= 1 && handle <= OYK_MAX_TELNET_CLIENTS) {
         WinTelnetClient* c = &g_telnet_clients[handle - 1];
-        if (c->in_use && c->iface_idx == iface_idx) return c;
+        if (c->in_use && c->stage != TSTAGE_CLOSING && c->iface_idx == iface_idx) return c;
     }
     if (dst) {
         for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
             WinTelnetClient* c = &g_telnet_clients[i];
             if (c->in_use && c->iface_idx == iface_idx &&
-                c->stage != TSTAGE_LOGIN && oyk_callsign_eq(&c->callsign, dst)) {
+                c->stage != TSTAGE_LOGIN && c->stage != TSTAGE_CLOSING &&
+                oyk_callsign_eq(&c->callsign, dst)) {
                 return c;
             }
         }
@@ -285,9 +300,10 @@ static void telnet_process_clean_byte(WinTelnetClient* c, oyk_u8 b) {
             for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
                 WinTelnetClient* o = &g_telnet_clients[i];
                 if (o != c && o->in_use && o->iface_idx == c->iface_idx &&
-                    o->stage != TSTAGE_LOGIN && oyk_callsign_eq(&o->callsign, &parsed)) {
+                    o->stage != TSTAGE_LOGIN && o->stage != TSTAGE_CLOSING &&
+                    oyk_callsign_eq(&o->callsign, &parsed)) {
                     telnet_send_str(c->sock, "*** Callsign already connected on this telnet port.\r\n");
-                    telnet_close_client(c);
+                    telnet_begin_close(c);
                     return;
                 }
             }
@@ -451,11 +467,11 @@ static int win_tx_callback(int iface_idx, const OykFrame* frame,
             case OYK_FT_DM:
                 telnet_send_str(c->sock,
                                 "\r\n*** Connection rejected (banned or incoming disabled).\r\n");
-                telnet_close_client(c);
+                telnet_begin_close(c);
                 return 1;
             case OYK_FT_DISC:
                 telnet_send_str(c->sock, "\r\n*** Disconnected.\r\n");
-                telnet_close_client(c);
+                telnet_begin_close(c);
                 return 1;
             case OYK_FT_I: {
                 static char out[600];
@@ -533,12 +549,33 @@ static void pump_winsock() {
         }
     }
 
-    /* 2. Pump connected Telnet client sockets */
+    /* 2. Pump connected & closing Telnet client sockets */
     for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
         WinTelnetClient* c = &g_telnet_clients[i];
         if (!c->in_use || c->sock == INVALID_SOCKET) continue;
 
-        for (int iter = 0; iter < 8 && c->in_use; ++iter) {
+        if (c->stage == TSTAGE_CLOSING) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(c->sock, &rfds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 0;
+            if (select(0, &rfds, NULL, NULL, &tv) > 0) {
+                int n = recv(c->sock, reinterpret_cast<char*>(buf), sizeof(buf), 0);
+                if (n <= 0 && (n == 0 || WSAGetLastError() != WSAEWOULDBLOCK)) {
+                    telnet_close_client(c);
+                    continue;
+                }
+            }
+            c->close_ticks++;
+            if (c->close_ticks >= 20) {
+                telnet_close_client(c);
+            }
+            continue;
+        }
+
+        for (int iter = 0; iter < 8 && c->in_use && c->stage != TSTAGE_CLOSING; ++iter) {
             fd_set rfds;
             FD_ZERO(&rfds);
             FD_SET(c->sock, &rfds);
@@ -987,6 +1024,78 @@ static void shutdown_win_interfaces() {
     }
 }
 
+static int has_pending_shutdown_drain() {
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        if (g_telnet_clients[i].in_use && g_telnet_clients[i].stage == TSTAGE_CLOSING) {
+            return 1;
+        }
+    }
+    for (int i = 0; i < g_node.max_sessions(); ++i) {
+        const OykSession& s = g_node.session_slot(i);
+        if (s.state == OYK_SESS_DISCONNECTING &&
+            s.iface_idx >= 0 && s.iface_idx < OYK_MAX_INTERFACES &&
+            g_ifaces[s.iface_idx].kind == WIN_IF_AXUDP) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void drain_win_shutdown() {
+    g_node.begin_shutdown();
+
+    /* Politely sign off any Telnet clients still sitting at the login prompt */
+    char node_s[16], signoff[80];
+    oyk_format_callsign(&g_node.config().callsign, node_s, sizeof(node_s));
+    sprintf(signoff, "\r\n*** Node shutting down. 73 de %s\r\n", node_s);
+    for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+        WinTelnetClient* c = &g_telnet_clients[i];
+        if (c->in_use && c->stage != TSTAGE_CLOSING) {
+            telnet_send_str(c->sock, signoff);
+            telnet_begin_close(c);
+        }
+    }
+
+    /* Stop accepting new Telnet connections while draining active ones */
+    for (int i = 0; i < OYK_MAX_INTERFACES; ++i) {
+        if (g_ifaces[i].kind == WIN_IF_TELNET && g_ifaces[i].sock != INVALID_SOCKET) {
+            closesocket(g_ifaces[i].sock);
+            g_ifaces[i].sock = INVALID_SOCKET;
+        }
+    }
+
+    if (has_pending_shutdown_drain()) {
+        DWORD start_ms = GetTickCount();
+        while (has_pending_shutdown_drain() &&
+               static_cast<DWORD>(GetTickCount() - start_ms) < 1000UL) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            int nfds = 0;
+            for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+                if (g_telnet_clients[i].in_use && g_telnet_clients[i].sock != INVALID_SOCKET) {
+                    FD_SET(g_telnet_clients[i].sock, &rfds);
+                    ++nfds;
+                }
+            }
+            for (int i = 0; i < OYK_MAX_INTERFACES; ++i) {
+                if (g_ifaces[i].kind == WIN_IF_AXUDP && g_ifaces[i].sock != INVALID_SOCKET) {
+                    FD_SET(g_ifaces[i].sock, &rfds);
+                    ++nfds;
+                }
+            }
+            if (nfds == 0) break;
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 25000; /* 25 ms */
+            select(0, &rfds, NULL, NULL, &tv);
+            pump_winsock();
+        }
+    }
+
+    g_node.finish_shutdown();
+    shutdown_win_interfaces();
+}
+
 int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     g_hinst = hinst;
 
@@ -1052,8 +1161,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         DispatchMessage(&msg);
     }
 
-    g_node.shutdown();
-    shutdown_win_interfaces();
+    drain_win_shutdown();
     WSACleanup();
     return static_cast<int>(msg.wParam);
 }

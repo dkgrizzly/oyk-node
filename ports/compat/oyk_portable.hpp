@@ -275,6 +275,9 @@ public:
 
     int init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ctx,
              char* err_out, size_t err_sz);
+    int begin_shutdown();
+    int disconnecting_count() const;
+    void finish_shutdown();
     void shutdown();
 
     void set_now_override(time_t fixed_now); /* 0 = use real time() */
