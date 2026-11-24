@@ -96,6 +96,16 @@ public:
                                 std::chrono::system_clock::time_point& out);
     static std::string format_timestamp(std::chrono::system_clock::time_point tp);
 
+    // Parse user-friendly ban lift specification:
+    //   - "" / "permanent" / "perm" / "never" -> std::nullopt (permanent ban)
+    //   - Relative durations: "30m", "12h", "7d", "2w", "1d12h", "45 minutes", "2 days"
+    //   - Explicit dates/times: "YYYY-MM-DD", "YYYY-MM-DD HH:MM[:SS]", "YYYYMMDD", "YYYYMMDD-HHMMSS"
+    static bool parse_lift_spec(
+        std::string_view text,
+        std::chrono::system_clock::time_point now,
+        std::optional<std::chrono::system_clock::time_point>& lift_at_out,
+        std::string* error_out = nullptr);
+
     // Sanitizes an appeal message: keeps only base printable ASCII (0x20..0x7E,
     // no control characters), trims leading/trailing whitespace, truncates to 140 chars.
     static std::string sanitize_appeal_text(std::string_view raw);

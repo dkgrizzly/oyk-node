@@ -15,6 +15,15 @@
 
 namespace oyk::node {
 
+struct ChatConfig {
+    bool enabled = true;
+    uint8_t ssid = 12;                  // Default SSID 12 -> <node base callsign>-12
+    ax25::Callsign callsign;            // Optional explicit callsign override
+    ax25::Callsign alias{"OYKCHT", 0};  // Optional chat alias
+    std::string default_topic = "Lobby";
+    std::string welcome = "Welcome to OYK Packet Chat! Type /h for help, /q to leave.";
+};
+
 struct NodeConfig {
     ax25::Callsign callsign{"N0CALL", 7};
     ax25::Callsign alias{"OYKNOD", 0};
@@ -24,6 +33,7 @@ struct NodeConfig {
     bool has_detected_line_ending = false;
 
     LogConfig logging;
+    ChatConfig chat;
     std::string banlist_path; // Optional override from banlist= in [node]
 
     bool accept_incoming_default = true;
@@ -40,6 +50,9 @@ struct NodeConfig {
     // Resolves banlist.cfg path: explicit `banlist=` override if set,
     // otherwise `banlist.cfg` in the same directory as `source_path` (or `./banlist.cfg`).
     std::string resolved_banlist_path() const;
+
+    // Resolves CHAT callsign: explicit chat.callsign if valid, else <callsign.base()>-<chat.ssid>.
+    ax25::Callsign resolved_chat_callsign() const;
 
     static NodeConfig make_default();
 

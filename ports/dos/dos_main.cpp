@@ -139,8 +139,10 @@ static void render_dos_screen() {
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
             sprintf(line, "#%-3lu %-10.10s %-8.8s %-8.8s %s",
                     static_cast<unsigned long>(s.id), cs,
-                    g_node.iface(s.iface_idx).cfg.id, s.since_hms,
-                    s.restricted_ban ? "BAN NOTICE" : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"));
+                    (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local", s.since_hms,
+                    s.restricted_ban ? "BAN NOTICE"
+                                     : (s.in_chat ? "CHAT"
+                                                  : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
             vid_puts(row++, 0, 0x07, line, 80);
         }
     }
@@ -244,6 +246,7 @@ struct DosFsEntry {
 static oyk_u32 g_dterm_sid = 0;
 static int g_dterm_connected = 0;
 static int g_dterm_connecting = 0;
+static int g_dterm_is_local = 0;
 static OykCallsign g_dterm_remote;
 static OykYappSession g_dterm_yapp;
 static char g_dterm_lines[DOS_TERM_MAX_LINES][80];
@@ -302,10 +305,15 @@ static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
         sprintf(msg, "*** Connected to %s", cs);
         dterm_push_line(msg);
     } else if (event_type == 2 && data && len > 0) {
+        const oyk_u8* text_ptr = data;
+        size_t text_len = len;
         static oyk_u8 plain[256];
-        size_t pn = oyk_yapp_feed_bytes(&g_dterm_yapp, data, len, plain, sizeof(plain));
-        for (size_t i = 0; i < pn; ++i) {
-            oyk_u8 ch = plain[i];
+        if (!g_dterm_is_local) {
+            text_len = oyk_yapp_feed_bytes(&g_dterm_yapp, data, len, plain, sizeof(plain));
+            text_ptr = plain;
+        }
+        for (size_t i = 0; i < text_len; ++i) {
+            oyk_u8 ch = text_ptr[i];
             if (ch == '\r' || ch == '\n') {
                 if (g_dterm_curline_len > 0 || ch == '\r') {
                     g_dterm_curline[g_dterm_curline_len] = '\0';
@@ -318,7 +326,7 @@ static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
                 }
             }
         }
-        if (g_dterm_yapp.status[0] && strcmp(g_dterm_yapp.status, g_dterm_last_yapp) != 0) {
+        if (!g_dterm_is_local && g_dterm_yapp.status[0] && strcmp(g_dterm_yapp.status, g_dterm_last_yapp) != 0) {
             strncpy(g_dterm_last_yapp, g_dterm_yapp.status, sizeof(g_dterm_last_yapp) - 1);
             g_dterm_last_yapp[sizeof(g_dterm_last_yapp) - 1] = '\0';
             char line[80];
@@ -329,6 +337,7 @@ static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
         g_dterm_sid = 0;
         g_dterm_connecting = 0;
         g_dterm_connected = 0;
+        g_dterm_is_local = 0;
         oyk_yapp_reset(&g_dterm_yapp);
         char msg[80];
         sprintf(msg, "*** Disconnected (%.56s)", reason ? reason : "Closed");
@@ -482,7 +491,8 @@ static void render_dos_terminal(const char* input_buf) {
     if (g_dterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-        sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (YAPP ready)", cs);
+        sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (%s)",
+                cs, g_dterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready");
     } else if (g_dterm_connecting) {
         char cs[16];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
@@ -519,6 +529,7 @@ static void run_dos_local_terminal() {
     g_dterm_sid = 0;
     g_dterm_connected = 0;
     g_dterm_connecting = 0;
+    g_dterm_is_local = 0;
     g_dterm_line_count = 0;
     g_dterm_curline_len = 0;
     g_dterm_last_yapp[0] = '\0';
@@ -552,36 +563,41 @@ static void run_dos_local_terminal() {
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 60) { /* F2: Connect */
-                if (g_axudp_iface_idx < 0) {
-                    dterm_push_line("*** No AXUDP interface active.");
-                } else {
-                    char target[64], err[64];
-                    prompt_line("Connect CALL[@ip:port] (Esc=cancel): ", target, sizeof(target));
-                    if (target[0]) {
-                        if (g_dterm_sid != 0) g_node.close_local_terminal(g_dterm_sid);
-                        oyk_u32 sid = 0;
-                        if (g_node.open_local_terminal(g_axudp_iface_idx, target, &sid,
-                                                       &g_dterm_remote, err, sizeof(err))) {
-                            g_dterm_sid = sid;
-                            g_dterm_connecting = 1;
-                            g_dterm_connected = 0;
-                            oyk_yapp_reset(&g_dterm_yapp);
-                            oyk_yapp_set_remote(&g_dterm_yapp, &g_dterm_remote);
-                            g_dterm_last_yapp[0] = '\0';
-                            char cs[16], msg[72];
-                            oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-                            sprintf(msg, "*** Connecting to %s...", cs);
-                            dterm_push_line(msg);
+                char target[64], err[64];
+                prompt_line("Target (LOCAL, CHAT, or CALL@ip:port): ", target, sizeof(target));
+                if (target[0]) {
+                    if (g_dterm_sid != 0) g_node.close_local_terminal(g_dterm_sid);
+                    oyk_u32 sid = 0;
+                    int is_local = 0;
+                    g_dterm_is_local = 0;
+                    if (g_node.open_local_terminal(g_axudp_iface_idx, target, &sid,
+                                                   &g_dterm_remote, &is_local, err, sizeof(err))) {
+                        g_dterm_sid = sid;
+                        g_dterm_is_local = is_local;
+                        g_dterm_connecting = is_local ? 0 : 1;
+                        g_dterm_connected = is_local ? 1 : 0;
+                        oyk_yapp_reset(&g_dterm_yapp);
+                        oyk_yapp_set_remote(&g_dterm_yapp, &g_dterm_remote);
+                        g_dterm_last_yapp[0] = '\0';
+                        char cs[16], msg[78];
+                        oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+                        if (is_local) {
+                            sprintf(msg, "*** Connected locally to %s (YAPP disabled)", cs);
                         } else {
-                            char msg[80];
-                            sprintf(msg, "*** Connect error: %.56s", err);
-                            dterm_push_line(msg);
+                            sprintf(msg, "*** Connecting to %s...", cs);
                         }
+                        dterm_push_line(msg);
+                    } else {
+                        char msg[80];
+                        sprintf(msg, "*** Connect error: %.56s", err);
+                        dterm_push_line(msg);
                     }
                 }
             } else if (ext == 61) { /* F3: YAPP Upload */
                 if (!g_dterm_connected || g_dterm_sid == 0) {
                     dterm_push_line("*** Connect to a remote node first (F2).");
+                } else if (g_dterm_is_local) {
+                    dterm_push_line("*** YAPP is disallowed when both sides are local.");
                 } else {
                     static char chosen[160];
                     if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
@@ -662,11 +678,21 @@ static void run_dos_menu_action(int chosen, int* running) {
     } else if (chosen == 4) {
         char call_buf[16];
         prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
-        if (call_buf[0] == '-') {
-            g_node.unban_callsign(call_buf + 1, g_status_line, sizeof(g_status_line));
+        if (call_buf[0] == '-' && call_buf[1]) {
+            char confirm_p[48], yn[4];
+            sprintf(confirm_p, "Unban %s? [Y/N]: ", call_buf + 1);
+            prompt_line(confirm_p, yn, sizeof(yn));
+            if (yn[0] == 'y' || yn[0] == 'Y') {
+                g_node.unban_callsign(call_buf + 1, g_status_line, sizeof(g_status_line));
+            } else {
+                strcpy(g_status_line, "Unban cancelled.");
+            }
         } else if (call_buf[0]) {
+            char lift_buf[32];
+            prompt_line("Lift [permanent, 30m, 12h, 7d, YYYY-MM-DD]: ", lift_buf, sizeof(lift_buf));
             g_node.ban_callsign(call_buf, OYK_BAN_APPEAL_ALLOWED,
-                                "Banned by DOS sysop.", "permanent",
+                                "Banned by DOS sysop.",
+                                lift_buf[0] ? lift_buf : "permanent",
                                 g_status_line, sizeof(g_status_line));
         }
     } else if (chosen == 5) {

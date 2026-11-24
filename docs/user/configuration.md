@@ -84,6 +84,23 @@ If omitted from `[logfiles]`, `node.log` defaults to `0x37` (`ERROR|WARNING|INFO
 
 When `log_rotate_daily = true`, active log files rotate automatically at calendar day rollover (and stale previous-day files rotate at startup) to `<file>.YYYYMMDD` on POSIX/Windows (or 8.3-safe `MMDD<3ch>.LOG` on MS-DOS).
 
+### `[chat]`
+
+Configures the built-in multi-user amateur radio packet CHAT conference room (enabled on **SSID 12** by default, e.g., `N0CALL-12`):
+
+```ini
+[chat]
+enabled = true
+ssid = 12
+# Optional explicit callsign override (defaults to <node base callsign>-<ssid>):
+# callsign = N0CALL-12
+alias = OYKCHT
+topic = Lobby
+welcome = Welcome to OYK Packet Chat! Type /h for help, /q to leave.
+```
+
+Users can connect directly to the CHAT callsign/SSID (or alias) over any radio interface or Local Terminal, or type `CHAT` from the node command shell. Inside CHAT, `/h` lists commands (`/u` users, `/t` topics, `/j <topic>` switch topic, `/m <call> <msg>` private message, `/n <name>` display name, `/q` leave).
+
 ### `[interface <id>]`
 
 Define one or more radio/transport ports, each with a unique `<id>`:

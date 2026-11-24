@@ -141,6 +141,129 @@ std::string BanList::format_timestamp(std::chrono::system_clock::time_point tp) 
     return Logger::format_timestamp_compact(tp);
 }
 
+bool BanList::parse_lift_spec(
+    std::string_view text,
+    std::chrono::system_clock::time_point now,
+    std::optional<std::chrono::system_clock::time_point>& lift_at_out,
+    std::string* error_out) {
+    std::string s = trim(text);
+    std::string low = to_lower(s);
+    if (low.empty() || low == "permanent" || low == "perm" || low == "never") {
+        lift_at_out = std::nullopt;
+        return true;
+    }
+
+    // 1. Canonical compact timestamp YYYYMMDD-HHMMSS
+    std::chrono::system_clock::time_point tp{};
+    if (parse_timestamp(s, tp)) {
+        lift_at_out = tp;
+        return true;
+    }
+
+    // 2. Compact 8-digit date YYYYMMDD -> end of day (23:59:59)
+    if (s.size() == 8 && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isdigit(c); })) {
+        if (parse_timestamp(s + "-235959", tp)) {
+            lift_at_out = tp;
+            return true;
+        }
+    }
+
+    // 3. ISO date: YYYY-MM-DD [HH:MM[:SS]] (or YYYY/MM/DD)
+    if (s.size() >= 10 &&
+        std::isdigit(static_cast<unsigned char>(s[0])) &&
+        std::isdigit(static_cast<unsigned char>(s[1])) &&
+        std::isdigit(static_cast<unsigned char>(s[2])) &&
+        std::isdigit(static_cast<unsigned char>(s[3])) &&
+        (s[4] == '-' || s[4] == '/') &&
+        std::isdigit(static_cast<unsigned char>(s[5])) &&
+        std::isdigit(static_cast<unsigned char>(s[6])) &&
+        (s[7] == '-' || s[7] == '/') &&
+        std::isdigit(static_cast<unsigned char>(s[8])) &&
+        std::isdigit(static_cast<unsigned char>(s[9]))) {
+        std::string ymd = s.substr(0, 4) + s.substr(5, 2) + s.substr(8, 2);
+        std::string rest = trim(s.substr(10));
+        if (!rest.empty() && (rest[0] == 'T' || rest[0] == 't')) {
+            rest = trim(rest.substr(1));
+        }
+        std::string hms = "235959";
+        if (!rest.empty()) {
+            if (rest.size() == 5 && rest[2] == ':') {
+                hms = rest.substr(0, 2) + rest.substr(3, 2) + "00";
+            } else if (rest.size() == 8 && rest[2] == ':' && rest[5] == ':') {
+                hms = rest.substr(0, 2) + rest.substr(3, 2) + rest.substr(6, 2);
+            } else {
+                if (error_out) {
+                    *error_out = "Invalid time in date (use YYYY-MM-DD or YYYY-MM-DD HH:MM)";
+                }
+                return false;
+            }
+        }
+        if (parse_timestamp(ymd + "-" + hms, tp)) {
+            lift_at_out = tp;
+            return true;
+        }
+        if (error_out) *error_out = "Invalid calendar date";
+        return false;
+    }
+
+    // 4. Relative duration: e.g. "30m", "12h", "7d", "2w", "1d 12h", "45 minutes"
+    int64_t total_secs = 0;
+    std::size_t pos = 0;
+    int parts = 0;
+    while (pos < low.size()) {
+        while (pos < low.size() && (std::isspace(static_cast<unsigned char>(low[pos])) || low[pos] == ',' || low[pos] == '+')) {
+            ++pos;
+        }
+        if (pos >= low.size()) break;
+        if (!std::isdigit(static_cast<unsigned char>(low[pos]))) {
+            if (error_out) {
+                *error_out = "Invalid lift spec (use permanent, 30m, 12h, 7d, or YYYY-MM-DD)";
+            }
+            return false;
+        }
+        int64_t num = 0;
+        while (pos < low.size() && std::isdigit(static_cast<unsigned char>(low[pos]))) {
+            num = num * 10 + (low[pos] - '0');
+            if (num > 10000000LL) {
+                if (error_out) *error_out = "Duration value too large";
+                return false;
+            }
+            ++pos;
+        }
+        while (pos < low.size() && std::isspace(static_cast<unsigned char>(low[pos]))) ++pos;
+        std::size_t ustart = pos;
+        while (pos < low.size() && std::isalpha(static_cast<unsigned char>(low[pos]))) ++pos;
+        std::string unit = low.substr(ustart, pos - ustart);
+        int64_t mult = 0;
+        if (unit == "m" || unit == "min" || unit == "mins" || unit == "minute" || unit == "minutes") {
+            mult = 60LL;
+        } else if (unit == "h" || unit == "hr" || unit == "hrs" || unit == "hour" || unit == "hours") {
+            mult = 3600LL;
+        } else if (unit == "d" || unit == "day" || unit == "days") {
+            mult = 86400LL;
+        } else if (unit == "w" || unit == "wk" || unit == "wks" || unit == "week" || unit == "weeks") {
+            mult = 7LL * 86400LL;
+        } else {
+            if (error_out) {
+                *error_out = "Invalid duration unit (use m/minutes, h/hours, d/days, or YYYY-MM-DD)";
+            }
+            return false;
+        }
+        total_secs += num * mult;
+        ++parts;
+    }
+
+    if (parts == 0 || total_secs <= 0) {
+        if (error_out) {
+            *error_out = "Invalid lift spec (use permanent, 30m, 12h, 7d, or YYYY-MM-DD)";
+        }
+        return false;
+    }
+
+    lift_at_out = now + std::chrono::seconds(total_secs);
+    return true;
+}
+
 std::string BanList::sanitize_appeal_text(std::string_view raw) {
     std::string clean;
     clean.reserve(std::min(raw.size(), MAX_APPEAL_LENGTH));

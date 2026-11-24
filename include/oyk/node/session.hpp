@@ -29,7 +29,8 @@ enum class SessionDirection {
 enum class SessionMode {
     Normal,
     RestrictedBan,
-    LocalTerminal
+    LocalTerminal,
+    Chat
 };
 
 struct SessionParams {
@@ -77,7 +78,12 @@ public:
     void set_bridged_session_id(uint64_t other_id) noexcept { bridged_session_id_ = other_id; }
 
     SessionMode mode() const noexcept { return mode_; }
+    void set_mode(SessionMode m) noexcept { mode_ = m; }
     void set_local_terminal() noexcept { mode_ = SessionMode::LocalTerminal; }
+    void set_local_loopback(bool v) noexcept { local_loopback_ = v; }
+    bool is_local_loopback() const noexcept { return local_loopback_; }
+    void set_chat_direct(bool v) noexcept { chat_direct_ = v; }
+    bool is_chat_direct() const noexcept { return chat_direct_; }
     void set_restricted_ban(std::string ban_key, bool appeal_eligible) {
         mode_ = SessionMode::RestrictedBan;
         ban_key_ = std::move(ban_key);
@@ -98,6 +104,9 @@ public:
     SessionEvents queue_bytes(const std::vector<uint8_t>& data);
     SessionEvents on_frame(const ax25::Frame& frame);
     SessionEvents on_tick(std::chrono::steady_clock::time_point now);
+
+    // Feed raw typed bytes for an in-process local loopback session, returning completed lines
+    std::vector<std::string> feed_local_loopback_bytes(const std::vector<uint8_t>& data);
 
     static std::string state_name(SessionState st);
 
@@ -125,6 +134,8 @@ private:
 
     SessionState state_ = SessionState::Connecting;
     SessionMode mode_ = SessionMode::Normal;
+    bool local_loopback_ = false;
+    bool chat_direct_ = false;
     std::string ban_key_;
     bool appeal_eligible_ = false;
     uint64_t bridged_session_id_ = 0;

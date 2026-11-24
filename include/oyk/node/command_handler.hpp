@@ -16,6 +16,7 @@ class NodeEngine;
 struct CommandResult {
     std::string response_text; // Text sent back to remote user (uses \r line endings)
     bool disconnect = false;   // True if user issued BYE/QUIT
+    bool enter_chat = false;   // True if user issued CHAT
     bool connect_request = false;
     std::string connect_port;
     std::string connect_callsign;

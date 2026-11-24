@@ -6,6 +6,7 @@
 #include "oyk/ax25/callsign.hpp"
 #include "oyk/ax25/frame.hpp"
 #include "oyk/node/ban_list.hpp"
+#include "oyk/node/chat_room.hpp"
 #include "oyk/node/command_handler.hpp"
 #include "oyk/node/logger.hpp"
 #include "oyk/node/node_config.hpp"
@@ -115,6 +116,12 @@ public:
                       uint32_t flags = BAN_FLAG_APPEAL_ALLOWED,
                       const std::string& reason = "Banned by sysop.",
                       std::optional<std::chrono::system_clock::time_point> lift_at = std::nullopt);
+    bool ban_callsign_with_lift_spec(std::string_view callsign_spec,
+                                     std::string_view lift_spec,
+                                     std::string* message_out = nullptr,
+                                     bool disconnect_active = true,
+                                     uint32_t flags = BAN_FLAG_APPEAL_ALLOWED,
+                                     const std::string& reason = "Banned by sysop.");
     bool unban_callsign(std::string_view callsign_spec, std::string* message_out = nullptr);
     bool is_banned(const ax25::Callsign& call) const;
 
@@ -138,7 +145,8 @@ public:
                              LocalTerminalCallbacks callbacks,
                              uint64_t& session_id_out,
                              ax25::Callsign* resolved_call_out,
-                             std::string& error_out);
+                             std::string& error_out,
+                             bool* is_local_out = nullptr);
     bool send_local_terminal_bytes(uint64_t session_id, const std::vector<uint8_t>& data);
     bool close_local_terminal(uint64_t session_id);
 
@@ -173,6 +181,14 @@ private:
     void queue_session_frames(Session& sess,
                               const std::vector<ax25::Frame>& frames,
                               std::vector<PendingTx>& pending);
+    void deliver_text_locked(Session& sess,
+                             const std::string& text,
+                             std::vector<PendingTx>& pending,
+                             std::vector<PendingLocalEvent>& pending_local);
+    void apply_chat_result_locked(const ChatActionResult& res,
+                                  uint64_t actor_sid,
+                                  std::vector<PendingTx>& pending,
+                                  std::vector<PendingLocalEvent>& pending_local);
     void process_session_events(Session& sess,
                                 SessionEvents& ev,
                                 std::vector<PendingTx>& pending,
@@ -193,6 +209,7 @@ private:
                              const std::string& interface_id,
                              std::chrono::system_clock::time_point now);
     bool is_for_node(const ax25::Callsign& dst) const;
+    bool is_for_chat(const ax25::Callsign& dst) const;
     bool is_own_callsign(const ax25::Callsign& call) const;
     bool is_banned_locked(const ax25::Callsign& call) const;
     std::string resolve_port_id_locked(const std::string& port_spec) const;
@@ -226,8 +243,9 @@ private:
     std::deque<NewCallsignRecord> last_new_callsigns_; // Most recent 5 new callsigns (newest first)
     std::map<std::string, MHeardRecord> mheard_;
 
-    // Persistent banlist (banlist.cfg)
+    // Persistent banlist (banlist.cfg) & multi-user CHAT conference room
     BanList ban_list_;
+    ChatRoom chat_room_;
 
     std::thread timer_thread_;
 };

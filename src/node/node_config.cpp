@@ -91,6 +91,13 @@ std::string NodeConfig::resolved_banlist_path() const {
     return "./banlist.cfg";
 }
 
+ax25::Callsign NodeConfig::resolved_chat_callsign() const {
+    if (chat.callsign.valid()) {
+        return chat.callsign;
+    }
+    return ax25::Callsign(callsign.base(), static_cast<uint8_t>(chat.ssid & 0x0Fu));
+}
+
 NodeConfig NodeConfig::make_default() {
     NodeConfig cfg;
     radio::RadioInterfaceConfig axudp;
@@ -176,6 +183,9 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 current_iface = nullptr;
             } else if (lower_sec == "logfiles") {
                 current_section = "logfiles";
+                current_iface = nullptr;
+            } else if (lower_sec == "chat") {
+                current_section = "chat";
                 current_iface = nullptr;
             } else if (lower_sec.rfind("interface", 0) == 0) {
                 std::string rest = trim(sec.substr(9));
@@ -274,6 +284,40 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 return false;
             }
             cfg.logging.log_files[raw_key] = mask;
+        } else if (current_section == "chat") {
+            if (key == "enabled") {
+                cfg.chat.enabled = parse_bool(val, true);
+            } else if (key == "ssid") {
+                cfg.chat.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+            } else if (key == "callsign") {
+                if (val.empty()) {
+                    cfg.chat.callsign = ax25::Callsign{};
+                } else {
+                    auto parsed = ax25::Callsign::parse(val);
+                    if (!parsed) {
+                        error_out = "Config line " + std::to_string(line_num) +
+                                    ": invalid chat callsign '" + val + "'";
+                        return false;
+                    }
+                    cfg.chat.callsign = *parsed;
+                }
+            } else if (key == "alias") {
+                if (val.empty()) {
+                    cfg.chat.alias = ax25::Callsign{};
+                } else {
+                    auto parsed = ax25::Callsign::parse(val);
+                    if (!parsed) {
+                        error_out = "Config line " + std::to_string(line_num) +
+                                    ": invalid chat alias '" + val + "'";
+                        return false;
+                    }
+                    cfg.chat.alias = *parsed;
+                }
+            } else if (key == "topic" || key == "default_topic") {
+                if (!val.empty()) cfg.chat.default_topic = val;
+            } else if (key == "welcome") {
+                cfg.chat.welcome = val;
+            }
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
@@ -335,6 +379,19 @@ bool NodeConfig::save_to_file(const std::string& path) const {
             lines.push_back(oss.str());
         }
     }
+
+    lines.push_back("");
+    lines.push_back("[chat]");
+    lines.push_back("enabled = " + std::string(chat.enabled ? "true" : "false"));
+    lines.push_back("ssid = " + std::to_string(static_cast<int>(chat.ssid)));
+    if (chat.callsign.valid()) {
+        lines.push_back("callsign = " + chat.callsign.str());
+    }
+    if (chat.alias.valid()) {
+        lines.push_back("alias = " + chat.alias.str());
+    }
+    lines.push_back("topic = " + chat.default_topic);
+    lines.push_back("welcome = " + chat.welcome);
 
     for (const auto& iface : interfaces) {
         lines.push_back("");

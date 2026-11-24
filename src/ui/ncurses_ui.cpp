@@ -411,8 +411,10 @@ void NcursesUI::draw_sessions_pane(const node::NodeSnapshot& snap, int y, int x,
                                ? "BAN NOTICE"
                                : (s.mode == node::SessionMode::LocalTerminal)
                                      ? "LOCAL TERM"
-                                     : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
-                                                             : "NODE SHELL");
+                                     : (s.mode == node::SessionMode::Chat)
+                                           ? "CHAT"
+                                           : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
+                                                                   : "NODE SHELL");
         line << std::left
              << std::setw(6) << ("#" + std::to_string(s.id))
              << std::setw(12) << clip(s.remote_call, 11)
@@ -702,6 +704,7 @@ void NcursesUI::modal_local_terminal() {
         uint64_t sid = 0;
         bool connecting = false;
         bool connected = false;
+        bool is_local = false;
         std::string port_id;
         ax25::Callsign remote_call{"UNKNOWN", 0};
         std::deque<std::string> lines;
@@ -766,6 +769,10 @@ void NcursesUI::modal_local_terminal() {
         cbs.on_rx_bytes = [ts](uint64_t sid, const std::vector<uint8_t>& bytes) {
             std::lock_guard<std::mutex> lk(ts->mtx);
             if (ts->sid != sid) return;
+            if (ts->is_local) {
+                ts->append_bytes(bytes);
+                return;
+            }
             std::vector<uint8_t> plain;
             ts->yapp.feed_bytes(bytes.data(), bytes.size(), plain);
             if (!plain.empty()) {
@@ -783,22 +790,29 @@ void NcursesUI::modal_local_terminal() {
             ts->sid = 0;
             ts->connecting = false;
             ts->connected = false;
+            ts->is_local = false;
             ts->yapp.reset();
             ts->append_line("*** Disconnected (" + reason + ")");
         };
 
         uint64_t new_sid = 0;
         ax25::Callsign resolved;
+        bool is_local = false;
         std::string err;
-        if (engine_.open_local_terminal(port, target, std::move(cbs), new_sid, &resolved, err)) {
+        if (engine_.open_local_terminal(port, target, std::move(cbs), new_sid, &resolved, err, &is_local)) {
             std::lock_guard<std::mutex> lk(ts->mtx);
             ts->sid = new_sid;
-            ts->connecting = true;
-            ts->connected = false;
-            ts->port_id = port;
+            ts->is_local = is_local;
+            ts->connecting = !is_local;
+            ts->connected = is_local;
+            ts->port_id = is_local ? "local" : port;
             ts->remote_call = resolved;
             ts->yapp.set_remote_callsign(resolved);
-            ts->append_line("*** Connecting to " + resolved.str() + " on " + port + "...");
+            if (is_local) {
+                ts->append_line("*** Connected locally to " + resolved.str() + " (YAPP disabled on local link)");
+            } else {
+                ts->append_line("*** Connecting to " + resolved.str() + " on " + port + "...");
+            }
         } else {
             std::lock_guard<std::mutex> lk(ts->mtx);
             ts->append_line("*** Connect error: " + err);
@@ -843,7 +857,7 @@ void NcursesUI::modal_local_terminal() {
             mvwaddnstr(cw, 4, 12, clip(call_in, w - 14).c_str(), w - 14);
             if (focus == 1) wattroff(cw, A_UNDERLINE | A_BOLD);
 
-            mvwaddnstr(cw, 6, 2, clip("CALLSIGN or CALLSIGN@ip:port  |  Tab:Field  Enter:Go  Esc:Cancel", w - 4).c_str(), w - 4);
+            mvwaddnstr(cw, 6, 2, clip("LOCAL, CHAT, CALL, or CALL@ip:port | Tab:Field Enter:Go Esc:Cancel", w - 4).c_str(), w - 4);
             wmove(cw, focus == 0 ? 2 : 4, 12 + static_cast<int>((focus == 0 ? port_in : call_in).size()));
             wrefresh(cw);
 
@@ -853,7 +867,7 @@ void NcursesUI::modal_local_terminal() {
             if (ch == '\t') {
                 focus = 1 - focus;
             } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-                if (!port_in.empty() && !call_in.empty()) {
+                if (!port_in.empty()) {
                     curs_set(0);
                     delwin(cw);
                     start_connect(port_in, call_in);
@@ -997,13 +1011,18 @@ void NcursesUI::modal_local_terminal() {
             prompt_connect();
         } else if (ch == KEY_F(3)) {
             bool is_conn = false;
+            bool is_loc = false;
             {
                 std::lock_guard<std::mutex> lk(ts->mtx);
                 is_conn = ts->connected;
+                is_loc = ts->is_local;
             }
             if (!is_conn) {
                 std::lock_guard<std::mutex> lk(ts->mtx);
                 ts->append_line("*** Connect to a remote node first before YAPP upload (F2).");
+            } else if (is_loc) {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                ts->append_line("*** YAPP file transfer is disallowed when both sides are local.");
             } else {
                 curs_set(0);
                 std::string chosen_file;
@@ -1057,10 +1076,14 @@ void NcursesUI::modal_local_terminal() {
                     if (sid != 0) engine_.close_local_terminal(sid);
                 } else if (cmd == "/send") {
                     bool is_conn = false;
-                    { std::lock_guard<std::mutex> lk(ts->mtx); is_conn = ts->connected; }
+                    bool is_loc = false;
+                    { std::lock_guard<std::mutex> lk(ts->mtx); is_conn = ts->connected; is_loc = ts->is_local; }
                     if (!is_conn) {
                         std::lock_guard<std::mutex> lk(ts->mtx);
                         ts->append_line("*** Not connected.");
+                    } else if (is_loc) {
+                        std::lock_guard<std::mutex> lk(ts->mtx);
+                        ts->append_line("*** YAPP file transfer is disallowed when both sides are local.");
                     } else {
                         curs_set(0);
                         std::string chosen_file;
@@ -1205,8 +1228,8 @@ void NcursesUI::modal_terminate_connection() {
 void NcursesUI::modal_ban_callsign() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(72, cols - 4);
-    int h = std::min(19, rows - 4);
+    int w = std::min(74, cols - 4);
+    int h = std::min(21, rows - 4);
     int y = std::max(1, (rows - h) / 2);
     int x = std::max(1, (cols - w) / 2);
 
@@ -1216,25 +1239,69 @@ void NcursesUI::modal_ban_callsign() {
     wtimeout(win, 200);
 
     std::string call_input;
+    std::string lift_input = "permanent";
     std::string reason_input = "Banned by sysop.";
     bool hard_ban = false;
     bool appeal_allowed = true;
     std::string feedback;
     int unban_sel = 0;
-    int focus = 0; // 0=callsign, 1=reason, 2=flags, 3=unban list
+    int focus = 0; // 0=callsign, 1=lift, 2=reason, 3=flags, 4=unban list
+
+    auto submit_ban = [&]() {
+        if (call_input.empty()) {
+            feedback = "Enter a callsign first.";
+            return;
+        }
+        uint32_t flags = (appeal_allowed ? node::BAN_FLAG_APPEAL_ALLOWED : 0) |
+                         (hard_ban ? node::BAN_FLAG_HARD_BAN : 0);
+        std::string msg;
+        if (engine_.ban_callsign_with_lift_spec(call_input, lift_input, &msg, true, flags, reason_input)) {
+            call_input.clear();
+            lift_input = "permanent";
+            feedback = msg;
+            set_status(msg);
+        } else {
+            feedback = "Error: " + msg;
+        }
+    };
+
+    auto confirm_unban = [&](const std::string& call_key) -> bool {
+        int cw = std::min(46, cols - 4);
+        int ch_h = 6;
+        WINDOW* cwin = newwin(ch_h, cw, std::max(1, (rows - ch_h) / 2), std::max(1, (cols - cw) / 2));
+        if (!cwin) return false;
+        keypad(cwin, TRUE);
+        wtimeout(cwin, 200);
+        bool yes = false;
+        while (true) {
+            if (external_stop_flag_ && external_stop_flag_->load()) break;
+            werase(cwin);
+            box(cwin, 0, 0);
+            mvwprintw(cwin, 0, 2, " Confirm Unban ");
+            mvwaddnstr(cwin, 2, 2, clip("Unban callsign " + call_key + "?", cw - 4).c_str(), cw - 4);
+            mvwaddnstr(cwin, 3, 2, "[Y] Yes   [N] No", cw - 4);
+            wrefresh(cwin);
+            int k = wgetch(cwin);
+            if (k == ERR) continue;
+            if (k == 'y' || k == 'Y') { yes = true; break; }
+            if (k == 'n' || k == 'N' || k == 27) { yes = false; break; }
+        }
+        delwin(cwin);
+        return yes;
+    };
 
     while (true) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
 
         auto snap = engine_.snapshot();
         if (snap.ban_entries.empty()) {
-            if (focus == 3) focus = 0;
+            if (focus == 4) focus = 0;
             unban_sel = 0;
         } else if (unban_sel >= static_cast<int>(snap.ban_entries.size())) {
             unban_sel = static_cast<int>(snap.ban_entries.size()) - 1;
         }
 
-        curs_set((focus == 0 || focus == 1) ? 1 : 0);
+        curs_set((focus <= 2) ? 1 : 0);
         werase(win);
         box(win, 0, 0);
         mvwprintw(win, 0, 2, " Ban / Unban Callsign (banlist.cfg) ");
@@ -1246,32 +1313,40 @@ void NcursesUI::modal_ban_callsign() {
                    w - 14);
         if (focus == 0) wattroff(win, A_UNDERLINE | A_BOLD);
 
-        mvwaddnstr(win, 3, 2, "Reason  : ", w - 4);
+        mvwaddnstr(win, 3, 2, "Lift At : ", w - 4);
+        int field_w = std::max(10, w - 14);
         if (focus == 1) wattron(win, A_UNDERLINE | A_BOLD);
-        int reason_w = std::max(10, w - 14);
-        mvwaddnstr(win, 3, 12, clip(reason_input, reason_w).c_str(), reason_w);
+        mvwaddnstr(win, 3, 12, clip(lift_input, field_w).c_str(), field_w);
         if (focus == 1) wattroff(win, A_UNDERLINE | A_BOLD);
+        if (w > 48) {
+            mvwaddnstr(win, 3, 32, clip("(permanent, 30m, 12h, 7d, YYYY-MM-DD)", w - 34).c_str(), w - 34);
+        }
+
+        mvwaddnstr(win, 4, 2, "Reason  : ", w - 4);
+        if (focus == 2) wattron(win, A_UNDERLINE | A_BOLD);
+        mvwaddnstr(win, 4, 12, clip(reason_input, field_w).c_str(), field_w);
+        if (focus == 2) wattroff(win, A_UNDERLINE | A_BOLD);
 
         std::string flags_line = std::string("Options : [") + (hard_ban ? "X" : " ") +
                                  "] Hard Ban (H)   [" + (appeal_allowed ? "X" : " ") +
                                  "] Appeal Allowed (A)";
-        if (focus == 2) wattron(win, A_REVERSE | A_BOLD);
-        mvwaddnstr(win, 4, 2, clip(flags_line, w - 4).c_str(), w - 4);
-        if (focus == 2) wattroff(win, A_REVERSE | A_BOLD);
+        if (focus == 3) wattron(win, A_REVERSE | A_BOLD);
+        mvwaddnstr(win, 5, 2, clip(flags_line, w - 4).c_str(), w - 4);
+        if (focus == 3) wattroff(win, A_REVERSE | A_BOLD);
 
-        mvwprintw(win, 6, 2, "Active Bans (%zu):", snap.ban_entries.size());
-        int list_h = std::max(1, h - 10);
+        mvwprintw(win, 7, 2, "Active Bans (%zu):", snap.ban_entries.size());
+        int list_h = std::max(1, h - 11);
         if (snap.ban_entries.empty()) {
-            mvwaddnstr(win, 7, 4, "(none)", w - 6);
+            mvwaddnstr(win, 8, 4, "(none)", w - 6);
         } else {
             int offset = (unban_sel >= list_h) ? (unban_sel - list_h + 1) : 0;
             for (int i = 0; i < list_h && (offset + i) < static_cast<int>(snap.ban_entries.size()); ++i) {
                 const auto& e = snap.ban_entries[static_cast<std::size_t>(offset + i)];
                 std::string row = " " + e.key + " [" + (e.hard_ban() ? "HARD" : "SOFT") +
-                                  " " + e.format_flags_binary() + "] " + e.reason;
-                bool highlighted = (focus == 3) && (offset + i == unban_sel);
+                                  " " + e.format_lift_at() + "] " + e.reason;
+                bool highlighted = (focus == 4) && (offset + i == unban_sel);
                 if (highlighted) wattron(win, A_REVERSE | A_BOLD);
-                mvwaddnstr(win, 7 + i, 3, clip(row, w - 6).c_str(), w - 6);
+                mvwaddnstr(win, 8 + i, 3, clip(row, w - 6).c_str(), w - 6);
                 if (highlighted) wattroff(win, A_REVERSE | A_BOLD);
             }
         }
@@ -1279,9 +1354,9 @@ void NcursesUI::modal_ban_callsign() {
         if (!feedback.empty()) {
             mvwaddnstr(win, h - 3, 2, clip(feedback, w - 4).c_str(), w - 4);
         }
-        const char* help_str = (focus == 3)
-                                   ? "Up/Down: pick | Enter: UNBAN | Tab: next field | Esc: close"
-                                   : (focus == 2)
+        const char* help_str = (focus == 4)
+                                   ? "Up/Down: pick | Enter: UNBAN (confirm) | Tab: next | Esc: close"
+                                   : (focus == 3)
                                          ? "H: hard/soft | A: appeal | Enter: BAN | Tab: next | Esc: close"
                                          : "Enter: BAN | Tab: next field | Esc: close";
         mvwaddnstr(win, h - 2, 2, clip(help_str, w - 4).c_str(), w - 4);
@@ -1289,7 +1364,9 @@ void NcursesUI::modal_ban_callsign() {
         if (focus == 0) {
             wmove(win, 2, 12 + static_cast<int>(call_input.size()));
         } else if (focus == 1) {
-            wmove(win, 3, 12 + std::min(reason_w - 1, static_cast<int>(reason_input.size())));
+            wmove(win, 3, 12 + std::min(field_w - 1, static_cast<int>(lift_input.size())));
+        } else if (focus == 2) {
+            wmove(win, 4, 12 + std::min(field_w - 1, static_cast<int>(reason_input.size())));
         }
         wrefresh(win);
 
@@ -1298,11 +1375,11 @@ void NcursesUI::modal_ban_callsign() {
         if (ch == 27) break;
 
         if (ch == '\t') {
-            focus = (focus + 1) % (snap.ban_entries.empty() ? 3 : 4);
+            focus = (focus + 1) % (snap.ban_entries.empty() ? 4 : 5);
             continue;
         }
 
-        if (focus == 3) {
+        if (focus == 4) {
             if (ch == KEY_UP && unban_sel > 0) {
                 --unban_sel;
             } else if (ch == KEY_DOWN &&
@@ -1310,46 +1387,27 @@ void NcursesUI::modal_ban_callsign() {
                 ++unban_sel;
             } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
                 std::string call = snap.ban_entries[static_cast<std::size_t>(unban_sel)].key;
-                std::string msg;
-                engine_.unban_callsign(call, &msg);
-                feedback = msg;
-                set_status(msg);
+                curs_set(0);
+                if (confirm_unban(call)) {
+                    std::string msg;
+                    engine_.unban_callsign(call, &msg);
+                    feedback = msg;
+                    set_status(msg);
+                } else {
+                    feedback = "Unban cancelled.";
+                }
             }
-        } else if (focus == 2) {
+        } else if (focus == 3) {
             if (ch == 'h' || ch == 'H') {
                 hard_ban = !hard_ban;
             } else if (ch == 'a' || ch == 'A') {
                 appeal_allowed = !appeal_allowed;
             } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-                if (!call_input.empty()) {
-                    uint32_t flags = (appeal_allowed ? node::BAN_FLAG_APPEAL_ALLOWED : 0) |
-                                     (hard_ban ? node::BAN_FLAG_HARD_BAN : 0);
-                    std::string msg;
-                    if (engine_.ban_callsign(call_input, &msg, true, flags, reason_input)) {
-                        call_input.clear();
-                        feedback = msg;
-                        set_status(msg);
-                    } else {
-                        feedback = "Error: " + msg;
-                    }
-                } else {
-                    feedback = "Enter a callsign first.";
-                }
+                submit_ban();
             }
         } else if (focus == 0) {
             if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-                if (!call_input.empty()) {
-                    uint32_t flags = (appeal_allowed ? node::BAN_FLAG_APPEAL_ALLOWED : 0) |
-                                     (hard_ban ? node::BAN_FLAG_HARD_BAN : 0);
-                    std::string msg;
-                    if (engine_.ban_callsign(call_input, &msg, true, flags, reason_input)) {
-                        call_input.clear();
-                        feedback = msg;
-                        set_status(msg);
-                    } else {
-                        feedback = "Error: " + msg;
-                    }
-                }
+                submit_ban();
             } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
                 if (!call_input.empty()) call_input.pop_back();
             } else if (ch >= 32 && ch < 127 && call_input.size() < 9) {
@@ -1360,20 +1418,16 @@ void NcursesUI::modal_ban_callsign() {
             }
         } else if (focus == 1) {
             if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-                if (!call_input.empty()) {
-                    uint32_t flags = (appeal_allowed ? node::BAN_FLAG_APPEAL_ALLOWED : 0) |
-                                     (hard_ban ? node::BAN_FLAG_HARD_BAN : 0);
-                    std::string msg;
-                    if (engine_.ban_callsign(call_input, &msg, true, flags, reason_input)) {
-                        call_input.clear();
-                        feedback = msg;
-                        set_status(msg);
-                    } else {
-                        feedback = "Error: " + msg;
-                    }
-                } else {
-                    focus = 0;
-                }
+                submit_ban();
+            } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+                if (!lift_input.empty()) lift_input.pop_back();
+            } else if (ch >= 32 && ch < 127 && lift_input.size() < 24) {
+                lift_input.push_back(static_cast<char>(ch));
+            }
+        } else if (focus == 2) {
+            if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                if (!call_input.empty()) submit_ban();
+                else focus = 0;
             } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
                 if (!reason_input.empty()) reason_input.pop_back();
             } else if (ch >= 32 && ch < 127 && reason_input.size() < 120) {

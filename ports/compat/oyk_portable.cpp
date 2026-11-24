@@ -694,6 +694,130 @@ void oyk_format_now_hms(time_t t, char* out, size_t out_sz) {
     sprintf(out, "%02d:%02d:%02d", lt->tm_hour, lt->tm_min, lt->tm_sec);
 }
 
+int oyk_parse_lift_spec(const char* text, time_t now, char* out, size_t out_sz) {
+    if (!out || out_sz < 16) return 0;
+    char s[64];
+    safe_copy(s, sizeof(s), text ? text : "");
+    trim_inplace(s);
+    if (!s[0] || stricmp_ascii(s, "permanent") == 0 ||
+        stricmp_ascii(s, "perm") == 0 || stricmp_ascii(s, "never") == 0) {
+        safe_copy(out, out_sz, "permanent");
+        return 1;
+    }
+
+    /* 1. Canonical YYYYMMDD-HHMMSS */
+    if (valid_timestamp_15(s)) {
+        safe_copy(out, out_sz, s);
+        return 1;
+    }
+
+    /* 2. Compact 8-digit YYYYMMDD */
+    size_t slen = strlen(s);
+    if (slen == 8) {
+        int all_d = 1;
+        for (size_t i = 0; i < 8; ++i) {
+            if (!isdigit(static_cast<unsigned char>(s[i]))) { all_d = 0; break; }
+        }
+        if (all_d) {
+            sprintf(out, "%s-235959", s);
+            return 1;
+        }
+    }
+
+    /* 3. ISO date YYYY-MM-DD [HH:MM[:SS]] */
+    if (slen >= 10 &&
+        isdigit(static_cast<unsigned char>(s[0])) && isdigit(static_cast<unsigned char>(s[1])) &&
+        isdigit(static_cast<unsigned char>(s[2])) && isdigit(static_cast<unsigned char>(s[3])) &&
+        (s[4] == '-' || s[4] == '/') &&
+        isdigit(static_cast<unsigned char>(s[5])) && isdigit(static_cast<unsigned char>(s[6])) &&
+        (s[7] == '-' || s[7] == '/') &&
+        isdigit(static_cast<unsigned char>(s[8])) && isdigit(static_cast<unsigned char>(s[9]))) {
+        int mo = (s[5] - '0') * 10 + (s[6] - '0');
+        int dy = (s[8] - '0') * 10 + (s[9] - '0');
+        if (mo < 1 || mo > 12 || dy < 1 || dy > 31) return 0;
+
+        char ymd[9];
+        ymd[0] = s[0]; ymd[1] = s[1]; ymd[2] = s[2]; ymd[3] = s[3];
+        ymd[4] = s[5]; ymd[5] = s[6]; ymd[6] = s[8]; ymd[7] = s[9];
+        ymd[8] = '\0';
+
+        char rest[24];
+        safe_copy(rest, sizeof(rest), s + 10);
+        trim_inplace(rest);
+        if (rest[0] == 'T' || rest[0] == 't') {
+            memmove(rest, rest + 1, strlen(rest));
+            trim_inplace(rest);
+        }
+        char hms[7];
+        strcpy(hms, "235959");
+        if (rest[0]) {
+            size_t rlen = strlen(rest);
+            if (rlen == 5 && rest[2] == ':' &&
+                isdigit(static_cast<unsigned char>(rest[0])) && isdigit(static_cast<unsigned char>(rest[1])) &&
+                isdigit(static_cast<unsigned char>(rest[3])) && isdigit(static_cast<unsigned char>(rest[4]))) {
+                hms[0] = rest[0]; hms[1] = rest[1]; hms[2] = rest[3]; hms[3] = rest[4];
+                hms[4] = '0'; hms[5] = '0'; hms[6] = '\0';
+            } else if (rlen == 8 && rest[2] == ':' && rest[5] == ':' &&
+                       isdigit(static_cast<unsigned char>(rest[0])) && isdigit(static_cast<unsigned char>(rest[1])) &&
+                       isdigit(static_cast<unsigned char>(rest[3])) && isdigit(static_cast<unsigned char>(rest[4])) &&
+                       isdigit(static_cast<unsigned char>(rest[6])) && isdigit(static_cast<unsigned char>(rest[7]))) {
+                hms[0] = rest[0]; hms[1] = rest[1]; hms[2] = rest[3]; hms[3] = rest[4];
+                hms[4] = rest[6]; hms[5] = rest[7]; hms[6] = '\0';
+            } else {
+                return 0;
+            }
+        }
+        sprintf(out, "%s-%s", ymd, hms);
+        return valid_timestamp_15(out);
+    }
+
+    /* 4. Relative duration: 30m, 12h, 7d, 2w, 1d12h, 45 minutes, etc. */
+    long total_secs = 0L;
+    int parts = 0;
+    const char* p = s;
+    while (*p) {
+        while (*p && (isspace(static_cast<unsigned char>(*p)) || *p == ',' || *p == '+')) ++p;
+        if (!*p) break;
+        if (!isdigit(static_cast<unsigned char>(*p))) return 0;
+        long num = 0L;
+        while (*p && isdigit(static_cast<unsigned char>(*p))) {
+            num = num * 10L + static_cast<long>(*p - '0');
+            if (num > 1000000L) return 0;
+            ++p;
+        }
+        while (*p && isspace(static_cast<unsigned char>(*p))) ++p;
+        char unit[16];
+        size_t ulen = 0;
+        while (*p && isalpha(static_cast<unsigned char>(*p)) && ulen < sizeof(unit) - 1) {
+            unit[ulen++] = static_cast<char>(tolower(static_cast<unsigned char>(*p)));
+            ++p;
+        }
+        unit[ulen] = '\0';
+        long mult = 0L;
+        if (strcmp(unit, "m") == 0 || strcmp(unit, "min") == 0 || strcmp(unit, "mins") == 0 ||
+            strcmp(unit, "minute") == 0 || strcmp(unit, "minutes") == 0) {
+            mult = 60L;
+        } else if (strcmp(unit, "h") == 0 || strcmp(unit, "hr") == 0 || strcmp(unit, "hrs") == 0 ||
+                   strcmp(unit, "hour") == 0 || strcmp(unit, "hours") == 0) {
+            mult = 3600L;
+        } else if (strcmp(unit, "d") == 0 || strcmp(unit, "day") == 0 || strcmp(unit, "days") == 0) {
+            mult = 86400L;
+        } else if (strcmp(unit, "w") == 0 || strcmp(unit, "wk") == 0 || strcmp(unit, "wks") == 0 ||
+                   strcmp(unit, "week") == 0 || strcmp(unit, "weeks") == 0) {
+            mult = 7L * 86400L;
+        } else {
+            return 0;
+        }
+        total_secs += num * mult;
+        ++parts;
+    }
+
+    if (parts == 0 || total_secs <= 0L) return 0;
+    time_t target = now + static_cast<time_t>(total_secs);
+    oyk_format_now_compact(target, out, out_sz);
+    return valid_timestamp_15(out);
+}
+
 void oyk_config_init_default(OykConfig* cfg) {
     memset(cfg, 0, sizeof(*cfg));
     oyk_parse_callsign("N0CALL-7", &cfg->callsign);
@@ -705,6 +829,14 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->accept_incoming = 1;
     cfg->line_ending = oyk_platform_default_eol();
     cfg->has_detected_eol = 0;
+
+    cfg->chat_enabled = 1;
+    cfg->chat_ssid = 12;
+    memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
+    oyk_parse_callsign("OYKCHT", &cfg->chat_alias);
+    safe_copy(cfg->chat_topic, sizeof(cfg->chat_topic), "Lobby");
+    safe_copy(cfg->chat_welcome, sizeof(cfg->chat_welcome),
+              "Welcome to OYK Packet Chat! Type /h for help, /q to leave.");
 
     cfg->iface_count = 1;
     safe_copy(cfg->ifaces[0].id, sizeof(cfg->ifaces[0].id), "axudp0");
@@ -734,6 +866,16 @@ void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz) 
     safe_copy(out, out_sz, "banlist.cfg");
 }
 
+void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out) {
+    if (!cfg || !out) return;
+    if (cfg->chat_callsign.base[0] != '\0') {
+        *out = cfg->chat_callsign;
+        return;
+    }
+    *out = cfg->callsign;
+    out->ssid = static_cast<oyk_u8>(cfg->chat_ssid & 0x0FU);
+}
+
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz) {
     size_t raw_len = 0;
     char* raw = read_all_binary(path, &raw_len);
@@ -751,7 +893,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                                             &found_eol, &mixed_eol);
     cfg->has_detected_eol = found_eol;
 
-    int section = 0; /* 0=node, 1=logfiles, 2=interface */
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat */
     OykIfaceConfig* cur_if = NULL;
 
     size_t pos = 0;
@@ -774,6 +916,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if = NULL;
             } else if (stricmp_ascii(sec, "logfiles") == 0) {
                 section = 1;
+                cur_if = NULL;
+            } else if (stricmp_ascii(sec, "chat") == 0) {
+                section = 3;
                 cur_if = NULL;
             } else if (strlen(sec) > 9 &&
                        (sec[0] == 'i' || sec[0] == 'I') &&
@@ -856,6 +1001,23 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     }
                 }
             }
+        } else if (section == 3) {
+            if (stricmp_ascii(k, "enabled") == 0) {
+                cfg->chat_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "ssid") == 0) {
+                int sv = atoi(v);
+                if (sv >= 0 && sv <= 15) cfg->chat_ssid = static_cast<oyk_u8>(sv);
+            } else if (stricmp_ascii(k, "callsign") == 0) {
+                if (!v[0]) memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
+                else oyk_parse_callsign(v, &cfg->chat_callsign);
+            } else if (stricmp_ascii(k, "alias") == 0) {
+                if (!v[0]) memset(&cfg->chat_alias, 0, sizeof(cfg->chat_alias));
+                else oyk_parse_callsign(v, &cfg->chat_alias);
+            } else if (stricmp_ascii(k, "topic") == 0 || stricmp_ascii(k, "default_topic") == 0) {
+                if (v[0]) safe_copy(cfg->chat_topic, sizeof(cfg->chat_topic), v);
+            } else if (stricmp_ascii(k, "welcome") == 0) {
+                safe_copy(cfg->chat_welcome, sizeof(cfg->chat_welcome), v);
+            }
         }
     }
 
@@ -912,6 +1074,22 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
                     static_cast<unsigned long>(cfg->log_files[i].mask), nl);
         }
     }
+
+    fprintf(fp, "%s[chat]%s", nl, nl);
+    fprintf(fp, "enabled = %s%s", cfg->chat_enabled ? "true" : "false", nl);
+    fprintf(fp, "ssid = %u%s", static_cast<unsigned int>(cfg->chat_ssid), nl);
+    if (cfg->chat_callsign.base[0]) {
+        char cc[16];
+        oyk_format_callsign(&cfg->chat_callsign, cc, sizeof(cc));
+        fprintf(fp, "callsign = %s%s", cc, nl);
+    }
+    if (cfg->chat_alias.base[0]) {
+        char ca[16];
+        oyk_format_callsign(&cfg->chat_alias, ca, sizeof(ca));
+        fprintf(fp, "alias = %s%s", ca, nl);
+    }
+    fprintf(fp, "topic = %s%s", cfg->chat_topic, nl);
+    fprintf(fp, "welcome = %s%s", cfg->chat_welcome, nl);
 
     for (int i = 0; i < cfg->iface_count; ++i) {
         const OykIfaceConfig* ic = &cfg->ifaces[i];
@@ -1080,23 +1258,95 @@ int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
 
 int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
                                          oyk_u32* sess_id_out, OykCallsign* resolved_call_out,
-                                         char* err_out, size_t err_sz) {
+                                         int* is_local_out, char* err_out, size_t err_sz) {
+    char spec_copy[96];
+    safe_copy(spec_copy, sizeof(spec_copy), target_spec ? target_spec : "");
+    trim_inplace(spec_copy);
+
+    OykCallsign target;
+    memset(&target, 0, sizeof(target));
+    int want_local = 0;
+    int direct_chat = 0;
+
+    if (stricmp_ascii(spec_copy, "CHAT") == 0) {
+        want_local = 1;
+        direct_chat = 1;
+        oyk_config_resolved_chat_callsign(&cfg_, &target);
+    } else if (strchr(spec_copy, '@') == NULL && strchr(spec_copy, ' ') == NULL &&
+               spec_copy[0] && oyk_parse_callsign(spec_copy, &target) &&
+               is_for_chat(&target)) {
+        want_local = 1;
+        direct_chat = 1;
+    } else if (iface_idx < 0 || !spec_copy[0] ||
+               stricmp_ascii(spec_copy, "LOCAL") == 0 ||
+               stricmp_ascii(spec_copy, "NODE") == 0) {
+        want_local = 1;
+        target = cfg_.callsign;
+    } else if (strchr(spec_copy, '@') == NULL && strchr(spec_copy, ' ') == NULL &&
+               oyk_parse_callsign(spec_copy, &target) &&
+               is_for_node(&target)) {
+        want_local = 1;
+    }
+
+    if (want_local) {
+        if (direct_chat && !cfg_.chat_enabled) {
+            safe_copy(err_out, err_sz, "Local CHAT is disabled");
+            return 0;
+        }
+        OykSession* sess = NULL;
+        for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+            if (sessions_[i].state == OYK_SESS_FREE) {
+                sess = &sessions_[i];
+                break;
+            }
+        }
+        if (!sess) {
+            safe_copy(err_out, err_sz, "No free session slots");
+            return 0;
+        }
+        time_t now_t = now_time();
+        memset(sess, 0, sizeof(*sess));
+        sess->id = next_session_id_++;
+        sess->iface_idx = -1;
+        sess->local_call = target;
+        sess->remote_call = cfg_.callsign;
+        sess->state = OYK_SESS_CONNECTED;
+        sess->is_local_term = 1;
+        sess->is_local_loopback = 1;
+        oyk_format_now_hms(now_t, sess->since_hms, sizeof(sess->since_hms));
+        sess->last_activity = now_t;
+
+        if (sess_id_out) *sess_id_out = sess->id;
+        if (resolved_call_out) *resolved_call_out = target;
+        if (is_local_out) *is_local_out = 1;
+
+        if (local_cb_) {
+            local_cb_(sess->id, 1, NULL, 0, "Connected locally", local_ctx_);
+        }
+        if (direct_chat) {
+            chat_join(sess, 1);
+        } else {
+            char node_s[16], banner[140];
+            oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
+            sprintf(banner, "*** Connected to %s Packet Node\rType HELP or ?\r%s> ",
+                    node_s, node_s);
+            send_text(sess, banner);
+        }
+        char cs[12], msg[80];
+        oyk_format_callsign(&target, cs, sizeof(cs));
+        sprintf(msg, "Local terminal #%lu connected locally to %s",
+                static_cast<unsigned long>(sess->id), cs);
+        log_message(OYK_LOG_INFO, msg);
+        return 1;
+    }
+
     if (iface_idx < 0 || iface_idx >= iface_count_) {
         safe_copy(err_out, err_sz, "Invalid interface");
         return 0;
     }
-    if (!target_spec || !target_spec[0]) {
-        safe_copy(err_out, err_sz, "Target callsign required");
-        return 0;
-    }
 
-    OykCallsign target;
     oyk_u32 peer_ip = 0;
     oyk_u16 peer_port = 0;
-
-    char spec_copy[96];
-    safe_copy(spec_copy, sizeof(spec_copy), target_spec);
-    trim_inplace(spec_copy);
 
     if (strchr(spec_copy, '@') != NULL || strchr(spec_copy, ' ') != NULL) {
         char call_s[16];
@@ -1115,11 +1365,6 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
             safe_copy(err_out, err_sz, "No peer IP for callsign (use CALL@ip:port)");
             return 0;
         }
-    }
-
-    if (is_for_node(&target)) {
-        safe_copy(err_out, err_sz, "Cannot connect to self");
-        return 0;
     }
 
     OykSession* sess = NULL;
@@ -1144,6 +1389,7 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
     sess->peer_port = peer_port;
     sess->state = OYK_SESS_CONNECTING;
     sess->is_local_term = 1;
+    sess->is_local_loopback = 0;
     oyk_format_now_hms(now_t, sess->since_hms, sizeof(sess->since_hms));
     sess->last_activity = now_t;
 
@@ -1159,6 +1405,7 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
 
     if (sess_id_out) *sess_id_out = sess->id;
     if (resolved_call_out) *resolved_call_out = target;
+    if (is_local_out) *is_local_out = 0;
 
     char cs[12], msg[80];
     oyk_format_callsign(&target, cs, sizeof(cs));
@@ -1169,7 +1416,7 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
 }
 
 int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, size_t len) {
-    if (!tx_cb_ || !data || len == 0) return 0;
+    if (!data || len == 0) return 0;
     OykSession* sess = NULL;
     for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
         if (sessions_[i].id == session_id && sessions_[i].is_local_term &&
@@ -1180,6 +1427,30 @@ int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, si
     }
     if (!sess) return 0;
 
+    if (sess->is_local_loopback) {
+        sess->last_activity = now_time();
+        for (size_t i = 0; i < len && sess->state == OYK_SESS_CONNECTED; ++i) {
+            oyk_u8 ch = data[i];
+            if (ch == '\r' || ch == '\n') {
+                sess->rx_line[sess->rx_line_len] = '\0';
+                if (sess->rx_line_len > 0 || ch == '\r') {
+                    if (sess->in_chat) {
+                        handle_chat_line(sess, sess->rx_line);
+                    } else {
+                        handle_normal_command(sess, sess->rx_line);
+                    }
+                }
+                sess->rx_line_len = 0;
+            } else if (ch >= 0x20U && ch <= 0x7EU) {
+                if (sess->rx_line_len < static_cast<int>(sizeof(sess->rx_line) - 1)) {
+                    sess->rx_line[sess->rx_line_len++] = static_cast<char>(ch);
+                }
+            }
+        }
+        return 1;
+    }
+
+    if (!tx_cb_) return 0;
     size_t pos = 0;
     while (pos < len) {
         size_t chunk = len - pos;
@@ -1208,7 +1479,10 @@ int OykPortableNode::close_local_terminal(oyk_u32 session_id) {
     for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
         if (sessions_[i].id == session_id && sessions_[i].is_local_term &&
             sessions_[i].state != OYK_SESS_FREE) {
-            send_disc(&sessions_[i]);
+            if (sessions_[i].in_chat) chat_leave(&sessions_[i], "Disconnected");
+            if (!sessions_[i].is_local_loopback) {
+                send_disc(&sessions_[i]);
+            }
             sessions_[i].state = OYK_SESS_FREE;
             if (local_cb_) {
                 local_cb_(session_id, 3, NULL, 0, "Disconnected", local_ctx_);
@@ -1350,6 +1624,15 @@ int OykPortableNode::is_for_node(const OykCallsign* dst) const {
     return 0;
 }
 
+int OykPortableNode::is_for_chat(const OykCallsign* dst) const {
+    if (!cfg_.chat_enabled || !dst) return 0;
+    OykCallsign chat_call;
+    oyk_config_resolved_chat_callsign(&cfg_, &chat_call);
+    if (oyk_callsign_eq(dst, &chat_call)) return 1;
+    if (cfg_.chat_alias.base[0] && oyk_callsign_eq(dst, &cfg_.chat_alias)) return 1;
+    return 0;
+}
+
 void OykPortableNode::push_console_log(const char* line) {
     if (console_log_count_ < OYK_MAX_CONSOLE_LOGS) {
         safe_copy(console_logs_[console_log_count_++], sizeof(console_logs_[0]), line);
@@ -1481,7 +1764,14 @@ void OykPortableNode::record_heard(const OykCallsign* src, int iface_idx) {
 }
 
 void OykPortableNode::send_text(OykSession* sess, const char* text) {
-    if (!tx_cb_ || !sess || !text) return;
+    if (!sess || !text) return;
+    if (sess->is_local_loopback) {
+        if (local_cb_) {
+            local_cb_(sess->id, 2, reinterpret_cast<const oyk_u8*>(text), strlen(text), NULL, local_ctx_);
+        }
+        return;
+    }
+    if (!tx_cb_) return;
     size_t total = strlen(text);
     size_t pos = 0;
     while (pos < total) {
@@ -1506,7 +1796,14 @@ void OykPortableNode::send_text(OykSession* sess, const char* text) {
 }
 
 void OykPortableNode::send_disc(OykSession* sess) {
-    if (!tx_cb_ || !sess) return;
+    if (!sess) return;
+    if (sess->is_local_loopback) {
+        if (local_cb_) {
+            local_cb_(sess->id, 3, NULL, 0, "Disconnected", local_ctx_);
+        }
+        return;
+    }
+    if (!tx_cb_) return;
     OykFrame f;
     memset(&f, 0, sizeof(f));
     f.dst = sess->remote_call;
@@ -1518,6 +1815,229 @@ void OykPortableNode::send_disc(OykSession* sess) {
     }
 }
 
+void OykPortableNode::chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text) {
+    if (!topic || !text) return;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].state == OYK_SESS_CONNECTED &&
+            sessions_[i].in_chat &&
+            sessions_[i].id != exclude_sid &&
+            stricmp_ascii(sessions_[i].chat_topic, topic) == 0) {
+            send_text(&sessions_[i], text);
+        }
+    }
+}
+
+void OykPortableNode::chat_join(OykSession* sess, int direct_connect) {
+    if (!sess) return;
+    sess->in_chat = 1;
+    sess->chat_direct = direct_connect ? 1 : 0;
+    safe_copy(sess->chat_topic, sizeof(sess->chat_topic),
+              cfg_.chat_topic[0] ? cfg_.chat_topic : "Lobby");
+    sess->chat_name[0] = '\0';
+
+    int count = 0;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (sessions_[i].state == OYK_SESS_CONNECTED && sessions_[i].in_chat) ++count;
+    }
+
+    OykCallsign chat_c;
+    oyk_config_resolved_chat_callsign(&cfg_, &chat_c);
+    char c_str[16], u_str[16], msg[220];
+    oyk_format_callsign(&chat_c, c_str, sizeof(c_str));
+    oyk_format_callsign(&sess->remote_call, u_str, sizeof(u_str));
+
+    sprintf(msg, "*** %s Packet Chat ***\r%s\rTopic: %s | Users online: %d\r",
+            c_str, cfg_.chat_welcome, sess->chat_topic, count);
+    send_text(sess, msg);
+
+    char note[64];
+    sprintf(note, "*** %s joined %s\r", u_str, sess->chat_topic);
+    chat_broadcast_topic(sess->chat_topic, sess->id, note);
+}
+
+void OykPortableNode::chat_leave(OykSession* sess, const char* reason) {
+    if (!sess || !sess->in_chat) return;
+    char topic[16], u_str[16], note[96];
+    safe_copy(topic, sizeof(topic), sess->chat_topic);
+    oyk_format_callsign(&sess->remote_call, u_str, sizeof(u_str));
+    sess->in_chat = 0;
+    if (reason && reason[0]) {
+        sprintf(note, "*** %s left chat (%s)\r", u_str, reason);
+    } else {
+        sprintf(note, "*** %s left chat\r", u_str);
+    }
+    chat_broadcast_topic(topic, sess->id, note);
+}
+
+void OykPortableNode::handle_chat_line(OykSession* sess, const char* raw_line) {
+    char line[160];
+    safe_copy(line, sizeof(line), raw_line);
+    trim_inplace(line);
+    if (!line[0]) return;
+
+    char u_str[16];
+    oyk_format_callsign(&sess->remote_call, u_str, sizeof(u_str));
+
+    if (line[0] == '/') {
+        char cmd[16];
+        size_t i = 0;
+        while (line[i] && !isspace(static_cast<unsigned char>(line[i])) && i < sizeof(cmd) - 1) {
+            cmd[i] = line[i];
+            ++i;
+        }
+        cmd[i] = '\0';
+        const char* arg = line + i;
+        while (*arg && isspace(static_cast<unsigned char>(*arg))) ++arg;
+
+        if (stricmp_ascii(cmd, "/h") == 0 || stricmp_ascii(cmd, "/help") == 0 || strcmp(cmd, "/?") == 0) {
+            send_text(sess,
+                      "Chat Commands: /u (users), /t (topics), /j <topic>, /m <call> <msg>, /n <name>, /q (leave)\r");
+            return;
+        }
+        if (stricmp_ascii(cmd, "/u") == 0 || stricmp_ascii(cmd, "/who") == 0) {
+            char resp[260];
+            strcpy(resp, "Chat Users:\r");
+            for (int k = 0; k < OYK_MAX_SESSIONS; ++k) {
+                if (sessions_[k].state == OYK_SESS_CONNECTED && sessions_[k].in_chat) {
+                    char cs[12], row[80];
+                    oyk_format_callsign(&sessions_[k].remote_call, cs, sizeof(cs));
+                    const char* ifid = (sessions_[k].iface_idx >= 0) ? ifaces_[sessions_[k].iface_idx].cfg.id : "local";
+                    if (sessions_[k].chat_name[0]) {
+                        sprintf(row, "  %s (%s) [%s] on %s\r", cs, sessions_[k].chat_name,
+                                sessions_[k].chat_topic, ifid);
+                    } else {
+                        sprintf(row, "  %s [%s] on %s\r", cs, sessions_[k].chat_topic, ifid);
+                    }
+                    if (strlen(resp) + strlen(row) < sizeof(resp) - 1) strcat(resp, row);
+                }
+            }
+            send_text(sess, resp);
+            return;
+        }
+        if (stricmp_ascii(cmd, "/t") == 0 || stricmp_ascii(cmd, "/topics") == 0) {
+            char resp[200];
+            strcpy(resp, "Active Topics:\r");
+            for (int k = 0; k < OYK_MAX_SESSIONS; ++k) {
+                if (sessions_[k].state == OYK_SESS_CONNECTED && sessions_[k].in_chat) {
+                    int dup = 0;
+                    for (int p = 0; p < k; ++p) {
+                        if (sessions_[p].state == OYK_SESS_CONNECTED && sessions_[p].in_chat &&
+                            stricmp_ascii(sessions_[p].chat_topic, sessions_[k].chat_topic) == 0) {
+                            dup = 1;
+                            break;
+                        }
+                    }
+                    if (!dup) {
+                        int cnt = 0;
+                        for (int q = k; q < OYK_MAX_SESSIONS; ++q) {
+                            if (sessions_[q].state == OYK_SESS_CONNECTED && sessions_[q].in_chat &&
+                                stricmp_ascii(sessions_[q].chat_topic, sessions_[k].chat_topic) == 0) ++cnt;
+                        }
+                        char row[32];
+                        sprintf(row, "  %s (%d)\r", sessions_[k].chat_topic, cnt);
+                        if (strlen(resp) + strlen(row) < sizeof(resp) - 1) strcat(resp, row);
+                    }
+                }
+            }
+            send_text(sess, resp);
+            return;
+        }
+        if (stricmp_ascii(cmd, "/j") == 0 || stricmp_ascii(cmd, "/join") == 0 || stricmp_ascii(cmd, "/topic") == 0) {
+            if (!arg[0]) {
+                send_text(sess, "Usage: /j <topic>\r");
+                return;
+            }
+            char nt[16];
+            size_t p = 0;
+            while (arg[p] && !isspace(static_cast<unsigned char>(arg[p])) && p < sizeof(nt) - 1) {
+                nt[p] = arg[p];
+                ++p;
+            }
+            nt[p] = '\0';
+            char note[64];
+            sprintf(note, "*** %s moved to %s\r", u_str, nt);
+            chat_broadcast_topic(sess->chat_topic, sess->id, note);
+            safe_copy(sess->chat_topic, sizeof(sess->chat_topic), nt);
+            sprintf(note, "*** Joined topic %s\r", sess->chat_topic);
+            send_text(sess, note);
+            sprintf(note, "*** %s joined %s\r", u_str, sess->chat_topic);
+            chat_broadcast_topic(sess->chat_topic, sess->id, note);
+            return;
+        }
+        if (stricmp_ascii(cmd, "/m") == 0 || stricmp_ascii(cmd, "/msg") == 0) {
+            char dst_c[16];
+            size_t p = 0;
+            while (arg[p] && !isspace(static_cast<unsigned char>(arg[p])) && p < sizeof(dst_c) - 1) {
+                dst_c[p] = static_cast<char>(toupper(static_cast<unsigned char>(arg[p])));
+                ++p;
+            }
+            dst_c[p] = '\0';
+            const char* mtxt = arg + p;
+            while (*mtxt && isspace(static_cast<unsigned char>(*mtxt))) ++mtxt;
+            if (!dst_c[0] || !mtxt[0]) {
+                send_text(sess, "Usage: /m <callsign> <message>\r");
+                return;
+            }
+            OykSession* target = NULL;
+            for (int k = 0; k < OYK_MAX_SESSIONS; ++k) {
+                if (sessions_[k].state == OYK_SESS_CONNECTED && sessions_[k].in_chat) {
+                    char cs[12];
+                    oyk_format_callsign(&sessions_[k].remote_call, cs, sizeof(cs));
+                    if (stricmp_ascii(cs, dst_c) == 0) {
+                        target = &sessions_[k];
+                        break;
+                    }
+                }
+            }
+            if (!target) {
+                send_text(sess, "*** User not in chat.\r");
+                return;
+            }
+            char pm[180];
+            sprintf(pm, "[PM from %s] %.140s\r", u_str, mtxt);
+            send_text(target, pm);
+            sprintf(pm, "[PM to %s] %.140s\r", dst_c, mtxt);
+            send_text(sess, pm);
+            return;
+        }
+        if (stricmp_ascii(cmd, "/n") == 0 || stricmp_ascii(cmd, "/name") == 0) {
+            safe_copy(sess->chat_name, sizeof(sess->chat_name), arg);
+            send_text(sess, sess->chat_name[0] ? "*** Display name updated.\r" : "*** Display name cleared.\r");
+            return;
+        }
+        if (stricmp_ascii(cmd, "/q") == 0 || stricmp_ascii(cmd, "/quit") == 0 || stricmp_ascii(cmd, "/bye") == 0) {
+            int direct = sess->chat_direct;
+            chat_leave(sess, NULL);
+            if (direct) {
+                OykCallsign chat_c;
+                oyk_config_resolved_chat_callsign(&cfg_, &chat_c);
+                char cc[16], bye[40];
+                oyk_format_callsign(&chat_c, cc, sizeof(cc));
+                sprintf(bye, "73 de %s\r", cc);
+                send_text(sess, bye);
+                send_disc(sess);
+                sess->state = OYK_SESS_FREE;
+            } else {
+                char node_s[16], ret[64];
+                oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
+                sprintf(ret, "*** Left chat. Returning to node.\r%s> ", node_s);
+                send_text(sess, ret);
+            }
+            return;
+        }
+        send_text(sess, "Unknown chat command. Type /h for help.\r");
+        return;
+    }
+
+    char out[200];
+    if (sess->chat_name[0]) {
+        sprintf(out, "<%s %s> %.150s\r", u_str, sess->chat_name, line);
+    } else {
+        sprintf(out, "<%s> %.160s\r", u_str, line);
+    }
+    chat_broadcast_topic(sess->chat_topic, sess->id, out);
+}
+
 void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                                   oyk_u32 peer_ip, oyk_u16 peer_port, oyk_u16 peer_handle) {
     if (iface_idx < 0 || iface_idx >= iface_count_ || !frame) return;
@@ -1525,7 +2045,7 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     record_heard(&frame->src, iface_idx);
 
     OykFrameType ft = oyk_frame_type(frame);
-    if (ft == OYK_FT_UI || !is_for_node(&frame->dst)) return;
+    if (ft == OYK_FT_UI || (!is_for_node(&frame->dst) && !is_for_chat(&frame->dst))) return;
 
     /* Locate existing session */
     OykSession* sess = NULL;
@@ -1672,6 +2192,12 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                     send_disc(sess);
                     sess->state = OYK_SESS_FREE;
                 }
+            } else if (is_for_chat(&frame->dst)) {
+                chat_join(sess, 1);
+                char msg[72];
+                sprintf(msg, "CHAT session #%lu connected: %s on %s",
+                        static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
+                log_message(OYK_LOG_INFO, msg);
             } else {
                 char node_s[16], banner[140];
                 oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
@@ -1736,6 +2262,7 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
         }
         oyk_u32 sid = sess->id;
         int was_local = sess->is_local_term;
+        if (sess->in_chat) chat_leave(sess, "Disconnected");
         sess->state = OYK_SESS_FREE;
         if (was_local && local_cb_) {
             local_cb_(sid, 3, NULL, 0, "Disconnected by remote", local_ctx_);
@@ -1746,6 +2273,7 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     if (ft == OYK_FT_DM || (ft == OYK_FT_UA && sess->state == OYK_SESS_DISCONNECTING)) {
         oyk_u32 sid = sess->id;
         int was_local = sess->is_local_term;
+        if (sess->in_chat) chat_leave(sess, "Disconnected");
         sess->state = OYK_SESS_FREE;
         if (was_local && local_cb_) {
             local_cb_(sid, 3, NULL, 0, "Disconnected", local_ctx_);
@@ -1782,6 +2310,8 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                     if (sess->rx_line_len > 0 || ch == '\r') {
                         if (sess->restricted_ban) {
                             handle_restricted_line(sess, sess->rx_line);
+                        } else if (sess->in_chat) {
+                            handle_chat_line(sess, sess->rx_line);
                         } else {
                             handle_normal_command(sess, sess->rx_line);
                         }
@@ -1844,7 +2374,14 @@ void OykPortableNode::handle_normal_command(OykSession* sess, const char* raw_li
     }
 
     if (stricmp_ascii(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
-        send_text(sess, "Commands: INFO, PORTS, USERS, MHEARD, BYE, HELP\r");
+        send_text(sess, "Commands: INFO, PORTS, USERS, MHEARD, CHAT, BYE, HELP\r");
+    } else if (stricmp_ascii(cmd, "CHAT") == 0 || stricmp_ascii(cmd, "CH") == 0) {
+        if (!cfg_.chat_enabled) {
+            send_text(sess, "CHAT is disabled on this node.\r");
+        } else {
+            chat_join(sess, 0);
+            return;
+        }
     } else if (stricmp_ascii(cmd, "INFO") == 0 || stricmp_ascii(cmd, "I") == 0) {
         char resp[160];
         sprintf(resp, "%s - %s | Active: %d\r", node_s, cfg_.info_text, total_active_connections());
@@ -1868,7 +2405,7 @@ void OykPortableNode::handle_normal_command(OykSession* sess, const char* raw_li
                 oyk_format_callsign(&sessions_[i].remote_call, cs, sizeof(cs));
                 sprintf(row, " #%lu %s on %s\r",
                         static_cast<unsigned long>(sessions_[i].id),
-                        cs, ifaces_[sessions_[i].iface_idx].cfg.id);
+                        cs, (sessions_[i].iface_idx >= 0) ? ifaces_[sessions_[i].iface_idx].cfg.id : "local");
                 if (strlen(resp) + strlen(row) < sizeof(resp) - 1) strcat(resp, row);
             }
         }
@@ -1947,6 +2484,12 @@ int OykPortableNode::ban_callsign(const char* call_spec, oyk_u32 flags, const ch
         return 0;
     }
 
+    char parsed_lift[20];
+    if (!oyk_parse_lift_spec(lift_spec, now_time(), parsed_lift, sizeof(parsed_lift))) {
+        if (msg_out) safe_copy(msg_out, msg_sz, "Invalid lift (use permanent, 30m, 12h, 7d, YYYY-MM-DD)");
+        return 0;
+    }
+
     int idx = -1;
     for (int i = 0; i < ban_count_; ++i) {
         if (strcmp(bans_[i].key, key) == 0) {
@@ -1966,8 +2509,7 @@ int OykPortableNode::ban_callsign(const char* call_spec, oyk_u32 flags, const ch
     memset(e, 0, sizeof(*e));
     safe_copy(e->key, sizeof(e->key), key);
     oyk_format_now_compact(now_time(), e->banned_at, sizeof(e->banned_at));
-    safe_copy(e->lift_at, sizeof(e->lift_at),
-              (lift_spec && lift_spec[0]) ? lift_spec : "permanent");
+    safe_copy(e->lift_at, sizeof(e->lift_at), parsed_lift);
     e->flags = flags;
     safe_copy(e->reason, sizeof(e->reason),
               (reason && reason[0]) ? reason : "Banned by sysop.");
