@@ -126,3 +126,9 @@ Severity bitmask flags:
 1. Subclass `oyk::radio::RadioInterface` in `include/oyk/radio/` and `src/radio/`.
 2. Register your driver factory with `oyk::radio::InterfaceRegistry::instance().register_type("kiss-tcp", ...)`.
 3. Add an `[interface <id>]` section with `type = kiss-tcp` to your config file.
+
+## License
+
+Copyright (C) 2026 KR4OYK - David Kuder.
+
+This project is licensed under the **GNU General Public License v3.0** (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full license text.
