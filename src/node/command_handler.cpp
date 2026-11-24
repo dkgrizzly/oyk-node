@@ -80,6 +80,7 @@ CommandResult CommandHandler::execute(NodeEngine& engine,
             << "  PORTS    (P)  - List radio interfaces\r"
             << "  USERS    (U)  - List active connections\r"
             << "  MHEARD   (MH) - Recently heard callsigns\r"
+            << "  CHAT     (CH) - Join packet chat conference\r"
             << "  CONNECT  (C)  - Connect out: C <port> <callsign>\r"
             << "  BYE      (B)  - Disconnect from node\r"
             << "  HELP     (?)  - Show this help\r";
@@ -158,6 +159,11 @@ CommandResult CommandHandler::execute(NodeEngine& engine,
             }
         }
         res.response_text = oss.str();
+        return res;
+    }
+
+    if (cmd == "CHAT" || cmd == "CH") {
+        res.enter_chat = true;
         return res;
     }
 

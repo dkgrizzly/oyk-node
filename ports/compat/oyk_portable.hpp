@@ -157,6 +157,13 @@ struct OykConfig {
     OykLineEnding line_ending;
     int has_detected_eol;
 
+    int chat_enabled;
+    oyk_u8 chat_ssid; /* Default 12 -> <callsign.base>-12 */
+    OykCallsign chat_callsign;
+    OykCallsign chat_alias;
+    char chat_topic[16];
+    char chat_welcome[96];
+
     int log_file_count;
     OykLogFileEntry log_files[OYK_MAX_LOG_FILES];
 
@@ -202,7 +209,12 @@ struct OykSession {
     oyk_u16 peer_port;
     oyk_u16 peer_handle;  /* e.g. socket index for Telnet/KISS */
     OykSessState state;
-    int is_local_term;    /* 1 = local operator outbound terminal (raw binary pass-through) */
+    int is_local_term;     /* 1 = local operator terminal */
+    int is_local_loopback; /* 1 = connected locally to this node (YAPP disallowed) */
+    int in_chat;           /* 1 = participant in CHAT conference */
+    int chat_direct;       /* 1 = connected directly to CHAT SSID */
+    char chat_topic[16];
+    char chat_name[16];
     int restricted_ban;
     int appeal_eligible;
     char ban_key[12];
@@ -280,6 +292,8 @@ int oyk_kiss_decoder_feed_byte(OykKissDecoder* dec, oyk_u8 b,
 
 int oyk_parse_flags_u32(const char* text, oyk_u32* out);
 int oyk_parse_log_mask(const char* text, oyk_u32* out);
+/* Parse user-friendly ban lift spec (permanent, 30m, 12h, 7d, YYYY-MM-DD, YYYYMMDD-HHMMSS) */
+int oyk_parse_lift_spec(const char* text, time_t now, char* out, size_t out_sz);
 void oyk_sanitize_appeal(const char* raw, char* out, size_t out_sz);
 void oyk_format_now_compact(time_t t, char* out, size_t out_sz);
 void oyk_format_now_yyyymmdd(time_t t, char* out, size_t out_sz);
@@ -290,6 +304,7 @@ void oyk_config_init_default(OykConfig* cfg);
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz);
 int oyk_config_save(const OykConfig* cfg, const char* path);
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
+void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 
 /* Cooperative portable packet node engine */
 class OykPortableNode {
@@ -325,7 +340,7 @@ public:
                            oyk_u32* ip_out, oyk_u16* port_out) const;
     int open_local_terminal(int iface_idx, const char* target_spec,
                             oyk_u32* sess_id_out, OykCallsign* resolved_call_out,
-                            char* err_out, size_t err_sz);
+                            int* is_local_out, char* err_out, size_t err_sz);
     int send_local_bytes(oyk_u32 session_id, const oyk_u8* data, size_t len);
     int close_local_terminal(oyk_u32 session_id);
 
@@ -359,9 +374,14 @@ private:
     int save_banlist();
     int find_ban_index(const OykCallsign* call, const char* now_compact) const;
     int is_for_node(const OykCallsign* dst) const;
+    int is_for_chat(const OykCallsign* dst) const;
     void record_heard(const OykCallsign* src, int iface_idx);
     void send_text(OykSession* sess, const char* text);
     void send_disc(OykSession* sess);
+    void chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text);
+    void chat_join(OykSession* sess, int direct_connect);
+    void chat_leave(OykSession* sess, const char* reason);
+    void handle_chat_line(OykSession* sess, const char* line);
     void handle_normal_command(OykSession* sess, const char* line);
     void handle_restricted_line(OykSession* sess, const char* line);
     void write_log_file_line(OykLogFileEntry* lf, const char* line, const char* today);

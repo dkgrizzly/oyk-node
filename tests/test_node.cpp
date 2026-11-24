@@ -1603,6 +1603,157 @@ void test_local_terminal_and_yapp() {
     std::cout << "[PASS] test_local_terminal_and_yapp\n";
 }
 
+void test_ban_lift_chat_and_local_loopback() {
+    namespace fs = std::filesystem;
+
+    // 1. Ban lift spec parser (default permanent, minutes, hours, days, weeks, dates)
+    std::chrono::system_clock::time_point base_now{};
+    assert(node::BanList::parse_timestamp("20261124-120000", base_now));
+
+    std::optional<std::chrono::system_clock::time_point> lift_opt;
+    std::string perr;
+    assert(node::BanList::parse_lift_spec("", base_now, lift_opt, &perr) && !lift_opt.has_value());
+    assert(node::BanList::parse_lift_spec("permanent", base_now, lift_opt, &perr) && !lift_opt.has_value());
+    assert(node::BanList::parse_lift_spec("30m", base_now, lift_opt, &perr) && lift_opt.has_value());
+    assert(node::BanList::format_timestamp(*lift_opt) == "20261124-123000");
+    assert(node::BanList::parse_lift_spec("12 hours", base_now, lift_opt, &perr) && lift_opt.has_value());
+    assert(node::BanList::format_timestamp(*lift_opt) == "20261125-000000");
+    assert(node::BanList::parse_lift_spec("7d", base_now, lift_opt, &perr) && lift_opt.has_value());
+    assert(node::BanList::format_timestamp(*lift_opt) == "20261201-120000");
+    assert(node::BanList::parse_lift_spec("2027-06-15", base_now, lift_opt, &perr) && lift_opt.has_value());
+    assert(node::BanList::format_timestamp(*lift_opt) == "20270615-235959");
+    assert(node::BanList::parse_lift_spec("2027-06-15 08:45", base_now, lift_opt, &perr) && lift_opt.has_value());
+    assert(node::BanList::format_timestamp(*lift_opt) == "20270615-084500");
+    assert(!node::BanList::parse_lift_spec("not-a-duration", base_now, lift_opt, &perr));
+    assert(!node::BanList::parse_lift_spec("0m", base_now, lift_opt, &perr));
+
+    // 2. Example configs/node.cfg places CHAT on SSID 12 by default
+    node::NodeConfig loaded_cfg;
+    std::string err;
+    assert(node::NodeConfig::load_from_file((fs::exists("configs/node.cfg") ? "configs/node.cfg" : "../configs/node.cfg"), loaded_cfg, err));
+    assert(loaded_cfg.chat.enabled);
+    assert(loaded_cfg.chat.ssid == 12);
+    assert(loaded_cfg.resolved_chat_callsign().str() == "N0CALL-12");
+
+    // 3. Multi-user CHAT (SSID 12 direct connect + Local Terminal loopback)
+    const fs::path tmp_root = "/tmp/oyk_test_chat_local";
+    fs::remove_all(tmp_root);
+    fs::create_directories(tmp_root);
+
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign("K7OYK", 7);
+    cfg.chat.enabled = true;
+    cfg.chat.ssid = 12;
+    cfg.t1_ms = 300;
+    cfg.logging.log_path = (tmp_root / "logs").string();
+    cfg.banlist_path = (tmp_root / "banlist.cfg").string();
+
+    radio::RadioInterfaceConfig ax_cfg;
+    ax_cfg.id = "axudp0";
+    ax_cfg.type = "axudp";
+    ax_cfg.params["bind_host"] = "127.0.0.1";
+    ax_cfg.params["bind_port"] = "0";
+    cfg.interfaces = {ax_cfg};
+
+    node::NodeEngine engine(cfg);
+    assert(engine.start(err));
+    auto* ax0 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("axudp0"));
+    assert(ax0 != nullptr);
+
+    // Local Terminal connects to local node (is_local == true!)
+    std::mutex lmtx;
+    bool local_conn = false;
+    std::string local_rx;
+    node::NodeEngine::LocalTerminalCallbacks cbs;
+    cbs.on_connected = [&](uint64_t) {
+        std::lock_guard<std::mutex> lk(lmtx);
+        local_conn = true;
+    };
+    cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+        std::lock_guard<std::mutex> lk(lmtx);
+        local_rx.append(reinterpret_cast<const char*>(b.data()), b.size());
+    };
+    uint64_t local_sid = 0;
+    ax25::Callsign local_target;
+    bool is_local = false;
+    assert(engine.open_local_terminal("local", "", std::move(cbs), local_sid, &local_target, err, &is_local));
+    assert(is_local);
+    assert(local_conn);
+    assert(local_target.str() == "K7OYK-7");
+    assert(local_rx.find("Connected to K7OYK-7") != std::string::npos);
+
+    // Local operator enters CHAT via node shell
+    const std::string enter_chat = "CHAT\r";
+    assert(engine.send_local_terminal_bytes(local_sid, std::vector<uint8_t>(enter_chat.begin(), enter_chat.end())));
+    assert(local_rx.find("K7OYK-12 Packet Chat") != std::string::npos);
+
+    // Remote AXUDP user connects directly to CHAT SSID 12 (K7OYK-12)
+    ax25::Callsign chat_call("K7OYK", 12);
+    TestAxudpClient rem(ax25::Callsign("W1CHT", 0), ax0->bound_port());
+    rem.send(ax25::Frame::make_sabm(chat_call, rem.call()));
+    auto ua = rem.recv(1000);
+    assert(ua.has_value() && ua->type() == ax25::FrameType::UA);
+    uint8_t rem_vr = 0;
+    std::string rem_welcome = rem.recv_all_text(chat_call, rem_vr, 200);
+    assert(rem_welcome.find("K7OYK-12 Packet Chat") != std::string::npos);
+
+    // Local user broadcasts a chat message -> remote W1CHT receives it!
+    const std::string hello = "Hello from local sysop!\r";
+    assert(engine.send_local_terminal_bytes(local_sid, std::vector<uint8_t>(hello.begin(), hello.end())));
+    std::string rem_got = rem.recv_all_text(chat_call, rem_vr, 200);
+    assert(rem_got.find("<K7OYK-7> Hello from local sysop!") != std::string::npos);
+
+    // Remote W1CHT replies -> local terminal receives it!
+    const std::string reply = "Hi back from RF!\r";
+    rem.send(ax25::Frame::make_i(chat_call, rem.call(), 0, rem_vr,
+                                 std::vector<uint8_t>(reply.begin(), reply.end())));
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lk(lmtx);
+            if (local_rx.find("<W1CHT> Hi back from RF!") != std::string::npos) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+    }
+    {
+        std::lock_guard<std::mutex> lk(lmtx);
+        assert(local_rx.find("<W1CHT> Hi back from RF!") != std::string::npos);
+    }
+
+    // Remote W1CHT leaves direct SSID-12 CHAT with /q -> gets 73 + DISC
+    const std::string quit_chat = "/q\r";
+    rem.send(ax25::Frame::make_i(chat_call, rem.call(), 1, rem_vr,
+                                 std::vector<uint8_t>(quit_chat.begin(), quit_chat.end())));
+    bool got_73 = false, got_disc = false;
+    auto qdl = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while ((!got_73 || !got_disc) && std::chrono::steady_clock::now() < qdl) {
+        auto f = rem.recv(50);
+        if (!f) continue;
+        if (f->type() == ax25::FrameType::I) {
+            std::string s(f->info.begin(), f->info.end());
+            if (s.find("73 de K7OYK-12") != std::string::npos) got_73 = true;
+            rem_vr = static_cast<uint8_t>((f->ns() + 1) & 0x07u);
+            rem.send(ax25::Frame::make_rr(chat_call, rem.call(), rem_vr, false, false));
+        } else if (f->type() == ax25::FrameType::DISC) {
+            got_disc = true;
+            rem.send(ax25::Frame::make_ua(chat_call, rem.call(), f->pf()));
+        }
+    }
+    assert(got_73 && got_disc);
+
+    // Local user leaves CHAT with /q -> returns cleanly to K7OYK-7> node prompt
+    assert(engine.send_local_terminal_bytes(local_sid, std::vector<uint8_t>(quit_chat.begin(), quit_chat.end())));
+    {
+        std::lock_guard<std::mutex> lk(lmtx);
+        assert(local_rx.find("Returning to node.") != std::string::npos);
+    }
+
+    assert(engine.close_local_terminal(local_sid));
+    engine.stop();
+    fs::remove_all(tmp_root);
+    std::cout << "[PASS] test_ban_lift_chat_and_local_loopback\n";
+}
+
 } // namespace
 
 int main() {
@@ -1620,6 +1771,7 @@ int main() {
     test_restricted_ban_and_appeal_sessions();
     test_config_line_ending_preservation();
     test_local_terminal_and_yapp();
+    test_ban_lift_chat_and_local_loopback();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

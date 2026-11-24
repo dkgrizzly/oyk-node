@@ -290,7 +290,87 @@ static int yapp_test_overwrite(const char* /*path*/, const char* /*fname*/, void
     return pipe->overwrite_allow;
 }
 
+static char g_pt_local_buf[512];
+static size_t g_pt_local_len = 0;
+
+static void pt_local_cb(oyk_u32 /*sid*/, int event_type,
+                        const oyk_u8* data, size_t len,
+                        const char* /*reason*/, void* /*ctx*/) {
+    if (event_type == 2 && data && len > 0) {
+        size_t avail = (g_pt_local_len < sizeof(g_pt_local_buf) - 1)
+                           ? (sizeof(g_pt_local_buf) - 1 - g_pt_local_len)
+                           : 0;
+        if (len > avail) len = avail;
+        if (len > 0) {
+            memcpy(g_pt_local_buf + g_pt_local_len, data, len);
+            g_pt_local_len += len;
+            g_pt_local_buf[g_pt_local_len] = '\0';
+        }
+    }
+}
+
 static void test_portable_yapp_and_local_terminal() {
+    /* 0. Ban lift spec parser (permanent, minutes, hours, days, dates) */
+    char lift_out[20];
+    assert(oyk_parse_lift_spec("", 1795540000L, lift_out, sizeof(lift_out)) == 1);
+    assert(strcmp(lift_out, "permanent") == 0);
+    assert(oyk_parse_lift_spec("permanent", 1795540000L, lift_out, sizeof(lift_out)) == 1);
+    assert(strcmp(lift_out, "permanent") == 0);
+    assert(oyk_parse_lift_spec("30m", 1795540000L, lift_out, sizeof(lift_out)) == 1);
+    assert(strlen(lift_out) == 15 && lift_out[8] == '-');
+    assert(oyk_parse_lift_spec("7 days", 1795540000L, lift_out, sizeof(lift_out)) == 1);
+    assert(strlen(lift_out) == 15 && lift_out[8] == '-');
+    assert(oyk_parse_lift_spec("2027-06-15", 1795540000L, lift_out, sizeof(lift_out)) == 1);
+    assert(strcmp(lift_out, "20270615-235959") == 0);
+    assert(oyk_parse_lift_spec("bad-spec", 1795540000L, lift_out, sizeof(lift_out)) == 0);
+
+    /* 0b. Portable CHAT default SSID 12 + local loopback terminal */
+    OykConfig* pcfg = new OykConfig;
+    oyk_config_init_default(pcfg);
+    strcpy(pcfg->log_path, OYK_T_PNODE_LOGS);
+    strcpy(pcfg->banlist_path, OYK_T_PNODE_BAN);
+    assert(pcfg->chat_enabled == 1 && pcfg->chat_ssid == 12);
+    OykCallsign chat_c;
+    oyk_config_resolved_chat_callsign(pcfg, &chat_c);
+    assert(strcmp(chat_c.base, "N0CALL") == 0 && chat_c.ssid == 12);
+
+    OykPortableNode* lnode = new OykPortableNode;
+    MockTxLog* ltx = new MockTxLog;
+    memset(ltx, 0, sizeof(*ltx));
+    char lerr[64];
+    assert(lnode->init(pcfg, mock_tx, ltx, lerr, sizeof(lerr)) == 1);
+    g_pt_local_len = 0;
+    g_pt_local_buf[0] = '\0';
+    lnode->set_local_event_callback(pt_local_cb, NULL);
+
+    oyk_u32 lsid = 0;
+    OykCallsign lres;
+    int is_local = 0;
+    assert(lnode->open_local_terminal(-1, "CHAT", &lsid, &lres, &is_local, lerr, sizeof(lerr)) == 1);
+    assert(is_local == 1 && lres.ssid == 12);
+    assert(strstr(g_pt_local_buf, "N0CALL-12 Packet Chat") != NULL);
+
+    /* Remote AX.25 station connects directly to N0CALL-12 CHAT */
+    OykFrame csabm;
+    memset(&csabm, 0, sizeof(csabm));
+    csabm.dst = chat_c;
+    oyk_parse_callsign("W2CHT", &csabm.src);
+    csabm.is_command = 1;
+    csabm.control = 0x3FU;
+    lnode->on_rx_frame(0, &csabm, 0x7F000001UL, 10093, 0);
+    assert(strstr(g_pt_local_buf, "W2CHT joined Lobby") != NULL);
+
+    /* Local terminal sends chat line -> remote W2CHT receives broadcast I-frame */
+    ltx->count = 0;
+    const char* cmsg = "Hi W2CHT!\r";
+    assert(lnode->send_local_bytes(lsid, reinterpret_cast<const oyk_u8*>(cmsg), strlen(cmsg)) == 1);
+    assert(ltx->count >= 1 && oyk_frame_type(&ltx->frames[0]) == OYK_FT_I);
+    lnode->close_local_terminal(lsid);
+    lnode->shutdown();
+    delete ltx;
+    delete lnode;
+    delete pcfg;
+
     /* 1. Filename sanitization & path traversal protection */
     assert(oyk_yapp_is_safe_filename("important-file.txt") == 1);
     assert(oyk_yapp_is_safe_filename("TEST123.BIN") == 1);

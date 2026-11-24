@@ -138,6 +138,7 @@ static HWND g_lterm_hwnd = NULL;
 static oyk_u32 g_lterm_sid = 0;
 static int g_lterm_connected = 0;
 static int g_lterm_connecting = 0;
+static int g_lterm_is_local = 0;
 static OykCallsign g_lterm_remote;
 static OykYappSession g_lterm_yapp;
 static char g_lterm_curline[260];
@@ -679,8 +680,10 @@ static void refresh_gui() {
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
             sprintf(buf, "#%-4lu %-11.11s %-9.9s %-9.9s %s",
                     static_cast<unsigned long>(s.id), cs,
-                    g_node.iface(s.iface_idx).cfg.id, s.since_hms,
-                    s.restricted_ban ? "BAN NOTICE" : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"));
+                    (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local", s.since_hms,
+                    s.restricted_ban ? "BAN NOTICE"
+                                     : (s.in_chat ? "CHAT"
+                                                  : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
             SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
         }
     }
@@ -715,7 +718,7 @@ OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     char cs[12], row[80];
                     oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
                     sprintf(row, "#%lu  %s on %s", static_cast<unsigned long>(s.id),
-                            cs, g_node.iface(s.iface_idx).cfg.id);
+                            cs, (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local");
                     SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
                     s_ids[s_count++] = s.id;
                 }
@@ -761,6 +764,7 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
         case WM_INITDIALOG:
+            SetDlgItemText(hdlg, IDC_BAN_LIFT, "permanent");
             SetDlgItemText(hdlg, IDC_BAN_REASON, "Banned by sysop.");
             CheckDlgButton(hdlg, IDC_BAN_APPEAL, BST_CHECKED);
             fill_ban_listbox(GetDlgItem(hdlg, IDC_BAN_LIST));
@@ -768,14 +772,16 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_BAN_ADD) {
-                char call[16], reason[96], fb[96];
+                char call[16], lift[32], reason[96], fb[96];
                 GetDlgItemText(hdlg, IDC_BAN_CALL, call, sizeof(call));
+                GetDlgItemText(hdlg, IDC_BAN_LIFT, lift, sizeof(lift));
                 GetDlgItemText(hdlg, IDC_BAN_REASON, reason, sizeof(reason));
                 oyk_u32 flags = 0;
                 if (IsDlgButtonChecked(hdlg, IDC_BAN_HARD)) flags |= OYK_BAN_HARD_BAN;
                 if (IsDlgButtonChecked(hdlg, IDC_BAN_APPEAL)) flags |= OYK_BAN_APPEAL_ALLOWED;
-                if (g_node.ban_callsign(call, flags, reason, "permanent", fb, sizeof(fb))) {
+                if (g_node.ban_callsign(call, flags, reason, lift, fb, sizeof(fb))) {
                     SetDlgItemText(hdlg, IDC_BAN_CALL, "");
+                    SetDlgItemText(hdlg, IDC_BAN_LIFT, "permanent");
                     set_status(fb);
                     fill_ban_listbox(GetDlgItem(hdlg, IDC_BAN_LIST));
                 } else {
@@ -787,10 +793,15 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 HWND lb = GetDlgItem(hdlg, IDC_BAN_LIST);
                 int sel = static_cast<int>(SendMessage(lb, LB_GETCURSEL, 0, 0));
                 if (sel >= 0 && sel < g_node.ban_count()) {
-                    char fb[96];
-                    g_node.unban_callsign(g_node.ban_entry(sel).key, fb, sizeof(fb));
-                    set_status(fb);
-                    fill_ban_listbox(lb);
+                    char confirm[64];
+                    sprintf(confirm, "Unban callsign %s?", g_node.ban_entry(sel).key);
+                    if (MessageBox(hdlg, confirm, "Confirm Unban",
+                                   MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        char fb[96];
+                        g_node.unban_callsign(g_node.ban_entry(sel).key, fb, sizeof(fb));
+                        set_status(fb);
+                        fill_ban_listbox(lb);
+                    }
                 }
                 return TRUE;
             }
@@ -825,14 +836,14 @@ static void lterm_append_line(const char* line) {
 static void lterm_update_status() {
     if (!g_lterm_hwnd) return;
     char st[160];
-    if (g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
+    if (!g_lterm_is_local && g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
         sprintf(st, "%.100s (%lu/%lu B)", g_lterm_yapp.status,
                 static_cast<unsigned long>(g_lterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_lterm_yapp.total_bytes));
     } else if (g_lterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(st, "Connected to %s (YAPP ready)", cs);
+        sprintf(st, "Connected to %s (%s)", cs, g_lterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready");
     } else if (g_lterm_connecting) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
@@ -844,9 +855,9 @@ static void lterm_update_status() {
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_CONNECT), (!g_lterm_connected && !g_lterm_connecting) ? TRUE : FALSE);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_DISC), (g_lterm_connected || g_lterm_connecting) ? TRUE : FALSE);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_UPLOAD),
-                 (g_lterm_connected && !oyk_yapp_is_active(&g_lterm_yapp)) ? TRUE : FALSE);
+                 (g_lterm_connected && !g_lterm_is_local && !oyk_yapp_is_active(&g_lterm_yapp)) ? TRUE : FALSE);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_ABORT),
-                 oyk_yapp_is_active(&g_lterm_yapp) ? TRUE : FALSE);
+                 (!g_lterm_is_local && oyk_yapp_is_active(&g_lterm_yapp)) ? TRUE : FALSE);
 }
 
 static int win_yapp_send_cb(const oyk_u8* data, size_t len, void* /*ctx*/) {
@@ -875,10 +886,15 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
         lterm_append_line(msg);
         lterm_update_status();
     } else if (event_type == 2 && data && len > 0) {
+        const oyk_u8* text_ptr = data;
+        size_t text_len = len;
         static oyk_u8 plain[512];
-        size_t pn = oyk_yapp_feed_bytes(&g_lterm_yapp, data, len, plain, sizeof(plain));
-        for (size_t i = 0; i < pn; ++i) {
-            oyk_u8 ch = plain[i];
+        if (!g_lterm_is_local) {
+            text_len = oyk_yapp_feed_bytes(&g_lterm_yapp, data, len, plain, sizeof(plain));
+            text_ptr = plain;
+        }
+        for (size_t i = 0; i < text_len; ++i) {
+            oyk_u8 ch = text_ptr[i];
             if (ch == '\r' || ch == '\n') {
                 if (g_lterm_curline_len > 0 || ch == '\r') {
                     g_lterm_curline[g_lterm_curline_len] = '\0';
@@ -891,7 +907,7 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
                 }
             }
         }
-        if (g_lterm_yapp.status[0] && strcmp(g_lterm_yapp.status, g_lterm_last_yapp_st) != 0) {
+        if (!g_lterm_is_local && g_lterm_yapp.status[0] && strcmp(g_lterm_yapp.status, g_lterm_last_yapp_st) != 0) {
             strncpy(g_lterm_last_yapp_st, g_lterm_yapp.status, sizeof(g_lterm_last_yapp_st) - 1);
             g_lterm_last_yapp_st[sizeof(g_lterm_last_yapp_st) - 1] = '\0';
             char line[160];
@@ -903,6 +919,7 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
         g_lterm_sid = 0;
         g_lterm_connecting = 0;
         g_lterm_connected = 0;
+        g_lterm_is_local = 0;
         oyk_yapp_reset(&g_lterm_yapp);
         char msg[96];
         sprintf(msg, "*** Disconnected (%s)", reason ? reason : "Closed");
@@ -913,7 +930,7 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
 
 OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
-    static int s_iface_map[OYK_MAX_INTERFACES];
+    static int s_iface_map[OYK_MAX_INTERFACES + 1];
     static int s_iface_cnt = 0;
 
     switch (msg) {
@@ -922,6 +939,7 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             g_lterm_sid = 0;
             g_lterm_connected = 0;
             g_lterm_connecting = 0;
+            g_lterm_is_local = 0;
             g_lterm_curline_len = 0;
             g_lterm_last_yapp_st[0] = '\0';
             oyk_yapp_init(&g_lterm_yapp, "incoming",
@@ -933,7 +951,9 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
             HWND cb = GetDlgItem(hdlg, IDC_LTERM_PORT);
             s_iface_cnt = 0;
-            for (int i = 0; i < g_node.iface_count() && s_iface_cnt < OYK_MAX_INTERFACES; ++i) {
+            SendMessage(cb, CB_ADDSTRING, 0, OYK_LPARAM_STR("local"));
+            s_iface_map[s_iface_cnt++] = -1;
+            for (int i = 0; i < g_node.iface_count() && s_iface_cnt <= OYK_MAX_INTERFACES; ++i) {
                 if (g_ifaces[i].kind == WIN_IF_AXUDP) {
                     SendMessage(cb, CB_ADDSTRING, 0, OYK_LPARAM_STR(g_node.iface(i).cfg.id));
                     s_iface_map[s_iface_cnt++] = i;
@@ -941,9 +961,8 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (s_iface_cnt > 0) SendMessage(cb, CB_SETCURSEL, 0, 0);
 
-            lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled)");
-            lterm_append_line("*** Downloads save to incoming\\<CALL-SSID>\\<file>");
-            lterm_append_line("*** Enter CALLSIGN (or CALLSIGN@ip:port) and click Connect.");
+            lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
+            lterm_append_line("*** Select 'local' for local node/CHAT, or a radio port for remote nodes.");
             lterm_update_status();
             return TRUE;
         }
@@ -952,24 +971,33 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_LTERM_CONNECT) {
                 int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_LTERM_PORT, CB_GETCURSEL, 0, 0));
                 if (sel < 0 || sel >= s_iface_cnt) {
-                    lterm_append_line("*** No AXUDP radio interface available.");
+                    lterm_append_line("*** Select a port first.");
                     return TRUE;
                 }
                 char target[96], err[96];
                 GetDlgItemText(hdlg, IDC_LTERM_TARGET, target, sizeof(target));
                 oyk_u32 sid = 0;
-                if (g_node.open_local_terminal(s_iface_map[sel], target, &sid, &g_lterm_remote, err, sizeof(err))) {
+                int is_local = 0;
+                g_lterm_is_local = (s_iface_map[sel] < 0) ? 1 : 0;
+                if (g_node.open_local_terminal(s_iface_map[sel], target, &sid, &g_lterm_remote,
+                                               &is_local, err, sizeof(err))) {
                     g_lterm_sid = sid;
-                    g_lterm_connecting = 1;
-                    g_lterm_connected = 0;
+                    g_lterm_is_local = is_local;
+                    g_lterm_connecting = is_local ? 0 : 1;
+                    g_lterm_connected = is_local ? 1 : 0;
                     oyk_yapp_reset(&g_lterm_yapp);
                     oyk_yapp_set_remote(&g_lterm_yapp, &g_lterm_remote);
                     g_lterm_last_yapp_st[0] = '\0';
                     char cs[16], line[96];
                     oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-                    sprintf(line, "*** Connecting to %s on %s...", cs, g_node.iface(s_iface_map[sel]).cfg.id);
+                    if (is_local) {
+                        sprintf(line, "*** Connected locally to %s (YAPP disabled)", cs);
+                    } else {
+                        sprintf(line, "*** Connecting to %s on %s...", cs, g_node.iface(s_iface_map[sel]).cfg.id);
+                    }
                     lterm_append_line(line);
                 } else {
+                    g_lterm_is_local = 0;
                     char line[128];
                     sprintf(line, "*** Connect error: %s", err);
                     lterm_append_line(line);
@@ -988,6 +1016,10 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_LTERM_UPLOAD) {
                 if (!g_lterm_connected || g_lterm_sid == 0) {
                     lterm_append_line("*** Connect to a remote node before uploading.");
+                    return TRUE;
+                }
+                if (g_lterm_is_local) {
+                    lterm_append_line("*** YAPP file transfer is disallowed when both sides are local.");
                     return TRUE;
                 }
                 static OPENFILENAME ofn;

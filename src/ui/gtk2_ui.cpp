@@ -165,8 +165,10 @@ void refresh_ui(GtkAppState* st) {
                                ? "BAN NOTICE"
                                : (s.mode == node::SessionMode::LocalTerminal)
                                      ? "LOCAL TERM"
-                                     : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
-                                                             : "NODE SHELL");
+                                     : (s.mode == node::SessionMode::Chat)
+                                           ? "CHAT"
+                                           : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
+                                                                   : "NODE SHELL");
         gtk_list_store_append(st->session_store, &iter);
         gtk_list_store_set(st->session_store, &iter,
                            0, id_str.c_str(),
@@ -243,6 +245,7 @@ struct GtkTermWindowState {
     uint64_t sid = 0;
     bool connected = false;
     bool connecting = false;
+    bool is_local = false;
     std::string port_id;
     ax25::Callsign remote_call{"UNKNOWN", 0};
     std::string pending_text;
@@ -268,6 +271,7 @@ gboolean on_gtk_term_tick(gpointer user_data) {
     protocol::YappProgress yp;
     bool is_conn = false;
     bool is_connecting = false;
+    bool is_loc = false;
     std::string overwrite_path;
 
     {
@@ -278,7 +282,8 @@ gboolean on_gtk_term_tick(gpointer user_data) {
         yp = ts->yapp.progress();
         is_conn = ts->connected;
         is_connecting = ts->connecting;
-        if (ts->yapp.awaiting_overwrite() && !ts->overwrite_prompt_open) {
+        is_loc = ts->is_local;
+        if (!is_loc && ts->yapp.awaiting_overwrite() && !ts->overwrite_prompt_open) {
             overwrite_path = yp.target_path;
             ts->overwrite_prompt_open = true;
         }
@@ -290,14 +295,15 @@ gboolean on_gtk_term_tick(gpointer user_data) {
 
     gtk_widget_set_sensitive(ts->btn_connect, (!is_conn && !is_connecting) ? TRUE : FALSE);
     gtk_widget_set_sensitive(ts->btn_disc, (is_conn || is_connecting) ? TRUE : FALSE);
-    gtk_widget_set_sensitive(ts->btn_upload, (is_conn && !ts->yapp.is_active()) ? TRUE : FALSE);
-    gtk_widget_set_sensitive(ts->btn_abort, ts->yapp.is_active() ? TRUE : FALSE);
+    gtk_widget_set_sensitive(ts->btn_upload, (is_conn && !is_loc && !ts->yapp.is_active()) ? TRUE : FALSE);
+    gtk_widget_set_sensitive(ts->btn_abort, (!is_loc && ts->yapp.is_active()) ? TRUE : FALSE);
 
     if (yp.state == protocol::YappState::Idle) {
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ts->progress_bar), 0.0);
-        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar),
-                                  is_conn ? ("Connected to " + ts->remote_call.str() + " (YAPP ready)").c_str()
-                                          : (is_connecting ? "Connecting..." : "Disconnected"));
+        std::string status_txt = is_conn
+            ? ("Connected to " + ts->remote_call.str() + (is_loc ? " (LOCAL - YAPP disabled)" : " (YAPP ready)"))
+            : (is_connecting ? "Connecting..." : "Disconnected");
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar), status_txt.c_str());
     } else {
         double frac = (yp.total_bytes > 0)
                           ? std::min(1.0, static_cast<double>(yp.bytes_transferred) / static_cast<double>(yp.total_bytes))
@@ -337,8 +343,8 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
     std::string port = port_raw ? port_raw : "";
     if (port_raw) g_free(port_raw);
     std::string target = gtk_entry_get_text(GTK_ENTRY(ts->call_entry));
-    if (port.empty() || target.empty()) {
-        gtk_term_append_text_ui(ts, "*** Select a port and enter a target callsign.\n");
+    if (port.empty()) {
+        gtk_term_append_text_ui(ts, "*** Select a port.\n");
         return;
     }
 
@@ -353,6 +359,13 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
     cbs.on_rx_bytes = [ts](uint64_t sid, const std::vector<uint8_t>& bytes) {
         std::lock_guard<std::mutex> lk(ts->mtx);
         if (ts->sid != sid) return;
+        if (ts->is_local) {
+            for (uint8_t b : bytes) {
+                if (b == '\r') ts->pending_text.push_back('\n');
+                else if (b == '\n' || (b >= 0x20 && b < 0x7F)) ts->pending_text.push_back(static_cast<char>(b));
+            }
+            return;
+        }
         std::vector<uint8_t> plain;
         ts->yapp.feed_bytes(bytes.data(), bytes.size(), plain);
         for (uint8_t b : plain) {
@@ -371,22 +384,29 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
         ts->sid = 0;
         ts->connecting = false;
         ts->connected = false;
+        ts->is_local = false;
         ts->yapp.reset();
         ts->pending_text += "*** Disconnected (" + reason + ")\n";
     };
 
     uint64_t sid = 0;
     ax25::Callsign resolved;
+    bool is_local = false;
     std::string err;
-    if (ts->engine->open_local_terminal(port, target, std::move(cbs), sid, &resolved, err)) {
+    if (ts->engine->open_local_terminal(port, target, std::move(cbs), sid, &resolved, err, &is_local)) {
         std::lock_guard<std::mutex> lk(ts->mtx);
         ts->sid = sid;
-        ts->connecting = true;
-        ts->connected = false;
-        ts->port_id = port;
+        ts->is_local = is_local;
+        ts->connecting = !is_local;
+        ts->connected = is_local;
+        ts->port_id = is_local ? "local" : port;
         ts->remote_call = resolved;
         ts->yapp.set_remote_callsign(resolved);
-        ts->pending_text += "*** Connecting to " + resolved.str() + " on " + port + "...\n";
+        if (is_local) {
+            ts->pending_text += "*** Connected locally to " + resolved.str() + " (YAPP disabled)\n";
+        } else {
+            ts->pending_text += "*** Connecting to " + resolved.str() + " on " + port + "...\n";
+        }
     } else {
         gtk_term_append_text_ui(ts, "*** Connect error: " + err + "\n");
     }
@@ -497,15 +517,12 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     GtkWidget* top_bar = gtk_hbox_new(FALSE, 4);
     gtk_box_pack_start(GTK_BOX(top_bar), gtk_label_new("Port:"), FALSE, FALSE, 2);
     ts->port_combo = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(ts->port_combo), "local");
     auto snap = st->engine->snapshot();
-    int active_idx = 0;
-    int idx = 0;
     for (const auto& iface : snap.interfaces) {
         gtk_combo_box_append_text(GTK_COMBO_BOX(ts->port_combo), iface.id.c_str());
-        if (iface.type != "telnet" && active_idx == 0) active_idx = idx;
-        ++idx;
     }
-    if (idx > 0) gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), active_idx);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), 0);
     gtk_box_pack_start(GTK_BOX(top_bar), ts->port_combo, FALSE, FALSE, 2);
 
     gtk_box_pack_start(GTK_BOX(top_bar), gtk_label_new("Callsign:"), FALSE, FALSE, 2);
@@ -643,7 +660,7 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
 
     GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
 
-    GtkWidget* table = gtk_table_new(3, 2, FALSE);
+    GtkWidget* table = gtk_table_new(4, 2, FALSE);
     gtk_table_set_row_spacings(GTK_TABLE(table), 4);
     gtk_table_set_col_spacings(GTK_TABLE(table), 6);
     gtk_container_set_border_width(GTK_CONTAINER(table), 6);
@@ -652,6 +669,11 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
     gtk_misc_set_alignment(GTK_MISC(call_lbl), 0.0f, 0.5f);
     GtkWidget* call_entry = gtk_entry_new();
     gtk_entry_set_max_length(GTK_ENTRY(call_entry), 9);
+
+    GtkWidget* lift_lbl = gtk_label_new("Lift (permanent, 30m, 12h, 7d, YYYY-MM-DD):");
+    gtk_misc_set_alignment(GTK_MISC(lift_lbl), 0.0f, 0.5f);
+    GtkWidget* lift_entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(lift_entry), "permanent");
 
     GtkWidget* reason_lbl = gtk_label_new("Reason:");
     gtk_misc_set_alignment(GTK_MISC(reason_lbl), 0.0f, 0.5f);
@@ -665,11 +687,14 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
     gtk_table_attach(GTK_TABLE(table), call_lbl, 0, 1, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
     gtk_table_attach(GTK_TABLE(table), call_entry, 1, 2, 0, 1,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), reason_lbl, 0, 1, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), reason_entry, 1, 2, 1, 2,
+    gtk_table_attach(GTK_TABLE(table), lift_lbl, 0, 1, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), lift_entry, 1, 2, 1, 2,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), chk_hard, 0, 1, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), chk_appeal, 1, 2, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), reason_lbl, 0, 1, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), reason_entry, 1, 2, 2, 3,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), chk_hard, 0, 1, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), chk_appeal, 1, 2, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
 
     gtk_box_pack_start(GTK_BOX(vbox), table, FALSE, FALSE, 4);
 
@@ -698,6 +723,7 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
         gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
         if (resp == 1) {
             std::string call = gtk_entry_get_text(GTK_ENTRY(call_entry));
+            std::string lift = gtk_entry_get_text(GTK_ENTRY(lift_entry));
             std::string reason = gtk_entry_get_text(GTK_ENTRY(reason_entry));
             uint32_t flags = 0;
             if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_hard))) {
@@ -707,8 +733,9 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
                 flags |= node::BAN_FLAG_APPEAL_ALLOWED;
             }
             std::string msg;
-            if (st->engine->ban_callsign(call, &msg, true, flags, reason)) {
+            if (st->engine->ban_callsign_with_lift_spec(call, lift, &msg, true, flags, reason)) {
                 gtk_entry_set_text(GTK_ENTRY(call_entry), "");
+                gtk_entry_set_text(GTK_ENTRY(lift_entry), "permanent");
                 gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
                 set_status_text(st, msg);
                 populate_ban_dialog_store(st->engine, ban_store);
@@ -724,13 +751,24 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
                 gchar* key = nullptr;
                 gtk_tree_model_get(model, &iter, 0, &key, -1);
                 if (key) {
-                    std::string msg;
-                    st->engine->unban_callsign(key, &msg);
+                    GtkWidget* confirm = gtk_message_dialog_new(
+                        GTK_WINDOW(dlg),
+                        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+                        GTK_MESSAGE_QUESTION,
+                        GTK_BUTTONS_YES_NO,
+                        "Unban callsign %s?", key);
+                    gtk_window_set_title(GTK_WINDOW(confirm), "Confirm Unban");
+                    gint cresp = gtk_dialog_run(GTK_DIALOG(confirm));
+                    gtk_widget_destroy(confirm);
+                    if (cresp == GTK_RESPONSE_YES) {
+                        std::string msg;
+                        st->engine->unban_callsign(key, &msg);
+                        gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
+                        set_status_text(st, msg);
+                        populate_ban_dialog_store(st->engine, ban_store);
+                        refresh_ui(st);
+                    }
                     g_free(key);
-                    gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
-                    set_status_text(st, msg);
-                    populate_ban_dialog_store(st->engine, ban_store);
-                    refresh_ui(st);
                 }
             }
         } else {

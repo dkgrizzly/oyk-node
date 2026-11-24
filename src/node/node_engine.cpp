@@ -161,6 +161,12 @@ bool NodeEngine::start(std::string& error_out) {
         log_msg(LOG_INFO, "Node " + config_.callsign.str() +
                           (config_.alias.valid() ? " (" + config_.alias.str() + ")" : "") +
                           " online");
+        if (config_.chat.enabled) {
+            const std::string chat_call = config_.resolved_chat_callsign().str();
+            chat_room_.configure(chat_call, config_.chat.default_topic, config_.chat.welcome);
+            log_msg(LOG_INFO, "CHAT conference active on " + chat_call +
+                              (config_.chat.alias.valid() ? " (" + config_.chat.alias.str() + ")" : ""));
+        }
     }
 
     running_.store(true);
@@ -358,6 +364,21 @@ bool NodeEngine::ban_callsign(std::string_view callsign_spec,
     return true;
 }
 
+bool NodeEngine::ban_callsign_with_lift_spec(std::string_view callsign_spec,
+                                             std::string_view lift_spec,
+                                             std::string* message_out,
+                                             bool disconnect_active,
+                                             uint32_t flags,
+                                             const std::string& reason) {
+    std::optional<std::chrono::system_clock::time_point> lift_at;
+    std::string parse_err;
+    if (!BanList::parse_lift_spec(lift_spec, current_time(), lift_at, &parse_err)) {
+        if (message_out) *message_out = parse_err;
+        return false;
+    }
+    return ban_callsign(callsign_spec, message_out, disconnect_active, flags, reason, lift_at);
+}
+
 bool NodeEngine::unban_callsign(std::string_view callsign_spec, std::string* message_out) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     std::string removed_key;
@@ -396,8 +417,15 @@ bool NodeEngine::is_for_node(const ax25::Callsign& dst) const {
     return false;
 }
 
+bool NodeEngine::is_for_chat(const ax25::Callsign& dst) const {
+    if (!config_.chat.enabled) return false;
+    if (dst == config_.resolved_chat_callsign()) return true;
+    if (config_.chat.alias.valid() && dst == config_.chat.alias) return true;
+    return false;
+}
+
 bool NodeEngine::is_own_callsign(const ax25::Callsign& call) const {
-    return is_for_node(call);
+    return is_for_node(call) || is_for_chat(call);
 }
 
 void NodeEngine::record_heard_locked(const ax25::Callsign& src,
@@ -460,10 +488,73 @@ std::string NodeEngine::build_ban_notice(const BanEntry& entry, bool can_appeal)
 void NodeEngine::queue_session_frames(Session& sess,
                                       const std::vector<ax25::Frame>& frames,
                                       std::vector<PendingTx>& pending) {
+    if (sess.is_local_loopback()) return;
     auto it = iface_by_id_.find(sess.interface_id());
     if (it == iface_by_id_.end() || !it->second) return;
     for (const auto& f : frames) {
         pending.push_back(PendingTx{it->second, f, sess.peer_endpoint()});
+    }
+}
+
+void NodeEngine::deliver_text_locked(Session& sess,
+                                     const std::string& text,
+                                     std::vector<PendingTx>& pending,
+                                     std::vector<PendingLocalEvent>& pending_local) {
+    if (text.empty()) return;
+    if (sess.is_local_loopback()) {
+        auto cbit = local_callbacks_.find(sess.id());
+        if (cbit != local_callbacks_.end()) {
+            PendingLocalEvent ple;
+            ple.session_id = sess.id();
+            ple.rx_bytes.assign(text.begin(), text.end());
+            ple.callbacks = cbit->second;
+            pending_local.push_back(std::move(ple));
+        }
+        return;
+    }
+    auto ev = sess.queue_text(text);
+    queue_session_frames(sess, ev.tx_frames, pending);
+}
+
+void NodeEngine::apply_chat_result_locked(const ChatActionResult& res,
+                                          uint64_t actor_sid,
+                                          std::vector<PendingTx>& pending,
+                                          std::vector<PendingLocalEvent>& pending_local) {
+    for (const auto& d : res.deliveries) {
+        auto it = sessions_.find(d.session_id);
+        if (it != sessions_.end() && it->second && it->second->state() == SessionState::Connected) {
+            deliver_text_locked(*it->second, d.text, pending, pending_local);
+        }
+    }
+    if (res.left_chat) {
+        auto it = sessions_.find(actor_sid);
+        if (it != sessions_.end() && it->second) {
+            Session& actor = *it->second;
+            if (res.disconnect_session) {
+                if (actor.is_local_loopback()) {
+                    auto cbit = local_callbacks_.find(actor_sid);
+                    if (cbit != local_callbacks_.end()) {
+                        PendingLocalEvent ple;
+                        ple.session_id = actor_sid;
+                        ple.closed = true;
+                        ple.close_reason = "Left chat";
+                        ple.callbacks = cbit->second;
+                        pending_local.push_back(std::move(ple));
+                        local_callbacks_.erase(cbit);
+                    }
+                    sessions_.erase(it);
+                } else {
+                    auto disc_ev = actor.initiate_disconnect("Left chat");
+                    queue_session_frames(actor, disc_ev.tx_frames, pending);
+                    if (actor.state() == SessionState::Closed) {
+                        sessions_.erase(it);
+                    }
+                }
+            } else {
+                actor.set_mode(SessionMode::Normal);
+                deliver_text_locked(actor, prompt_string(), pending, pending_local);
+            }
+        }
     }
 }
 
@@ -494,17 +585,15 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
                                      LocalTerminalCallbacks callbacks,
                                      uint64_t& session_id_out,
                                      ax25::Callsign* resolved_call_out,
-                                     std::string& error_out) {
+                                     std::string& error_out,
+                                     bool* is_local_out) {
     std::vector<PendingTx> pending;
+    std::vector<PendingLocalEvent> pending_local;
+    bool is_local = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        std::string port_id = resolve_port_id_locked(port_spec);
-        if (port_id.empty()) {
-            error_out = "Unknown port '" + port_spec + "'";
-            return false;
-        }
 
-        // Allow optional CALLSIGN@host:port endpoint override
+        std::string port_upper = to_upper(port_spec);
         std::string call_part = target_call_str;
         std::string endpoint;
         std::size_t at = target_call_str.find('@');
@@ -512,59 +601,150 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
             call_part = target_call_str.substr(0, at);
             endpoint = target_call_str.substr(at + 1);
         }
+        std::string call_upper = to_upper(call_part);
 
-        auto target = ax25::Callsign::parse(call_part);
-        if (!target) {
-            error_out = "Invalid callsign '" + call_part + "'";
-            return false;
-        }
-        if (is_own_callsign(*target)) {
-            error_out = "Cannot connect to self";
-            return false;
+        bool target_is_local_keyword = call_upper.empty() || call_upper == "LOCAL" || call_upper == "NODE";
+        bool target_is_chat_keyword = (call_upper == "CHAT");
+        std::optional<ax25::Callsign> parsed_target;
+        if (!target_is_local_keyword && !target_is_chat_keyword) {
+            parsed_target = ax25::Callsign::parse(call_part);
         }
 
-        SessionParams sp{
-            config_.paclen,
-            config_.maxframe,
-            config_.t1_ms,
-            config_.n2_retries,
-            config_.idle_timeout_sec
-        };
-        uint64_t sid = next_session_id_++;
-        auto sess = std::make_unique<Session>(
-            sid, port_id, config_.callsign, *target, endpoint,
-            SessionDirection::Outbound, sp);
-        sess->set_local_terminal();
-        Session* raw = sess.get();
-        sessions_[sid] = std::move(sess);
-        local_callbacks_[sid] = std::move(callbacks);
+        bool direct_chat = false;
+        if (port_upper == "LOCAL" || target_is_local_keyword || target_is_chat_keyword ||
+            (parsed_target && (is_for_node(*parsed_target) || is_for_chat(*parsed_target)))) {
+            is_local = true;
+            if (target_is_chat_keyword || (parsed_target && is_for_chat(*parsed_target))) {
+                if (!config_.chat.enabled) {
+                    error_out = "Local CHAT is disabled in configuration";
+                    return false;
+                }
+                direct_chat = true;
+                parsed_target = config_.resolved_chat_callsign();
+            } else {
+                parsed_target = config_.callsign;
+            }
+        }
 
-        auto ev = raw->initiate_outbound_connect();
-        queue_session_frames(*raw, ev.tx_frames, pending);
+        if (is_local) {
+            SessionParams sp{
+                config_.paclen,
+                config_.maxframe,
+                config_.t1_ms,
+                config_.n2_retries,
+                config_.idle_timeout_sec
+            };
+            uint64_t sid = next_session_id_++;
+            auto sess = std::make_unique<Session>(
+                sid, "local", *parsed_target, config_.callsign, "local",
+                SessionDirection::Inbound, sp);
+            sess->set_local_loopback(true);
+            (void)sess->accept_inbound_sabm();
+            if (direct_chat) {
+                sess->set_mode(SessionMode::Chat);
+                sess->set_chat_direct(true);
+            } else {
+                sess->set_mode(SessionMode::Normal);
+            }
+            Session* raw = sess.get();
+            sessions_[sid] = std::move(sess);
+            local_callbacks_[sid] = callbacks;
 
-        session_id_out = sid;
-        if (resolved_call_out) *resolved_call_out = *target;
-        log_msg(LOG_INFO, "Local terminal #" + std::to_string(sid) + " connecting to " +
-                          target->str() + " on " + port_id);
+            PendingLocalEvent conn_ev;
+            conn_ev.session_id = sid;
+            conn_ev.connected = true;
+            conn_ev.callbacks = callbacks;
+            pending_local.push_back(std::move(conn_ev));
+
+            if (direct_chat) {
+                auto chat_res = chat_room_.join(sid, config_.callsign.str(), "local", true);
+                apply_chat_result_locked(chat_res, sid, pending, pending_local);
+            } else {
+                deliver_text_locked(*raw, welcome_banner(), pending, pending_local);
+            }
+
+            session_id_out = sid;
+            if (resolved_call_out) *resolved_call_out = *parsed_target;
+            if (is_local_out) *is_local_out = true;
+            log_msg(LOG_INFO, "Local terminal #" + std::to_string(sid) + " connected locally to " +
+                              parsed_target->str());
+        } else {
+            std::string port_id = resolve_port_id_locked(port_spec);
+            if (port_id.empty()) {
+                error_out = "Unknown port '" + port_spec + "'";
+                return false;
+            }
+            if (!parsed_target) {
+                error_out = "Invalid callsign '" + call_part + "'";
+                return false;
+            }
+
+            SessionParams sp{
+                config_.paclen,
+                config_.maxframe,
+                config_.t1_ms,
+                config_.n2_retries,
+                config_.idle_timeout_sec
+            };
+            uint64_t sid = next_session_id_++;
+            auto sess = std::make_unique<Session>(
+                sid, port_id, config_.callsign, *parsed_target, endpoint,
+                SessionDirection::Outbound, sp);
+            sess->set_local_terminal();
+            Session* raw = sess.get();
+            sessions_[sid] = std::move(sess);
+            local_callbacks_[sid] = std::move(callbacks);
+
+            auto ev = raw->initiate_outbound_connect();
+            queue_session_frames(*raw, ev.tx_frames, pending);
+
+            session_id_out = sid;
+            if (resolved_call_out) *resolved_call_out = *parsed_target;
+            if (is_local_out) *is_local_out = false;
+            log_msg(LOG_INFO, "Local terminal #" + std::to_string(sid) + " connecting to " +
+                              parsed_target->str() + " on " + port_id);
+        }
     }
     dispatch_tx(pending);
+    dispatch_local_events(pending_local);
     return true;
 }
 
 bool NodeEngine::send_local_terminal_bytes(uint64_t session_id, const std::vector<uint8_t>& data) {
     std::vector<PendingTx> pending;
+    std::vector<PendingLocalEvent> pending_local;
+    std::vector<PendingCommand> pending_cmds;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         auto it = sessions_.find(session_id);
         if (it == sessions_.end() || !it->second ||
-            it->second->mode() != SessionMode::LocalTerminal ||
             it->second->state() != SessionState::Connected) {
             return false;
         }
-        auto ev = it->second->queue_bytes(data);
-        queue_session_frames(*it->second, ev.tx_frames, pending);
+        Session& sess = *it->second;
+        if (sess.is_local_loopback()) {
+            auto lines = sess.feed_local_loopback_bytes(data);
+            for (const auto& line : lines) {
+                if (sess.mode() == SessionMode::Chat) {
+                    auto cres = chat_room_.handle_line(session_id, line);
+                    apply_chat_result_locked(cres, session_id, pending, pending_local);
+                    if (sessions_.find(session_id) == sessions_.end()) break;
+                } else {
+                    pending_cmds.push_back(PendingCommand{session_id, line});
+                }
+            }
+        } else if (sess.mode() == SessionMode::LocalTerminal) {
+            auto ev = sess.queue_bytes(data);
+            queue_session_frames(sess, ev.tx_frames, pending);
+        } else {
+            return false;
+        }
     }
     dispatch_tx(pending);
+    dispatch_local_events(pending_local);
+    if (!pending_cmds.empty()) {
+        execute_pending_commands(pending_cmds);
+    }
     return true;
 }
 
@@ -579,10 +759,18 @@ bool NodeEngine::close_local_terminal(uint64_t session_id) {
             return false;
         }
         Session& sess = *it->second;
-        auto ev = sess.initiate_disconnect("Disconnected by local operator");
-        queue_session_frames(sess, ev.tx_frames, pending);
-        auto cbit = local_callbacks_.find(session_id);
-        if (sess.state() == SessionState::Closed) {
+        if (chat_room_.has_participant(session_id)) {
+            auto cres = chat_room_.leave(session_id, "Disconnected");
+            for (const auto& d : cres.deliveries) {
+                if (d.session_id == session_id) continue;
+                auto dit = sessions_.find(d.session_id);
+                if (dit != sessions_.end() && dit->second && dit->second->state() == SessionState::Connected) {
+                    deliver_text_locked(*dit->second, d.text, pending, pending_local);
+                }
+            }
+        }
+        if (sess.is_local_loopback()) {
+            auto cbit = local_callbacks_.find(session_id);
             if (cbit != local_callbacks_.end()) {
                 PendingLocalEvent ple;
                 ple.session_id = session_id;
@@ -593,6 +781,22 @@ bool NodeEngine::close_local_terminal(uint64_t session_id) {
                 local_callbacks_.erase(cbit);
             }
             sessions_.erase(it);
+        } else {
+            auto ev = sess.initiate_disconnect("Disconnected by local operator");
+            queue_session_frames(sess, ev.tx_frames, pending);
+            auto cbit = local_callbacks_.find(session_id);
+            if (sess.state() == SessionState::Closed) {
+                if (cbit != local_callbacks_.end()) {
+                    PendingLocalEvent ple;
+                    ple.session_id = session_id;
+                    ple.closed = true;
+                    ple.close_reason = "Disconnected";
+                    ple.callbacks = cbit->second;
+                    pending_local.push_back(std::move(ple));
+                    local_callbacks_.erase(cbit);
+                }
+                sessions_.erase(it);
+            }
         }
     }
     dispatch_tx(pending);
@@ -616,7 +820,7 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
             return;
         }
 
-        if (!is_for_node(frame.destination)) {
+        if (!is_for_node(frame.destination) && !is_for_chat(frame.destination)) {
             return;
         }
 
@@ -743,11 +947,19 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                     auto ev = raw->accept_inbound_sabm();
                     queue_session_frames(*raw, ev.tx_frames, pending);
 
-                    log_msg(LOG_INFO, "Session #" + std::to_string(sid) + " connected: " +
-                                      frame.source.str() + " on " + meta.interface_id);
-
-                    auto banner_ev = raw->queue_text(welcome_banner());
-                    queue_session_frames(*raw, banner_ev.tx_frames, pending);
+                    if (is_for_chat(frame.destination)) {
+                        raw->set_mode(SessionMode::Chat);
+                        raw->set_chat_direct(true);
+                        log_msg(LOG_INFO, "CHAT session #" + std::to_string(sid) + " connected: " +
+                                          frame.source.str() + " on " + meta.interface_id);
+                        auto cres = chat_room_.join(sid, frame.source.str(), meta.interface_id, true);
+                        apply_chat_result_locked(cres, sid, pending, pending_local);
+                    } else {
+                        log_msg(LOG_INFO, "Session #" + std::to_string(sid) + " connected: " +
+                                          frame.source.str() + " on " + meta.interface_id);
+                        auto banner_ev = raw->queue_text(welcome_banner());
+                        queue_session_frames(*raw, banner_ev.tx_frames, pending);
+                    }
                 }
             }
         } else if (!existing) {
@@ -853,7 +1065,13 @@ void NodeEngine::process_session_events(Session& sess,
         }
     }
 
-    if (sess.mode() == SessionMode::RestrictedBan) {
+    if (sess.mode() == SessionMode::Chat) {
+        for (const auto& line : ev.rx_lines) {
+            auto cres = chat_room_.handle_line(sid, line);
+            apply_chat_result_locked(cres, sid, pending, pending_local);
+            if (sessions_.find(sid) == sessions_.end()) return;
+        }
+    } else if (sess.mode() == SessionMode::RestrictedBan) {
         for (const auto& line : ev.rx_lines) {
             handle_restricted_ban_line_locked(sess, line, pending);
             if (sess.state() != SessionState::Connected) {
@@ -876,6 +1094,16 @@ void NodeEngine::process_session_events(Session& sess,
         std::string reason = ev.close_reason.empty() ? "Closed" : ev.close_reason;
         log_msg(LOG_INFO, "Session #" + std::to_string(sid) + " (" +
                           sess.remote_call().str() + ") closed: " + reason);
+        if (chat_room_.has_participant(sid)) {
+            auto cres = chat_room_.leave(sid, reason);
+            for (const auto& d : cres.deliveries) {
+                if (d.session_id == sid) continue;
+                auto dit = sessions_.find(d.session_id);
+                if (dit != sessions_.end() && dit->second && dit->second->state() == SessionState::Connected) {
+                    deliver_text_locked(*dit->second, d.text, pending, pending_local);
+                }
+            }
+        }
         teardown_bridge_locked(sess, reason, pending);
         sessions_.erase(sid);
     }
@@ -886,6 +1114,7 @@ void NodeEngine::execute_pending_commands(const std::vector<PendingCommand>& pen
         CommandResult result = command_handler_.execute(*this, pc.session_id, pc.line);
 
         std::vector<PendingTx> pending;
+        std::vector<PendingLocalEvent> pending_local;
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             auto it = sessions_.find(pc.session_id);
@@ -897,25 +1126,54 @@ void NodeEngine::execute_pending_commands(const std::vector<PendingCommand>& pen
             }
             Session& sess = *it->second;
 
-            if (result.connect_request) {
-                start_outbound_connect(sess, result.connect_port, result.connect_callsign, pending);
+            if (result.enter_chat) {
+                if (!config_.chat.enabled) {
+                    deliver_text_locked(sess, "CHAT is disabled on this node.\r" + prompt_string(),
+                                        pending, pending_local);
+                } else {
+                    sess.set_mode(SessionMode::Chat);
+                    sess.set_chat_direct(false);
+                    auto cres = chat_room_.join(sess.id(), sess.remote_call().str(),
+                                                sess.interface_id(), false);
+                    apply_chat_result_locked(cres, sess.id(), pending, pending_local);
+                }
+            } else if (result.connect_request) {
+                if (sess.is_local_loopback()) {
+                    deliver_text_locked(sess, "Use Connect (F2 / Connect button) to connect to a remote node.\r" + prompt_string(),
+                                        pending, pending_local);
+                } else {
+                    start_outbound_connect(sess, result.connect_port, result.connect_callsign, pending);
+                }
             } else {
                 if (!result.response_text.empty()) {
-                    auto out_ev = sess.queue_text(result.response_text);
-                    queue_session_frames(sess, out_ev.tx_frames, pending);
+                    deliver_text_locked(sess, result.response_text, pending, pending_local);
                 }
                 if (result.disconnect) {
-                    auto disc_ev = sess.initiate_disconnect("User disconnected (BYE)");
-                    queue_session_frames(sess, disc_ev.tx_frames, pending);
-                    log_msg(LOG_INFO, "Session #" + std::to_string(sess.id()) + " (" +
-                                      sess.remote_call().str() + ") disconnected via BYE");
+                    if (sess.is_local_loopback()) {
+                        auto cbit = local_callbacks_.find(sess.id());
+                        if (cbit != local_callbacks_.end()) {
+                            PendingLocalEvent ple;
+                            ple.session_id = sess.id();
+                            ple.closed = true;
+                            ple.close_reason = "User disconnected (BYE)";
+                            ple.callbacks = cbit->second;
+                            pending_local.push_back(std::move(ple));
+                            local_callbacks_.erase(cbit);
+                        }
+                        sessions_.erase(it);
+                    } else {
+                        auto disc_ev = sess.initiate_disconnect("User disconnected (BYE)");
+                        queue_session_frames(sess, disc_ev.tx_frames, pending);
+                        log_msg(LOG_INFO, "Session #" + std::to_string(sess.id()) + " (" +
+                                          sess.remote_call().str() + ") disconnected via BYE");
+                    }
                 } else {
-                    auto prompt_ev = sess.queue_text(prompt_string());
-                    queue_session_frames(sess, prompt_ev.tx_frames, pending);
+                    deliver_text_locked(sess, prompt_string(), pending, pending_local);
                 }
             }
         }
         dispatch_tx(pending);
+        dispatch_local_events(pending_local);
     }
 }
 

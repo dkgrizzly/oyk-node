@@ -34,6 +34,7 @@
 #define IDC_BAN_LIST        415
 #define IDC_BAN_ADD         416
 #define IDC_BAN_REMOVE      417
+#define IDC_BAN_LIFT        418
 
 #define IDD_TERMINAL        420
 #define IDC_LTERM_PORT      421

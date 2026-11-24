@@ -329,6 +329,25 @@ SessionEvents Session::on_frame(const ax25::Frame& frame) {
     return ev;
 }
 
+std::vector<std::string> Session::feed_local_loopback_bytes(const std::vector<uint8_t>& data) {
+    touch();
+    std::vector<std::string> lines;
+    for (uint8_t b : data) {
+        char c = static_cast<char>(b);
+        if (c == '\r' || c == '\n') {
+            if (!rx_line_buf_.empty() || c == '\r') {
+                lines.push_back(rx_line_buf_);
+                rx_line_buf_.clear();
+            }
+        } else if (c == '\b' || b == 0x7F) {
+            if (!rx_line_buf_.empty()) rx_line_buf_.pop_back();
+        } else if (b >= 0x20 && b < 0x7F) {
+            if (rx_line_buf_.size() < 512) rx_line_buf_.push_back(c);
+        }
+    }
+    return lines;
+}
+
 SessionEvents Session::on_tick(std::chrono::steady_clock::time_point now) {
     SessionEvents ev;
     if (state_ == SessionState::Closed) {
