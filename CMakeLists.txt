@@ -13,9 +13,10 @@ option(BUILD_GTK2_UI      "Automatically build X11 GTK+ 2.0 GUI when libgtk2.0-d
 option(BUILD_TESTS        "Build unit and integration tests" ON)
 
 # Retro & Windows ports are ONLY built when explicitly requested
-option(BUILD_MSDOS_PORT   "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP) executable" OFF)
-option(BUILD_WIN16_PORT   "Add target to build 16-bit Windows 3.1 (OpenWatcom) executable" OFF)
-option(BUILD_WINDOWS_PORT "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
+option(BUILD_MSDOS_PORT    "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP) executable" OFF)
+option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) executable" OFF)
+option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
+option(BUILD_TINYTMUX_PORT "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
 set(MTCP_DIR "$ENV{HOME}/mTCP" CACHE PATH "Path to Michael Brutman's mTCP source tree (for BUILD_MSDOS_PORT)")
 set(FREEDOS_BOOT_IMG "" CACHE FILEPATH "Path to FreeDOS/MS-DOS boot floppy/disk image for QEMU DOS unit tests")
 
@@ -305,6 +306,22 @@ if(BUILD_WINDOWS_PORT)
     endif()
 endif()
 
+# Optional Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware target - built only if requested
+if(BUILD_TINYTMUX_PORT)
+    find_program(ARM_NONE_EABI_CXX arm-none-eabi-g++)
+    if(NOT ARM_NONE_EABI_CXX)
+        message(FATAL_ERROR "BUILD_TINYTMUX_PORT requires 'arm-none-eabi-g++' in PATH")
+    endif()
+    set(_tinytmux_build_dir "${CMAKE_CURRENT_BINARY_DIR}/tinytmux")
+    add_custom_target(oyk-tinytmux
+        COMMAND ${CMAKE_COMMAND} -S "${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux"
+                -B "${_tinytmux_build_dir}"
+                -DCMAKE_TOOLCHAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/arm-imxrt1062.cmake"
+        COMMAND ${CMAKE_COMMAND} --build "${_tinytmux_build_dir}" -j
+        COMMENT "Building Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware (oyk-tinytmux.hex)"
+    )
+endif()
+
 if(BUILD_TESTS AND NOT WIN32)
     enable_testing()
 
@@ -332,6 +349,31 @@ if(BUILD_TESTS AND NOT WIN32)
     )
     target_compile_options(oyk_portable_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_portable_tests COMMAND oyk_portable_tests)
+
+    # Strict C++98 host verification of Teensy 4.1 / IMXRT1060 (TinyTMUX) PSRAM, USB Host, PPP, Ethernet bridge & VT100 console
+    add_executable(oyk_tinytmux_tests
+        tests/test_tinytmux.cpp
+        ports/tinytmux/board_tinytmux.cpp
+        ports/tinytmux/tinytmux_psram.cpp
+        ports/tinytmux/tinytmux_usb_host.cpp
+        ports/tinytmux/oyk_ppp.cpp
+        ports/tinytmux/lwip_net_bridge.cpp
+        ports/tinytmux/tinytmux_console.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+    )
+    target_include_directories(oyk_tinytmux_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux
+    )
+    set_target_properties(oyk_tinytmux_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_tinytmux_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_tinytmux_tests COMMAND oyk_tinytmux_tests)
 
     # Optional headless 16-bit MS-DOS unit tests in qemu-system-i386
     if(BUILD_MSDOS_PORT)

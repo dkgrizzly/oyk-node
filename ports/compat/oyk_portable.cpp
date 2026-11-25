@@ -19,6 +19,9 @@
 #include <direct.h>
 #include <dos.h>
 #define OYK_MKDIR(p) mkdir(p)
+#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#include <sys/stat.h>
+#define OYK_MKDIR(p) ((void)(p), -1)
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -2148,6 +2151,8 @@ static int oyk_list_dir_entries(const char* dir_path, OykDirEnt* out, int max_ou
             }
         } while (_dos_findnext(&fi) == 0);
     }
+#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+    (void)dir_path;
 #else
     DIR* d = opendir(dir_path);
     if (!d) return 0;
@@ -2195,6 +2200,10 @@ static int oyk_is_regular_file(const char* path) {
     struct find_t fi;
     if (_dos_findfirst(path, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) != 0) return 0;
     return (fi.attrib & _A_SUBDIR) ? 0 : 1;
+#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISREG(st.st_mode) ? 1 : 0;
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;
@@ -2214,6 +2223,10 @@ static int oyk_is_directory(const char* path) {
     char pat[192];
     join_path(path, "*.*", pat, sizeof(pat));
     return (_dos_findfirst(pat, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) == 0) ? 1 : 0;
+#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;
