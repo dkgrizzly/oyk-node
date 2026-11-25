@@ -833,7 +833,7 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[1;2B"), 6);
     assert(con->current_settings_sel() == 2);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
-    assert(con->current_settings_sel() == 4);
+    assert(con->current_settings_sel() == 5);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H"), 3);
     assert(con->current_settings_sel() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOC"), 3);
@@ -882,6 +882,26 @@ static void test_vt100_console_full_parity() {
     assert(con->has_active_terminal() == 1);
     assert(strstr(cap->buf, "Tab:Term(ACTIVE)") != NULL);
 
+    /* Misplaced QSPI Flash on CS0 triggers warning banner + startup flag; CS1 flash clears warning */
+    tinytmux_psram_set_sim_chips(NULL, 0, 0, 0, NULL, 0, 0, 0);
+    tinytmux_psram_set_sim_flash(0, TMUX_FLEXSPI_FLASH_NOR, 0xEFU, 0x40U, 0x18U, 16UL * 1024UL * 1024UL);
+    tinytmux_psram_set_sim_flash(1, TMUX_FLEXSPI_NONE, 0, 0, 0, 0);
+    tinytmux_psram_retest();
+    assert(tinytmux_psram_info()->misplaced_flash_cs0 == 1);
+    assert(tinytmux_psram_info()->has_valid_qspi_flash_cs1 == 0);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("mp"), 2);
+    assert(strstr(cap->buf, "WRONG PADS (CS0 / Pin 48") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(t += 50UL);
+
+    tinytmux_psram_set_sim_flash(0, TMUX_FLEXSPI_NONE, 0, 0, 0, 0);
+    tinytmux_psram_set_sim_flash(1, TMUX_FLEXSPI_FLASH_NOR, 0xEFU, 0x40U, 0x18U, 16UL * 1024UL * 1024UL);
+    tinytmux_psram_retest();
+    assert(tinytmux_psram_info()->misplaced_flash_cs0 == 0);
+    assert(tinytmux_psram_info()->has_valid_qspi_flash_cs1 == 1);
+    tinytmux_psram_set_sim_flash(1, TMUX_FLEXSPI_NONE, 0, 0, 0, 0);
+
     g_test_con = NULL;
     tinytmux_psram_set_sim_chips(NULL, 0, 0, 0, NULL, 0, 0, 0);
     delete[] sim_cs1;
@@ -897,14 +917,41 @@ static void test_vt100_console_full_parity() {
 static void test_fs_hooks() {
     assert(tinytmux_fs_is_mounted() == 0);
     assert(strcmp(tinytmux_fs_status_label(), "UNMOUNTED") == 0);
+
+    /* Tier 1: microSD present */
+    tinytmux_fs_set_sim_tiers(1, 1, 1);
     assert(tinytmux_fs_mount() == 1);
     assert(tinytmux_fs_is_mounted() == 1);
-    assert(strcmp(tinytmux_fs_status_label(), "HOST") == 0);
+    assert(tinytmux_fs_active_tier() == TMUX_STORAGE_SD);
+    assert(tinytmux_fs_is_flash_storage() == 0);
+    assert(strcmp(tinytmux_fs_status_label(), "SDIO MOUNTED") == 0);
+
+    /* Tier 2 fallback: No SD, QSPI Flash present */
+    tinytmux_fs_unmount();
+    tinytmux_fs_set_sim_tiers(0, 1, 1);
+    assert(tinytmux_fs_mount() == 1);
+    assert(tinytmux_fs_active_tier() == TMUX_STORAGE_QSPI);
+    assert(tinytmux_fs_is_flash_storage() == 1);
+    assert(strcmp(tinytmux_fs_status_label(), "QSPI FLASH") == 0);
+
+    /* Tier 3 fallback: Neither SD nor QSPI, Internal 4 MB LittleFS active */
+    tinytmux_fs_unmount();
+    tinytmux_fs_set_sim_tiers(0, 0, 1);
+    assert(tinytmux_fs_mount() == 1);
+    assert(tinytmux_fs_active_tier() == TMUX_STORAGE_INTERNAL);
+    assert(tinytmux_fs_is_flash_storage() == 1);
+    assert(strcmp(tinytmux_fs_status_label(), "INT FLASH 4M") == 0);
+
+    TinyTmuxStorageTierInfo ti;
+    assert(tinytmux_fs_tier_info(TMUX_STORAGE_INTERNAL, &ti) == 1);
+    assert(ti.mounted == 1 && ti.total_kb == 4096UL);
+
     assert(oyk_imxrt_mkdir("/test") == -1);
     assert(oyk_imxrt_is_regular_file("/test/a.txt") == 0);
     assert(oyk_imxrt_is_directory("/test") == 0);
     assert(oyk_imxrt_opendir("/") == NULL);
     tinytmux_fs_unmount();
+    tinytmux_fs_set_sim_tiers(1, 0, 1);
     assert(tinytmux_fs_is_mounted() == 0);
     assert(strcmp(tinytmux_fs_status_label(), "UNMOUNTED") == 0);
     printf("[PASS] test_fs_hooks\n");

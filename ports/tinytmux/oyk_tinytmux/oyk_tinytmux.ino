@@ -23,6 +23,7 @@
 #include "tinytmux_psram.hpp"
 
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <SD.h>
 #include <USBHost_t36.h>
 
@@ -36,9 +37,9 @@
 #include <string.h>
 #include <strings.h>
 
-static OykPortableNode g_node;
-static TinyTmuxNetBridge g_net;
-static TinyTmuxConsole g_console;
+static OykPortableNode* g_node = NULL;
+static TinyTmuxNetBridge* g_net = NULL;
+static TinyTmuxConsole* g_console = NULL;
 static bool g_cdc0_connected = false;
 static oyk_u32 g_last_blink_ms = 0;
 static int g_blink_state = 1;
@@ -69,10 +70,12 @@ static size_t usb_cdc0_console_tx(const char* data, size_t len, void* /*ctx*/) {
 static void local_term_trampoline(oyk_u32 sid, int event_type,
                                   const oyk_u8* data, size_t len,
                                   const char* reason, void* /*ctx*/) {
-    g_console.on_local_term_event(sid, event_type, data, len, reason);
+    if (g_console) {
+        g_console->on_local_term_event(sid, event_type, data, len, reason);
+    }
 }
 
-static void build_default_tinytmux_config(OykConfig* cfg) {
+OYK_FLASHMEM static void build_default_tinytmux_config(OykConfig* cfg) {
     oyk_config_init_default(cfg);
     oyk_parse_callsign("N0CALL-7", &cfg->callsign);
     oyk_parse_callsign("OYKNOD", &cfg->alias);
@@ -156,9 +159,10 @@ static void print_ser0_boot_summary(const OykConfig* cfg) {
 }
 
 static void print_aux_status(Print& out) {
+    if (!g_node || !g_net) return;
     char call_str[16], usb_short[12], ps_short[12];
-    oyk_format_callsign(&g_node.config().callsign, call_str, sizeof(call_str));
-    g_net.usb_host()->format_short_status(usb_short, sizeof(usb_short));
+    oyk_format_callsign(&g_node->config().callsign, call_str, sizeof(call_str));
+    g_net->usb_host()->format_short_status(usb_short, sizeof(usb_short));
     tinytmux_psram_format_short(tinytmux_board_psram_info(), ps_short, sizeof(ps_short));
     oyk_u32 ip = tinytmux_enet_current_ip();
     out.printf("OYK %s | SD=%s | PSRAM=%s | ENET=%s (%u.%u.%u.%u) | USBH=%s | SESS=%d\r\n",
@@ -171,10 +175,10 @@ static void print_aux_status(Print& out) {
                static_cast<unsigned>((ip >> 16) & 0xFFU),
                static_cast<unsigned>((ip >> 24) & 0xFFU),
                usb_short,
-               g_node.total_active_connections());
+               g_node->total_active_connections());
 }
 
-void setup() {
+OYK_FLASHMEM void setup() {
     delay(50);
     Serial.begin(115200);
     SerialUSB1.begin(115200);
@@ -182,29 +186,44 @@ void setup() {
     tinytmux_board_init();
     int sd_ok = tinytmux_fs_mount();
 
-    OykConfig cfg;
-    build_default_tinytmux_config(&cfg);
+    g_node = new OykPortableNode();
+    g_net = new TinyTmuxNetBridge();
+    g_console = new TinyTmuxConsole();
+
+    OykConfig* cfg = new OykConfig();
+    build_default_tinytmux_config(cfg);
 
     char cfg_err[128];
     cfg_err[0] = '\0';
     if (sd_ok) {
-        oyk_config_load("/node.cfg", &cfg, cfg_err, sizeof(cfg_err));
+        oyk_config_load("/node.cfg", cfg, cfg_err, sizeof(cfg_err));
     }
 
-    if (!ser0_claimed_by_config(&cfg)) {
-        print_ser0_boot_summary(&cfg);
+    if (!ser0_claimed_by_config(cfg)) {
+        print_ser0_boot_summary(cfg);
     }
 
     char init_err[128];
     init_err[0] = '\0';
-    g_node.init(&cfg, TinyTmuxNetBridge::node_tx_callback, &g_net, init_err, sizeof(init_err));
-    g_node.set_local_event_callback(local_term_trampoline, NULL);
+    g_node->init(cfg, TinyTmuxNetBridge::node_tx_callback, g_net, init_err, sizeof(init_err));
+    g_node->set_storage_is_flash(tinytmux_fs_is_flash_storage());
+    if (tinytmux_psram_info()->misplaced_flash_cs0) {
+        g_node->log_message(OYK_LOG_ERROR,
+            "QSPI Flash detected on small CS0 pads (Pin 48)! Teensy 4.1 LittleFS_QSPI only supports large CS1 pads (Pin 51).");
+    }
+    if (tinytmux_fs_is_flash_storage() && !cfg->allow_flash_logging) {
+        g_node->log_message(OYK_LOG_INFO,
+            "Flash storage active without SD; file logging paused unless allow_flash_logging=true.");
+    }
+    delete cfg;
+
+    g_node->set_local_event_callback(local_term_trampoline, NULL);
 
     oyk_u32 now = tinytmux_board_millis();
-    g_net.init(&g_node, now);
-    g_console.init(&g_node, usb_cdc0_console_tx, NULL);
-    g_console.set_net_bridge(&g_net);
-    g_console.set_now_ms(now);
+    g_net->init(g_node, now);
+    g_console->init(g_node, usb_cdc0_console_tx, NULL);
+    g_console->set_net_bridge(g_net);
+    g_console->set_now_ms(now);
 
     g_blink_state = 1;
     g_last_blink_ms = now;
@@ -212,13 +231,14 @@ void setup() {
 }
 
 void loop() {
+    if (!g_node || !g_net || !g_console) return;
     oyk_u32 now = tinytmux_board_millis();
-    g_console.tick(now);
+    g_console->tick(now);
 
     bool cdc0_now = static_cast<bool>(Serial);
     if (cdc0_now && !g_cdc0_connected) {
         g_cdc0_connected = true;
-        g_console.render();
+        g_console->render();
     } else if (!cdc0_now) {
         g_cdc0_connected = false;
     }
@@ -232,7 +252,7 @@ void loop() {
             rx[n++] = static_cast<oyk_u8>(ch & 0xFF);
         }
         if (n > 0) {
-            g_console.feed_input(rx, n);
+            g_console->feed_input(rx, n);
         }
     }
 
@@ -249,8 +269,8 @@ void loop() {
         }
     }
 
-    g_net.poll(now);
-    g_node.tick();
+    g_net->poll(now);
+    g_node->tick();
 
     if ((now - g_last_blink_ms) >= 500UL) {
         g_last_blink_ms = now;

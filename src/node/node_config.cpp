@@ -328,6 +328,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.banlist_path = val;
             } else if (key == "accept_incoming") {
                 cfg.accept_incoming_default = parse_bool(val, true);
+            } else if (key == "allow_flash_logging" || key == "allow_logging_to_flash") {
+                cfg.allow_flash_logging = parse_bool(val, false);
             } else if (key == "paclen") {
                 cfg.paclen = static_cast<std::size_t>(std::clamp(std::stoi(val), 32, 256));
             } else if (key == "maxframe") {
@@ -494,6 +496,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     lines.push_back("welcome = " + welcome_text);
     lines.push_back("info = " + info_text);
     lines.push_back("accept_incoming = " + std::string(accept_incoming_default ? "true" : "false"));
+    lines.push_back("allow_flash_logging = " + std::string(allow_flash_logging ? "true" : "false"));
     lines.push_back("paclen = " + std::to_string(paclen));
     lines.push_back("maxframe = " + std::to_string(static_cast<int>(maxframe)));
     lines.push_back("t1_ms = " + std::to_string(t1_ms));

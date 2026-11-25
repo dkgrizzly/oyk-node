@@ -33,4 +33,12 @@
 #define OYK_HAS_TINYUSB 0
 #endif
 
+#ifndef OYK_FLASHMEM
+#if defined(TEENSYDUINO)
+#define OYK_FLASHMEM __attribute__((section(".flashmem")))
+#else
+#define OYK_FLASHMEM
+#endif
+#endif
+
 #endif /* OYK_TINYTMUX_CONFIG_H */
