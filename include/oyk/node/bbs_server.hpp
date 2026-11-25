@@ -95,6 +95,8 @@ public:
     const std::string& mail_path() const noexcept { return mail_path_; }
     const std::string& files_path() const noexcept { return files_path_; }
     const std::string& incoming_root() const noexcept { return incoming_root_; }
+    bool files_enabled() const noexcept { return files_enabled_; }
+    void set_files_enabled(bool enabled) noexcept { files_enabled_ = enabled; }
 
     // Strictly validates and resolves a virtual path inside files_root.
     // Rejects directory traversal (.., \, drive letters, null bytes, and symlinks escaping root).
@@ -173,6 +175,8 @@ private:
     std::string bbs_alias_ = "OYKBBS";
     std::string mail_path_ = "mail";
     std::string files_path_ = "files";
+    bool files_enabled_ = true;
+    bool loaded_once_ = false;
     std::string incoming_root_ = "incoming";
     std::string welcome_ = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
     std::size_t max_msg_bytes_ = 8192;

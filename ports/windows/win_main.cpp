@@ -1336,6 +1336,293 @@ static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, TRUE);
 }
 
+static void init_win_interfaces();
+static void shutdown_win_interfaces();
+
+static OykConfig g_set_draft;
+static OykIfaceConfig g_add_if_out;
+static int g_add_if_ok = 0;
+
+static void populate_settings_ifaces(HWND hdlg) {
+    HWND hlist = GetDlgItem(hdlg, IDC_SET_IF_LIST);
+    SendMessage(hlist, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+        const OykIfaceConfig& ic = g_set_draft.ifaces[i];
+        char row[112];
+        if (win_strieq(ic.type, "kiss-serial")) {
+            sprintf(row, "%-10.10s %-11.11s %s @%lu",
+                    ic.id, ic.type, ic.device[0] ? ic.device : "COM1",
+                    static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+        } else {
+            sprintf(row, "%-10.10s %-11.11s %s:%u",
+                    ic.id, ic.type, ic.host[0] ? ic.host : "0.0.0.0",
+                    static_cast<unsigned int>(ic.port));
+        }
+        SendMessage(hlist, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(row));
+    }
+}
+
+OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            SetDlgItemText(hdlg, IDC_AIF_ID, "axudp1");
+            HWND cb = GetDlgItem(hdlg, IDC_AIF_TYPE);
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axudp"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axip"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-serial"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-tcp"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("telnet"));
+            SendMessage(cb, CB_SETCURSEL, 0, 0);
+            SetDlgItemText(hdlg, IDC_AIF_HOST, "0.0.0.0");
+            SetDlgItemText(hdlg, IDC_AIF_PORT, "10093");
+            g_add_if_ok = 0;
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDOK) {
+                memset(&g_add_if_out, 0, sizeof(g_add_if_out));
+                GetDlgItemText(hdlg, IDC_AIF_ID, g_add_if_out.id, sizeof(g_add_if_out.id));
+                if (!g_add_if_out.id[0]) {
+                    MessageBox(hdlg, "Interface ID cannot be empty.", "Add Interface", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                int tsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_TYPE, CB_GETCURSEL, 0, 0));
+                static const char* TYPES[5] = { "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" };
+                if (tsel < 0 || tsel > 4) tsel = 0;
+                strcpy(g_add_if_out.type, TYPES[tsel]);
+                GetDlgItemText(hdlg, IDC_AIF_DESC, g_add_if_out.description, sizeof(g_add_if_out.description));
+                char host_b[32], port_b[16], peer_b[64];
+                GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
+                GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+                GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
+
+                if (win_strieq(g_add_if_out.type, "kiss-serial")) {
+                    strncpy(g_add_if_out.device, host_b[0] ? host_b : "COM1", sizeof(g_add_if_out.device) - 1);
+                    long bv = atol(port_b);
+                    g_add_if_out.baud = (bv > 0L) ? static_cast<oyk_u32>(bv) : 9600UL;
+                } else {
+                    strncpy(g_add_if_out.host, host_b[0] ? host_b : "0.0.0.0", sizeof(g_add_if_out.host) - 1);
+                    long pv = atol(port_b);
+                    if (pv > 0L && pv <= 65535L) g_add_if_out.port = static_cast<oyk_u16>(pv);
+                    else if (win_strieq(g_add_if_out.type, "telnet")) g_add_if_out.port = 8010;
+                    else if (win_strieq(g_add_if_out.type, "kiss-tcp")) g_add_if_out.port = 8001;
+                    else if (win_strieq(g_add_if_out.type, "axudp")) g_add_if_out.port = 10093;
+                }
+                if (peer_b[0]) {
+                    OykPeerEntry pe;
+                    memset(&pe, 0, sizeof(pe));
+                    if (oyk_parse_peer_spec(peer_b, pe.callsign, sizeof(pe.callsign),
+                                            &pe.ip, &pe.port,
+                                            g_add_if_out.port ? g_add_if_out.port : static_cast<oyk_u16>(10093))) {
+                        g_add_if_out.peers[0] = pe;
+                        g_add_if_out.peer_count = 1;
+                    }
+                }
+                g_add_if_ok = 1;
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
+OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            g_set_draft = g_node.config();
+            char buf[32];
+            oyk_format_callsign(&g_set_draft.callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.alias.base[0]) oyk_format_callsign(&g_set_draft.alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_ALIAS, buf);
+            CheckDlgButton(hdlg, IDC_SET_ACCEPT, g_set_draft.accept_incoming ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text);
+            SetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text);
+
+            CheckDlgButton(hdlg, IDC_SET_BBS_EN, g_set_draft.bbs_enabled ? 1 : 0);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.bbs_ssid));
+            SetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf);
+            buf[0] = '\0';
+            if (g_set_draft.bbs_callsign.base[0]) oyk_format_callsign(&g_set_draft.bbs_callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_BBS_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.bbs_alias.base[0]) oyk_format_callsign(&g_set_draft.bbs_alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_BBS_ALIAS, buf);
+            CheckDlgButton(hdlg, IDC_SET_FILES_EN, g_set_draft.bbs_files_enabled ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_SET_FILES_PATH, g_set_draft.bbs_files_path);
+            SetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome);
+
+            CheckDlgButton(hdlg, IDC_SET_CHAT_EN, g_set_draft.chat_enabled ? 1 : 0);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.chat_ssid));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_SSID, buf);
+            buf[0] = '\0';
+            if (g_set_draft.chat_callsign.base[0]) oyk_format_callsign(&g_set_draft.chat_callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.chat_alias.base[0]) oyk_format_callsign(&g_set_draft.chat_alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_ALIAS, buf);
+            SetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, g_set_draft.chat_topic);
+            SetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome);
+
+            populate_settings_ifaces(hdlg);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_SET_IF_ADD) {
+                if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
+                    MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                if (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ADD_IFACE), hdlg, (DLGPROC)AddIfaceDlgProc) == IDOK && g_add_if_ok) {
+                    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                        if (win_strieq(g_set_draft.ifaces[i].id, g_add_if_out.id)) {
+                            MessageBox(hdlg, "Duplicate interface ID.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                            return TRUE;
+                        }
+                    }
+                    g_set_draft.ifaces[g_set_draft.iface_count++] = g_add_if_out;
+                    populate_settings_ifaces(hdlg);
+                }
+                return TRUE;
+            } else if (id == IDC_SET_IF_REM) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < g_set_draft.iface_count) {
+                    for (int i = sel + 1; i < g_set_draft.iface_count; ++i) {
+                        g_set_draft.ifaces[i - 1] = g_set_draft.ifaces[i];
+                    }
+                    g_set_draft.iface_count--;
+                    populate_settings_ifaces(hdlg);
+                }
+                return TRUE;
+            } else if (id == IDOK) {
+                char buf[32];
+                GetDlgItemText(hdlg, IDC_SET_CALL, buf, sizeof(buf));
+                if (!oyk_parse_callsign_with_default_ssid(buf, OYK_DEFAULT_NODE_SSID, &g_set_draft.callsign)) {
+                    MessageBox(hdlg, "Invalid node callsign.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.alias, 0, sizeof(g_set_draft.alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.alias)) {
+                    MessageBox(hdlg, "Invalid node alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.accept_incoming = (IsDlgButtonChecked(hdlg, IDC_SET_ACCEPT) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text, sizeof(g_set_draft.welcome_text));
+                GetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text, sizeof(g_set_draft.info_text));
+
+                g_set_draft.bbs_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_BBS_EN) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf, sizeof(buf));
+                int bss = atoi(buf);
+                if (bss < 0 || bss > 15) {
+                    MessageBox(hdlg, "BBS SSID must be 0..15.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.bbs_ssid = static_cast<oyk_u8>(bss);
+                GetDlgItemText(hdlg, IDC_SET_BBS_CALL, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.bbs_callsign, 0, sizeof(g_set_draft.bbs_callsign));
+                else if (!oyk_parse_callsign_with_default_ssid(buf, g_set_draft.bbs_ssid, &g_set_draft.bbs_callsign)) {
+                    MessageBox(hdlg, "Invalid BBS callsign override.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_BBS_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.bbs_alias, 0, sizeof(g_set_draft.bbs_alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.bbs_alias)) {
+                    MessageBox(hdlg, "Invalid BBS alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.bbs_files_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_FILES_EN) != 0) ? 1 : 0;
+                char fpath[96];
+                GetDlgItemText(hdlg, IDC_SET_FILES_PATH, fpath, sizeof(fpath));
+                if (fpath[0]) strncpy(g_set_draft.bbs_files_path, fpath, sizeof(g_set_draft.bbs_files_path) - 1);
+                GetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome, sizeof(g_set_draft.bbs_welcome));
+
+                g_set_draft.chat_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_CHAT_EN) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_CHAT_SSID, buf, sizeof(buf));
+                int css = atoi(buf);
+                if (css < 0 || css > 15) {
+                    MessageBox(hdlg, "CHAT SSID must be 0..15.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.chat_ssid = static_cast<oyk_u8>(css);
+                GetDlgItemText(hdlg, IDC_SET_CHAT_CALL, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.chat_callsign, 0, sizeof(g_set_draft.chat_callsign));
+                else if (!oyk_parse_callsign_with_default_ssid(buf, g_set_draft.chat_ssid, &g_set_draft.chat_callsign)) {
+                    MessageBox(hdlg, "Invalid CHAT callsign override.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_CHAT_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.chat_alias, 0, sizeof(g_set_draft.chat_alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.chat_alias)) {
+                    MessageBox(hdlg, "Invalid CHAT alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                char ctop[16];
+                GetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, ctop, sizeof(ctop));
+                if (ctop[0]) strncpy(g_set_draft.chat_topic, ctop, sizeof(g_set_draft.chat_topic) - 1);
+                GetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome, sizeof(g_set_draft.chat_welcome));
+
+                static OykConfigApplyResult res;
+                if (!g_node.apply_config(&g_set_draft, 1, &res)) {
+                    MessageBox(hdlg, res.error[0] ? res.error : "Invalid configuration.",
+                               "Settings Error", MB_OK | MB_ICONSTOP);
+                    return TRUE;
+                }
+                if (res.identity_restarted || res.interfaces_changed) {
+                    /* Sign off any Telnet clients still sitting at the login prompt */
+                    if (res.identity_restarted) {
+                        char nc[16], so[128];
+                        oyk_format_callsign(&g_node.config().callsign, nc, sizeof(nc));
+                        sprintf(so, "\r\n*** Node is restarting for configuration changes. "
+                                    "Node will be accessible on %s after restart. 73!\r\n", nc);
+                        for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+                            if (g_telnet_clients[i].in_use && g_telnet_clients[i].stage != TSTAGE_CLOSING) {
+                                telnet_send_str(g_telnet_clients[i].sock, so);
+                                telnet_begin_close(&g_telnet_clients[i]);
+                            }
+                        }
+                    }
+                    if (res.interfaces_changed) {
+                        shutdown_win_interfaces();
+                        init_win_interfaces();
+                    }
+                }
+                if (!res.saved_to_disk) {
+                    MessageBox(hdlg,
+                               res.warning[0]
+                                   ? res.warning
+                                   : "The configuration file could not be written. Changes remain in "
+                                     "memory only while running and will be lost on exit.",
+                               "Read-Only Configuration",
+                               MB_OK | MB_ICONEXCLAMATION);
+                    set_status("Settings applied IN MEMORY ONLY (config not writable).");
+                } else {
+                    char st[128];
+                    sprintf(st, "Settings saved to %.72s and applied.", res.save_path);
+                    set_status(st);
+                }
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
 OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
@@ -1401,6 +1688,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 refresh_gui();
             } else if (id == IDM_APPROVE_FILES) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                refresh_gui();
+            } else if (id == IDM_SETTINGS) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {

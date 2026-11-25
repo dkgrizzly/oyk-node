@@ -168,17 +168,24 @@ bool BbsServer::configure(std::string bbs_callsign,
                           std::string welcome,
                           std::size_t max_msg_bytes,
                           std::string& error_out) {
+    const std::string new_mail_path = mail_path.empty() ? "mail" : std::move(mail_path);
+    const bool path_changed = (!loaded_once_ || new_mail_path != mail_path_);
     if (!bbs_callsign.empty()) bbs_callsign_ = std::move(bbs_callsign);
     bbs_alias_ = std::move(bbs_alias);
-    mail_path_ = mail_path.empty() ? "mail" : std::move(mail_path);
+    mail_path_ = new_mail_path;
     files_path_ = files_path.empty() ? "files" : std::move(files_path);
     incoming_root_ = incoming_root.empty() ? "incoming" : std::move(incoming_root);
     if (!welcome.empty()) welcome_ = std::move(welcome);
     max_msg_bytes_ = std::clamp<std::size_t>(max_msg_bytes, 256, 65536);
 
+    if (!path_changed) {
+        return true;
+    }
+
     namespace fs = std::filesystem;
     messages_.clear();
     next_msg_id_ = 1;
+    loaded_once_ = true;
     std::error_code ec;
     if (!fs::exists(mail_path_, ec)) {
         return true;
@@ -896,13 +903,17 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             << "  ST <to> [@bbs]  - Send NTS traffic message\r"
             << "  SR <n>          - Reply to message #<n>\r"
             << "  K <n> [n2...]   - Kill (delete) message(s)\r"
-            << "  KM              - Kill all read personal messages to me\r"
-            << "  FILES / DIR [d] - List files in BBS files area\r"
-            << "  CD <dir> / PWD  - Navigate BBS files area subdirectories\r"
-            << "  TYPE <file>     - View text file from BBS files area\r"
-            << "  GET / D <file>  - Download file via YAPP / YAPP-C\r"
-            << "  UPLOAD / YU     - Upload file via YAPP (queued in incoming/)\r"
-            << "  I  / INFO       - BBS status and statistics\r"
+            << "  KM              - Kill all read personal messages to me\r";
+        if (files_enabled_) {
+            oss << "  FILES / DIR [d] - List files in BBS files area\r"
+                << "  CD <dir> / PWD  - Navigate BBS files area subdirectories\r"
+                << "  TYPE <file>     - View text file from BBS files area\r"
+                << "  GET / D <file>  - Download file via YAPP / YAPP-C\r"
+                << "  UPLOAD / YU     - Upload file via YAPP (queued in incoming/)\r";
+        } else {
+            oss << "  (Files Area is currently disabled)\r";
+        }
+        oss << "  I  / INFO       - BBS status and statistics\r"
             << "  B  / BYE / Q    - Exit BBS\r"
             << prompt_string();
         res.response_text = oss.str();
@@ -925,6 +936,7 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             << "Active messages: " << (pers + bull + traf)
             << " (Personal: " << pers << ", Bulletins: " << bull << ", Traffic: " << traf << ")\r"
             << "Your unread personal mail: " << unread_count_for(st.callsign) << "\r"
+            << "Files area: " << (files_enabled_ ? "ENABLED" : "DISABLED") << "\r"
             << "Max message size: " << max_msg_bytes_ << " bytes\r"
             << prompt_string();
         res.response_text = oss.str();
@@ -1174,6 +1186,16 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
         oss << prompt_string();
         res.response_text = oss.str();
         return res;
+    }
+
+    // Files Area feature gate
+    if (cmd == "F" || cmd == "FILES" || cmd == "DIR" || cmd == "PWD" || cmd == "CD" ||
+        cmd == "TYPE" || cmd == "CAT" || cmd == "D" || cmd == "GET" ||
+        cmd == "DOWNLOAD" || cmd == "YAPP" || cmd == "U" || cmd == "UPLOAD" || cmd == "YU") {
+        if (!files_enabled_) {
+            res.response_text = "*** BBS Files Area is currently disabled.\r" + prompt_string();
+            return res;
+        }
     }
 
     // Files Area: list directory (F / FILES / DIR [subdir])

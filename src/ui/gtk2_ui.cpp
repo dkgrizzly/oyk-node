@@ -944,6 +944,455 @@ void on_approve_files_clicked(GtkWidget*, gpointer user_data) {
     gtk_widget_destroy(dlg);
 }
 
+std::string gtk_iface_summary(const radio::RadioInterfaceConfig& ic) {
+    auto gp = [&](const char* k) -> std::string {
+        auto it = ic.params.find(k);
+        return (it != ic.params.end()) ? it->second : "";
+    };
+    if (ic.type == "axudp" || ic.type == "telnet") {
+        std::string h = gp("bind_host");
+        return (h.empty() ? "0.0.0.0" : h) + ":" + gp("bind_port");
+    }
+    if (ic.type == "axip") {
+        std::string h = gp("bind_host");
+        return (h.empty() ? "0.0.0.0" : h) + " (IP proto 93)";
+    }
+    if (ic.type == "kiss-serial") {
+        return gp("device") + " @" + gp("baud");
+    }
+    if (ic.type == "kiss-tcp") {
+        return gp("mode") + " " + gp("host") + ":" + gp("port");
+    }
+    return {};
+}
+
+struct GtkSettingsCtx {
+    GtkWidget* dlg = nullptr;
+    GtkListStore* if_store = nullptr;
+    GtkWidget* if_tree = nullptr;
+    std::vector<radio::RadioInterfaceConfig>* ifaces = nullptr;
+};
+
+void repopulate_gtk_ifaces(GtkSettingsCtx* ctx) {
+    gtk_list_store_clear(ctx->if_store);
+    for (std::size_t i = 0; i < ctx->ifaces->size(); ++i) {
+        const auto& ic = (*ctx->ifaces)[i];
+        GtkTreeIter it;
+        gtk_list_store_append(ctx->if_store, &it);
+        gtk_list_store_set(ctx->if_store, &it,
+                           0, ic.id.c_str(),
+                           1, ic.type.c_str(),
+                           2, gtk_iface_summary(ic).c_str(),
+                           3, ic.description.c_str(),
+                           4, static_cast<gint>(i),
+                           -1);
+    }
+}
+
+void on_settings_add_iface_clicked(GtkWidget*, gpointer user_data) {
+    auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
+    GtkWidget* adlg = gtk_dialog_new_with_buttons(
+        "Add Interface Mapping",
+        GTK_WINDOW(ctx->dlg),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        GTK_STOCK_ADD, GTK_RESPONSE_ACCEPT,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(adlg), 420, 280);
+
+    GtkWidget* tbl = gtk_table_new(8, 2, FALSE);
+    gtk_container_set_border_width(GTK_CONTAINER(tbl), 8);
+    gtk_table_set_row_spacings(GTK_TABLE(tbl), 5);
+    gtk_table_set_col_spacings(GTK_TABLE(tbl), 8);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(adlg)->vbox), tbl, TRUE, TRUE, 4);
+
+    auto add_row = [&](int r, const char* lbl, GtkWidget* w) {
+        GtkWidget* l = gtk_label_new(lbl);
+        gtk_misc_set_alignment(GTK_MISC(l), 0.0f, 0.5f);
+        gtk_table_attach(GTK_TABLE(tbl), l, 0, 1, r, r + 1, GTK_FILL, GTK_FILL, 0, 0);
+        gtk_table_attach(GTK_TABLE(tbl), w, 1, 2, r, r + 1,
+                         static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    };
+
+    GtkWidget* e_id = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_id), "axudp1");
+    add_row(0, "Interface ID:", e_id);
+
+    GtkWidget* cb_type = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "axudp");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "axip");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "kiss-serial");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "kiss-tcp");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "telnet");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_type), 0);
+    add_row(1, "Type:", cb_type);
+
+    GtkWidget* e_desc = gtk_entry_new();
+    add_row(2, "Description:", e_desc);
+
+    GtkWidget* e_host = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_host), "0.0.0.0");
+    add_row(3, "Host / Serial Device:", e_host);
+
+    GtkWidget* e_port = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_port), "10093");
+    add_row(4, "Port / Baud Rate:", e_port);
+
+    GtkWidget* cb_mode = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_mode), "client");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_mode), "server");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_mode), 0);
+    add_row(5, "KISS-TCP Mode:", cb_mode);
+
+    GtkWidget* e_peer = gtk_entry_new();
+    add_row(6, "Peer (optional):", e_peer);
+
+    gtk_widget_show_all(adlg);
+    while (gtk_dialog_run(GTK_DIALOG(adlg)) == GTK_RESPONSE_ACCEPT) {
+        std::string id = gtk_entry_get_text(GTK_ENTRY(e_id));
+        gchar* t_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_type));
+        std::string type_s = t_raw ? t_raw : "axudp";
+        if (t_raw) g_free(t_raw);
+        if (id.empty()) {
+            GtkWidget* err = gtk_message_dialog_new(
+                GTK_WINDOW(adlg), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                "Interface ID cannot be empty.");
+            gtk_dialog_run(GTK_DIALOG(err));
+            gtk_widget_destroy(err);
+            continue;
+        }
+        bool dup = false;
+        for (const auto& ex : *ctx->ifaces) {
+            if (ex.id == id) { dup = true; break; }
+        }
+        if (dup) {
+            GtkWidget* err = gtk_message_dialog_new(
+                GTK_WINDOW(adlg), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                "An interface with ID '%s' already exists.", id.c_str());
+            gtk_dialog_run(GTK_DIALOG(err));
+            gtk_widget_destroy(err);
+            continue;
+        }
+        radio::RadioInterfaceConfig ic;
+        ic.id = id;
+        ic.type = type_s;
+        ic.description = gtk_entry_get_text(GTK_ENTRY(e_desc));
+        std::string host = gtk_entry_get_text(GTK_ENTRY(e_host));
+        std::string port = gtk_entry_get_text(GTK_ENTRY(e_port));
+        std::string peer = gtk_entry_get_text(GTK_ENTRY(e_peer));
+        gchar* m_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_mode));
+        std::string mode = m_raw ? m_raw : "client";
+        if (m_raw) g_free(m_raw);
+
+        if (type_s == "axudp") {
+            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+            ic.params["bind_port"] = port.empty() ? "10093" : port;
+            ic.params["auto_learn"] = "true";
+            if (!peer.empty()) ic.peers.push_back(peer);
+        } else if (type_s == "axip") {
+            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+            ic.params["auto_learn"] = "true";
+            if (!peer.empty()) ic.peers.push_back(peer);
+        } else if (type_s == "kiss-serial") {
+            ic.params["device"] = host.empty() ? "/dev/ttyUSB0" : host;
+            ic.params["baud"] = port.empty() ? "9600" : port;
+            ic.params["kiss_port"] = "0";
+        } else if (type_s == "kiss-tcp") {
+            ic.params["mode"] = mode;
+            ic.params["host"] = host.empty() ? "127.0.0.1" : host;
+            ic.params["port"] = port.empty() ? "8001" : port;
+            ic.params["kiss_port"] = "0";
+        } else if (type_s == "telnet") {
+            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+            ic.params["bind_port"] = port.empty() ? "8010" : port;
+        }
+        ctx->ifaces->push_back(std::move(ic));
+        repopulate_gtk_ifaces(ctx);
+        break;
+    }
+    gtk_widget_destroy(adlg);
+}
+
+void on_settings_rem_iface_clicked(GtkWidget*, gpointer user_data) {
+    auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
+    GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ctx->if_tree));
+    GtkTreeModel* model = nullptr;
+    GtkTreeIter iter;
+    if (!gtk_tree_selection_get_selected(sel, &model, &iter)) return;
+    gint idx = -1;
+    gtk_tree_model_get(model, &iter, 4, &idx, -1);
+    if (idx >= 0 && static_cast<std::size_t>(idx) < ctx->ifaces->size()) {
+        ctx->ifaces->erase(ctx->ifaces->begin() + idx);
+        repopulate_gtk_ifaces(ctx);
+    }
+}
+
+void on_settings_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    node::NodeConfig draft = st->engine->config();
+
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        "Node Settings",
+        GTK_WINDOW(st->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        "Save && Apply", GTK_RESPONSE_ACCEPT,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 400);
+
+    GtkWidget* nb = gtk_notebook_new();
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), nb, TRUE, TRUE, 6);
+
+    auto make_table = [](int rows) -> GtkWidget* {
+        GtkWidget* t = gtk_table_new(rows, 2, FALSE);
+        gtk_container_set_border_width(GTK_CONTAINER(t), 10);
+        gtk_table_set_row_spacings(GTK_TABLE(t), 6);
+        gtk_table_set_col_spacings(GTK_TABLE(t), 8);
+        return t;
+    };
+    auto attach_row = [](GtkWidget* tbl, int r, const char* lbl, GtkWidget* w) {
+        GtkWidget* l = gtk_label_new(lbl);
+        gtk_misc_set_alignment(GTK_MISC(l), 0.0f, 0.5f);
+        gtk_table_attach(GTK_TABLE(tbl), l, 0, 1, r, r + 1, GTK_FILL, GTK_FILL, 0, 0);
+        gtk_table_attach(GTK_TABLE(tbl), w, 1, 2, r, r + 1,
+                         static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    };
+
+    // Tab 1: Node
+    GtkWidget* t_node = make_table(5);
+    GtkWidget* e_call = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_call), draft.callsign.str().c_str());
+    attach_row(t_node, 0, "Node Callsign (CALL-SSID):", e_call);
+
+    GtkWidget* e_alias = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_alias), draft.alias.valid() ? draft.alias.str().c_str() : "");
+    attach_row(t_node, 1, "Node Alias:", e_alias);
+
+    GtkWidget* e_welcome = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_welcome), draft.welcome_text.c_str());
+    attach_row(t_node, 2, "Welcome Message:", e_welcome);
+
+    GtkWidget* e_info = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_info), draft.info_text.c_str());
+    attach_row(t_node, 3, "Info Message:", e_info);
+
+    GtkWidget* chk_accept = gtk_check_button_new_with_label("Allow incoming connections by default");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_accept), draft.accept_incoming_default ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new("Node"));
+
+    // Tab 2: BBS
+    GtkWidget* t_bbs = make_table(8);
+    GtkWidget* chk_bbs = gtk_check_button_new_with_label("Enable Packet BBS");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_bbs), draft.bbs.enabled ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_bbs), chk_bbs, 0, 2, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* sp_bbs_ssid = gtk_spin_button_new_with_range(0.0, 15.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp_bbs_ssid), static_cast<gdouble>(draft.bbs.ssid));
+    attach_row(t_bbs, 1, "BBS SSID (0-15):", sp_bbs_ssid);
+
+    GtkWidget* e_bbs_call = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_bbs_call), draft.bbs.callsign.valid() ? draft.bbs.callsign.str().c_str() : "");
+    attach_row(t_bbs, 2, "Callsign Override (optional):", e_bbs_call);
+
+    GtkWidget* e_bbs_alias = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_bbs_alias), draft.bbs.alias.valid() ? draft.bbs.alias.str().c_str() : "");
+    attach_row(t_bbs, 3, "BBS Alias:", e_bbs_alias);
+
+    GtkWidget* chk_files = gtk_check_button_new_with_label("Enable BBS Files Area (FILES/GET/UPLOAD)");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_files), draft.bbs.files_enabled ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_bbs), chk_files, 0, 2, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* e_files_path = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_files_path), draft.bbs.files_path.c_str());
+    attach_row(t_bbs, 5, "Files Area Root Path:", e_files_path);
+
+    GtkWidget* e_mail_path = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_mail_path), draft.bbs.mail_path.c_str());
+    attach_row(t_bbs, 6, "Mail Storage Path:", e_mail_path);
+
+    GtkWidget* e_bbs_welcome = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_bbs_welcome), draft.bbs.welcome.c_str());
+    attach_row(t_bbs, 7, "BBS Welcome Message:", e_bbs_welcome);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_bbs, gtk_label_new("BBS"));
+
+    // Tab 3: CHAT
+    GtkWidget* t_chat = make_table(6);
+    GtkWidget* chk_chat = gtk_check_button_new_with_label("Enable Multi-User CHAT Conference");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_chat), draft.chat.enabled ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_chat), chk_chat, 0, 2, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* sp_chat_ssid = gtk_spin_button_new_with_range(0.0, 15.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp_chat_ssid), static_cast<gdouble>(draft.chat.ssid));
+    attach_row(t_chat, 1, "CHAT SSID (0-15):", sp_chat_ssid);
+
+    GtkWidget* e_chat_call = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_chat_call), draft.chat.callsign.valid() ? draft.chat.callsign.str().c_str() : "");
+    attach_row(t_chat, 2, "Callsign Override (optional):", e_chat_call);
+
+    GtkWidget* e_chat_alias = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_chat_alias), draft.chat.alias.valid() ? draft.chat.alias.str().c_str() : "");
+    attach_row(t_chat, 3, "CHAT Alias:", e_chat_alias);
+
+    GtkWidget* e_chat_topic = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_chat_topic), draft.chat.default_topic.c_str());
+    attach_row(t_chat, 4, "Default Topic:", e_chat_topic);
+
+    GtkWidget* e_chat_welcome = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_chat_welcome), draft.chat.welcome.c_str());
+    attach_row(t_chat, 5, "CHAT Welcome Message:", e_chat_welcome);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_chat, gtk_label_new("CHAT"));
+
+    // Tab 4: Interfaces
+    GtkWidget* if_vbox = gtk_vbox_new(FALSE, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(if_vbox), 8);
+    GtkListStore* if_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING,
+                                                G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+    GtkWidget* if_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(if_store));
+    add_text_column(GTK_TREE_VIEW(if_tree), "ID", 0, 85);
+    add_text_column(GTK_TREE_VIEW(if_tree), "Type", 1, 80);
+    add_text_column(GTK_TREE_VIEW(if_tree), "Endpoint / Device", 2, 160);
+    add_text_column(GTK_TREE_VIEW(if_tree), "Description", 3, 140);
+    GtkWidget* if_sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(if_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(if_sc), if_tree);
+    gtk_box_pack_start(GTK_BOX(if_vbox), if_sc, TRUE, TRUE, 0);
+
+    GtkWidget* if_btns = gtk_hbox_new(FALSE, 6);
+    GtkWidget* btn_add_if = gtk_button_new_with_label("Add Interface...");
+    GtkWidget* btn_rem_if = gtk_button_new_with_label("Remove Selected");
+    gtk_box_pack_start(GTK_BOX(if_btns), btn_add_if, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(if_btns), btn_rem_if, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(if_vbox), if_btns, FALSE, FALSE, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), if_vbox, gtk_label_new("Interfaces"));
+
+    GtkSettingsCtx sctx;
+    sctx.dlg = dlg;
+    sctx.if_store = if_store;
+    sctx.if_tree = if_tree;
+    sctx.ifaces = &draft.interfaces;
+    repopulate_gtk_ifaces(&sctx);
+    g_signal_connect(btn_add_if, "clicked", G_CALLBACK(on_settings_add_iface_clicked), &sctx);
+    g_signal_connect(btn_rem_if, "clicked", G_CALLBACK(on_settings_rem_iface_clicked), &sctx);
+
+    gtk_widget_show_all(dlg);
+
+    while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+        node::NodeConfig next = draft;
+
+        auto show_err = [&](const std::string& msg) {
+            GtkWidget* ed = gtk_message_dialog_new(
+                GTK_WINDOW(dlg), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                "%s", msg.c_str());
+            gtk_window_set_title(GTK_WINDOW(ed), "Configuration Error");
+            gtk_dialog_run(GTK_DIALOG(ed));
+            gtk_widget_destroy(ed);
+        };
+
+        auto parsed_call = node::NodeConfig::parse_callsign_with_default_ssid(
+            gtk_entry_get_text(GTK_ENTRY(e_call)));
+        if (!parsed_call) {
+            show_err("Invalid node callsign.");
+            continue;
+        }
+        next.callsign = *parsed_call;
+
+        std::string alias_s = gtk_entry_get_text(GTK_ENTRY(e_alias));
+        if (alias_s.empty()) {
+            next.alias = ax25::Callsign{};
+        } else if (auto pa = ax25::Callsign::parse(alias_s)) {
+            next.alias = *pa;
+        } else {
+            show_err("Invalid node alias.");
+            continue;
+        }
+        next.welcome_text = gtk_entry_get_text(GTK_ENTRY(e_welcome));
+        next.info_text = gtk_entry_get_text(GTK_ENTRY(e_info));
+        next.accept_incoming_default = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_accept)) != FALSE;
+
+        next.bbs.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_bbs)) != FALSE;
+        next.bbs.ssid = static_cast<uint8_t>(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(sp_bbs_ssid)));
+        std::string bc_s = gtk_entry_get_text(GTK_ENTRY(e_bbs_call));
+        if (bc_s.empty()) {
+            next.bbs.callsign = ax25::Callsign{};
+        } else if (auto pbc = node::NodeConfig::parse_callsign_with_default_ssid(bc_s, next.bbs.ssid)) {
+            next.bbs.callsign = *pbc;
+        } else {
+            show_err("Invalid BBS callsign override.");
+            continue;
+        }
+        std::string ba_s = gtk_entry_get_text(GTK_ENTRY(e_bbs_alias));
+        if (ba_s.empty()) {
+            next.bbs.alias = ax25::Callsign{};
+        } else if (auto pba = ax25::Callsign::parse(ba_s)) {
+            next.bbs.alias = *pba;
+        } else {
+            show_err("Invalid BBS alias.");
+            continue;
+        }
+        next.bbs.files_enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_files)) != FALSE;
+        std::string fp_s = gtk_entry_get_text(GTK_ENTRY(e_files_path));
+        if (!fp_s.empty()) next.bbs.files_path = fp_s;
+        std::string mp_s = gtk_entry_get_text(GTK_ENTRY(e_mail_path));
+        if (!mp_s.empty()) next.bbs.mail_path = mp_s;
+        next.bbs.welcome = gtk_entry_get_text(GTK_ENTRY(e_bbs_welcome));
+
+        next.chat.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_chat)) != FALSE;
+        next.chat.ssid = static_cast<uint8_t>(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(sp_chat_ssid)));
+        std::string cc_s = gtk_entry_get_text(GTK_ENTRY(e_chat_call));
+        if (cc_s.empty()) {
+            next.chat.callsign = ax25::Callsign{};
+        } else if (auto pcc = node::NodeConfig::parse_callsign_with_default_ssid(cc_s, next.chat.ssid)) {
+            next.chat.callsign = *pcc;
+        } else {
+            show_err("Invalid CHAT callsign override.");
+            continue;
+        }
+        std::string ca_s = gtk_entry_get_text(GTK_ENTRY(e_chat_alias));
+        if (ca_s.empty()) {
+            next.chat.alias = ax25::Callsign{};
+        } else if (auto pca = ax25::Callsign::parse(ca_s)) {
+            next.chat.alias = *pca;
+        } else {
+            show_err("Invalid CHAT alias.");
+            continue;
+        }
+        std::string ct_s = gtk_entry_get_text(GTK_ENTRY(e_chat_topic));
+        if (!ct_s.empty()) next.chat.default_topic = ct_s;
+        next.chat.welcome = gtk_entry_get_text(GTK_ENTRY(e_chat_welcome));
+
+        auto res = st->engine->apply_config(next, true);
+        if (!res.applied) {
+            show_err(res.error);
+            continue;
+        }
+        if (!res.saved_to_disk) {
+            GtkWidget* wd = gtk_message_dialog_new(
+                GTK_WINDOW(dlg), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+                "%s",
+                res.warning.empty()
+                    ? "The configuration file could not be written. Changes have been applied "
+                      "in memory only and will be lost when the node exits."
+                    : res.warning.c_str());
+            gtk_window_set_title(GTK_WINDOW(wd), "Read-Only Configuration");
+            gtk_dialog_run(GTK_DIALOG(wd));
+            gtk_widget_destroy(wd);
+            set_status_text(st, "Settings applied IN MEMORY ONLY (config file not writable).");
+        } else {
+            std::string msg = "Settings saved to " + res.save_path + " and applied.";
+            if (res.signed_off_sessions > 0) {
+                msg += " Signed off " + std::to_string(res.signed_off_sessions) + " session(s).";
+            }
+            set_status_text(st, msg);
+        }
+        refresh_ui(st);
+        break;
+    }
+
+    g_object_unref(if_store);
+    gtk_widget_destroy(dlg);
+}
+
 bool confirm_and_exit(GtkAppState* st) {
     auto snap = st->engine->snapshot();
     std::string msg = (snap.total_active_connections > 0)
@@ -1020,6 +1469,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
     GtkWidget* mi_lterm = gtk_menu_item_new_with_mnemonic("_Local Terminal...");
     GtkWidget* mi_files = gtk_menu_item_new_with_mnemonic("Approve Incoming _Files...");
+    GtkWidget* mi_sett  = gtk_menu_item_new_with_mnemonic("_Settings...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
     GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
@@ -1029,6 +1479,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
     g_signal_connect(mi_lterm, "activate", G_CALLBACK(on_local_terminal_clicked), &st);
     g_signal_connect(mi_files, "activate", G_CALLBACK(on_approve_files_clicked), &st);
+    g_signal_connect(mi_sett,  "activate", G_CALLBACK(on_settings_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
@@ -1038,6 +1489,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_lterm);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_files);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sett);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);
