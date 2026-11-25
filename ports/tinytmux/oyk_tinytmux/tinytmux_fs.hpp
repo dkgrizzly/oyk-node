@@ -5,12 +5,33 @@
 #define OYK_TINYTMUX_FS_HPP
 
 /*
- * MicroSD Mount, Newlib Syscall Retargeting, and Directory Hooks
- * for Teensy 4.1 / IMXRT1062 (TinyTMUX) via Teensyduino SD.h.
+ * 3-Tier Filesystem Mount, Newlib Syscall Retargeting, and Directory Hooks
+ * for Teensy 4.1 / IMXRT1062 (TinyTMUX):
+ *   1. microSD Card (SDIO, BUILTIN_SDCARD)
+ *   2. External QSPI Flash on CS1 / Pin 51 (LittleFS_QSPI)
+ *   3. Internal 4 MB Program Flash (LittleFS_Program)
  */
 
 #include "oyk_tinytmux_config.h"
 #include "oyk_portable.hpp"
+
+#define TINYTMUX_INTERNAL_FS_BYTES (4UL * 1024UL * 1024UL)
+
+enum TinyTmuxStorageTier {
+    TMUX_STORAGE_NONE = 0,
+    TMUX_STORAGE_SD,
+    TMUX_STORAGE_QSPI,
+    TMUX_STORAGE_INTERNAL
+};
+
+struct TinyTmuxStorageTierInfo {
+    int tier;
+    int detected;
+    int mounted;
+    oyk_u32 total_kb;
+    oyk_u32 used_kb;
+    char label[32];
+};
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,7 +40,13 @@ extern "C" {
 int tinytmux_fs_mount();
 void tinytmux_fs_unmount();
 int tinytmux_fs_is_mounted();
+int tinytmux_fs_active_tier();
+int tinytmux_fs_is_flash_storage();
 const char* tinytmux_fs_status_label();
+int tinytmux_fs_tier_info(int tier, TinyTmuxStorageTierInfo* out);
+
+/* Host/unit-test simulation hook (no-op on Teensy hardware). */
+void tinytmux_fs_set_sim_tiers(int sd_present, int qspi_present, int internal_present);
 
 /* Platform directory & file hooks consumed by ports/compat/oyk_portable.cpp */
 int oyk_imxrt_mkdir(const char* path);

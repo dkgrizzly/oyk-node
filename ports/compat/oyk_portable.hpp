@@ -173,6 +173,7 @@ struct OykConfig {
     oyk_u32 console_level;
     int rotate_daily;
     int accept_incoming;
+    int allow_flash_logging;
     OykLineEnding line_ending;
     int has_detected_eol;
 
@@ -488,6 +489,10 @@ public:
 
     OykLineEnding banlist_line_ending() const { return banlist_eol_; }
 
+    void set_storage_is_flash(int is_flash);
+    int storage_is_flash() const { return storage_is_flash_; }
+    int file_logging_allowed() const;
+
     void log_message(oyk_u32 level, const char* msg);
     void log_appeal(const char* callsign, const char* clean_appeal);
 
@@ -534,6 +539,7 @@ private:
     time_t fixed_now_;
     int accept_incoming_;
     int manual_deny_incoming_;
+    int storage_is_flash_;
     oyk_u32 next_session_id_;
 
     int iface_count_;

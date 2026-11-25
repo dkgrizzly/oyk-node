@@ -862,6 +862,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->console_level = OYK_DEFAULT_CONSOLE_MASK;
     cfg->rotate_daily = 1;
     cfg->accept_incoming = 1;
+    cfg->allow_flash_logging = 0;
     cfg->line_ending = oyk_platform_default_eol();
     cfg->has_detected_eol = 0;
 
@@ -1053,6 +1054,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 safe_copy(cfg->banlist_path, sizeof(cfg->banlist_path), v);
             } else if (stricmp_ascii(k, "accept_incoming") == 0) {
                 cfg->accept_incoming = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "allow_flash_logging") == 0 ||
+                       stricmp_ascii(k, "allow_logging_to_flash") == 0) {
+                cfg->allow_flash_logging = (stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0) ? 1 : 0;
             }
         } else if (section == 1) {
             oyk_u32 mask = 0;
@@ -1226,6 +1230,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "welcome = %s%s", cfg->welcome_text, nl);
     fprintf(fp, "info = %s%s", cfg->info_text, nl);
     fprintf(fp, "accept_incoming = %s%s", cfg->accept_incoming ? "true" : "false", nl);
+    fprintf(fp, "allow_flash_logging = %s%s", cfg->allow_flash_logging ? "true" : "false", nl);
     fprintf(fp, "logpath = %s%s", cfg->log_path, nl);
     fprintf(fp, "consolelevel = 0x%lx%s", static_cast<unsigned long>(cfg->console_level), nl);
     fprintf(fp, "log_rotate_daily = %s%s", cfg->rotate_daily ? "true" : "false", nl);
@@ -1336,7 +1341,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
 OykPortableNode::OykPortableNode()
     : tx_cb_(NULL), tx_ctx_(NULL), local_cb_(NULL), local_ctx_(NULL),
       started_at_(0), fixed_now_(0),
-      accept_incoming_(1), manual_deny_incoming_(0), next_session_id_(1), iface_count_(0),
+      accept_incoming_(1), manual_deny_incoming_(0), storage_is_flash_(0), next_session_id_(1), iface_count_(0),
       mheard_count_(0), new_heard_count_(0),
       banlist_eol_(oyk_platform_default_eol()),
       banlist_has_eol_(0), banlist_mixed_eol_(0),
@@ -1398,7 +1403,9 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
         lf->mask = OYK_DEFAULT_APPEALS_MASK;
     }
 
-    make_dir_simple(cfg_.log_path);
+    if (file_logging_allowed()) {
+        make_dir_simple(cfg_.log_path);
+    }
 
     iface_count_ = cfg_.iface_count;
     for (int i = 0; i < iface_count_; ++i) {
@@ -1956,6 +1963,17 @@ void OykPortableNode::write_log_file_line(OykLogFileEntry* lf, const char* line,
     }
 }
 
+void OykPortableNode::set_storage_is_flash(int is_flash) {
+    storage_is_flash_ = is_flash ? 1 : 0;
+    if (file_logging_allowed()) {
+        make_dir_simple(cfg_.log_path);
+    }
+}
+
+int OykPortableNode::file_logging_allowed() const {
+    return (!storage_is_flash_ || cfg_.allow_flash_logging) ? 1 : 0;
+}
+
 void OykPortableNode::log_message(oyk_u32 level, const char* msg) {
     if (level == OYK_LOG_SILENT || !msg) return;
     time_t t = now_time();
@@ -1972,9 +1990,11 @@ void OykPortableNode::log_message(oyk_u32 level, const char* msg) {
 
     char fline[160];
     sprintf(fline, "[%s] [%s] %.120s", compact, level_name_str(level), msg);
-    for (int i = 0; i < cfg_.log_file_count; ++i) {
-        if ((level & cfg_.log_files[i].mask) != 0) {
-            write_log_file_line(&cfg_.log_files[i], fline, today);
+    if (file_logging_allowed()) {
+        for (int i = 0; i < cfg_.log_file_count; ++i) {
+            if ((level & cfg_.log_files[i].mask) != 0) {
+                write_log_file_line(&cfg_.log_files[i], fline, today);
+            }
         }
     }
 }
@@ -1995,9 +2015,11 @@ void OykPortableNode::log_appeal(const char* callsign, const char* clean_appeal)
         push_console_log(cline);
     }
 
-    for (int i = 0; i < cfg_.log_file_count; ++i) {
-        if ((OYK_LOG_APPEAL & cfg_.log_files[i].mask) != 0) {
-            write_log_file_line(&cfg_.log_files[i], aline, today);
+    if (file_logging_allowed()) {
+        for (int i = 0; i < cfg_.log_file_count; ++i) {
+            if ((OYK_LOG_APPEAL & cfg_.log_files[i].mask) != 0) {
+                write_log_file_line(&cfg_.log_files[i], aline, today);
+            }
         }
     }
 }

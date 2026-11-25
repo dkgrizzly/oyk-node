@@ -952,6 +952,32 @@ static void test_portable_rig_and_dos_usb() {
 
     delete cap;
     delete net;
+
+    /* 6. allow_flash_logging config round-trip & file log suppression when running on flash */
+    OykConfig* fcfg = new OykConfig;
+    oyk_config_init_default(fcfg);
+    assert(fcfg->allow_flash_logging == 0);
+    fcfg->allow_flash_logging = 1;
+    assert(oyk_config_save(fcfg, "tflog.cfg") == 1);
+    OykConfig* fcfg2 = new OykConfig;
+    assert(oyk_config_load("tflog.cfg", fcfg2, err, sizeof(err)) == 1);
+    assert(fcfg2->allow_flash_logging == 1);
+    remove("tflog.cfg");
+    OykPortableNode* fnode = new OykPortableNode;
+    assert(fnode->init(fcfg, mock_tx, NULL, err, sizeof(err)) == 1);
+    fnode->set_storage_is_flash(1);
+    assert(fnode->file_logging_allowed() == 1);
+    fcfg2->allow_flash_logging = 0;
+    OykConfigApplyResult far;
+    fnode->apply_config(fcfg2, 0, &far);
+    assert(fnode->file_logging_allowed() == 0);
+    fnode->set_storage_is_flash(0);
+    assert(fnode->file_logging_allowed() == 1);
+    fnode->shutdown();
+    delete fnode;
+    delete fcfg2;
+    delete fcfg;
+
     printf("[PASS] test_portable_rig_and_dos_usb\n");
 }
 

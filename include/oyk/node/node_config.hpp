@@ -56,6 +56,7 @@ struct NodeConfig {
     std::string banlist_path; // Optional override from banlist= in [node]
 
     bool accept_incoming_default = true;
+    bool allow_flash_logging = false;
     std::size_t paclen = 236;
     uint8_t maxframe = 4;
     uint32_t t1_ms = 3000;

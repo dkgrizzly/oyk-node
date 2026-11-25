@@ -3,10 +3,13 @@
 
 #include "tinytmux_fs.hpp"
 #include "board_tinytmux.hpp"
+#include "tinytmux_psram.hpp"
 
+#include <stdio.h>
 #include <string.h>
 
 static int s_fs_mounted = 0;
+static int s_active_tier = TMUX_STORAGE_NONE;
 static char s_fs_label[24] = "UNMOUNTED";
 
 static void fs_str_copy(char* dst, size_t cap, const char* src) {
@@ -21,6 +24,7 @@ static void fs_str_copy(char* dst, size_t cap, const char* src) {
 #if defined(TEENSYDUINO)
 
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <SD.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -29,6 +33,12 @@ static void fs_str_copy(char* dst, size_t cap, const char* src) {
 
 #define OYK_MAX_OPEN_FILES 16
 #define OYK_MAX_OPEN_DIRS   4
+
+static LittleFS_QSPI s_qspi_fs;
+static LittleFS_Program s_prog_fs;
+static FS* s_active_fs = NULL;
+static int s_qspi_begun = 0;
+static int s_prog_begun = 0;
 
 static File s_files[OYK_MAX_OPEN_FILES];
 static oyk_u8 s_file_open[OYK_MAX_OPEN_FILES];
@@ -39,7 +49,7 @@ struct OykDirHandle {
 };
 static OykDirHandle s_dirs[OYK_MAX_OPEN_DIRS];
 
-static void normalize_sd_path(const char* in, char* out, size_t out_cap) {
+static void normalize_fs_path(const char* in, char* out, size_t out_cap) {
     if (!out || out_cap == 0) return;
     out[0] = '\0';
     if (!in || !in[0]) {
@@ -74,24 +84,7 @@ static const char* basename_ptr(const char* p) {
     return slash ? (slash + 1) : p;
 }
 
-extern "C" {
-
-int tinytmux_fs_mount() {
-    if (s_fs_mounted) return 1;
-    memset(s_file_open, 0, sizeof(s_file_open));
-    for (int i = 0; i < OYK_MAX_OPEN_DIRS; ++i) s_dirs[i].in_use = 0;
-
-    if (!SD.begin(BUILTIN_SDCARD)) {
-        s_fs_mounted = 0;
-        fs_str_copy(s_fs_label, sizeof(s_fs_label), "NO CARD");
-        return 0;
-    }
-    s_fs_mounted = 1;
-    fs_str_copy(s_fs_label, sizeof(s_fs_label), "SDIO MOUNTED");
-    return 1;
-}
-
-void tinytmux_fs_unmount() {
+static void close_all_handles() {
     for (int i = 0; i < OYK_MAX_OPEN_FILES; ++i) {
         if (s_file_open[i]) {
             s_files[i].close();
@@ -104,6 +97,52 @@ void tinytmux_fs_unmount() {
             s_dirs[i].in_use = 0;
         }
     }
+}
+
+extern "C" {
+
+OYK_FLASHMEM int tinytmux_fs_mount() {
+    if (s_fs_mounted && s_active_fs) return 1;
+    memset(s_file_open, 0, sizeof(s_file_open));
+    for (int i = 0; i < OYK_MAX_OPEN_DIRS; ++i) s_dirs[i].in_use = 0;
+
+    if (SD.begin(BUILTIN_SDCARD)) {
+        s_active_fs = &SD;
+        s_active_tier = TMUX_STORAGE_SD;
+        s_fs_mounted = 1;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "SDIO MOUNTED");
+        return 1;
+    }
+
+    if (s_qspi_fs.begin()) {
+        s_qspi_begun = 1;
+        s_active_fs = &s_qspi_fs;
+        s_active_tier = TMUX_STORAGE_QSPI;
+        s_fs_mounted = 1;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "QSPI FLASH");
+        return 1;
+    }
+
+    if (s_prog_fs.begin(TINYTMUX_INTERNAL_FS_BYTES)) {
+        s_prog_begun = 1;
+        s_active_fs = &s_prog_fs;
+        s_active_tier = TMUX_STORAGE_INTERNAL;
+        s_fs_mounted = 1;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "INT FLASH 4M");
+        return 1;
+    }
+
+    s_active_fs = NULL;
+    s_active_tier = TMUX_STORAGE_NONE;
+    s_fs_mounted = 0;
+    fs_str_copy(s_fs_label, sizeof(s_fs_label), "NO STORAGE");
+    return 0;
+}
+
+void tinytmux_fs_unmount() {
+    close_all_handles();
+    s_active_fs = NULL;
+    s_active_tier = TMUX_STORAGE_NONE;
     s_fs_mounted = 0;
     fs_str_copy(s_fs_label, sizeof(s_fs_label), "UNMOUNTED");
 }
@@ -112,25 +151,79 @@ int tinytmux_fs_is_mounted() {
     return s_fs_mounted;
 }
 
+int tinytmux_fs_active_tier() {
+    return s_active_tier;
+}
+
+int tinytmux_fs_is_flash_storage() {
+    return (s_fs_mounted &&
+            (s_active_tier == TMUX_STORAGE_QSPI || s_active_tier == TMUX_STORAGE_INTERNAL))
+           ? 1 : 0;
+}
+
 const char* tinytmux_fs_status_label() {
     return s_fs_label;
 }
 
+OYK_FLASHMEM int tinytmux_fs_tier_info(int tier, TinyTmuxStorageTierInfo* out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    out->tier = tier;
+    if (tier == TMUX_STORAGE_SD) {
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_SD) ? 1 : 0;
+        out->detected = out->mounted;
+        fs_str_copy(out->label, sizeof(out->label), "microSD Card (SDIO)");
+        if (out->mounted) {
+            out->total_kb = static_cast<oyk_u32>(SD.totalSize() / 1024ULL);
+            out->used_kb = static_cast<oyk_u32>(SD.usedSize() / 1024ULL);
+        }
+        return 1;
+    }
+    if (tier == TMUX_STORAGE_QSPI) {
+        const TinyTmuxPsramInfo* pinfo = tinytmux_psram_info();
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_QSPI) ? 1 : 0;
+        out->detected = (out->mounted || s_qspi_begun || (pinfo && pinfo->has_valid_qspi_flash_cs1)) ? 1 : 0;
+        fs_str_copy(out->label, sizeof(out->label), "QSPI Flash (CS1 / Pin 51)");
+        if (out->mounted || s_qspi_begun) {
+            out->total_kb = static_cast<oyk_u32>(s_qspi_fs.totalSize() / 1024ULL);
+            out->used_kb = static_cast<oyk_u32>(s_qspi_fs.usedSize() / 1024ULL);
+        } else if (pinfo && pinfo->has_valid_qspi_flash_cs1) {
+            out->total_kb = static_cast<oyk_u32>(pinfo->chips[1].size_bytes / 1024UL);
+        }
+        return 1;
+    }
+    if (tier == TMUX_STORAGE_INTERNAL) {
+        out->detected = 1;
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_INTERNAL) ? 1 : 0;
+        fs_str_copy(out->label, sizeof(out->label), "Internal Flash (4 MB)");
+        if (out->mounted || s_prog_begun) {
+            out->total_kb = static_cast<oyk_u32>(s_prog_fs.totalSize() / 1024ULL);
+            out->used_kb = static_cast<oyk_u32>(s_prog_fs.usedSize() / 1024ULL);
+        } else {
+            out->total_kb = static_cast<oyk_u32>(TINYTMUX_INTERNAL_FS_BYTES / 1024UL);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+void tinytmux_fs_set_sim_tiers(int /*sd_present*/, int /*qspi_present*/, int /*internal_present*/) {}
+
 int oyk_imxrt_mkdir(const char* path) {
-    if (!s_fs_mounted || !path || !path[0]) return -1;
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) return -1;
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
+    normalize_fs_path(path, norm, sizeof(norm));
     if (strcmp(norm, "/") == 0) return 0;
     if (oyk_imxrt_is_directory(norm)) return 0;
-    return SD.mkdir(norm) ? 0 : -1;
+    return s_active_fs->mkdir(norm) ? 0 : -1;
 }
 
 int oyk_imxrt_is_regular_file(const char* path) {
-    if (!s_fs_mounted || !path || !path[0]) return 0;
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) return 0;
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
+    normalize_fs_path(path, norm, sizeof(norm));
     if (strcmp(norm, "/") == 0) return 0;
-    File f = SD.open(norm, FILE_READ);
+    File f = s_active_fs->open(norm, FILE_READ);
     if (!f) return 0;
     int is_reg = f.isDirectory() ? 0 : 1;
     f.close();
@@ -138,11 +231,11 @@ int oyk_imxrt_is_regular_file(const char* path) {
 }
 
 int oyk_imxrt_is_directory(const char* path) {
-    if (!s_fs_mounted || !path || !path[0]) return 0;
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) return 0;
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
+    normalize_fs_path(path, norm, sizeof(norm));
     if (strcmp(norm, "/") == 0) return 1;
-    File f = SD.open(norm, FILE_READ);
+    File f = s_active_fs->open(norm, FILE_READ);
     if (!f) return 0;
     int is_dir = f.isDirectory() ? 1 : 0;
     f.close();
@@ -150,7 +243,7 @@ int oyk_imxrt_is_directory(const char* path) {
 }
 
 void* oyk_imxrt_opendir(const char* dir_path) {
-    if (!s_fs_mounted || !dir_path || !dir_path[0]) return NULL;
+    if (!s_fs_mounted || !s_active_fs || !dir_path || !dir_path[0]) return NULL;
     int slot = -1;
     for (int i = 0; i < OYK_MAX_OPEN_DIRS; ++i) {
         if (!s_dirs[i].in_use) {
@@ -160,8 +253,8 @@ void* oyk_imxrt_opendir(const char* dir_path) {
     }
     if (slot < 0) return NULL;
     char norm[192];
-    normalize_sd_path(dir_path, norm, sizeof(norm));
-    File d = SD.open(norm, FILE_READ);
+    normalize_fs_path(dir_path, norm, sizeof(norm));
+    File d = s_active_fs->open(norm, FILE_READ);
     if (!d || !d.isDirectory()) {
         if (d) d.close();
         return NULL;
@@ -203,13 +296,8 @@ void oyk_imxrt_closedir(void* dir_handle) {
     }
 }
 
-/*
- * Newlib POSIX syscall retargeting for stdio (<stdio.h> fopen/fread/fwrite/etc.).
- * Preserves Teensyduino Print::printf() pointer-encoded fd values (>= 0x10000)
- * and defers _sbrk/_isatty/_exit/_gettimeofday to cores/teensy4.
- */
 int _open(const char* path, int flags, int /*mode*/) {
-    if (!s_fs_mounted || !path || !path[0]) {
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) {
         errno = ENOENT;
         return -1;
     }
@@ -226,11 +314,11 @@ int _open(const char* path, int flags, int /*mode*/) {
     }
 
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
+    normalize_fs_path(path, norm, sizeof(norm));
 
     int acc = flags & O_ACCMODE;
     if (acc == O_RDONLY) {
-        File f = SD.open(norm, FILE_READ);
+        File f = s_active_fs->open(norm, FILE_READ);
         if (!f || f.isDirectory()) {
             if (f) f.close();
             errno = ENOENT;
@@ -241,15 +329,15 @@ int _open(const char* path, int flags, int /*mode*/) {
         return slot + 3;
     }
 
-    if (!(flags & O_CREAT) && !SD.exists(norm)) {
+    if (!(flags & O_CREAT) && !s_active_fs->exists(norm)) {
         errno = ENOENT;
         return -1;
     }
-    if ((flags & O_TRUNC) && SD.exists(norm)) {
-        SD.remove(norm);
+    if ((flags & O_TRUNC) && s_active_fs->exists(norm)) {
+        s_active_fs->remove(norm);
     }
-    uint8_t sd_mode = (flags & O_APPEND) ? FILE_WRITE : FILE_WRITE_BEGIN;
-    File f = SD.open(norm, sd_mode);
+    uint8_t open_mode = (flags & O_APPEND) ? FILE_WRITE : FILE_WRITE_BEGIN;
+    File f = s_active_fs->open(norm, open_mode);
     if (!f) {
         errno = EIO;
         return -1;
@@ -363,17 +451,17 @@ int _fstat(int fd, struct stat* st) {
 int _stat(const char* path, struct stat* st) {
     if (!st) return -1;
     memset(st, 0, sizeof(*st));
-    if (!s_fs_mounted || !path || !path[0]) {
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) {
         errno = ENOENT;
         return -1;
     }
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
+    normalize_fs_path(path, norm, sizeof(norm));
     if (strcmp(norm, "/") == 0) {
         st->st_mode = S_IFDIR | 0755;
         return 0;
     }
-    File f = SD.open(norm, FILE_READ);
+    File f = s_active_fs->open(norm, FILE_READ);
     if (!f) {
         errno = ENOENT;
         return -1;
@@ -389,10 +477,10 @@ int _stat(const char* path, struct stat* st) {
 }
 
 int _unlink(const char* path) {
-    if (!s_fs_mounted || !path || !path[0]) { errno = ENOENT; return -1; }
+    if (!s_fs_mounted || !s_active_fs || !path || !path[0]) { errno = ENOENT; return -1; }
     char norm[192];
-    normalize_sd_path(path, norm, sizeof(norm));
-    return SD.remove(norm) ? 0 : -1;
+    normalize_fs_path(path, norm, sizeof(norm));
+    return s_active_fs->remove(norm) ? 0 : -1;
 }
 
 int _link(const char* /*oldp*/, const char* /*newp*/) {
@@ -401,11 +489,11 @@ int _link(const char* /*oldp*/, const char* /*newp*/) {
 }
 
 int _rename(const char* oldp, const char* newp) {
-    if (!s_fs_mounted || !oldp || !newp) { errno = ENOENT; return -1; }
+    if (!s_fs_mounted || !s_active_fs || !oldp || !newp) { errno = ENOENT; return -1; }
     char n1[192], n2[192];
-    normalize_sd_path(oldp, n1, sizeof(n1));
-    normalize_sd_path(newp, n2, sizeof(n2));
-    return SD.rename(n1, n2) ? 0 : -1;
+    normalize_fs_path(oldp, n1, sizeof(n1));
+    normalize_fs_path(newp, n2, sizeof(n2));
+    return s_active_fs->rename(n1, n2) ? 0 : -1;
 }
 
 int mkdir(const char* path, mode_t /*mode*/) {
@@ -416,16 +504,46 @@ int mkdir(const char* path, mode_t /*mode*/) {
 
 #else /* Host build / unit tests */
 
+static int s_sim_sd_ok = 1;
+static int s_sim_qspi_ok = 0;
+static int s_sim_int_ok = 1;
+
 extern "C" {
 
-int tinytmux_fs_mount() {
-    s_fs_mounted = 1;
-    fs_str_copy(s_fs_label, sizeof(s_fs_label), "HOST");
-    return 1;
+void tinytmux_fs_set_sim_tiers(int sd_present, int qspi_present, int internal_present) {
+    s_sim_sd_ok = sd_present ? 1 : 0;
+    s_sim_qspi_ok = qspi_present ? 1 : 0;
+    s_sim_int_ok = internal_present ? 1 : 0;
+}
+
+OYK_FLASHMEM int tinytmux_fs_mount() {
+    if (s_sim_sd_ok) {
+        s_fs_mounted = 1;
+        s_active_tier = TMUX_STORAGE_SD;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "SDIO MOUNTED");
+        return 1;
+    }
+    if (s_sim_qspi_ok) {
+        s_fs_mounted = 1;
+        s_active_tier = TMUX_STORAGE_QSPI;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "QSPI FLASH");
+        return 1;
+    }
+    if (s_sim_int_ok) {
+        s_fs_mounted = 1;
+        s_active_tier = TMUX_STORAGE_INTERNAL;
+        fs_str_copy(s_fs_label, sizeof(s_fs_label), "INT FLASH 4M");
+        return 1;
+    }
+    s_fs_mounted = 0;
+    s_active_tier = TMUX_STORAGE_NONE;
+    fs_str_copy(s_fs_label, sizeof(s_fs_label), "NO STORAGE");
+    return 0;
 }
 
 void tinytmux_fs_unmount() {
     s_fs_mounted = 0;
+    s_active_tier = TMUX_STORAGE_NONE;
     fs_str_copy(s_fs_label, sizeof(s_fs_label), "UNMOUNTED");
 }
 
@@ -433,8 +551,47 @@ int tinytmux_fs_is_mounted() {
     return s_fs_mounted;
 }
 
+int tinytmux_fs_active_tier() {
+    return s_active_tier;
+}
+
+int tinytmux_fs_is_flash_storage() {
+    return (s_fs_mounted &&
+            (s_active_tier == TMUX_STORAGE_QSPI || s_active_tier == TMUX_STORAGE_INTERNAL))
+           ? 1 : 0;
+}
+
 const char* tinytmux_fs_status_label() {
     return s_fs_label;
+}
+
+OYK_FLASHMEM int tinytmux_fs_tier_info(int tier, TinyTmuxStorageTierInfo* out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    out->tier = tier;
+    if (tier == TMUX_STORAGE_SD) {
+        out->detected = s_sim_sd_ok;
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_SD) ? 1 : 0;
+        out->total_kb = s_sim_sd_ok ? 32768UL : 0UL;
+        fs_str_copy(out->label, sizeof(out->label), "microSD Card (SDIO)");
+        return 1;
+    }
+    if (tier == TMUX_STORAGE_QSPI) {
+        const TinyTmuxPsramInfo* pinfo = tinytmux_psram_info();
+        out->detected = (s_sim_qspi_ok || (pinfo && pinfo->has_valid_qspi_flash_cs1)) ? 1 : 0;
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_QSPI) ? 1 : 0;
+        out->total_kb = out->detected ? 16384UL : 0UL;
+        fs_str_copy(out->label, sizeof(out->label), "QSPI Flash (CS1 / Pin 51)");
+        return 1;
+    }
+    if (tier == TMUX_STORAGE_INTERNAL) {
+        out->detected = s_sim_int_ok;
+        out->mounted = (s_fs_mounted && s_active_tier == TMUX_STORAGE_INTERNAL) ? 1 : 0;
+        out->total_kb = s_sim_int_ok ? static_cast<oyk_u32>(TINYTMUX_INTERNAL_FS_BYTES / 1024UL) : 0UL;
+        fs_str_copy(out->label, sizeof(out->label), "Internal Flash (4 MB)");
+        return 1;
+    }
+    return 0;
 }
 
 int oyk_imxrt_mkdir(const char* /*path*/) { return -1; }

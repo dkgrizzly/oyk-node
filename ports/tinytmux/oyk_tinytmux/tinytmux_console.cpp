@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "tinytmux_console.hpp"
+#include "tinytmux_fs.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -412,19 +413,20 @@ void TinyTmuxConsole::render_rig() {
 }
 
 int TinyTmuxConsole::settings_tab_item_count(int tab) const {
-    if (tab == 0) return 5;
+    if (tab == 0) return 6;
     if (tab == 1) return 8;
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
     return 6;
 }
 
-void TinyTmuxConsole::render_settings() {
+OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     static const char* TAB_NAMES[5] = {
         "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig"
     };
-    static const char* NODE_LABELS[5] = {
-        "Node Callsign", "Node Alias", "Welcome Message", "Info Message", "Allow Incoming (Default)"
+    static const char* NODE_LABELS[6] = {
+        "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
+        "Allow Incoming (Default)", "Allow Logging to Flash"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS", "BBS SSID (0-15)", "Callsign Override", "BBS Alias",
@@ -461,7 +463,8 @@ void TinyTmuxConsole::render_settings() {
                 else if (i == 1) { if (draft_.alias.base[0]) oyk_format_callsign(&draft_.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                 else if (i == 2) { strncpy(val, draft_.welcome_text, 48); val[48] = '\0'; }
                 else if (i == 3) { strncpy(val, draft_.info_text, 48); val[48] = '\0'; }
-                else strcpy(val, draft_.accept_incoming ? "[ON]" : "[OFF]");
+                else if (i == 4) strcpy(val, draft_.accept_incoming ? "[ON]" : "[OFF]");
+                else strcpy(val, draft_.allow_flash_logging ? "[ON]" : "[OFF]");
             } else if (settings_tab_ == 1) {
                 if (i == 0) strcpy(val, draft_.bbs_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft_, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft_.bbs_ssid), cs); }
@@ -526,7 +529,7 @@ static void format_progress_bar(oyk_u8 pct, char* out, size_t out_sz) {
     out[22] = '\0';
 }
 
-void TinyTmuxConsole::render_psram() {
+OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
     char buf[192], tag[8];
     const TinyTmuxPsramInfo* info = tinytmux_psram_info();
     const TinyTmuxMarchCStatus* mc = tinytmux_psram_marchc_status();
@@ -546,16 +549,24 @@ void TinyTmuxConsole::render_psram() {
 
     for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
         const TinyTmuxPsramChipInfo& c = info->chips[i];
-        sprintf(buf, " Chip %d (CS%d @ 0x%08lX): %s  %s  %lu MB  JEDEC=%02X %02X\r\n",
+        const char* kind_str = "EMPTY";
+        if (c.chip_kind == TMUX_FLEXSPI_PSRAM) kind_str = "PSRAM";
+        else if (c.chip_kind == TMUX_FLEXSPI_FLASH_NOR) kind_str = "QSPI NOR";
+        else if (c.chip_kind == TMUX_FLEXSPI_FLASH_NAND) kind_str = "QSPI NAND";
+        else if (c.detected) kind_str = "DETECTED";
+        sprintf(buf, " Chip %d (CS%d @ 0x%08lX): %-9s  %s  %lu MB  JEDEC=%02X %02X %02X\r\n",
                 i, i,
                 static_cast<unsigned long>(c.base_addr),
-                c.detected ? "DETECTED" : "EMPTY",
-                c.passed ? "PASS" : (c.detected ? "FAIL" : "-"),
+                kind_str,
+                (c.chip_kind == TMUX_FLEXSPI_PSRAM) ? (c.passed ? "PASS" : "FAIL")
+                                                    : (c.detected ? "FLASH" : "-"),
                 static_cast<unsigned long>(c.size_bytes / (1024UL * 1024UL)),
-                static_cast<unsigned int>(c.mfg_id),
-                static_cast<unsigned int>(c.kgd));
+                static_cast<unsigned int>(c.jedec_id[0]),
+                static_cast<unsigned int>(c.jedec_id[1]),
+                static_cast<unsigned int>(c.jedec_id[2]));
         write_str(buf);
-        if (mc->state != TMUX_MARCHC_IDLE && mc->chip_result[i] != TMUX_MARCHC_CHIP_NONE) {
+        if (c.chip_kind == TMUX_FLEXSPI_PSRAM && mc->state != TMUX_MARCHC_IDLE &&
+            mc->chip_result[i] != TMUX_MARCHC_CHIP_NONE) {
             char bar[28];
             format_progress_bar(mc->chip_percent[i], bar, sizeof(bar));
             const char* res_s = "WAIT";
@@ -566,12 +577,18 @@ void TinyTmuxConsole::render_psram() {
                     bar, static_cast<unsigned int>(mc->chip_percent[i]), res_s);
             write_str(buf);
         }
-        if (c.detected && !c.passed) {
+        if (c.detected && c.chip_kind == TMUX_FLEXSPI_PSRAM && !c.passed) {
             sprintf(buf, "   Fault @ 0x%08lX  Check footprint: %s\r\n",
                     static_cast<unsigned long>(c.fail_addr),
                     tinytmux_psram_footprint_label(i));
             write_str(buf);
         }
+    }
+
+    if (info->misplaced_flash_cs0) {
+        write_str("\r\n \033[7m WARNING: QSPI FLASH ON WRONG PADS (CS0 / Pin 48 small footprint)! \033[0m\r\n");
+        write_str(" Teensy 4.1 LittleFS_QSPI only supports CS1 (large pads / Pin 51).\r\n");
+        write_str(" Startup CS0 probes PSRAM first; move flash to CS1 to use QSPI storage.\r\n");
     }
 
     write_str("\r\n");
@@ -606,7 +623,7 @@ void TinyTmuxConsole::render_prompt_overlay() {
     write_str(buf);
 }
 
-void TinyTmuxConsole::open_settings() {
+OYK_FLASHMEM void TinyTmuxConsole::open_settings() {
     if (node_) draft_ = node_->config();
     settings_tab_ = 0;
     dialog_fb_[0] = '\0';
@@ -614,10 +631,11 @@ void TinyTmuxConsole::open_settings() {
     render();
 }
 
-void TinyTmuxConsole::save_and_apply_settings() {
+OYK_FLASHMEM void TinyTmuxConsole::save_and_apply_settings() {
     if (!node_) return;
     OykConfigApplyResult res;
     node_->apply_config(&draft_, 1, &res);
+    node_->set_storage_is_flash(tinytmux_fs_is_flash_storage());
     if (bridge_) {
         bridge_->rebind_interfaces(now_ms_);
     }
@@ -648,7 +666,7 @@ void TinyTmuxConsole::begin_prompt(PromptKind kind, const char* label, const cha
     render();
 }
 
-void TinyTmuxConsole::edit_current_settings_field() {
+OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
     int idx = settings_sel_[settings_tab_];
     if (settings_tab_ == 0) {
         if (idx == 0) {
@@ -661,8 +679,11 @@ void TinyTmuxConsole::edit_current_settings_field() {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Node Welcome Message:", draft_.welcome_text);
         } else if (idx == 3) {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Node Info Message:", draft_.info_text);
-        } else {
+        } else if (idx == 4) {
             draft_.accept_incoming = draft_.accept_incoming ? 0 : 1;
+            render();
+        } else {
+            draft_.allow_flash_logging = draft_.allow_flash_logging ? 0 : 1;
             render();
         }
     } else if (settings_tab_ == 1) {
@@ -1099,7 +1120,7 @@ void TinyTmuxConsole::handle_rig_key(int key) {
     render();
 }
 
-void TinyTmuxConsole::handle_settings_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
     int cnt = settings_tab_item_count(settings_tab_);
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;

@@ -26,6 +26,9 @@ static size_t s_sim_words[TINYTMUX_PSRAM_MAX_CHIPS] = { 0, 0 };
 static oyk_u8 s_sim_mfg[TINYTMUX_PSRAM_MAX_CHIPS] = { 0, 0 };
 static oyk_u8 s_sim_kgd[TINYTMUX_PSRAM_MAX_CHIPS] = { 0, 0 };
 static oyk_u32 s_sim_fault_mask[TINYTMUX_PSRAM_MAX_CHIPS] = { 0UL, 0UL };
+static int s_sim_flash_kind[TINYTMUX_PSRAM_MAX_CHIPS] = { 0, 0 };
+static oyk_u8 s_sim_flash_id[TINYTMUX_PSRAM_MAX_CHIPS][3] = { {0,0,0}, {0,0,0} };
+static oyk_u32 s_sim_flash_bytes[TINYTMUX_PSRAM_MAX_CHIPS] = { 0UL, 0UL };
 #endif
 
 static void safe_copy_psram(char* dst, size_t cap, const char* src) {
@@ -146,9 +149,70 @@ int tinytmux_psram_test_region_words(volatile oyk_u32* base,
 
 #if defined(TEENSYDUINO)
 
+#include <Arduino.h>
+
 extern "C" uint8_t external_psram_size;
 
-static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
+static void flexspi2_probe_jedec_id(uint32_t probe_addr, oyk_u8 id_out[3]) {
+    id_out[0] = 0; id_out[1] = 0; id_out[2] = 0;
+    FLEXSPI2_LUTKEY = FLEXSPI_LUTKEY_VALUE;
+    FLEXSPI2_LUTCR = FLEXSPI_LUTCR_UNLOCK;
+    FLEXSPI2_LUT32 = FLEXSPI_LUT_INSTRUCTION(FLEXSPI_LUT_OPCODE_CMD_SDR, FLEXSPI_LUT_NUM_PADS_1, 0x9F) |
+                     (FLEXSPI_LUT_INSTRUCTION(FLEXSPI_LUT_OPCODE_READ_SDR, FLEXSPI_LUT_NUM_PADS_1, 1) << 16);
+    FLEXSPI2_LUT33 = 0;
+
+    FLEXSPI2_INTR = FLEXSPI_INTR_IPRXWA | FLEXSPI_INTR_IPCMDDONE | FLEXSPI_INTR_IPCMDERR;
+    FLEXSPI2_IPRXFCR = FLEXSPI_IPRXFCR_CLRIPRXF | FLEXSPI_IPRXFCR_RXWMRK(0);
+    FLEXSPI2_IPCR0 = probe_addr;
+    FLEXSPI2_IPCR1 = FLEXSPI_IPCR1_ISEQID(8) | FLEXSPI_IPCR1_IDATSZ(4);
+    FLEXSPI2_IPCMD = FLEXSPI_IPCMD_TRG;
+
+    oyk_u32 guard = 100000UL;
+    while (!(FLEXSPI2_INTR & FLEXSPI_INTR_IPCMDDONE) && --guard > 0UL) {
+    }
+    uint32_t raw = FLEXSPI2_RFDR0;
+    FLEXSPI2_INTR = FLEXSPI_INTR_IPCMDDONE | FLEXSPI_INTR_IPRXWA | FLEXSPI_INTR_IPCMDERR;
+    id_out[0] = static_cast<oyk_u8>(raw & 0xFFU);
+    id_out[1] = static_cast<oyk_u8>((raw >> 8) & 0xFFU);
+    id_out[2] = static_cast<oyk_u8>((raw >> 16) & 0xFFU);
+}
+
+static void classify_qspi_flash_id(const oyk_u8 id[3], TinyTmuxPsramChipInfo* c) {
+    /* Exclude empty/floating bus and PSRAM KGD (0x5D) */
+    if ((id[0] == 0x00U && id[1] == 0x00U) || (id[0] == 0xFFU && id[1] == 0xFFU && id[2] == 0xFFU)) return;
+    if (id[1] == 0x5DU && (id[0] == 0x0DU || id[0] == 0x9DU)) return;
+
+    /* Common QSPI SPI-NAND IDs (1-byte dummy in 0x9F, or direct mfg/dev) */
+    if ((id[0] == 0xFFU && id[1] == 0xEFU && (id[2] == 0xAAU || id[2] == 0xABU)) ||
+        (id[0] == 0xEFU && (id[1] == 0xAAU || id[1] == 0xABU)) ||
+        (id[0] == 0xC8U && (id[1] == 0xD1U || id[1] == 0xD2U || id[1] == 0xD4U ||
+                            id[1] == 0xB1U || id[1] == 0xB2U || id[1] == 0xB4U))) {
+        c->detected = 1;
+        c->chip_kind = TMUX_FLEXSPI_FLASH_NAND;
+        c->mfg_id = (id[0] == 0xFFU) ? id[1] : id[0];
+        c->kgd = (id[0] == 0xFFU) ? id[2] : id[1];
+        c->jedec_id[0] = id[0]; c->jedec_id[1] = id[1]; c->jedec_id[2] = id[2];
+        c->size_bytes = 128UL * 1024UL * 1024UL;
+        safe_copy_psram(c->chip_label, sizeof(c->chip_label), "QSPI NAND Flash");
+        return;
+    }
+
+    /* Standard JEDEC QSPI NOR Flash (W25Q, MX25, GD25, S25FL, IS25, MT25, AT25, SST26) */
+    int known_mfg = (id[0] == 0xEFU || id[0] == 0xC2U || id[0] == 0xC8U || id[0] == 0x01U ||
+                     id[0] == 0x20U || id[0] == 0x9DU || id[0] == 0x1FU || id[0] == 0xBFU ||
+                     id[0] == 0x85U);
+    if (known_mfg && id[2] >= 0x14U && id[2] <= 0x22U) {
+        c->detected = 1;
+        c->chip_kind = TMUX_FLEXSPI_FLASH_NOR;
+        c->mfg_id = id[0];
+        c->kgd = id[1];
+        c->jedec_id[0] = id[0]; c->jedec_id[1] = id[1]; c->jedec_id[2] = id[2];
+        c->size_bytes = (1UL << id[2]);
+        safe_copy_psram(c->chip_label, sizeof(c->chip_label), "QSPI NOR Flash");
+    }
+}
+
+OYK_FLASHMEM static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
     /*
      * Teensyduino startup.c configures FlexSPI2 at 0x70000000 and sets
      * external_psram_size to 0, 8, or 16 MB.
@@ -158,10 +222,15 @@ static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
     for (int i = 0; i < chips && i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
         oyk_u32 base_addr = TINYTMUX_PSRAM_BASE + static_cast<oyk_u32>(i) * TINYTMUX_PSRAM_CHIP_BYTES;
         info->chips[i].detected = 1;
+        info->chips[i].chip_kind = TMUX_FLEXSPI_PSRAM;
         info->chips[i].mfg_id = 0x0DU;
         info->chips[i].kgd = 0x5DU;
+        info->chips[i].jedec_id[0] = 0x0DU;
+        info->chips[i].jedec_id[1] = 0x5DU;
+        info->chips[i].jedec_id[2] = 0x00U;
         info->chips[i].base_addr = base_addr;
         info->chips[i].size_bytes = TINYTMUX_PSRAM_CHIP_BYTES;
+        safe_copy_psram(info->chips[i].chip_label, sizeof(info->chips[i].chip_label), "QSPI PSRAM");
 
         volatile oyk_u32* ptr = reinterpret_cast<volatile oyk_u32*>(base_addr);
         size_t words = TINYTMUX_PSRAM_CHIP_BYTES / 4UL;
@@ -169,22 +238,59 @@ static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
         info->chips[i].passed = run_word_test_internal(i, ptr, words, base_addr, &fail_addr);
         info->chips[i].fail_addr = fail_addr;
     }
+
+    /* Probe non-PSRAM FlexSPI2 slots via JEDEC 0x9F to detect QSPI Flash on CS1 or misplaced on CS0 */
+    if (chips == 0) {
+        oyk_u8 id0[3];
+        flexspi2_probe_jedec_id(0UL, id0);
+        classify_qspi_flash_id(id0, &info->chips[0]);
+        if (info->chips[0].detected) {
+            info->chips[0].base_addr = TINYTMUX_PSRAM_BASE;
+        }
+    }
+    if (chips < 2) {
+        uint32_t cs1_off = (FLEXSPI2_FLSHA1CR0 & 0x7FFFFFUL) << 10;
+        oyk_u8 id1[3];
+        flexspi2_probe_jedec_id(cs1_off, id1);
+        classify_qspi_flash_id(id1, &info->chips[1]);
+        if (info->chips[1].detected) {
+            info->chips[1].base_addr = TINYTMUX_PSRAM_BASE + cs1_off;
+        }
+    }
 }
 
 #else
 
-static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
+OYK_FLASHMEM static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
     for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
         if (s_sim_buf[i] != NULL && s_sim_words[i] >= 16 && s_sim_kgd[i] == 0x5DU) {
             oyk_u32 base_addr = TINYTMUX_PSRAM_BASE + static_cast<oyk_u32>(i) * TINYTMUX_PSRAM_CHIP_BYTES;
             info->chips[i].detected = 1;
+            info->chips[i].chip_kind = TMUX_FLEXSPI_PSRAM;
             info->chips[i].mfg_id = s_sim_mfg[i];
             info->chips[i].kgd = s_sim_kgd[i];
+            info->chips[i].jedec_id[0] = s_sim_mfg[i];
+            info->chips[i].jedec_id[1] = s_sim_kgd[i];
+            info->chips[i].jedec_id[2] = 0x00U;
             info->chips[i].base_addr = base_addr;
             info->chips[i].size_bytes = TINYTMUX_PSRAM_CHIP_BYTES;
+            safe_copy_psram(info->chips[i].chip_label, sizeof(info->chips[i].chip_label), "QSPI PSRAM");
             oyk_u32 fail_addr = 0;
             info->chips[i].passed = run_word_test_internal(i, s_sim_buf[i], s_sim_words[i], base_addr, &fail_addr);
             info->chips[i].fail_addr = fail_addr;
+        } else if (s_sim_flash_kind[i] == TMUX_FLEXSPI_FLASH_NOR ||
+                   s_sim_flash_kind[i] == TMUX_FLEXSPI_FLASH_NAND) {
+            info->chips[i].detected = 1;
+            info->chips[i].chip_kind = s_sim_flash_kind[i];
+            info->chips[i].mfg_id = s_sim_flash_id[i][0];
+            info->chips[i].kgd = s_sim_flash_id[i][1];
+            info->chips[i].jedec_id[0] = s_sim_flash_id[i][0];
+            info->chips[i].jedec_id[1] = s_sim_flash_id[i][1];
+            info->chips[i].jedec_id[2] = s_sim_flash_id[i][2];
+            info->chips[i].base_addr = TINYTMUX_PSRAM_BASE + static_cast<oyk_u32>(i) * TINYTMUX_PSRAM_CHIP_BYTES;
+            info->chips[i].size_bytes = s_sim_flash_bytes[i];
+            safe_copy_psram(info->chips[i].chip_label, sizeof(info->chips[i].chip_label),
+                            (s_sim_flash_kind[i] == TMUX_FLEXSPI_FLASH_NAND) ? "QSPI NAND Flash" : "QSPI NOR Flash");
         }
     }
 }
@@ -194,30 +300,41 @@ static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
 static void finalize_psram_summary(TinyTmuxPsramInfo* info, oyk_u32 elapsed_ms) {
     info->chip_count = 0;
     info->usable_chip_count = 0;
+    info->misplaced_flash_cs0 = 0;
+    info->has_valid_qspi_flash_cs1 = 0;
     info->detected_bytes = 0;
     info->usable_bytes = 0;
     info->base_addr = 0;
     info->test_time_ms = elapsed_ms;
 
+    if (info->chips[0].chip_kind == TMUX_FLEXSPI_FLASH_NOR ||
+        info->chips[0].chip_kind == TMUX_FLEXSPI_FLASH_NAND) {
+        info->misplaced_flash_cs0 = 1;
+    }
+    if (info->chips[1].chip_kind == TMUX_FLEXSPI_FLASH_NOR ||
+        info->chips[1].chip_kind == TMUX_FLEXSPI_FLASH_NAND) {
+        info->has_valid_qspi_flash_cs1 = 1;
+    }
+
     for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
-        if (info->chips[i].detected) {
+        if (info->chips[i].detected && info->chips[i].chip_kind == TMUX_FLEXSPI_PSRAM) {
             info->chip_count++;
             info->detected_bytes += info->chips[i].size_bytes;
         }
     }
-    /* Contiguous usable memory always starts at CS0 (0x70000000) */
-    if (info->chips[0].detected && info->chips[0].passed) {
+    /* Contiguous usable PSRAM memory always starts at CS0 (0x70000000) */
+    if (info->chips[0].detected && info->chips[0].chip_kind == TMUX_FLEXSPI_PSRAM && info->chips[0].passed) {
         info->base_addr = info->chips[0].base_addr;
         info->usable_chip_count = 1;
         info->usable_bytes = info->chips[0].size_bytes;
-        if (info->chips[1].detected && info->chips[1].passed) {
+        if (info->chips[1].detected && info->chips[1].chip_kind == TMUX_FLEXSPI_PSRAM && info->chips[1].passed) {
             info->usable_chip_count = 2;
             info->usable_bytes += info->chips[1].size_bytes;
         }
     }
 }
 
-const TinyTmuxPsramInfo* tinytmux_psram_init_and_test() {
+OYK_FLASHMEM const TinyTmuxPsramInfo* tinytmux_psram_init_and_test() {
     memset(&g_psram_info, 0, sizeof(g_psram_info));
     memset(&g_marchc_status, 0, sizeof(g_marchc_status));
     g_marchc_status.fail_chip = -1;
@@ -251,6 +368,7 @@ const char* tinytmux_psram_footprint_label(int chip_idx) {
 static volatile oyk_u32* marchc_chip_ptr(int chip_idx, size_t* words_out) {
 #if !defined(OYK_TARGET_IMXRT1060)
     if (chip_idx >= 0 && chip_idx < TINYTMUX_PSRAM_MAX_CHIPS &&
+        g_psram_info.chips[chip_idx].chip_kind == TMUX_FLEXSPI_PSRAM &&
         s_sim_buf[chip_idx] != NULL && s_sim_words[chip_idx] >= 16) {
         if (words_out) *words_out = s_sim_words[chip_idx];
         return s_sim_buf[chip_idx];
@@ -259,7 +377,9 @@ static volatile oyk_u32* marchc_chip_ptr(int chip_idx, size_t* words_out) {
     return NULL;
 #else
     if (chip_idx >= 0 && chip_idx < TINYTMUX_PSRAM_MAX_CHIPS &&
-        g_psram_info.chips[chip_idx].detected && g_psram_info.chips[chip_idx].size_bytes >= 64) {
+        g_psram_info.chips[chip_idx].detected &&
+        g_psram_info.chips[chip_idx].chip_kind == TMUX_FLEXSPI_PSRAM &&
+        g_psram_info.chips[chip_idx].size_bytes >= 64) {
         if (words_out) *words_out = static_cast<size_t>(g_psram_info.chips[chip_idx].size_bytes / 4UL);
         return reinterpret_cast<volatile oyk_u32*>(g_psram_info.chips[chip_idx].base_addr);
     }
@@ -460,5 +580,19 @@ void tinytmux_psram_set_sim_fault_mask(int chip_idx, oyk_u32 stuck_or_mask) {
 #else
     (void)chip_idx;
     (void)stuck_or_mask;
+#endif
+}
+
+void tinytmux_psram_set_sim_flash(int chip_idx, int kind, oyk_u8 mfg, oyk_u8 type, oyk_u8 cap, oyk_u32 size_bytes) {
+#if !defined(OYK_TARGET_IMXRT1060)
+    if (chip_idx >= 0 && chip_idx < TINYTMUX_PSRAM_MAX_CHIPS) {
+        s_sim_flash_kind[chip_idx] = kind;
+        s_sim_flash_id[chip_idx][0] = mfg;
+        s_sim_flash_id[chip_idx][1] = type;
+        s_sim_flash_id[chip_idx][2] = cap;
+        s_sim_flash_bytes[chip_idx] = size_bytes;
+    }
+#else
+    (void)chip_idx; (void)kind; (void)mfg; (void)type; (void)cap; (void)size_bytes;
 #endif
 }
