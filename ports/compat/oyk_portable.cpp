@@ -830,6 +830,15 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->line_ending = oyk_platform_default_eol();
     cfg->has_detected_eol = 0;
 
+    cfg->bbs_enabled = 1;
+    cfg->bbs_ssid = 11;
+    memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
+    oyk_parse_callsign("OYKBBS", &cfg->bbs_alias);
+    safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), "mail");
+    safe_copy(cfg->bbs_welcome, sizeof(cfg->bbs_welcome),
+              "Welcome to OYK Packet BBS! Type H for help, B to exit.");
+    cfg->bbs_max_msg_bytes = static_cast<oyk_u16>(OYK_MAX_BBS_BODY - 1);
+
     cfg->chat_enabled = 1;
     cfg->chat_ssid = 12;
     memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
@@ -866,6 +875,16 @@ void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz) 
     safe_copy(out, out_sz, "banlist.cfg");
 }
 
+void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out) {
+    if (!cfg || !out) return;
+    if (cfg->bbs_callsign.base[0] != '\0') {
+        *out = cfg->bbs_callsign;
+        return;
+    }
+    *out = cfg->callsign;
+    out->ssid = static_cast<oyk_u8>(cfg->bbs_ssid & 0x0FU);
+}
+
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out) {
     if (!cfg || !out) return;
     if (cfg->chat_callsign.base[0] != '\0') {
@@ -893,7 +912,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                                             &found_eol, &mixed_eol);
     cfg->has_detected_eol = found_eol;
 
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat */
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs */
     OykIfaceConfig* cur_if = NULL;
 
     size_t pos = 0;
@@ -916,6 +935,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if = NULL;
             } else if (stricmp_ascii(sec, "logfiles") == 0) {
                 section = 1;
+                cur_if = NULL;
+            } else if (stricmp_ascii(sec, "bbs") == 0) {
+                section = 4;
                 cur_if = NULL;
             } else if (stricmp_ascii(sec, "chat") == 0) {
                 section = 3;
@@ -1018,6 +1040,28 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             } else if (stricmp_ascii(k, "welcome") == 0) {
                 safe_copy(cfg->chat_welcome, sizeof(cfg->chat_welcome), v);
             }
+        } else if (section == 4) {
+            if (stricmp_ascii(k, "enabled") == 0) {
+                cfg->bbs_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "ssid") == 0) {
+                int sv = atoi(v);
+                if (sv >= 0 && sv <= 15) cfg->bbs_ssid = static_cast<oyk_u8>(sv);
+            } else if (stricmp_ascii(k, "callsign") == 0) {
+                if (!v[0]) memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
+                else oyk_parse_callsign(v, &cfg->bbs_callsign);
+            } else if (stricmp_ascii(k, "alias") == 0) {
+                if (!v[0]) memset(&cfg->bbs_alias, 0, sizeof(cfg->bbs_alias));
+                else oyk_parse_callsign(v, &cfg->bbs_alias);
+            } else if (stricmp_ascii(k, "mailpath") == 0 || stricmp_ascii(k, "mail_path") == 0) {
+                if (v[0]) safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), v);
+            } else if (stricmp_ascii(k, "welcome") == 0) {
+                safe_copy(cfg->bbs_welcome, sizeof(cfg->bbs_welcome), v);
+            } else if (stricmp_ascii(k, "max_msg_bytes") == 0) {
+                long mv = atol(v);
+                if (mv < 128L) mv = 128L;
+                if (mv > static_cast<long>(OYK_MAX_BBS_BODY - 1)) mv = static_cast<long>(OYK_MAX_BBS_BODY - 1);
+                cfg->bbs_max_msg_bytes = static_cast<oyk_u16>(mv);
+            }
         }
     }
 
@@ -1075,6 +1119,23 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
         }
     }
 
+    fprintf(fp, "%s[bbs]%s", nl, nl);
+    fprintf(fp, "enabled = %s%s", cfg->bbs_enabled ? "true" : "false", nl);
+    fprintf(fp, "ssid = %u%s", static_cast<unsigned int>(cfg->bbs_ssid), nl);
+    if (cfg->bbs_callsign.base[0]) {
+        char bc[16];
+        oyk_format_callsign(&cfg->bbs_callsign, bc, sizeof(bc));
+        fprintf(fp, "callsign = %s%s", bc, nl);
+    }
+    if (cfg->bbs_alias.base[0]) {
+        char ba[16];
+        oyk_format_callsign(&cfg->bbs_alias, ba, sizeof(ba));
+        fprintf(fp, "alias = %s%s", ba, nl);
+    }
+    fprintf(fp, "mailpath = %s%s", cfg->bbs_mail_path, nl);
+    fprintf(fp, "welcome = %s%s", cfg->bbs_welcome, nl);
+    fprintf(fp, "max_msg_bytes = %u%s", static_cast<unsigned int>(cfg->bbs_max_msg_bytes), nl);
+
     fprintf(fp, "%s[chat]%s", nl, nl);
     fprintf(fp, "enabled = %s%s", cfg->chat_enabled ? "true" : "false", nl);
     fprintf(fp, "ssid = %u%s", static_cast<unsigned int>(cfg->chat_ssid), nl);
@@ -1114,7 +1175,8 @@ OykPortableNode::OykPortableNode()
       mheard_count_(0), new_heard_count_(0),
       banlist_eol_(oyk_platform_default_eol()),
       banlist_has_eol_(0), banlist_mixed_eol_(0),
-      ban_count_(0), console_log_count_(0) {
+      ban_count_(0), console_log_count_(0),
+      bbs_next_id_(1), bbs_msg_count_(0) {
     oyk_config_init_default(&cfg_);
     memset(ifaces_, 0, sizeof(ifaces_));
     memset(sessions_, 0, sizeof(sessions_));
@@ -1122,6 +1184,7 @@ OykPortableNode::OykPortableNode()
     memset(new_heard_, 0, sizeof(new_heard_));
     memset(bans_, 0, sizeof(bans_));
     memset(console_logs_, 0, sizeof(console_logs_));
+    memset(bbs_msgs_, 0, sizeof(bbs_msgs_));
     banlist_path_[0] = '\0';
 }
 
@@ -1176,6 +1239,10 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
     }
     if (cfg_.has_detected_eol && (!banlist_has_eol_ || banlist_mixed_eol_)) {
         banlist_eol_ = cfg_.line_ending;
+    }
+
+    if (cfg_.bbs_enabled) {
+        bbs_load_index();
     }
 
     char call_s[16];
@@ -1267,8 +1334,18 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
     memset(&target, 0, sizeof(target));
     int want_local = 0;
     int direct_chat = 0;
+    int direct_bbs = 0;
 
-    if (stricmp_ascii(spec_copy, "CHAT") == 0) {
+    if (stricmp_ascii(spec_copy, "BBS") == 0) {
+        want_local = 1;
+        direct_bbs = 1;
+        oyk_config_resolved_bbs_callsign(&cfg_, &target);
+    } else if (strchr(spec_copy, '@') == NULL && strchr(spec_copy, ' ') == NULL &&
+               spec_copy[0] && oyk_parse_callsign(spec_copy, &target) &&
+               is_for_bbs(&target)) {
+        want_local = 1;
+        direct_bbs = 1;
+    } else if (stricmp_ascii(spec_copy, "CHAT") == 0) {
         want_local = 1;
         direct_chat = 1;
         oyk_config_resolved_chat_callsign(&cfg_, &target);
@@ -1289,6 +1366,10 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
     }
 
     if (want_local) {
+        if (direct_bbs && !cfg_.bbs_enabled) {
+            safe_copy(err_out, err_sz, "Local BBS is disabled");
+            return 0;
+        }
         if (direct_chat && !cfg_.chat_enabled) {
             safe_copy(err_out, err_sz, "Local CHAT is disabled");
             return 0;
@@ -1323,7 +1404,9 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
         if (local_cb_) {
             local_cb_(sess->id, 1, NULL, 0, "Connected locally", local_ctx_);
         }
-        if (direct_chat) {
+        if (direct_bbs) {
+            bbs_enter(sess, 1);
+        } else if (direct_chat) {
             chat_join(sess, 1);
         } else {
             char node_s[16], banner[140];
@@ -1434,13 +1517,24 @@ int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, si
             if (ch == '\r' || ch == '\n') {
                 sess->rx_line[sess->rx_line_len] = '\0';
                 if (sess->rx_line_len > 0 || ch == '\r') {
-                    if (sess->in_chat) {
+                    if (sess->in_bbs) {
+                        handle_bbs_line(sess, sess->rx_line);
+                    } else if (sess->in_chat) {
                         handle_chat_line(sess, sess->rx_line);
                     } else {
                         handle_normal_command(sess, sess->rx_line);
                     }
                 }
                 sess->rx_line_len = 0;
+            } else if (ch == 0x1AU) {
+                if (sess->rx_line_len > 0) {
+                    sess->rx_line[sess->rx_line_len] = '\0';
+                    if (sess->in_bbs) handle_bbs_line(sess, sess->rx_line);
+                    sess->rx_line_len = 0;
+                }
+                if (sess->in_bbs && sess->state == OYK_SESS_CONNECTED) {
+                    handle_bbs_line(sess, "/EX");
+                }
             } else if (ch >= 0x20U && ch <= 0x7EU) {
                 if (sess->rx_line_len < static_cast<int>(sizeof(sess->rx_line) - 1)) {
                     sess->rx_line[sess->rx_line_len++] = static_cast<char>(ch);
@@ -1621,6 +1715,15 @@ int OykPortableNode::find_ban_index(const OykCallsign* call, const char* now_com
 int OykPortableNode::is_for_node(const OykCallsign* dst) const {
     if (oyk_callsign_eq(dst, &cfg_.callsign)) return 1;
     if (cfg_.alias.base[0] && oyk_callsign_eq(dst, &cfg_.alias)) return 1;
+    return 0;
+}
+
+int OykPortableNode::is_for_bbs(const OykCallsign* dst) const {
+    if (!cfg_.bbs_enabled || !dst) return 0;
+    OykCallsign bbs_call;
+    oyk_config_resolved_bbs_callsign(&cfg_, &bbs_call);
+    if (oyk_callsign_eq(dst, &bbs_call)) return 1;
+    if (cfg_.bbs_alias.base[0] && oyk_callsign_eq(dst, &cfg_.bbs_alias)) return 1;
     return 0;
 }
 
@@ -1813,6 +1916,646 @@ void OykPortableNode::send_disc(OykSession* sess) {
     if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
         ifaces_[sess->iface_idx].tx_frames++;
     }
+}
+
+static void bbs_base_call(const char* in, char* out, size_t out_sz) {
+    size_t j = 0;
+    if (!in || !out || out_sz == 0) return;
+    while (*in && isspace(static_cast<unsigned char>(*in))) ++in;
+    while (*in && *in != '-' && !isspace(static_cast<unsigned char>(*in)) && j < out_sz - 1) {
+        out[j++] = static_cast<char>(toupper(static_cast<unsigned char>(*in)));
+        ++in;
+    }
+    out[j] = '\0';
+}
+
+static void bbs_sanitize_tok(const char* in, char* out, size_t out_sz) {
+    size_t j = 0;
+    if (!in || !out || out_sz == 0) return;
+    while (*in && j < out_sz - 1) {
+        unsigned char c = static_cast<unsigned char>(*in);
+        if (isalnum(c) || c == '-' || c == '_' || c == '.') {
+            out[j++] = static_cast<char>(toupper(c));
+        }
+        ++in;
+    }
+    out[j] = '\0';
+}
+
+static void bbs_sanitize_text(const char* in, char* out, size_t out_sz) {
+    size_t j = 0;
+    if (!in || !out || out_sz == 0) return;
+    while (*in && j < out_sz - 1) {
+        unsigned char c = static_cast<unsigned char>(*in);
+        if (c >= 0x20U && c <= 0x7EU && c != '|') {
+            out[j++] = static_cast<char>(c);
+        }
+        ++in;
+    }
+    out[j] = '\0';
+}
+
+static int bbs_call_matches(const char* target, const OykSession* sess) {
+    if (!target || !target[0] || !sess) return 0;
+    char full_s[16], base_s[12], t_base[12];
+    oyk_format_callsign(&sess->remote_call, full_s, sizeof(full_s));
+    bbs_base_call(full_s, base_s, sizeof(base_s));
+    if (stricmp_ascii(target, full_s) == 0 || stricmp_ascii(target, base_s) == 0) return 1;
+    if (strchr(target, '-') == NULL) {
+        bbs_base_call(target, t_base, sizeof(t_base));
+        if (stricmp_ascii(t_base, base_s) == 0) return 1;
+    }
+    return 0;
+}
+
+static int bbs_contains_ci(const char* hay, const char* needle) {
+    if (!hay || !needle || !needle[0]) return 0;
+    size_t nlen = strlen(needle);
+    for (size_t i = 0; hay[i]; ++i) {
+        size_t j = 0;
+        while (j < nlen && hay[i + j] &&
+               toupper(static_cast<unsigned char>(hay[i + j])) ==
+               toupper(static_cast<unsigned char>(needle[j]))) {
+            ++j;
+        }
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
+int OykPortableNode::bbs_is_sysop(const OykSession* sess) const {
+    if (!sess) return 0;
+    if (sess->is_local_loopback) return 1;
+    return (stricmp_ascii(sess->remote_call.base, cfg_.callsign.base) == 0) ? 1 : 0;
+}
+
+int OykPortableNode::bbs_can_read(const OykBbsMsgMeta* m, const OykSession* sess) const {
+    if (!m || !sess || m->status == 'K') return 0;
+    if (m->type != 'P') return 1;
+    if (bbs_is_sysop(sess)) return 1;
+    return (bbs_call_matches(m->to, sess) || bbs_call_matches(m->from, sess)) ? 1 : 0;
+}
+
+int OykPortableNode::bbs_can_kill(const OykBbsMsgMeta* m, const OykSession* sess) const {
+    if (!m || !sess || m->status == 'K') return 0;
+    if (bbs_is_sysop(sess)) return 1;
+    if (bbs_call_matches(m->from, sess)) return 1;
+    if (m->type == 'P' && bbs_call_matches(m->to, sess)) return 1;
+    return 0;
+}
+
+int OykPortableNode::bbs_unread_for(const char* base_call) const {
+    if (!base_call || !base_call[0]) return 0;
+    int n = 0;
+    for (int i = 0; i < bbs_msg_count_; ++i) {
+        const OykBbsMsgMeta& m = bbs_msgs_[i];
+        if (m.type == 'P' && m.status == 'N') {
+            char tb[12];
+            bbs_base_call(m.to, tb, sizeof(tb));
+            if (stricmp_ascii(tb, base_call) == 0) ++n;
+        }
+    }
+    return n;
+}
+
+void OykPortableNode::bbs_load_index() {
+    bbs_msg_count_ = 0;
+    bbs_next_id_ = 1;
+    char idx_path[160];
+    join_path(cfg_.bbs_mail_path[0] ? cfg_.bbs_mail_path : "mail", "BBS.IDX",
+              idx_path, sizeof(idx_path));
+    FILE* fp = fopen(idx_path, "rb");
+    if (!fp) return;
+
+    char line[220];
+    while (fgets(line, static_cast<int>(sizeof(line)), fp) != NULL) {
+        trim_inplace(line);
+        if (!line[0] || line[0] == '#') continue;
+        /* Format: id|type|status|from|to|at|date|size|subject */
+        char* parts[9];
+        int pc = 0;
+        char* p = line;
+        parts[pc++] = p;
+        while (*p && pc < 9) {
+            if (*p == '|') {
+                *p = '\0';
+                parts[pc++] = p + 1;
+            }
+            ++p;
+        }
+        if (pc < 9) continue;
+        oyk_u32 id = static_cast<oyk_u32>(atol(parts[0]));
+        if (id == 0) continue;
+        if (id >= bbs_next_id_) bbs_next_id_ = id + 1;
+        char st = parts[2][0] ? parts[2][0] : 'N';
+        if (st == 'K') continue;
+        if (bbs_msg_count_ < OYK_MAX_BBS_MSGS) {
+            OykBbsMsgMeta* m = &bbs_msgs_[bbs_msg_count_++];
+            memset(m, 0, sizeof(*m));
+            m->id = id;
+            m->type = parts[1][0] ? parts[1][0] : 'P';
+            m->status = st;
+            safe_copy(m->from, sizeof(m->from), parts[3]);
+            safe_copy(m->to, sizeof(m->to), parts[4]);
+            safe_copy(m->at_bbs, sizeof(m->at_bbs), parts[5]);
+            safe_copy(m->date, sizeof(m->date), parts[6]);
+            m->size = static_cast<oyk_u16>(atol(parts[7]));
+            safe_copy(m->subject, sizeof(m->subject), parts[8]);
+        }
+    }
+    fclose(fp);
+}
+
+int OykPortableNode::bbs_save_index() const {
+    const char* dir = cfg_.bbs_mail_path[0] ? cfg_.bbs_mail_path : "mail";
+    make_dir_simple(dir);
+    char idx_path[160];
+    join_path(dir, "BBS.IDX", idx_path, sizeof(idx_path));
+    FILE* fp = fopen(idx_path, "wb");
+    if (!fp) return 0;
+    for (int i = 0; i < bbs_msg_count_; ++i) {
+        const OykBbsMsgMeta& m = bbs_msgs_[i];
+        fprintf(fp, "%lu|%c|%c|%s|%s|%s|%s|%u|%s\n",
+                static_cast<unsigned long>(m.id),
+                m.type, m.status, m.from, m.to, m.at_bbs, m.date,
+                static_cast<unsigned int>(m.size), m.subject);
+    }
+    fclose(fp);
+    return 1;
+}
+
+int OykPortableNode::bbs_save_msg_file(const OykBbsMsgMeta* meta, const char* body) const {
+    if (!meta) return 0;
+    const char* dir = cfg_.bbs_mail_path[0] ? cfg_.bbs_mail_path : "mail";
+    make_dir_simple(dir);
+    char fname[24], full[160];
+    sprintf(fname, "M%lu.MSG", static_cast<unsigned long>(meta->id));
+    join_path(dir, fname, full, sizeof(full));
+    FILE* fp = fopen(full, "wb");
+    if (!fp) return 0;
+    fprintf(fp, "ID: %lu\nTYPE: %c\nSTATUS: %c\nFROM: %s\nTO: %s\nAT: %s\nDATE: %s\nSUBJECT: %s\n---\n",
+            static_cast<unsigned long>(meta->id),
+            meta->type, meta->status, meta->from, meta->to, meta->at_bbs,
+            meta->date, meta->subject);
+    if (body && body[0]) {
+        fputs(body, fp);
+    }
+    fclose(fp);
+    return 1;
+}
+
+void OykPortableNode::bbs_send_prompt(OykSession* sess) {
+    OykCallsign bbs_c;
+    oyk_config_resolved_bbs_callsign(&cfg_, &bbs_c);
+    char bs[16], p[32];
+    oyk_format_callsign(&bbs_c, bs, sizeof(bs));
+    sprintf(p, "de %s> ", bs);
+    send_text(sess, p);
+}
+
+void OykPortableNode::bbs_send_msg(OykSession* sess, OykBbsMsgMeta* m) {
+    if (!sess || !m) return;
+    char hdr[320];
+    sprintf(hdr,
+            "------------------------------------------------------------------\r"
+            "Msg #%lu [%c%c] Date: %s\r"
+            "From: %s  To: %s%s%s\r"
+            "Subj: %s\r"
+            "------------------------------------------------------------------\r",
+            static_cast<unsigned long>(m->id), m->type, m->status, m->date,
+            m->from, m->to, m->at_bbs[0] ? " @ " : "", m->at_bbs, m->subject);
+    send_text(sess, hdr);
+
+    const char* dir = cfg_.bbs_mail_path[0] ? cfg_.bbs_mail_path : "mail";
+    char fname[24], full[160];
+    sprintf(fname, "M%lu.MSG", static_cast<unsigned long>(m->id));
+    join_path(dir, fname, full, sizeof(full));
+    FILE* fp = fopen(full, "rb");
+    if (fp) {
+        char line[180];
+        int in_body = 0;
+        while (fgets(line, static_cast<int>(sizeof(line)), fp) != NULL) {
+            size_t l = strlen(line);
+            while (l > 0 && (line[l - 1] == '\n' || line[l - 1] == '\r')) line[--l] = '\0';
+            if (!in_body) {
+                if (strcmp(line, "---") == 0) in_body = 1;
+                continue;
+            }
+            if (l + 2 < sizeof(line)) {
+                line[l] = '\r';
+                line[l + 1] = '\0';
+            }
+            send_text(sess, line);
+        }
+        fclose(fp);
+    }
+    send_text(sess, "------------------------------------------------------------------\r");
+
+    if (m->type == 'P' && m->status == 'N' && bbs_call_matches(m->to, sess)) {
+        m->status = 'Y';
+        bbs_save_index();
+    }
+}
+
+void OykPortableNode::bbs_enter(OykSession* sess, int direct_connect) {
+    if (!sess) return;
+    sess->in_bbs = 1;
+    sess->bbs_direct = direct_connect ? 1 : 0;
+    sess->bbs_stage = 0;
+    sess->bbs_draft_len = 0;
+    sess->bbs_draft_body[0] = '\0';
+
+    OykCallsign bbs_c;
+    oyk_config_resolved_bbs_callsign(&cfg_, &bbs_c);
+    char bs[16], us[16], ub[12];
+    oyk_format_callsign(&bbs_c, bs, sizeof(bs));
+    oyk_format_callsign(&sess->remote_call, us, sizeof(us));
+    bbs_base_call(us, ub, sizeof(ub));
+
+    int active = 0;
+    for (int i = 0; i < bbs_msg_count_; ++i) {
+        if (bbs_msgs_[i].status != 'K') ++active;
+    }
+    int unread = bbs_unread_for(ub);
+
+    char msg[260];
+    sprintf(msg,
+            "[OYK-0.1-HMR$]\r*** %s Packet BBS ***\r%s\r"
+            "Hello %s. Active msgs: %d | Unread personal: %d\r",
+            bs, cfg_.bbs_welcome, ub, active, unread);
+    send_text(sess, msg);
+    if (unread > 0) {
+        send_text(sess, "*** You have unread personal mail. Type LN or RM to read.\r");
+    }
+    bbs_send_prompt(sess);
+}
+
+void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
+    if (!sess || !sess->in_bbs) return;
+
+    char line[160];
+    safe_copy(line, sizeof(line), raw_line);
+
+    if (sess->bbs_stage == 1) {
+        trim_inplace(line);
+        if (stricmp_ascii(line, "/AB") == 0 || stricmp_ascii(line, "/ABORT") == 0) {
+            sess->bbs_stage = 0;
+            send_text(sess, "Message aborted.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        bbs_sanitize_text(line, sess->bbs_draft_subj, sizeof(sess->bbs_draft_subj));
+        if (!sess->bbs_draft_subj[0]) safe_copy(sess->bbs_draft_subj, sizeof(sess->bbs_draft_subj), "(no subject)");
+        sess->bbs_draft_len = 0;
+        sess->bbs_draft_body[0] = '\0';
+        sess->bbs_stage = 2;
+        send_text(sess, "Enter message text. End with /EX or Ctrl-Z on a new line (/AB to abort):\r");
+        return;
+    }
+
+    if (sess->bbs_stage == 2) {
+        char trimmed[160];
+        safe_copy(trimmed, sizeof(trimmed), line);
+        trim_inplace(trimmed);
+        if (stricmp_ascii(trimmed, "/AB") == 0 || stricmp_ascii(trimmed, "/ABORT") == 0) {
+            sess->bbs_stage = 0;
+            sess->bbs_draft_len = 0;
+            sess->bbs_draft_body[0] = '\0';
+            send_text(sess, "Message aborted.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (stricmp_ascii(trimmed, "/EX") == 0 || strcmp(trimmed, ".") == 0) {
+            OykBbsMsgMeta meta;
+            memset(&meta, 0, sizeof(meta));
+            meta.id = bbs_next_id_++;
+            meta.type = sess->bbs_draft_type;
+            meta.status = (meta.type == 'B') ? '$' : 'N';
+            char us[16];
+            oyk_format_callsign(&sess->remote_call, us, sizeof(us));
+            bbs_base_call(us, meta.from, sizeof(meta.from));
+            safe_copy(meta.to, sizeof(meta.to), sess->bbs_draft_to);
+            safe_copy(meta.at_bbs, sizeof(meta.at_bbs), sess->bbs_draft_at);
+            oyk_format_now_compact(now_time(), meta.date, sizeof(meta.date));
+            safe_copy(meta.subject, sizeof(meta.subject), sess->bbs_draft_subj);
+            meta.size = sess->bbs_draft_len;
+
+            int slot = -1;
+            if (bbs_msg_count_ < OYK_MAX_BBS_MSGS) {
+                slot = bbs_msg_count_++;
+            } else {
+                for (int i = 0; i < bbs_msg_count_; ++i) {
+                    if (bbs_msgs_[i].status == 'K') { slot = i; break; }
+                }
+                if (slot < 0) {
+                    for (int i = 1; i < OYK_MAX_BBS_MSGS; ++i) bbs_msgs_[i - 1] = bbs_msgs_[i];
+                    slot = OYK_MAX_BBS_MSGS - 1;
+                }
+            }
+            bbs_msgs_[slot] = meta;
+            bbs_save_msg_file(&meta, sess->bbs_draft_body);
+            bbs_save_index();
+
+            sess->bbs_stage = 0;
+            sess->bbs_draft_len = 0;
+            sess->bbs_draft_body[0] = '\0';
+
+            char resp[96];
+            sprintf(resp, "Message #%lu saved (%u bytes) for %s.\r",
+                    static_cast<unsigned long>(meta.id),
+                    static_cast<unsigned int>(meta.size), meta.to);
+            send_text(sess, resp);
+            bbs_send_prompt(sess);
+            return;
+        }
+        oyk_u16 max_b = cfg_.bbs_max_msg_bytes;
+        if (max_b == 0 || max_b >= OYK_MAX_BBS_BODY) max_b = static_cast<oyk_u16>(OYK_MAX_BBS_BODY - 1);
+        size_t llen = strlen(line);
+        if (static_cast<size_t>(sess->bbs_draft_len) + llen + 1 > static_cast<size_t>(max_b)) {
+            send_text(sess, "*** Max message size reached. Type /EX to send or /AB to abort.\r");
+            return;
+        }
+        memcpy(sess->bbs_draft_body + sess->bbs_draft_len, line, llen);
+        sess->bbs_draft_len = static_cast<oyk_u16>(sess->bbs_draft_len + llen);
+        sess->bbs_draft_body[sess->bbs_draft_len++] = '\n';
+        sess->bbs_draft_body[sess->bbs_draft_len] = '\0';
+        return;
+    }
+
+    trim_inplace(line);
+    if (!line[0]) {
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    char cmd[16];
+    size_t ci = 0;
+    while (line[ci] && !isspace(static_cast<unsigned char>(line[ci])) && ci < sizeof(cmd) - 1) {
+        cmd[ci] = static_cast<char>(toupper(static_cast<unsigned char>(line[ci])));
+        ++ci;
+    }
+    cmd[ci] = '\0';
+    const char* arg = line + ci;
+    while (*arg && isspace(static_cast<unsigned char>(*arg))) ++arg;
+
+    if (strcmp(cmd, "H") == 0 || strcmp(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
+        send_text(sess,
+                  "BBS Commands: L/LL, LM/LN, LB/LP, L>/L</L@/LC/LS, R <n>, RM, "
+                  "SP/SB/ST <to>, SR <n>, K <n>, KM, I, B\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "I") == 0 || strcmp(cmd, "INFO") == 0 || strcmp(cmd, "STAT") == 0) {
+        int active = 0, pers = 0, bull = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].status == 'K') continue;
+            ++active;
+            if (bbs_msgs_[i].type == 'P') ++pers;
+            else if (bbs_msgs_[i].type == 'B') ++bull;
+        }
+        char us[16], ub[12], resp[140];
+        oyk_format_callsign(&sess->remote_call, us, sizeof(us));
+        bbs_base_call(us, ub, sizeof(ub));
+        sprintf(resp, "OYK Packet BBS [OYK-0.1-HMR$] Active:%d (P:%d B:%d) Unread:%d\r",
+                active, pers, bull, bbs_unread_for(ub));
+        send_text(sess, resp);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "B") == 0 || strcmp(cmd, "BYE") == 0 ||
+        strcmp(cmd, "Q") == 0 || strcmp(cmd, "QUIT") == 0) {
+        int direct = sess->bbs_direct;
+        sess->in_bbs = 0;
+        sess->bbs_stage = 0;
+        if (direct) {
+            OykCallsign bbs_c;
+            oyk_config_resolved_bbs_callsign(&cfg_, &bbs_c);
+            char bs[16], bye_s[40];
+            oyk_format_callsign(&bbs_c, bs, sizeof(bs));
+            sprintf(bye_s, "73 de %s\r", bs);
+            send_text(sess, bye_s);
+            send_disc(sess);
+            sess->state = OYK_SESS_FREE;
+        } else {
+            char ns[16], ret_s[64];
+            oyk_format_callsign(&cfg_.callsign, ns, sizeof(ns));
+            sprintf(ret_s, "*** Leaving BBS. Returning to node.\r%s> ", ns);
+            send_text(sess, ret_s);
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "L") == 0 || strcmp(cmd, "LL") == 0 || strcmp(cmd, "LM") == 0 ||
+        strcmp(cmd, "LN") == 0 || strcmp(cmd, "LB") == 0 || strcmp(cmd, "LP") == 0 ||
+        strcmp(cmd, "L>") == 0 || strcmp(cmd, "L<") == 0 || strcmp(cmd, "L@") == 0 ||
+        strcmp(cmd, "LS") == 0 || strcmp(cmd, "LC") == 0) {
+        if (strcmp(cmd, "LC") == 0) {
+            int any = 0;
+            for (int i = 0; i < bbs_msg_count_; ++i) {
+                if (bbs_msgs_[i].status == 'K' || bbs_msgs_[i].type != 'B') continue;
+                int dup = 0;
+                for (int p = 0; p < i; ++p) {
+                    if (bbs_msgs_[p].status != 'K' && bbs_msgs_[p].type == 'B' &&
+                        stricmp_ascii(bbs_msgs_[p].to, bbs_msgs_[i].to) == 0) {
+                        dup = 1;
+                        break;
+                    }
+                }
+                if (dup) continue;
+                int cnt = 0;
+                for (int q = i; q < bbs_msg_count_; ++q) {
+                    if (bbs_msgs_[q].status != 'K' && bbs_msgs_[q].type == 'B' &&
+                        stricmp_ascii(bbs_msgs_[q].to, bbs_msgs_[i].to) == 0) ++cnt;
+                }
+                char row[48];
+                sprintf(row, "  %-10s (%d)\r", bbs_msgs_[i].to, cnt);
+                send_text(sess, row);
+                any = 1;
+            }
+            if (!any) send_text(sess, "No bulletin categories.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        int limit = 20;
+        if (strcmp(cmd, "LL") == 0 && arg[0]) {
+            int lv = atoi(arg);
+            if (lv > 0) limit = lv;
+        }
+        int shown = 0;
+        for (int i = bbs_msg_count_ - 1; i >= 0 && shown < limit; --i) {
+            const OykBbsMsgMeta& m = bbs_msgs_[i];
+            if (!bbs_can_read(&m, sess)) continue;
+            int keep = 0;
+            if (strcmp(cmd, "L") == 0 || strcmp(cmd, "LL") == 0) keep = 1;
+            else if (strcmp(cmd, "LM") == 0) keep = bbs_call_matches(m.to, sess);
+            else if (strcmp(cmd, "LN") == 0) keep = (m.type == 'P' && m.status == 'N' && bbs_call_matches(m.to, sess));
+            else if (strcmp(cmd, "LB") == 0) keep = (m.type == 'B');
+            else if (strcmp(cmd, "LP") == 0) keep = (m.type == 'P');
+            else if (strcmp(cmd, "L>") == 0) keep = (arg[0] && stricmp_ascii(m.to, arg) == 0);
+            else if (strcmp(cmd, "L<") == 0) keep = (arg[0] && stricmp_ascii(m.from, arg) == 0);
+            else if (strcmp(cmd, "L@") == 0) keep = (arg[0] && stricmp_ascii(m.at_bbs, arg) == 0);
+            else if (strcmp(cmd, "LS") == 0) keep = (arg[0] && (bbs_contains_ci(m.subject, arg) ||
+                                                                 bbs_contains_ci(m.to, arg) ||
+                                                                 bbs_contains_ci(m.from, arg)));
+            if (keep) {
+                if (shown == 0) {
+                    send_text(sess, "Msg#  TS Size  To       From     Subject\r");
+                }
+                char row[96];
+                sprintf(row, "%-5lu %c%c %5u %-8.8s %-8.8s %.32s\r",
+                        static_cast<unsigned long>(m.id), m.type, m.status,
+                        static_cast<unsigned int>(m.size), m.to, m.from, m.subject);
+                send_text(sess, row);
+                ++shown;
+            }
+        }
+        if (shown == 0) send_text(sess, "No matching messages.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "RM") == 0 || strcmp(cmd, "RN") == 0) {
+        int cnt = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].type == 'P' && bbs_msgs_[i].status == 'N' &&
+                bbs_call_matches(bbs_msgs_[i].to, sess)) {
+                bbs_send_msg(sess, &bbs_msgs_[i]);
+                ++cnt;
+            }
+        }
+        if (cnt == 0) send_text(sess, "No unread personal messages.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "R") == 0 || strcmp(cmd, "READ") == 0) {
+        oyk_u32 mid = static_cast<oyk_u32>(atol(arg));
+        int found = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].id == mid && bbs_can_read(&bbs_msgs_[i], sess)) {
+                bbs_send_msg(sess, &bbs_msgs_[i]);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) send_text(sess, "Message not found or access denied.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "SP") == 0 || strcmp(cmd, "S") == 0 ||
+        strcmp(cmd, "SB") == 0 || strcmp(cmd, "ST") == 0) {
+        if (!arg[0]) {
+            send_text(sess, "Usage: SP/SB/ST <to> [@ <bbs>]\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char to_tok[24], at_tok[24];
+        to_tok[0] = '\0';
+        at_tok[0] = '\0';
+        const char* p = arg;
+        size_t ti = 0;
+        while (*p && !isspace(static_cast<unsigned char>(*p)) && *p != '@' && ti < sizeof(to_tok) - 1) {
+            to_tok[ti++] = *p++;
+        }
+        to_tok[ti] = '\0';
+        while (*p && isspace(static_cast<unsigned char>(*p))) ++p;
+        if (*p == '@') {
+            ++p;
+            while (*p && isspace(static_cast<unsigned char>(*p))) ++p;
+            size_t ai = 0;
+            while (*p && !isspace(static_cast<unsigned char>(*p)) && ai < sizeof(at_tok) - 1) {
+                at_tok[ai++] = *p++;
+            }
+            at_tok[ai] = '\0';
+        }
+        bbs_sanitize_tok(to_tok, sess->bbs_draft_to, sizeof(sess->bbs_draft_to));
+        bbs_sanitize_tok(at_tok, sess->bbs_draft_at, sizeof(sess->bbs_draft_at));
+        if (!sess->bbs_draft_to[0]) {
+            send_text(sess, "Invalid recipient.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        sess->bbs_draft_type = (cmd[1] == 'B') ? 'B' : ((cmd[1] == 'T') ? 'T' : 'P');
+        sess->bbs_stage = 1;
+        send_text(sess, "Enter title (subject) (/AB to abort): ");
+        return;
+    }
+
+    if (strcmp(cmd, "SR") == 0) {
+        oyk_u32 mid = static_cast<oyk_u32>(atol(arg));
+        int idx = -1;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].id == mid && bbs_can_read(&bbs_msgs_[i], sess)) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            send_text(sess, "Message not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        sess->bbs_draft_type = 'P';
+        safe_copy(sess->bbs_draft_to, sizeof(sess->bbs_draft_to), bbs_msgs_[idx].from);
+        sess->bbs_draft_at[0] = '\0';
+        if (bbs_msgs_[idx].subject[0] &&
+            toupper(static_cast<unsigned char>(bbs_msgs_[idx].subject[0])) == 'R' &&
+            toupper(static_cast<unsigned char>(bbs_msgs_[idx].subject[1])) == 'E' &&
+            bbs_msgs_[idx].subject[2] == ':') {
+            safe_copy(sess->bbs_draft_subj, sizeof(sess->bbs_draft_subj), bbs_msgs_[idx].subject);
+        } else {
+            sprintf(sess->bbs_draft_subj, "Re: %.43s", bbs_msgs_[idx].subject);
+        }
+        sess->bbs_draft_len = 0;
+        sess->bbs_draft_body[0] = '\0';
+        sess->bbs_stage = 2;
+        send_text(sess, "Enter reply text. End with /EX or Ctrl-Z (/AB to abort):\r");
+        return;
+    }
+
+    if (strcmp(cmd, "KM") == 0) {
+        int killed = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].type == 'P' && bbs_msgs_[i].status == 'Y' &&
+                bbs_call_matches(bbs_msgs_[i].to, sess)) {
+                bbs_msgs_[i].status = 'K';
+                ++killed;
+            }
+        }
+        if (killed > 0) bbs_save_index();
+        char resp[64];
+        sprintf(resp, "Killed %d read personal message(s).\r", killed);
+        send_text(sess, resp);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "K") == 0 || strcmp(cmd, "KILL") == 0) {
+        oyk_u32 mid = static_cast<oyk_u32>(atol(arg));
+        int found = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].id == mid && bbs_msgs_[i].status != 'K') {
+                found = 1;
+                if (!bbs_can_kill(&bbs_msgs_[i], sess)) {
+                    send_text(sess, "Not authorized to kill message.\r");
+                } else {
+                    bbs_msgs_[i].status = 'K';
+                    bbs_save_index();
+                    send_text(sess, "Message killed.\r");
+                }
+                break;
+            }
+        }
+        if (!found) send_text(sess, "Message not found.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    send_text(sess, "Unknown BBS command. Type H for help.\r");
+    bbs_send_prompt(sess);
 }
 
 void OykPortableNode::chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text) {
@@ -2045,7 +2788,10 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     record_heard(&frame->src, iface_idx);
 
     OykFrameType ft = oyk_frame_type(frame);
-    if (ft == OYK_FT_UI || (!is_for_node(&frame->dst) && !is_for_chat(&frame->dst))) return;
+    if (ft == OYK_FT_UI ||
+        (!is_for_node(&frame->dst) && !is_for_bbs(&frame->dst) && !is_for_chat(&frame->dst))) {
+        return;
+    }
 
     /* Locate existing session */
     OykSession* sess = NULL;
@@ -2192,6 +2938,12 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                     send_disc(sess);
                     sess->state = OYK_SESS_FREE;
                 }
+            } else if (is_for_bbs(&frame->dst)) {
+                bbs_enter(sess, 1);
+                char msg[72];
+                sprintf(msg, "BBS session #%lu connected: %s on %s",
+                        static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
+                log_message(OYK_LOG_INFO, msg);
             } else if (is_for_chat(&frame->dst)) {
                 chat_join(sess, 1);
                 char msg[72];
@@ -2310,6 +3062,8 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                     if (sess->rx_line_len > 0 || ch == '\r') {
                         if (sess->restricted_ban) {
                             handle_restricted_line(sess, sess->rx_line);
+                        } else if (sess->in_bbs) {
+                            handle_bbs_line(sess, sess->rx_line);
                         } else if (sess->in_chat) {
                             handle_chat_line(sess, sess->rx_line);
                         } else {
@@ -2317,6 +3071,16 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                         }
                     }
                     sess->rx_line_len = 0;
+                    if (sess->state != OYK_SESS_CONNECTED) break;
+                } else if (ch == 0x1AU) {
+                    if (sess->rx_line_len > 0) {
+                        sess->rx_line[sess->rx_line_len] = '\0';
+                        if (sess->in_bbs) handle_bbs_line(sess, sess->rx_line);
+                        sess->rx_line_len = 0;
+                    }
+                    if (sess->in_bbs && sess->state == OYK_SESS_CONNECTED) {
+                        handle_bbs_line(sess, "/EX");
+                    }
                     if (sess->state != OYK_SESS_CONNECTED) break;
                 } else if (ch >= 0x20U && ch <= 0x7EU) {
                     if (sess->rx_line_len < static_cast<int>(sizeof(sess->rx_line) - 1)) {
@@ -2374,7 +3138,14 @@ void OykPortableNode::handle_normal_command(OykSession* sess, const char* raw_li
     }
 
     if (stricmp_ascii(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
-        send_text(sess, "Commands: INFO, PORTS, USERS, MHEARD, CHAT, BYE, HELP\r");
+        send_text(sess, "Commands: INFO, PORTS, USERS, MHEARD, BBS, CHAT, BYE, HELP\r");
+    } else if (stricmp_ascii(cmd, "BBS") == 0) {
+        if (!cfg_.bbs_enabled) {
+            send_text(sess, "BBS is disabled on this node.\r");
+        } else {
+            bbs_enter(sess, 0);
+            return;
+        }
     } else if (stricmp_ascii(cmd, "CHAT") == 0 || stricmp_ascii(cmd, "CH") == 0) {
         if (!cfg_.chat_enabled) {
             send_text(sess, "CHAT is disabled on this node.\r");

@@ -1780,6 +1780,216 @@ void test_x11_geometry_parser() {
     std::cout << "[PASS] test_x11_geometry_parser\n";
 }
 
+void test_bbs_ssid11_persistence_and_privacy() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_bbs_ssid11";
+    fs::remove_all(tmp_root);
+    fs::create_directories(tmp_root);
+
+    // 1. Verify example configs/node.cfg defines [bbs] on SSID 11
+    {
+        std::string cfg_file = fs::exists("configs/node.cfg") ? "configs/node.cfg" : "../configs/node.cfg";
+        node::NodeConfig ex_cfg;
+        std::string err;
+        assert(node::NodeConfig::load_from_file(cfg_file, ex_cfg, err));
+        assert(ex_cfg.bbs.enabled);
+        assert(ex_cfg.bbs.ssid == 11);
+        assert(ex_cfg.resolved_bbs_callsign() == ax25::Callsign("N0CALL", 11));
+        assert(ex_cfg.bbs.alias == ax25::Callsign("OYKBBS", 0));
+    }
+
+    // 2. Start NodeEngine with BBS on default SSID 11 (K7OYK-11)
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign("K7OYK", 7);
+    cfg.alias = ax25::Callsign("OYKNOD", 0);
+    cfg.logging.log_path = tmp_root + "/logs/";
+    cfg.banlist_path = tmp_root + "/banlist.cfg";
+    cfg.bbs.mail_path = tmp_root + "/mail";
+    cfg.t1_ms = 500;
+    assert(cfg.bbs.enabled && cfg.bbs.ssid == 11);
+    assert(cfg.resolved_bbs_callsign() == ax25::Callsign("K7OYK", 11));
+
+    radio::RadioInterfaceConfig ax_cfg;
+    ax_cfg.id = "axudp0";
+    ax_cfg.type = "axudp";
+    ax_cfg.params["bind_host"] = "127.0.0.1";
+    ax_cfg.params["bind_port"] = "0";
+    cfg.interfaces = {ax_cfg};
+
+    auto send_and_collect = [](TestAxudpClient& cl, const ax25::Callsign& dst,
+                               uint8_t& vs, uint8_t& vr, const std::string& line,
+                               bool* saw_disc_out = nullptr) -> std::string {
+        std::vector<uint8_t> bytes(line.begin(), line.end());
+        cl.send(ax25::Frame::make_i(dst, cl.call(), vs, vr, bytes));
+        vs = static_cast<uint8_t>((vs + 1) & 0x07u);
+        std::string out;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto f = cl.recv(50);
+            if (!f) {
+                if (!out.empty()) break;
+                continue;
+            }
+            if (f->type() == ax25::FrameType::I) {
+                out.append(f->info.begin(), f->info.end());
+                vr = static_cast<uint8_t>((f->ns() + 1) & 0x07u);
+                cl.send(ax25::Frame::make_rr(dst, cl.call(), vr, false, false));
+            } else if (f->type() == ax25::FrameType::DISC) {
+                if (saw_disc_out) *saw_disc_out = true;
+                cl.send(ax25::Frame::make_ua(dst, cl.call(), f->pf()));
+                break;
+            }
+        }
+        return out;
+    };
+
+    {
+        node::NodeEngine engine(cfg);
+        std::string err;
+        assert(engine.start(err));
+        auto* ax0 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("axudp0"));
+        assert(ax0 != nullptr);
+        const uint16_t port0 = ax0->bound_port();
+        const ax25::Callsign bbs_call("K7OYK", 11);
+
+        // Remote user W1AW connects directly to K7OYK-11 (SSID 11)
+        TestAxudpClient w1aw(ax25::Callsign("W1AW", 0), port0);
+        w1aw.send(ax25::Frame::make_sabm(bbs_call, w1aw.call()));
+        auto ua = w1aw.recv(500);
+        assert(ua.has_value() && ua->type() == ax25::FrameType::UA);
+
+        uint8_t vs = 0, vr = 0;
+        std::string banner;
+        while (auto f = w1aw.recv(150)) {
+            if (f->type() == ax25::FrameType::I) {
+                banner.append(f->info.begin(), f->info.end());
+                vr = static_cast<uint8_t>((f->ns() + 1) & 0x07u);
+                w1aw.send(ax25::Frame::make_rr(bbs_call, w1aw.call(), vr, false, false));
+            }
+        }
+        assert(banner.find("[OYK-0.1-HMR$]") != std::string::npos);
+        assert(banner.find("de K7OYK-11>") != std::string::npos);
+
+        // W1AW sends personal message #1 to K7OYK (terminated with /EX)
+        std::string r = send_and_collect(w1aw, bbs_call, vs, vr, "SP K7OYK\r");
+        assert(r.find("Enter title") != std::string::npos);
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "Signal Report\r");
+        assert(r.find("/EX") != std::string::npos);
+        (void)send_and_collect(w1aw, bbs_call, vs, vr, "Hi David, 599 on 2m!\r");
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "/EX\r");
+        assert(r.find("Message #1 saved") != std::string::npos);
+
+        // W1AW sends bulletin #2 to ALL @ LOCAL (terminated with Ctrl-Z 0x1A)
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "SB ALL @ LOCAL\r");
+        assert(r.find("Enter title") != std::string::npos);
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "Club Net Tonight\r");
+        assert(r.find("/EX") != std::string::npos);
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "Net starts at 2000 local.\x1A");
+        assert(r.find("Message #2 saved") != std::string::npos);
+
+        // W1AW disconnects cleanly via B
+        bool got_disc = false;
+        r = send_and_collect(w1aw, bbs_call, vs, vr, "B\r", &got_disc);
+        assert(r.find("73 de K7OYK-11") != std::string::npos && got_disc);
+
+        // Privacy check: third station N9XYZ connects to OYKBBS alias
+        const ax25::Callsign bbs_alias("OYKBBS", 0);
+        TestAxudpClient n9xyz(ax25::Callsign("N9XYZ", 0), port0);
+        n9xyz.send(ax25::Frame::make_sabm(bbs_alias, n9xyz.call()));
+        auto ua2 = n9xyz.recv(500);
+        assert(ua2.has_value() && ua2->type() == ax25::FrameType::UA);
+        uint8_t vs2 = 0, vr2 = 0;
+        while (auto f = n9xyz.recv(150)) {
+            if (f->type() == ax25::FrameType::I) {
+                vr2 = static_cast<uint8_t>((f->ns() + 1) & 0x07u);
+                n9xyz.send(ax25::Frame::make_rr(bbs_alias, n9xyz.call(), vr2, false, false));
+            }
+        }
+        // N9XYZ sees bulletin #2, cannot read or kill personal msg #1
+        std::string lb = send_and_collect(n9xyz, bbs_alias, vs2, vr2, "LB\r");
+        assert(lb.find("Club Net Tonight") != std::string::npos);
+        std::string denied = send_and_collect(n9xyz, bbs_alias, vs2, vr2, "R 1\r");
+        assert(denied.find("access denied") != std::string::npos);
+        std::string kdenied = send_and_collect(n9xyz, bbs_alias, vs2, vr2, "K 1\r");
+        assert(kdenied.find("Not authorized") != std::string::npos);
+
+        // Local operator enters node shell via local terminal, switches to BBS, reads mail & replies
+        std::mutex lmtx;
+        std::string lrx;
+        node::NodeEngine::LocalTerminalCallbacks lcbs;
+        lcbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& bytes) {
+            std::lock_guard<std::mutex> lk(lmtx);
+            lrx.append(bytes.begin(), bytes.end());
+        };
+        uint64_t lsid = 0;
+        bool is_loc = false;
+        assert(engine.open_local_terminal("local", "LOCAL", std::move(lcbs), lsid, nullptr, err, &is_loc));
+        assert(is_loc);
+
+        auto send_local = [&](const std::string& s) {
+            {
+                std::lock_guard<std::mutex> lk(lmtx);
+                lrx.clear();
+            }
+            assert(engine.send_local_terminal_bytes(lsid, std::vector<uint8_t>(s.begin(), s.end())));
+            std::lock_guard<std::mutex> lk(lmtx);
+            return lrx;
+        };
+
+        std::string b_enter = send_local("BBS\r");
+        assert(b_enter.find("Unread personal mail: 1") != std::string::npos);
+
+        std::string rm_out = send_local("RM\r");
+        assert(rm_out.find("Hi David, 599 on 2m!") != std::string::npos);
+
+        // Reply to #1 via SR 1 -> saves message #3 for W1AW with Re: Signal Report
+        std::string sr_out = send_local("SR 1\r");
+        assert(sr_out.find("Re: Signal Report") != std::string::npos);
+        std::string sr_save = send_local("Thanks for the report!\r/EX\r");
+        assert(sr_save.find("Message #3 saved") != std::string::npos);
+
+        // Leave BBS -> returns to node prompt
+        std::string leave_out = send_local("B\r");
+        assert(leave_out.find("Returning to node.") != std::string::npos);
+        assert(leave_out.find("K7OYK-7>") != std::string::npos);
+
+        assert(engine.close_local_terminal(lsid));
+        engine.stop();
+    }
+
+    // 3. Restart NodeEngine and verify messages persisted in mail/M*.MSG survive reload
+    {
+        node::NodeEngine engine2(cfg);
+        std::string err;
+        assert(engine2.start(err));
+
+        std::mutex lmtx;
+        std::string lrx;
+        node::NodeEngine::LocalTerminalCallbacks lcbs;
+        lcbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& bytes) {
+            std::lock_guard<std::mutex> lk(lmtx);
+            lrx.append(bytes.begin(), bytes.end());
+        };
+        uint64_t lsid = 0;
+        assert(engine2.open_local_terminal("local", "BBS", std::move(lcbs), lsid, nullptr, err, nullptr));
+        {
+            std::lock_guard<std::mutex> lk(lmtx);
+            assert(lrx.find("Active msgs: 3") != std::string::npos);
+            lrx.clear();
+        }
+        assert(engine2.send_local_terminal_bytes(lsid, {'R', ' ', '3', '\r'}));
+        {
+            std::lock_guard<std::mutex> lk(lmtx);
+            assert(lrx.find("Thanks for the report!") != std::string::npos);
+        }
+        assert(engine2.close_local_terminal(lsid));
+        engine2.stop();
+    }
+
+    fs::remove_all(tmp_root);
+    std::cout << "[PASS] test_bbs_ssid11_persistence_and_privacy\n";
+}
+
 } // namespace
 
 int main() {
@@ -1799,6 +2009,7 @@ int main() {
     test_local_terminal_and_yapp();
     test_ban_lift_chat_and_local_loopback();
     test_x11_geometry_parser();
+    test_bbs_ssid11_persistence_and_privacy();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

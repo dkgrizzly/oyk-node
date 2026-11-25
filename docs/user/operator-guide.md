@@ -55,5 +55,7 @@ Stations connected to the normal node shell can issue:
 | `PORTS` | `P` | List radio interfaces, types, status, and active connection counts |
 | `USERS` | `U` | List currently active sessions |
 | `MHEARD` | `MH` | Display recently heard callsigns, port, packet counts, and last-heard times |
+| `BBS` | — | Enter the built-in Packet Bulletin Board System (also reachable directly on SSID 11 / `OYKBBS`) |
+| `CHAT` | `CH` | Join the built-in multi-user Packet CHAT room (also reachable directly on SSID 12 / `OYKCHT`) |
 | `CONNECT <port> <call>` | `C` | Initiate an outbound AX.25 connection through `<port>` (index or ID) and bridge transparently |
 | `BYE` | `B`, `QUIT`, `Q` | Cleanly disconnect from the node |

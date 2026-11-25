@@ -91,6 +91,27 @@ std::string NodeConfig::resolved_banlist_path() const {
     return "./banlist.cfg";
 }
 
+ax25::Callsign NodeConfig::resolved_bbs_callsign() const {
+    if (bbs.callsign.valid()) {
+        return bbs.callsign;
+    }
+    return ax25::Callsign(callsign.base(), static_cast<uint8_t>(bbs.ssid & 0x0Fu));
+}
+
+std::string NodeConfig::resolved_bbs_mail_path() const {
+    namespace fs = std::filesystem;
+    std::string raw = bbs.mail_path.empty() ? "mail/" : expand_tilde(bbs.mail_path);
+    fs::path p(raw);
+    if (p.is_absolute() || source_path.empty()) {
+        return p.string();
+    }
+    fs::path cfg_dir = fs::path(source_path).parent_path();
+    if (cfg_dir.empty()) {
+        return p.string();
+    }
+    return (cfg_dir / p).string();
+}
+
 ax25::Callsign NodeConfig::resolved_chat_callsign() const {
     if (chat.callsign.valid()) {
         return chat.callsign;
@@ -183,6 +204,9 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 current_iface = nullptr;
             } else if (lower_sec == "logfiles") {
                 current_section = "logfiles";
+                current_iface = nullptr;
+            } else if (lower_sec == "bbs") {
+                current_section = "bbs";
                 current_iface = nullptr;
             } else if (lower_sec == "chat") {
                 current_section = "chat";
@@ -284,6 +308,42 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 return false;
             }
             cfg.logging.log_files[raw_key] = mask;
+        } else if (current_section == "bbs") {
+            if (key == "enabled") {
+                cfg.bbs.enabled = parse_bool(val, true);
+            } else if (key == "ssid") {
+                cfg.bbs.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+            } else if (key == "callsign") {
+                if (val.empty()) {
+                    cfg.bbs.callsign = ax25::Callsign{};
+                } else {
+                    auto parsed = ax25::Callsign::parse(val);
+                    if (!parsed) {
+                        error_out = "Config line " + std::to_string(line_num) +
+                                    ": invalid bbs callsign '" + val + "'";
+                        return false;
+                    }
+                    cfg.bbs.callsign = *parsed;
+                }
+            } else if (key == "alias") {
+                if (val.empty()) {
+                    cfg.bbs.alias = ax25::Callsign{};
+                } else {
+                    auto parsed = ax25::Callsign::parse(val);
+                    if (!parsed) {
+                        error_out = "Config line " + std::to_string(line_num) +
+                                    ": invalid bbs alias '" + val + "'";
+                        return false;
+                    }
+                    cfg.bbs.alias = *parsed;
+                }
+            } else if (key == "mailpath" || key == "mail_path") {
+                if (!val.empty()) cfg.bbs.mail_path = val;
+            } else if (key == "welcome") {
+                cfg.bbs.welcome = val;
+            } else if (key == "max_msg_bytes") {
+                cfg.bbs.max_msg_bytes = static_cast<std::size_t>(std::clamp(std::stoi(val), 256, 65536));
+            }
         } else if (current_section == "chat") {
             if (key == "enabled") {
                 cfg.chat.enabled = parse_bool(val, true);
@@ -379,6 +439,20 @@ bool NodeConfig::save_to_file(const std::string& path) const {
             lines.push_back(oss.str());
         }
     }
+
+    lines.push_back("");
+    lines.push_back("[bbs]");
+    lines.push_back("enabled = " + std::string(bbs.enabled ? "true" : "false"));
+    lines.push_back("ssid = " + std::to_string(static_cast<int>(bbs.ssid)));
+    if (bbs.callsign.valid()) {
+        lines.push_back("callsign = " + bbs.callsign.str());
+    }
+    if (bbs.alias.valid()) {
+        lines.push_back("alias = " + bbs.alias.str());
+    }
+    lines.push_back("mailpath = " + bbs.mail_path);
+    lines.push_back("welcome = " + bbs.welcome);
+    lines.push_back("max_msg_bytes = " + std::to_string(bbs.max_msg_bytes));
 
     lines.push_back("");
     lines.push_back("[chat]");

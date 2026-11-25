@@ -57,6 +57,16 @@ typedef unsigned long  oyk_u32;
 #ifndef OYK_MAX_APPEAL_LEN
 #define OYK_MAX_APPEAL_LEN   140
 #endif
+#ifndef OYK_MAX_BBS_MSGS
+#define OYK_MAX_BBS_MSGS     32
+#endif
+#ifndef OYK_MAX_BBS_BODY
+#if defined(__DOS__) || (defined(__WINDOWS__) && !defined(__NT__))
+#define OYK_MAX_BBS_BODY     512
+#else
+#define OYK_MAX_BBS_BODY     2048
+#endif
+#endif
 
 /* Line ending conventions for config files ONLY (never overrides wire protocols) */
 enum OykLineEnding {
@@ -157,6 +167,14 @@ struct OykConfig {
     OykLineEnding line_ending;
     int has_detected_eol;
 
+    int bbs_enabled;
+    oyk_u8 bbs_ssid;  /* Default 11 -> <callsign.base>-11 */
+    OykCallsign bbs_callsign;
+    OykCallsign bbs_alias;
+    char bbs_mail_path[96];
+    char bbs_welcome[96];
+    oyk_u16 bbs_max_msg_bytes;
+
     int chat_enabled;
     oyk_u8 chat_ssid; /* Default 12 -> <callsign.base>-12 */
     OykCallsign chat_callsign;
@@ -200,6 +218,18 @@ enum OykSessState {
     OYK_SESS_DISCONNECTING
 };
 
+struct OykBbsMsgMeta {
+    oyk_u32 id;
+    char type;       /* 'P', 'B', 'T' */
+    char status;     /* 'N', 'Y', '$', 'K' */
+    char from[12];
+    char to[12];
+    char at_bbs[12];
+    char date[16];
+    char subject[48];
+    oyk_u16 size;
+};
+
 struct OykSession {
     oyk_u32 id;
     int iface_idx;
@@ -215,6 +245,15 @@ struct OykSession {
     int chat_direct;       /* 1 = connected directly to CHAT SSID */
     char chat_topic[16];
     char chat_name[16];
+    int in_bbs;            /* 1 = active in Packet BBS */
+    int bbs_direct;        /* 1 = connected directly to BBS SSID */
+    int bbs_stage;         /* 0=cmd, 1=subject, 2=body */
+    char bbs_draft_type;
+    char bbs_draft_to[12];
+    char bbs_draft_at[12];
+    char bbs_draft_subj[48];
+    oyk_u16 bbs_draft_len;
+    char bbs_draft_body[OYK_MAX_BBS_BODY];
     int restricted_ban;
     int appeal_eligible;
     char ban_key[12];
@@ -304,6 +343,7 @@ void oyk_config_init_default(OykConfig* cfg);
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz);
 int oyk_config_save(const OykConfig* cfg, const char* path);
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
+void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 
 /* Cooperative portable packet node engine */
@@ -374,10 +414,22 @@ private:
     int save_banlist();
     int find_ban_index(const OykCallsign* call, const char* now_compact) const;
     int is_for_node(const OykCallsign* dst) const;
+    int is_for_bbs(const OykCallsign* dst) const;
     int is_for_chat(const OykCallsign* dst) const;
     void record_heard(const OykCallsign* src, int iface_idx);
     void send_text(OykSession* sess, const char* text);
     void send_disc(OykSession* sess);
+    void bbs_load_index();
+    int bbs_save_index() const;
+    int bbs_save_msg_file(const OykBbsMsgMeta* meta, const char* body) const;
+    int bbs_is_sysop(const OykSession* sess) const;
+    int bbs_can_read(const OykBbsMsgMeta* m, const OykSession* sess) const;
+    int bbs_can_kill(const OykBbsMsgMeta* m, const OykSession* sess) const;
+    int bbs_unread_for(const char* base_call) const;
+    void bbs_send_prompt(OykSession* sess);
+    void bbs_send_msg(OykSession* sess, OykBbsMsgMeta* m);
+    void bbs_enter(OykSession* sess, int direct_connect);
+    void handle_bbs_line(OykSession* sess, const char* line);
     void chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text);
     void chat_join(OykSession* sess, int direct_connect);
     void chat_leave(OykSession* sess, const char* reason);
@@ -416,6 +468,10 @@ private:
 
     int console_log_count_;
     char console_logs_[OYK_MAX_CONSOLE_LOGS][112];
+
+    oyk_u32 bbs_next_id_;
+    int bbs_msg_count_;
+    OykBbsMsgMeta bbs_msgs_[OYK_MAX_BBS_MSGS];
 };
 
 #endif /* OYK_PORTABLE_HPP */

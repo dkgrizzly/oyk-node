@@ -6,6 +6,7 @@
 #include "oyk/ax25/callsign.hpp"
 #include "oyk/ax25/frame.hpp"
 #include "oyk/node/ban_list.hpp"
+#include "oyk/node/bbs_server.hpp"
 #include "oyk/node/chat_room.hpp"
 #include "oyk/node/command_handler.hpp"
 #include "oyk/node/logger.hpp"
@@ -189,6 +190,10 @@ private:
                                   uint64_t actor_sid,
                                   std::vector<PendingTx>& pending,
                                   std::vector<PendingLocalEvent>& pending_local);
+    void apply_bbs_result_locked(const BbsActionResult& res,
+                                 uint64_t actor_sid,
+                                 std::vector<PendingTx>& pending,
+                                 std::vector<PendingLocalEvent>& pending_local);
     void process_session_events(Session& sess,
                                 SessionEvents& ev,
                                 std::vector<PendingTx>& pending,
@@ -209,6 +214,7 @@ private:
                              const std::string& interface_id,
                              std::chrono::system_clock::time_point now);
     bool is_for_node(const ax25::Callsign& dst) const;
+    bool is_for_bbs(const ax25::Callsign& dst) const;
     bool is_for_chat(const ax25::Callsign& dst) const;
     bool is_own_callsign(const ax25::Callsign& call) const;
     bool is_banned_locked(const ax25::Callsign& call) const;
@@ -243,8 +249,9 @@ private:
     std::deque<NewCallsignRecord> last_new_callsigns_; // Most recent 5 new callsigns (newest first)
     std::map<std::string, MHeardRecord> mheard_;
 
-    // Persistent banlist (banlist.cfg) & multi-user CHAT conference room
+    // Persistent banlist (banlist.cfg), packet BBS, and multi-user CHAT conference room
     BanList ban_list_;
+    BbsServer bbs_server_;
     ChatRoom chat_room_;
 
     std::thread timer_thread_;

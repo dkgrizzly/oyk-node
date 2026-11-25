@@ -682,8 +682,9 @@ static void refresh_gui() {
                     static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local", s.since_hms,
                     s.restricted_ban ? "BAN NOTICE"
-                                     : (s.in_chat ? "CHAT"
-                                                  : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
+                                     : (s.in_bbs ? "BBS"
+                                                 : (s.in_chat ? "CHAT"
+                                                              : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"))));
             SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
         }
     }

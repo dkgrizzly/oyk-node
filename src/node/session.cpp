@@ -274,6 +274,12 @@ SessionEvents Session::on_frame(const ax25::Frame& frame) {
                                 ev.rx_lines.push_back(rx_line_buf_);
                                 rx_line_buf_.clear();
                             }
+                        } else if (b == 0x1A) {
+                            if (!rx_line_buf_.empty()) {
+                                ev.rx_lines.push_back(rx_line_buf_);
+                                rx_line_buf_.clear();
+                            }
+                            ev.rx_lines.push_back("\x1A");
                         } else if (c == '\b' || b == 0x7F) {
                             if (!rx_line_buf_.empty()) {
                                 rx_line_buf_.pop_back();
@@ -339,6 +345,12 @@ std::vector<std::string> Session::feed_local_loopback_bytes(const std::vector<ui
                 lines.push_back(rx_line_buf_);
                 rx_line_buf_.clear();
             }
+        } else if (b == 0x1A) {
+            if (!rx_line_buf_.empty()) {
+                lines.push_back(rx_line_buf_);
+                rx_line_buf_.clear();
+            }
+            lines.push_back("\x1A");
         } else if (c == '\b' || b == 0x7F) {
             if (!rx_line_buf_.empty()) rx_line_buf_.pop_back();
         } else if (b >= 0x20 && b < 0x7F) {

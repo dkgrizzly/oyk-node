@@ -168,8 +168,10 @@ void refresh_ui(GtkAppState* st) {
                                      ? "LOCAL TERM"
                                      : (s.mode == node::SessionMode::Chat)
                                            ? "CHAT"
-                                           : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
-                                                                   : "NODE SHELL");
+                                           : (s.mode == node::SessionMode::Bbs)
+                                                 ? "BBS"
+                                                 : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
+                                                                         : "NODE SHELL");
         gtk_list_store_append(st->session_store, &iter);
         gtk_list_store_set(st->session_store, &iter,
                            0, id_str.c_str(),
