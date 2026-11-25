@@ -169,7 +169,8 @@ BEGIN
     LTEXT           "Configured radio / network interface mappings:", IDC_SET_L_IF, 14, 38, 220, 10
     LISTBOX         IDC_SET_IF_LIST, 14, 52, 320, 94, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
     PUSHBUTTON      "&Add Interface...", IDC_SET_IF_ADD, 14, 152, 74, 15
-    PUSHBUTTON      "&Remove Selected", IDC_SET_IF_REM, 94, 152, 78, 15
+    PUSHBUTTON      "&Edit Selected...", IDC_SET_IF_EDIT, 94, 152, 74, 15
+    PUSHBUTTON      "&Remove Selected", IDC_SET_IF_REM, 174, 152, 78, 15
 
     /* Tab 5: Rig Control */
     CHECKBOX        "Enable Radio / Rig Control", IDC_SET_RIG_EN, 14, 38, 160, 11, BS_AUTOCHECKBOX | WS_TABSTOP
@@ -256,4 +257,26 @@ BEGIN
     PUSHBUTTON      "< &Back", IDC_AIF_BACK, 92, 144, 56, 14
     DEFPUSHBUTTON   "&Next >", IDC_AIF_NEXT, 152, 144, 56, 14
     PUSHBUTTON      "Cancel", IDCANCEL, 212, 144, 56, 14
+END
+
+IDD_EDIT_IFACE DIALOG 24, 24, 276, 156
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Edit Interface"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Driver:", -1, 8, 10, 62, 10
+    COMBOBOX        IDC_EIF_DRV, 74, 8, 194, 68, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Interface ID:", -1, 8, 28, 62, 10
+    EDITTEXT        IDC_EIF_ID, 74, 26, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Description (opt):", -1, 8, 46, 62, 10
+    EDITTEXT        IDC_EIF_DESC, 74, 44, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Host / Device:", IDC_EIF_L_HOST, 8, 64, 62, 10
+    EDITTEXT        IDC_EIF_HOST, 74, 62, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port / Baud:", IDC_EIF_L_PORT, 8, 82, 62, 10
+    EDITTEXT        IDC_EIF_PORT, 74, 80, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Static Peer (opt):", IDC_EIF_L_PEER, 8, 100, 62, 10
+    EDITTEXT        IDC_EIF_PEER, 74, 98, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "", IDC_EIF_ERR, 8, 118, 260, 10
+    DEFPUSHBUTTON   "&Save", IDOK, 152, 134, 56, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 212, 134, 56, 14
 END

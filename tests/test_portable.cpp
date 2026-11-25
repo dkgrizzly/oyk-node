@@ -1143,6 +1143,37 @@ static void test_derive_default_iface_id() {
     printf("[PASS] test_derive_default_iface_id\n");
 }
 
+static void test_format_peer_spec() {
+    OykPeerEntry pe;
+    char out[64];
+
+    memset(&pe, 0, sizeof(pe));
+    assert(oyk_parse_peer_spec("N0CALL-5@192.168.1.42:10094", pe.callsign, sizeof(pe.callsign),
+                               &pe.ip, &pe.port, 10093) == 1);
+    oyk_format_peer_spec(&pe, out, sizeof(out));
+    assert(strcmp(out, "N0CALL-5@192.168.1.42:10094") == 0);
+
+    memset(&pe, 0, sizeof(pe));
+    assert(oyk_parse_peer_spec("K1ABC@10.0.0.2", pe.callsign, sizeof(pe.callsign),
+                               &pe.ip, &pe.port, 10093) == 1);
+    oyk_format_peer_spec(&pe, out, sizeof(out));
+    assert(strcmp(out, "K1ABC@10.0.0.2:10093") == 0);
+
+    memset(&pe, 0, sizeof(pe));
+    assert(oyk_parse_peer_spec("44.1.2.3:10095", pe.callsign, sizeof(pe.callsign),
+                               &pe.ip, &pe.port, 10093) == 1);
+    oyk_format_peer_spec(&pe, out, sizeof(out));
+    assert(strcmp(out, "44.1.2.3:10095") == 0);
+
+    memset(&pe, 0, sizeof(pe));
+    assert(oyk_parse_peer_spec("172.16.0.9", pe.callsign, sizeof(pe.callsign),
+                               &pe.ip, &pe.port, 10093) == 1);
+    oyk_format_peer_spec(&pe, out, sizeof(out));
+    assert(strcmp(out, "172.16.0.9:10093") == 0);
+
+    printf("[PASS] test_format_peer_spec\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1153,6 +1184,7 @@ int oyk_run_portable_tests() {
     test_portable_printer();
     test_dos_video_dirty_diff_and_attrs();
     test_derive_default_iface_id();
+    test_format_peer_spec();
     return 0;
 }
 

@@ -90,6 +90,7 @@ private:
         PROMPT_BAN_REASON,
         PROMPT_SETTINGS_VALUE,
         PROMPT_SETTINGS_ADD_WIZARD,
+        PROMPT_SETTINGS_EDIT_IFACE,
         PROMPT_RIG_FREQ,
         PROMPT_RIG_MODE,
         PROMPT_RIG_VFO,
@@ -134,13 +135,19 @@ private:
     void render_storage();
     void render_prompt_overlay();
     void render_add_iface_wizard();
+    void render_edit_iface_dialog();
     void render_confirm_format_modal();
 
+    void open_add_iface_wizard();
+    void open_edit_iface_dialog(int edit_idx);
     void handle_add_wizard_key(int key);
+    void handle_edit_iface_key(int key);
     void wizard_apply_driver_defaults();
     int wizard_try_advance();
-    void wizard_commit();
+    int edit_iface_try_save();
+    void commit_iface_fields(int slot);
     int wizard_step_field_count() const;
+    int edit_iface_field_count() const;
 
     void handle_console_key(int key);
     void handle_menu_key(int key);
@@ -195,6 +202,7 @@ private:
     int prompt_len_;
     char ban_call_tmp_[16];
     char ban_action_tmp_[16];
+    int wiz_edit_idx_;
     int wiz_step_;
     int wiz_drv_;
     int wiz_last_drv_;

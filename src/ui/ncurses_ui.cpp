@@ -2244,7 +2244,7 @@ void NcursesUI::modal_settings() {
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
         mvwhline(win, h - 1, 1, ' ', w - 2);
         const char* help_bar = (tab == 3)
-            ? "Tab/1-6:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
+            ? "Tab/1-6:Tabs  A:Add  Enter/E:Edit  D/Del:Remove  S/F2:Save  Esc:Cancel"
             : "Tab/Left/Right/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
         mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
@@ -2315,6 +2315,19 @@ void NcursesUI::modal_settings() {
                 draft.interfaces.push_back(std::move(ic));
                 sel[3] = static_cast<int>(draft.interfaces.size()) - 1;
                 feedback = "Added interface '" + new_id + "' (press S/F2 to Save & Apply).";
+            } else if ((ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'e' || ch == 'E') && cnt > 0) {
+                int idx = sel[3];
+                radio::RadioInterfaceConfig ic;
+                bool updated = modal_edit_interface(draft.interfaces, idx, ic);
+                touchwin(win);
+                wrefresh(win);
+                if (!updated) {
+                    feedback = "Edit interface cancelled.";
+                    continue;
+                }
+                std::string new_id = ic.id;
+                draft.interfaces[static_cast<std::size_t>(idx)] = std::move(ic);
+                feedback = "Updated interface '" + new_id + "' (press S/F2 to Save & Apply).";
             } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && cnt > 0) {
                 std::string rem_id = draft.interfaces[static_cast<std::size_t>(sel[3])].id;
                 mvwhline(win, h - 2, 1, ' ', w - 2);
@@ -2493,19 +2506,107 @@ void NcursesUI::modal_settings() {
     delwin(win);
 }
 
+namespace {
+
+struct NcursesDriverOpt {
+    const char* type;
+    const char* desc;
+};
+
+static const NcursesDriverOpt NC_IFACE_DRIVERS[5] = {
+    { "axudp",       "AX.25 over UDP (BPQ / AXUDP)" },
+    { "axip",        "AX.25 over IP (Protocol 93)" },
+    { "kiss-serial", "KISS TNC over Serial Port" },
+    { "kiss-tcp",    "KISS TNC over TCP (Direwolf)" },
+    { "telnet",      "Plaintext Telnet User Port" }
+};
+
+static bool nc_ci_eq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void nc_apply_driver_defaults(int drv,
+                                     std::string& f_host,
+                                     std::string& f_port,
+                                     std::string& f_mode,
+                                     std::string& f_kport,
+                                     std::string& f_peer) {
+    const std::string t = NC_IFACE_DRIVERS[drv].type;
+    f_peer.clear();
+    f_kport = "0";
+    f_mode = "client";
+    if (t == "axudp") {
+        f_host = "0.0.0.0";
+        f_port = "10093";
+    } else if (t == "axip") {
+        f_host = "0.0.0.0";
+        f_port = "0";
+    } else if (t == "kiss-serial") {
+        f_host = "/dev/ttyUSB0";
+        f_port = "9600";
+    } else if (t == "kiss-tcp") {
+        f_host = "127.0.0.1";
+        f_port = "8001";
+    } else {
+        f_host = "0.0.0.0";
+        f_port = "8010";
+    }
+}
+
+static void nc_build_iface_config(int drv,
+                                  const std::string& f_id,
+                                  const std::string& f_desc,
+                                  const std::string& f_host,
+                                  const std::string& f_port,
+                                  const std::string& f_mode,
+                                  const std::string& f_kport,
+                                  const std::string& f_peer,
+                                  const radio::RadioInterfaceConfig* prev,
+                                  radio::RadioInterfaceConfig& out_iface) {
+    out_iface = radio::RadioInterfaceConfig{};
+    out_iface.id = f_id;
+    out_iface.type = NC_IFACE_DRIVERS[drv].type;
+    out_iface.description = f_desc;
+    if (drv == 0) {
+        out_iface.params["bind_host"] = f_host;
+        out_iface.params["bind_port"] = f_port;
+        out_iface.params["auto_learn"] = "true";
+        if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
+    } else if (drv == 1) {
+        out_iface.params["bind_host"] = f_host;
+        out_iface.params["auto_learn"] = "true";
+        if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
+    } else if (drv == 2) {
+        out_iface.params["device"] = f_host;
+        out_iface.params["baud"] = f_port;
+        out_iface.params["kiss_port"] = f_kport.empty() ? "0" : f_kport;
+    } else if (drv == 3) {
+        out_iface.params["mode"] = f_mode;
+        out_iface.params["host"] = f_host;
+        out_iface.params["port"] = f_port;
+        out_iface.params["kiss_port"] = f_kport.empty() ? "0" : f_kport;
+    } else {
+        out_iface.params["bind_host"] = f_host;
+        out_iface.params["bind_port"] = f_port;
+    }
+    if (prev && (drv == 0 || drv == 1)) {
+        for (std::size_t p = 1; p < prev->peers.size(); ++p) {
+            out_iface.peers.push_back(prev->peers[p]);
+        }
+    }
+}
+
+} // namespace
+
 bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfaceConfig>& existing,
                                              radio::RadioInterfaceConfig& out_iface) {
-    struct DriverOpt {
-        const char* type;
-        const char* desc;
-    };
-    static const DriverOpt DRIVERS[5] = {
-        { "axudp",       "AX.25 over UDP (BPQ / AXUDP)" },
-        { "axip",        "AX.25 over IP (Protocol 93)" },
-        { "kiss-serial", "KISS TNC over Serial Port" },
-        { "kiss-tcp",    "KISS TNC over TCP (Direwolf)" },
-        { "telnet",      "Plaintext Telnet User Port" }
-    };
     static const char* PROG[4] = {
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
@@ -2531,40 +2632,10 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
     std::string err_msg;
     bool committed = false;
 
-    auto ci_eq = [](const std::string& a, const std::string& b) {
-        if (a.size() != b.size()) return false;
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            if (std::tolower(static_cast<unsigned char>(a[i])) !=
-                std::tolower(static_cast<unsigned char>(b[i]))) {
-                return false;
-            }
-        }
-        return true;
-    };
-
     auto apply_driver_defaults = [&]() {
-        const std::string t = DRIVERS[drv].type;
-        f_id = node::derive_default_iface_id(existing, t);
+        f_id = node::derive_default_iface_id(existing, NC_IFACE_DRIVERS[drv].type);
         f_desc.clear();
-        f_peer.clear();
-        f_kport = "0";
-        f_mode = "client";
-        if (t == "axudp") {
-            f_host = "0.0.0.0";
-            f_port = "10093";
-        } else if (t == "axip") {
-            f_host = "0.0.0.0";
-            f_port = "0";
-        } else if (t == "kiss-serial") {
-            f_host = "/dev/ttyUSB0";
-            f_port = "9600";
-        } else if (t == "kiss-tcp") {
-            f_host = "127.0.0.1";
-            f_port = "8001";
-        } else {
-            f_host = "0.0.0.0";
-            f_port = "8010";
-        }
+        nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
         last_drv = drv;
     };
 
@@ -2612,8 +2683,8 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
                 focus = 0;
                 return;
             }
-            for (const auto& ex : existing) {
-                if (ci_eq(ex.id, f_id)) {
+            for (std::size_t i = 0; i < existing.size(); ++i) {
+                if (nc_ci_eq(existing[i].id, f_id)) {
                     err_msg = "Duplicate interface ID: " + f_id;
                     focus = 0;
                     return;
@@ -2641,32 +2712,8 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             return;
         }
         if (step == 3) {
-            out_iface = radio::RadioInterfaceConfig{};
-            out_iface.id = f_id;
-            out_iface.type = DRIVERS[drv].type;
-            out_iface.description = f_desc;
-            if (drv == 0) {
-                out_iface.params["bind_host"] = f_host;
-                out_iface.params["bind_port"] = f_port;
-                out_iface.params["auto_learn"] = "true";
-                if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
-            } else if (drv == 1) {
-                out_iface.params["bind_host"] = f_host;
-                out_iface.params["auto_learn"] = "true";
-                if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
-            } else if (drv == 2) {
-                out_iface.params["device"] = f_host;
-                out_iface.params["baud"] = f_port;
-                out_iface.params["kiss_port"] = f_kport.empty() ? "0" : f_kport;
-            } else if (drv == 3) {
-                out_iface.params["mode"] = f_mode;
-                out_iface.params["host"] = f_host;
-                out_iface.params["port"] = f_port;
-                out_iface.params["kiss_port"] = f_kport.empty() ? "0" : f_kport;
-            } else {
-                out_iface.params["bind_host"] = f_host;
-                out_iface.params["bind_port"] = f_port;
-            }
+            nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport, f_peer,
+                                  nullptr, out_iface);
             committed = true;
         }
     };
@@ -2719,12 +2766,12 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
                 if (hi) wattron(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
                 mvwhline(wiz, 3 + i, 1, ' ', w - 2);
                 mvwprintw(wiz, 3 + i, 2, "%d. %-14s %-*s",
-                          i + 1, DRIVERS[i].type,
-                          std::max(1, w - 21), clip(DRIVERS[i].desc, std::max(1, w - 21)).c_str());
+                          i + 1, NC_IFACE_DRIVERS[i].type,
+                          std::max(1, w - 21), clip(NC_IFACE_DRIVERS[i].desc, std::max(1, w - 21)).c_str());
                 if (hi) wattroff(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
             }
         } else if (step == 1) {
-            mvwprintw(wiz, 3, 3, "Driver       : %s", DRIVERS[drv].type);
+            mvwprintw(wiz, 3, 3, "Driver       : %s", NC_IFACE_DRIVERS[drv].type);
             auto draw_f = [&](int row, int idx, const char* lbl, const std::string& val) {
                 bool hi = (focus == idx);
                 mvwprintw(wiz, row, 3, "%-13s: ", lbl);
@@ -2736,7 +2783,7 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             draw_f(5, 0, "Interface ID", f_id);
             draw_f(7, 1, "Description", f_desc);
         } else if (step == 2) {
-            mvwprintw(wiz, 3, 3, "Interface    : %s (%s)", f_id.c_str(), DRIVERS[drv].type);
+            mvwprintw(wiz, 3, 3, "Interface    : %s (%s)", f_id.c_str(), NC_IFACE_DRIVERS[drv].type);
             auto draw_f = [&](int row, int idx, const char* lbl, const std::string& val) {
                 bool hi = (focus == idx);
                 mvwprintw(wiz, row, 3, "%-15s: ", lbl);
@@ -2766,7 +2813,7 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
                 draw_f(7, 1, "TCP Port", f_port);
             }
         } else {
-            mvwprintw(wiz, 3, 3, "Driver       : %s", DRIVERS[drv].type);
+            mvwprintw(wiz, 3, 3, "Driver       : %s", NC_IFACE_DRIVERS[drv].type);
             mvwprintw(wiz, 4, 3, "Interface ID : %s", f_id.c_str());
             mvwprintw(wiz, 5, 3, "Description  : %s", f_desc.empty() ? "(none)" : clip(f_desc, w - 20).c_str());
             if (drv == 2) {
@@ -2938,6 +2985,262 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
 
     curs_set(0);
     delwin(wiz);
+    return committed;
+}
+
+bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConfig>& existing,
+                                     int edit_idx,
+                                     radio::RadioInterfaceConfig& out_iface) {
+    if (edit_idx < 0 || static_cast<std::size_t>(edit_idx) >= existing.size()) {
+        return false;
+    }
+
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(68, cols - 4);
+    int h = 16;
+    int y = std::max(1, (rows - h) / 2);
+    int x = std::max(1, (cols - w) / 2);
+
+    WINDOW* dlg = newwin(h, w, y, x);
+    if (!dlg) return false;
+    keypad(dlg, TRUE);
+    wtimeout(dlg, 200);
+
+    const radio::RadioInterfaceConfig& src = existing[static_cast<std::size_t>(edit_idx)];
+    auto get_p = [&](const char* k, const char* fallback) -> std::string {
+        auto it = src.params.find(k);
+        return (it != src.params.end() && !it->second.empty()) ? it->second : fallback;
+    };
+
+    int drv = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (nc_ci_eq(src.type, NC_IFACE_DRIVERS[i].type)) { drv = i; break; }
+    }
+    std::string f_id = src.id;
+    std::string f_desc = src.description;
+    std::string f_mode = "client";
+    std::string f_kport = "0";
+    std::string f_host, f_port, f_peer;
+    if (drv == 2) {
+        f_host = get_p("device", "/dev/ttyUSB0");
+        f_port = get_p("baud", "9600");
+        f_kport = get_p("kiss_port", "0");
+    } else if (drv == 3) {
+        f_mode = get_p("mode", "client");
+        f_host = get_p("host", "127.0.0.1");
+        f_port = get_p("port", "8001");
+        f_kport = get_p("kiss_port", "0");
+    } else {
+        f_host = get_p("bind_host", "0.0.0.0");
+        if (drv == 0) f_port = get_p("bind_port", "10093");
+        else if (drv == 4) f_port = get_p("bind_port", "8010");
+        else f_port = "0";
+        if (!src.peers.empty() && (drv == 0 || drv == 1)) f_peer = src.peers[0];
+    }
+
+    int focus = 0;
+    int btn = 0; // 0=Save, 1=Cancel
+    std::string err_msg;
+    bool committed = false;
+
+    auto field_count = [&]() -> int {
+        if (drv == 0 || drv == 2) return 6;
+        if (drv == 3) return 7;
+        return 5;
+    };
+
+    auto active_text_field = [&](int fidx) -> std::string* {
+        if (fidx == 0) return nullptr; // Driver cycler
+        if (fidx == 1) return &f_id;
+        if (fidx == 2) return &f_desc;
+        if (drv == 0) return (fidx == 3) ? &f_host : ((fidx == 4) ? &f_port : &f_peer);
+        if (drv == 1) return (fidx == 3) ? &f_host : &f_peer;
+        if (drv == 2) return (fidx == 3) ? &f_host : ((fidx == 4) ? &f_port : &f_kport);
+        if (drv == 3) {
+            if (fidx == 3) return nullptr; // Mode toggle
+            if (fidx == 4) return &f_host;
+            if (fidx == 5) return &f_port;
+            return &f_kport;
+        }
+        return (fidx == 3) ? &f_host : &f_port;
+    };
+
+    auto validate_and_save = [&]() {
+        err_msg.clear();
+        if (f_id.empty()) {
+            err_msg = "Interface ID cannot be empty.";
+            focus = 1;
+            return;
+        }
+        for (std::size_t i = 0; i < existing.size(); ++i) {
+            if (i == static_cast<std::size_t>(edit_idx)) continue;
+            if (nc_ci_eq(existing[i].id, f_id)) {
+                err_msg = "Duplicate interface ID: " + f_id;
+                focus = 1;
+                return;
+            }
+        }
+        if (f_host.empty()) {
+            err_msg = (drv == 2) ? "Serial device cannot be empty." : "Host cannot be empty.";
+            focus = (drv == 3) ? 4 : 3;
+            return;
+        }
+        if (drv != 1 && f_port.empty()) {
+            err_msg = (drv == 2) ? "Baud rate cannot be empty." : "Port cannot be empty.";
+            focus = (drv == 3) ? 5 : 4;
+            return;
+        }
+        nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport, f_peer,
+                              &src, out_iface);
+        committed = true;
+    };
+
+    while (!committed) {
+        if (external_stop_flag_ && external_stop_flag_->load()) {
+            committed = false;
+            break;
+        }
+
+        werase(dlg);
+        if (has_colors_) wattron(dlg, COLOR_PAIR(CP_BORDER));
+        box(dlg, 0, 0);
+        if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_BORDER));
+
+        wattron(dlg, A_BOLD);
+        mvwprintw(dlg, 0, 2, " Edit Interface ");
+        mvwaddnstr(dlg, 1, 2, "Edit interface settings and select Save to update draft:", w - 4);
+        wattroff(dlg, A_BOLD);
+
+        auto draw_row = [&](int row, int idx, const char* lbl, const std::string& val) {
+            bool hi = (focus == idx);
+            mvwprintw(dlg, row, 3, "%-16s: ", lbl);
+            if (hi) wattron(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            mvwprintw(dlg, row, 21, " %-*s ", std::max(10, w - 26),
+                      clip(val, std::max(10, w - 26)).c_str());
+            if (hi) wattroff(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+        };
+
+        draw_row(3, 0, "Driver (Lt/Rt)", std::string("< ") + NC_IFACE_DRIVERS[drv].type + " >");
+        draw_row(4, 1, "Interface ID", f_id);
+        draw_row(5, 2, "Description", f_desc);
+        if (drv == 0) {
+            draw_row(6, 3, "Bind Host/IP", f_host);
+            draw_row(7, 4, "UDP Port", f_port);
+            draw_row(8, 5, "Peer (opt)", f_peer);
+        } else if (drv == 1) {
+            draw_row(6, 3, "Bind Host/IP", f_host);
+            draw_row(7, 4, "Peer (opt)", f_peer);
+        } else if (drv == 2) {
+            draw_row(6, 3, "Serial Device", f_host);
+            draw_row(7, 4, "Baud Rate", f_port);
+            draw_row(8, 5, "KISS Port", f_kport);
+        } else if (drv == 3) {
+            draw_row(6, 3, "Mode (Lt/Rt/Sp)", std::string("< ") + f_mode + " >");
+            draw_row(7, 4, "Host / IP", f_host);
+            draw_row(8, 5, "TCP Port", f_port);
+            draw_row(9, 6, "KISS Port", f_kport);
+        } else {
+            draw_row(6, 3, "Bind Host/IP", f_host);
+            draw_row(7, 4, "TCP Port", f_port);
+        }
+
+        if (!err_msg.empty()) {
+            if (has_colors_) wattron(dlg, COLOR_PAIR(CP_DANGER) | A_BOLD);
+            else wattron(dlg, A_BOLD);
+            mvwaddnstr(dlg, h - 4, 2, clip(err_msg, w - 4).c_str(), w - 4);
+            if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_DANGER) | A_BOLD);
+            else wattroff(dlg, A_BOLD);
+        }
+
+        if (has_colors_) wattron(dlg, COLOR_PAIR(CP_BORDER));
+        mvwhline(dlg, h - 3, 1, ACS_HLINE, w - 2);
+        if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_BORDER));
+
+        int fcnt = field_count();
+        bool on_bar = (focus == fcnt);
+        {
+            bool shi = (on_bar && btn == 0);
+            if (shi) wattron(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            mvwaddstr(dlg, h - 2, 3, "[  Save  ]");
+            if (shi) wattroff(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+        }
+        {
+            bool chi = (on_bar && btn == 1);
+            if (chi) wattron(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            mvwaddstr(dlg, h - 2, 16, "[ Cancel ]");
+            if (chi) wattroff(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+        }
+        mvwaddnstr(dlg, h - 2, 28, "Up/Dn:Field  Enter:Save  Esc:Cancel",
+                   std::max(0, w - 30));
+
+        curs_set((focus < fcnt && active_text_field(focus) != nullptr) ? 1 : 0);
+        wrefresh(dlg);
+
+        int ch = wgetch(dlg);
+        if (ch == ERR) continue;
+        if (ch == 27) {
+            committed = false;
+            break;
+        }
+        if (ch == KEY_UP || ch == KEY_BTAB) {
+            focus = (focus + fcnt) % (fcnt + 1);
+            continue;
+        }
+        if (ch == KEY_DOWN || ch == '\t') {
+            focus = (focus + 1) % (fcnt + 1);
+            continue;
+        }
+        if (focus == fcnt) {
+            if (ch == KEY_LEFT || ch == KEY_RIGHT) btn = (btn == 0) ? 1 : 0;
+            else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
+                if (btn == 1) {
+                    committed = false;
+                    break;
+                }
+                validate_and_save();
+            }
+            continue;
+        }
+        if (focus == 0) {
+            if (ch == KEY_LEFT) {
+                drv = (drv + 4) % 5;
+                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
+                err_msg.clear();
+            } else if (ch == KEY_RIGHT || ch == ' ') {
+                drv = (drv + 1) % 5;
+                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
+                err_msg.clear();
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_save();
+            }
+            continue;
+        }
+        if (drv == 3 && focus == 3) {
+            if (ch == KEY_LEFT || ch == KEY_RIGHT || ch == ' ') {
+                f_mode = (f_mode == "client") ? "server" : "client";
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_save();
+            }
+            continue;
+        }
+        std::string* fld = active_text_field(focus);
+        if (fld) {
+            std::size_t cap = (focus == 1) ? 15 : 48;
+            if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                if (!fld->empty()) fld->pop_back();
+                err_msg.clear();
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_save();
+            } else if (ch >= 32 && ch < 127 && fld->size() < cap) {
+                fld->push_back(static_cast<char>(ch));
+                err_msg.clear();
+            }
+        }
+    }
+
+    curs_set(0);
+    delwin(dlg);
     return committed;
 }
 

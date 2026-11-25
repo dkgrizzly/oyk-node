@@ -46,6 +46,9 @@ private:
     void modal_settings();
     bool modal_add_interface_wizard(const std::vector<radio::RadioInterfaceConfig>& existing,
                                     radio::RadioInterfaceConfig& out_iface);
+    bool modal_edit_interface(const std::vector<radio::RadioInterfaceConfig>& existing,
+                              int edit_idx,
+                              radio::RadioInterfaceConfig& out_iface);
     bool modal_confirm_exit();
 
     void draw_box(int y, int x, int h, int w, const std::string& title);

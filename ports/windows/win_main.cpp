@@ -1954,6 +1954,60 @@ static const WinDriverOpt WIN_DRIVERS[5] = {
 static int g_wiz_step = 0;
 static int g_wiz_drv = 0;
 static int g_wiz_last_drv = -1;
+static int g_edit_if_idx = -1;
+static int g_edit_if_drv = 0;
+
+static void win_build_iface_config(int drv,
+                                   const char* id_b,
+                                   const char* desc_b,
+                                   const char* host_b,
+                                   const char* port_b,
+                                   const char* peer_b,
+                                   const OykIfaceConfig* prev_ic,
+                                   OykIfaceConfig* out_ic) {
+    memset(out_ic, 0, sizeof(*out_ic));
+    strncpy(out_ic->id, id_b, sizeof(out_ic->id) - 1);
+    strcpy(out_ic->type, WIN_DRIVERS[drv].type);
+    strncpy(out_ic->description, desc_b, sizeof(out_ic->description) - 1);
+
+    if (win_strieq(out_ic->type, "kiss-serial")) {
+        strncpy(out_ic->device, host_b[0] ? host_b : "COM1", sizeof(out_ic->device) - 1);
+        long bv = atol(port_b);
+        out_ic->baud = (bv > 0L) ? static_cast<oyk_u32>(bv) : 9600UL;
+    } else {
+        strncpy(out_ic->host, host_b[0] ? host_b : "0.0.0.0", sizeof(out_ic->host) - 1);
+        long pv = atol(port_b);
+        if (pv > 0L && pv <= 65535L) out_ic->port = static_cast<oyk_u16>(pv);
+        else if (win_strieq(out_ic->type, "telnet")) out_ic->port = 8010;
+        else if (win_strieq(out_ic->type, "kiss-tcp")) out_ic->port = 8001;
+        else if (win_strieq(out_ic->type, "axudp")) out_ic->port = 10093;
+        if (prev_ic && (drv == 0 || drv == 1)) {
+            if (win_strieq(prev_ic->type, "axudp") || win_strieq(prev_ic->type, "axip")) {
+                for (int p = 1; p < prev_ic->peer_count && out_ic->peer_count < OYK_MAX_PEERS; ++p) {
+                    out_ic->peers[out_ic->peer_count++] = prev_ic->peers[p];
+                }
+            }
+        }
+        if (peer_b[0] && (drv == 0 || drv == 1)) {
+            OykPeerEntry pe;
+            memset(&pe, 0, sizeof(pe));
+            if (oyk_parse_peer_spec(peer_b, pe.callsign, sizeof(pe.callsign),
+                                    &pe.ip, &pe.port,
+                                    out_ic->port ? out_ic->port : static_cast<oyk_u16>(10093))) {
+                if (out_ic->peer_count > 0) {
+                    for (int p = (out_ic->peer_count < OYK_MAX_PEERS ? out_ic->peer_count : OYK_MAX_PEERS - 1); p > 0; --p) {
+                        out_ic->peers[p] = out_ic->peers[p - 1];
+                    }
+                    out_ic->peers[0] = pe;
+                    if (out_ic->peer_count < OYK_MAX_PEERS) out_ic->peer_count++;
+                } else {
+                    out_ic->peers[0] = pe;
+                    out_ic->peer_count = 1;
+                }
+            }
+        }
+    }
+}
 
 static void sync_win_wiz_ui(HWND hdlg) {
     static const char* PROG[4] = {
@@ -2041,6 +2095,7 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 sprintf(row, "%-12s %s", WIN_DRIVERS[i].type, WIN_DRIVERS[i].desc);
                 SendMessage(hlist, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
             }
+            SetWindowText(hdlg, "Add Interface");
             g_wiz_step = 0;
             g_wiz_drv = 0;
             g_wiz_last_drv = -1;
@@ -2116,41 +2171,137 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     sync_win_wiz_ui(hdlg);
                     return TRUE;
                 }
-                memset(&g_add_if_out, 0, sizeof(g_add_if_out));
-                GetDlgItemText(hdlg, IDC_AIF_ID, g_add_if_out.id, sizeof(g_add_if_out.id));
-                strcpy(g_add_if_out.type, WIN_DRIVERS[g_wiz_drv].type);
-                GetDlgItemText(hdlg, IDC_AIF_DESC, g_add_if_out.description, sizeof(g_add_if_out.description));
-                char host_b[32], port_b[16], peer_b[64];
+                char id_b[24], desc_b[64], host_b[32], port_b[16], peer_b[64];
+                GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
+                GetDlgItemText(hdlg, IDC_AIF_DESC, desc_b, sizeof(desc_b));
                 GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
                 GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
                 GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
-
-                if (win_strieq(g_add_if_out.type, "kiss-serial")) {
-                    strncpy(g_add_if_out.device, host_b[0] ? host_b : "COM1", sizeof(g_add_if_out.device) - 1);
-                    long bv = atol(port_b);
-                    g_add_if_out.baud = (bv > 0L) ? static_cast<oyk_u32>(bv) : 9600UL;
-                } else {
-                    strncpy(g_add_if_out.host, host_b[0] ? host_b : "0.0.0.0", sizeof(g_add_if_out.host) - 1);
-                    long pv = atol(port_b);
-                    if (pv > 0L && pv <= 65535L) g_add_if_out.port = static_cast<oyk_u16>(pv);
-                    else if (win_strieq(g_add_if_out.type, "telnet")) g_add_if_out.port = 8010;
-                    else if (win_strieq(g_add_if_out.type, "kiss-tcp")) g_add_if_out.port = 8001;
-                    else if (win_strieq(g_add_if_out.type, "axudp")) g_add_if_out.port = 10093;
-                }
-                if (peer_b[0]) {
-                    OykPeerEntry pe;
-                    memset(&pe, 0, sizeof(pe));
-                    if (oyk_parse_peer_spec(peer_b, pe.callsign, sizeof(pe.callsign),
-                                            &pe.ip, &pe.port,
-                                            g_add_if_out.port ? g_add_if_out.port : static_cast<oyk_u16>(10093))) {
-                        g_add_if_out.peers[0] = pe;
-                        g_add_if_out.peer_count = 1;
-                    }
-                }
+                win_build_iface_config(g_wiz_drv, id_b, desc_b, host_b, port_b, peer_b, NULL, &g_add_if_out);
                 g_add_if_ok = 1;
                 EndDialog(hdlg, IDOK);
                 return TRUE;
             } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
+static void sync_win_edit_iface_ui(HWND hdlg, int drv) {
+    SetDlgItemText(hdlg, IDC_EIF_L_HOST, (drv == 2) ? "Serial Device:" : ((drv == 3) ? "Host / IP:" : "Bind Host:"));
+    SetDlgItemText(hdlg, IDC_EIF_L_PORT, (drv == 2) ? "Baud Rate:" : ((drv == 0) ? "UDP Port:" : "TCP Port:"));
+    int show_port = (drv != 1) ? 1 : 0;
+    int show_peer = (drv == 0 || drv == 1) ? 1 : 0;
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_PORT), show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_PORT),   show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_PEER), show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_PEER),   show_peer ? SW_SHOW : SW_HIDE);
+}
+
+OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)lp;
+#endif
+    switch (msg) {
+        case WM_INITDIALOG: {
+            if (g_edit_if_idx < 0 || g_edit_if_idx >= g_set_draft.iface_count) {
+                EndDialog(hdlg, IDCANCEL);
+                return FALSE;
+            }
+            HWND hcb = GetDlgItem(hdlg, IDC_EIF_DRV);
+            const OykIfaceConfig& ic = g_set_draft.ifaces[g_edit_if_idx];
+            g_edit_if_drv = 0;
+            for (int i = 0; i < 5; ++i) {
+                char row[80];
+                sprintf(row, "%-12s %s", WIN_DRIVERS[i].type, WIN_DRIVERS[i].desc);
+                SendMessage(hcb, CB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+                if (win_strieq(ic.type, WIN_DRIVERS[i].type)) g_edit_if_drv = i;
+            }
+            SendMessage(hcb, CB_SETCURSEL, static_cast<WPARAM>(g_edit_if_drv), 0);
+            g_add_if_ok = 0;
+            SetDlgItemText(hdlg, IDC_EIF_ID, ic.id);
+            SetDlgItemText(hdlg, IDC_EIF_DESC, ic.description);
+            SetDlgItemText(hdlg, IDC_EIF_ERR, "");
+            if (g_edit_if_drv == 2) {
+                char bb[16];
+                SetDlgItemText(hdlg, IDC_EIF_HOST, ic.device[0] ? ic.device : "COM1");
+                sprintf(bb, "%lu", static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+                SetDlgItemText(hdlg, IDC_EIF_PORT, bb);
+                SetDlgItemText(hdlg, IDC_EIF_PEER, "");
+            } else {
+                char pb[16], peer_s[64];
+                SetDlgItemText(hdlg, IDC_EIF_HOST, ic.host[0] ? ic.host : "0.0.0.0");
+                sprintf(pb, "%u", static_cast<unsigned int>(ic.port));
+                SetDlgItemText(hdlg, IDC_EIF_PORT, pb);
+                peer_s[0] = '\0';
+                if (ic.peer_count > 0 && (g_edit_if_drv == 0 || g_edit_if_drv == 1)) {
+                    oyk_format_peer_spec(&ic.peers[0], peer_s, sizeof(peer_s));
+                }
+                SetDlgItemText(hdlg, IDC_EIF_PEER, peer_s);
+            }
+            sync_win_edit_iface_ui(hdlg, g_edit_if_drv);
+            SetFocus(GetDlgItem(hdlg, IDC_EIF_ID));
+            return FALSE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
+            if (id == IDC_EIF_DRV && ntf == CBN_SELCHANGE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_EIF_DRV, CB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < 5 && sel != g_edit_if_drv) {
+                    g_edit_if_drv = sel;
+                    SetDlgItemText(hdlg, IDC_EIF_HOST, WIN_DRIVERS[g_edit_if_drv].def_host);
+                    SetDlgItemText(hdlg, IDC_EIF_PORT, WIN_DRIVERS[g_edit_if_drv].def_port);
+                    SetDlgItemText(hdlg, IDC_EIF_PEER, "");
+                    SetDlgItemText(hdlg, IDC_EIF_ERR, "");
+                    sync_win_edit_iface_ui(hdlg, g_edit_if_drv);
+                }
+                return TRUE;
+            }
+            if (id == IDOK) {
+                char id_b[24], desc_b[64], host_b[32], port_b[16], peer_b[64];
+                GetDlgItemText(hdlg, IDC_EIF_ID, id_b, sizeof(id_b));
+                GetDlgItemText(hdlg, IDC_EIF_DESC, desc_b, sizeof(desc_b));
+                GetDlgItemText(hdlg, IDC_EIF_HOST, host_b, sizeof(host_b));
+                GetDlgItemText(hdlg, IDC_EIF_PORT, port_b, sizeof(port_b));
+                GetDlgItemText(hdlg, IDC_EIF_PEER, peer_b, sizeof(peer_b));
+                if (!id_b[0]) {
+                    SetDlgItemText(hdlg, IDC_EIF_ERR, "Interface ID cannot be empty.");
+                    SetFocus(GetDlgItem(hdlg, IDC_EIF_ID));
+                    return TRUE;
+                }
+                for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                    if (i == g_edit_if_idx) continue;
+                    if (win_strieq(g_set_draft.ifaces[i].id, id_b)) {
+                        SetDlgItemText(hdlg, IDC_EIF_ERR, "An interface with that ID already exists.");
+                        SetFocus(GetDlgItem(hdlg, IDC_EIF_ID));
+                        return TRUE;
+                    }
+                }
+                if (!host_b[0]) {
+                    SetDlgItemText(hdlg, IDC_EIF_ERR, "Host / Serial Device cannot be empty.");
+                    SetFocus(GetDlgItem(hdlg, IDC_EIF_HOST));
+                    return TRUE;
+                }
+                if (g_edit_if_drv != 1 && !port_b[0]) {
+                    SetDlgItemText(hdlg, IDC_EIF_ERR, "Port / Baud Rate cannot be empty.");
+                    SetFocus(GetDlgItem(hdlg, IDC_EIF_PORT));
+                    return TRUE;
+                }
+                const OykIfaceConfig* prev =
+                    (g_edit_if_idx >= 0 && g_edit_if_idx < g_set_draft.iface_count)
+                        ? &g_set_draft.ifaces[g_edit_if_idx]
+                        : NULL;
+                win_build_iface_config(g_edit_if_drv, id_b, desc_b, host_b, port_b, peer_b, prev, &g_add_if_out);
+                g_add_if_ok = 1;
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            }
+            if (id == IDCANCEL) {
                 EndDialog(hdlg, IDCANCEL);
                 return TRUE;
             }
@@ -2176,7 +2327,7 @@ static void switch_settings_tab(HWND hdlg, int tab) {
         IDC_SET_L_CWELC, IDC_SET_CHAT_WELC
     };
     static const int IF_IDS[] = {
-        IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_REM
+        IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_EDIT, IDC_SET_IF_REM
     };
     static const int RIG_IDS[] = {
         IDC_SET_RIG_EN, IDC_SET_L_RPROTO, IDC_SET_RIG_PROTO,
@@ -2443,6 +2594,30 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     g_set_draft.ifaces[g_set_draft.iface_count++] = g_add_if_out;
                     populate_settings_ifaces(hdlg);
                 }
+                return TRUE;
+            } else if (id == IDC_SET_IF_EDIT || (id == IDC_SET_IF_LIST && OYK_CMD_NOTIFY(wp, lp) == LBN_DBLCLK)) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= g_set_draft.iface_count) {
+                    if (id == IDC_SET_IF_EDIT) {
+                        MessageBox(hdlg, "Select an interface to edit.", "Settings", MB_OK | MB_ICONINFORMATION);
+                    }
+                    return TRUE;
+                }
+                g_edit_if_idx = sel;
+                if (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EDIT_IFACE), hdlg, (DLGPROC)EditIfaceDlgProc) == IDOK && g_add_if_ok) {
+                    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                        if (i == sel) continue;
+                        if (win_strieq(g_set_draft.ifaces[i].id, g_add_if_out.id)) {
+                            MessageBox(hdlg, "Duplicate interface ID.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                            g_edit_if_idx = -1;
+                            return TRUE;
+                        }
+                    }
+                    g_set_draft.ifaces[sel] = g_add_if_out;
+                    populate_settings_ifaces(hdlg);
+                    SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_SETCURSEL, static_cast<WPARAM>(sel), 0);
+                }
+                g_edit_if_idx = -1;
                 return TRUE;
             } else if (id == IDC_SET_IF_REM) {
                 int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_GETCURSEL, 0, 0));

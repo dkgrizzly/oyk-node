@@ -1713,6 +1713,10 @@ struct DosAddWizState {
     char err[64];
 };
 
+static const char* const DOS_IFACE_TYPES[5] = {
+    "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
+};
+
 static int dos_strieq(const char* a, const char* b) {
     while (*a && *b) {
         char ca = (*a >= 'a' && *a <= 'z') ? static_cast<char>(*a - 32) : *a;
@@ -1724,6 +1728,73 @@ static int dos_strieq(const char* a, const char* b) {
     return (*a == '\0' && *b == '\0') ? 1 : 0;
 }
 
+static void dos_iface_apply_driver_defaults(int drv, char* ep, char* port, char* peer) {
+    const char* t = DOS_IFACE_TYPES[drv];
+    peer[0] = '\0';
+    if (strcmp(t, "kiss-serial") == 0) {
+        strcpy(ep, "COM1");
+        strcpy(port, "9600");
+    } else if (strcmp(t, "usb-cdc-serial") == 0) {
+        strcpy(ep, "USBCOM1");
+        strcpy(port, "115200");
+    } else if (strcmp(t, "telnet") == 0) {
+        strcpy(ep, "0.0.0.0");
+        strcpy(port, "8010");
+    } else {
+        strcpy(ep, "0.0.0.0");
+        strcpy(port, "10093");
+    }
+}
+
+static void dos_build_iface_config(int drv,
+                                   const char* id,
+                                   const char* desc,
+                                   const char* ep,
+                                   const char* port,
+                                   const char* peer,
+                                   const OykIfaceConfig* prev_ic,
+                                   OykIfaceConfig* out_ic) {
+    memset(out_ic, 0, sizeof(*out_ic));
+    strncpy(out_ic->id, id, sizeof(out_ic->id) - 1);
+    strncpy(out_ic->type, DOS_IFACE_TYPES[drv], sizeof(out_ic->type) - 1);
+    strncpy(out_ic->description, desc, sizeof(out_ic->description) - 1);
+    if (drv == 1 || drv == 2) {
+        strncpy(out_ic->device, ep, sizeof(out_ic->device) - 1);
+        long bv = atol(port);
+        out_ic->baud = (bv >= 300L) ? static_cast<oyk_u32>(bv) : ((drv == 2) ? 115200UL : 9600UL);
+    } else {
+        strncpy(out_ic->host, ep, sizeof(out_ic->host) - 1);
+        long pv = atol(port);
+        out_ic->port = (pv > 0L && pv <= 65535L)
+                           ? static_cast<oyk_u16>(pv)
+                           : ((drv == 4) ? 8010U : 10093U);
+        if (drv == 0) {
+            if (prev_ic && dos_strieq(prev_ic->type, "axudp")) {
+                for (int p = 1; p < prev_ic->peer_count && out_ic->peer_count < OYK_MAX_PEERS; ++p) {
+                    out_ic->peers[out_ic->peer_count++] = prev_ic->peers[p];
+                }
+            }
+            if (peer[0]) {
+                OykPeerEntry pe;
+                memset(&pe, 0, sizeof(pe));
+                if (oyk_parse_peer_spec(peer, pe.callsign, sizeof(pe.callsign),
+                                        &pe.ip, &pe.port, out_ic->port ? out_ic->port : 10093U)) {
+                    if (out_ic->peer_count > 0) {
+                        for (int p = (out_ic->peer_count < OYK_MAX_PEERS ? out_ic->peer_count : OYK_MAX_PEERS - 1); p > 0; --p) {
+                            out_ic->peers[p] = out_ic->peers[p - 1];
+                        }
+                        out_ic->peers[0] = pe;
+                        if (out_ic->peer_count < OYK_MAX_PEERS) out_ic->peer_count++;
+                    } else {
+                        out_ic->peers[0] = pe;
+                        out_ic->peer_count = 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
 static int dos_wiz_field_count(const DosAddWizState* st) {
     if (st->step == 1) return 2;
     if (st->step == 2) return (st->drv == 0) ? 3 : 2;
@@ -1731,33 +1802,13 @@ static int dos_wiz_field_count(const DosAddWizState* st) {
 }
 
 static void dos_wiz_apply_defaults(const OykConfig* draft, DosAddWizState* st) {
-    static const char* TYPES[5] = {
-        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
-    };
-    const char* t = TYPES[st->drv];
-    oyk_derive_default_iface_id(draft, t, st->id, sizeof(st->id));
+    oyk_derive_default_iface_id(draft, DOS_IFACE_TYPES[st->drv], st->id, sizeof(st->id));
     st->desc[0] = '\0';
-    st->peer[0] = '\0';
-    if (strcmp(t, "kiss-serial") == 0) {
-        strcpy(st->ep, "COM1");
-        strcpy(st->port, "9600");
-    } else if (strcmp(t, "usb-cdc-serial") == 0) {
-        strcpy(st->ep, "USBCOM1");
-        strcpy(st->port, "115200");
-    } else if (strcmp(t, "telnet") == 0) {
-        strcpy(st->ep, "0.0.0.0");
-        strcpy(st->port, "8010");
-    } else {
-        strcpy(st->ep, "0.0.0.0");
-        strcpy(st->port, "10093");
-    }
+    dos_iface_apply_driver_defaults(st->drv, st->ep, st->port, st->peer);
     st->last_drv = st->drv;
 }
 
 static int dos_wiz_try_advance(const OykConfig* draft, DosAddWizState* st, OykIfaceConfig* out_ic) {
-    static const char* TYPES[5] = {
-        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
-    };
     st->err[0] = '\0';
     if (st->step == 0) {
         if (st->drv != st->last_drv) {
@@ -1803,39 +1854,13 @@ static int dos_wiz_try_advance(const OykConfig* draft, DosAddWizState* st, OykIf
         return 0;
     }
     if (st->step == 3) {
-        memset(out_ic, 0, sizeof(*out_ic));
-        strncpy(out_ic->id, st->id, sizeof(out_ic->id) - 1);
-        strncpy(out_ic->type, TYPES[st->drv], sizeof(out_ic->type) - 1);
-        strncpy(out_ic->description, st->desc, sizeof(out_ic->description) - 1);
-        if (st->drv == 1 || st->drv == 2) {
-            strncpy(out_ic->device, st->ep, sizeof(out_ic->device) - 1);
-            long bv = atol(st->port);
-            out_ic->baud = (bv >= 300L) ? static_cast<oyk_u32>(bv) : ((st->drv == 2) ? 115200UL : 9600UL);
-        } else {
-            strncpy(out_ic->host, st->ep, sizeof(out_ic->host) - 1);
-            long pv = atol(st->port);
-            out_ic->port = (pv > 0L && pv <= 65535L)
-                               ? static_cast<oyk_u16>(pv)
-                               : ((st->drv == 4) ? 8010U : 10093U);
-            if (st->drv == 0 && st->peer[0]) {
-                OykPeerEntry pe;
-                memset(&pe, 0, sizeof(pe));
-                if (oyk_parse_peer_spec(st->peer, pe.callsign, sizeof(pe.callsign),
-                                        &pe.ip, &pe.port, out_ic->port ? out_ic->port : 10093U)) {
-                    out_ic->peers[0] = pe;
-                    out_ic->peer_count = 1;
-                }
-            }
-        }
+        dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->peer, NULL, out_ic);
         return 1;
     }
     return 0;
 }
 
 static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_ic) {
-    static const char* DRV_TYPES[5] = {
-        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
-    };
     static const char* DRV_DESCS[5] = {
         "AX.25 over UDP (mTCP / Packet Driver)",
         "KISS TNC over Serial (COM1..COM4)",
@@ -1892,12 +1917,12 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 for (int i = 0; i < 5; ++i) {
                     char row[68];
                     sprintf(row, " %d. %-15.15s %-44.44s",
-                            i + 1, DRV_TYPES[i], DRV_DESCS[i]);
+                            i + 1, DOS_IFACE_TYPES[i], DRV_DESCS[i]);
                     vid_puts(top + 3 + i, left + 1, (i == st.drv) ? sel_at : fill_at, row, w - 2);
                 }
             } else if (st.step == 1) {
                 char row[68];
-                sprintf(row, "Driver       : %s", DRV_TYPES[st.drv]);
+                sprintf(row, "Driver       : %s", DOS_IFACE_TYPES[st.drv]);
                 vid_puts(top + 3, left + 3, fill_at, row, w - 6);
                 vid_puts(top + 5, left + 3, fill_at, "Interface ID : ", 15);
                 vid_puts(top + 5, left + 18, (st.focus == 0) ? sel_at : inp_at, st.id, 36);
@@ -1905,7 +1930,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 vid_puts(top + 7, left + 18, (st.focus == 1) ? sel_at : inp_at, st.desc, 36);
             } else if (st.step == 2) {
                 char row[68];
-                sprintf(row, "Interface    : %s (%s)", st.id, DRV_TYPES[st.drv]);
+                sprintf(row, "Interface    : %s (%s)", st.id, DOS_IFACE_TYPES[st.drv]);
                 vid_puts(top + 3, left + 3, fill_at, row, w - 6);
                 vid_puts(top + 5, left + 3, fill_at,
                          (st.drv == 1 || st.drv == 2) ? "Serial Device: " : "Host / IP    : ", 15);
@@ -1919,7 +1944,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 }
             } else {
                 char row[68];
-                sprintf(row, "Driver       : %-46.46s", DRV_TYPES[st.drv]);
+                sprintf(row, "Driver       : %-46.46s", DOS_IFACE_TYPES[st.drv]);
                 vid_puts(top + 3, left + 3, fill_at, row, w - 6);
                 sprintf(row, "Interface ID : %-46.46s", st.id);
                 vid_puts(top + 4, left + 3, fill_at, row, w - 6);
@@ -2044,6 +2069,195 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
 
         if (ch == '\r' || ch == '\n') {
             if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+        } else if (target && (ch == 8 || ch == 127)) {
+            size_t n = strlen(target);
+            if (n > 0) target[n - 1] = '\0';
+            st.err[0] = '\0';
+        } else if (target && ch >= 32 && ch < 127) {
+            size_t n = strlen(target);
+            if (n + 1 < cap) {
+                target[n] = static_cast<char>(ch);
+                target[n + 1] = '\0';
+            }
+            st.err[0] = '\0';
+        }
+    }
+    return 0;
+}
+
+struct DosEditIfaceState {
+    int drv;
+    int focus;
+    int btn; /* 0=Save, 1=Cancel */
+    char id[16];
+    char desc[32];
+    char ep[32];
+    char port[12];
+    char peer[32];
+    char err[64];
+};
+
+static int dos_edit_try_save(const OykConfig* draft,
+                             int edit_idx,
+                             DosEditIfaceState* st,
+                             OykIfaceConfig* out_ic) {
+    st->err[0] = '\0';
+    if (!st->id[0]) {
+        strcpy(st->err, "Interface ID cannot be empty.");
+        st->focus = 1;
+        return 0;
+    }
+    for (int i = 0; i < draft->iface_count; ++i) {
+        if (i == edit_idx) continue;
+        if (dos_strieq(draft->ifaces[i].id, st->id)) {
+            sprintf(st->err, "Duplicate interface ID: %.24s", st->id);
+            st->focus = 1;
+            return 0;
+        }
+    }
+    if (!st->ep[0]) {
+        strcpy(st->err, (st->drv == 1 || st->drv == 2) ? "Serial device cannot be empty." : "Host cannot be empty.");
+        st->focus = 3;
+        return 0;
+    }
+    if (!st->port[0]) {
+        strcpy(st->err, (st->drv == 1 || st->drv == 2) ? "Baud rate cannot be empty." : "Port cannot be empty.");
+        st->focus = 4;
+        return 0;
+    }
+    dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->peer,
+                           &draft->ifaces[edit_idx], out_ic);
+    return 1;
+}
+
+static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIfaceConfig* out_ic) {
+    if (edit_idx < 0 || edit_idx >= draft->iface_count) return 0;
+
+    const int top = 4, left = 6, h = 16, w = 68;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+
+    DosEditIfaceState st;
+    memset(&st, 0, sizeof(st));
+    const OykIfaceConfig& ic = draft->ifaces[edit_idx];
+    for (int i = 0; i < 5; ++i) {
+        if (dos_strieq(ic.type, DOS_IFACE_TYPES[i])) { st.drv = i; break; }
+    }
+    strncpy(st.id, ic.id, sizeof(st.id) - 1);
+    strncpy(st.desc, ic.description, sizeof(st.desc) - 1);
+    if (st.drv == 1 || st.drv == 2) {
+        strncpy(st.ep, ic.device[0] ? ic.device : ((st.drv == 2) ? "USBCOM1" : "COM1"), sizeof(st.ep) - 1);
+        sprintf(st.port, "%lu", static_cast<unsigned long>(ic.baud ? ic.baud : ((st.drv == 2) ? 115200UL : 9600UL)));
+    } else {
+        strncpy(st.ep, ic.host[0] ? ic.host : "0.0.0.0", sizeof(st.ep) - 1);
+        sprintf(st.port, "%u", static_cast<unsigned int>(ic.port ? ic.port : ((st.drv == 4) ? 8010U : 10093U)));
+        if (st.drv == 0 && ic.peer_count > 0) {
+            oyk_format_peer_spec(&ic.peers[0], st.peer, sizeof(st.peer));
+        }
+    }
+    int dirty = 1;
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+
+        int fcnt = (st.drv == 0) ? 6 : 5;
+        if (st.focus > fcnt) st.focus = fcnt;
+
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Edit Interface");
+            vid_puts(top + 1, left + 2, ttl_at, "Edit interface settings and select Save to update draft:", w - 4);
+
+            char drv_lbl[32];
+            sprintf(drv_lbl, "< %s >", DOS_IFACE_TYPES[st.drv]);
+            vid_puts(top + 3, left + 3, fill_at, "Driver (Lt/Rt) : ", 17);
+            vid_puts(top + 3, left + 20, (st.focus == 0) ? sel_at : inp_at, drv_lbl, 36);
+            vid_puts(top + 4, left + 3, fill_at, "Interface ID   : ", 17);
+            vid_puts(top + 4, left + 20, (st.focus == 1) ? sel_at : inp_at, st.id, 36);
+            vid_puts(top + 5, left + 3, fill_at, "Description    : ", 17);
+            vid_puts(top + 5, left + 20, (st.focus == 2) ? sel_at : inp_at, st.desc, 36);
+            vid_puts(top + 6, left + 3, fill_at,
+                     (st.drv == 1 || st.drv == 2) ? "Serial Device  : " : "Host / IP      : ", 17);
+            vid_puts(top + 6, left + 20, (st.focus == 3) ? sel_at : inp_at, st.ep, 36);
+            vid_puts(top + 7, left + 3, fill_at,
+                     (st.drv == 1 || st.drv == 2) ? "Baud Rate      : " : ((st.drv == 4) ? "TCP Port       : " : "UDP Port       : "), 17);
+            vid_puts(top + 7, left + 20, (st.focus == 4) ? sel_at : inp_at, st.port, 36);
+            if (st.drv == 0) {
+                vid_puts(top + 8, left + 3, fill_at, "Static Peer    : ", 17);
+                vid_puts(top + 8, left + 20, (st.focus == 5) ? sel_at : inp_at, st.peer, 36);
+            }
+
+            if (st.err[0]) {
+                vid_puts(top + 12, left + 2, err_at, st.err, w - 4);
+            }
+            dos_vid_hdiv(g_vid, top + 13, left, w, bdr_at);
+
+            int on_bar = (st.focus == fcnt);
+            vid_puts(top + 14, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
+            vid_puts(top + 14, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 14, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72) st.focus = (st.focus + fcnt) % (fcnt + 1);
+            else if (ext == 80) st.focus = (st.focus + 1) % (fcnt + 1);
+            else if (ext == 75 || ext == 77) {
+                if (st.focus == 0) {
+                    st.drv = (ext == 75) ? ((st.drv + 4) % 5) : ((st.drv + 1) % 5);
+                    dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.peer);
+                    st.err[0] = '\0';
+                } else if (st.focus == fcnt) {
+                    st.btn = (st.btn == 0) ? 1 : 0;
+                }
+            }
+            continue;
+        }
+
+        if (ch == 27) return 0;
+        if (ch == '\t') {
+            st.focus = (st.focus + 1) % (fcnt + 1);
+            continue;
+        }
+        if (st.focus == fcnt) {
+            if (ch == '\r' || ch == '\n' || ch == ' ') {
+                if (st.btn == 1) return 0;
+                if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+        if (st.focus == 0) {
+            if (ch == ' ') {
+                st.drv = (st.drv + 1) % 5;
+                dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.peer);
+                st.err[0] = '\0';
+            } else if (ch == '\r' || ch == '\n') {
+                if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+
+        char* target = NULL;
+        size_t cap = 0;
+        if (st.focus == 1) { target = st.id; cap = sizeof(st.id); }
+        else if (st.focus == 2) { target = st.desc; cap = sizeof(st.desc); }
+        else if (st.focus == 3) { target = st.ep; cap = sizeof(st.ep); }
+        else if (st.focus == 4) { target = st.port; cap = sizeof(st.port); }
+        else { target = st.peer; cap = sizeof(st.peer); }
+
+        if (ch == '\r' || ch == '\n') {
+            if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
         } else if (target && (ch == 8 || ch == 127)) {
             size_t n = strlen(target);
             if (n > 0) target[n - 1] = '\0';
@@ -2215,7 +2429,7 @@ static void run_dos_settings() {
 
             vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
             if (tab == 3) {
-                vid_puts(24, 0, tab_bg, " Tab/1-6:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
+                vid_puts(24, 0, tab_bg, " Tab/1-6:Tabs  A:Add  Enter/E:Edit  D:Remove  S/F2:Save  Esc:Cancel ", 80);
             } else {
                 vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
             }
@@ -2278,6 +2492,16 @@ static void run_dos_settings() {
                     sprintf(fb, "Added interface %s (press S/F2 to Save & Apply).", ic.id);
                 } else {
                     strcpy(fb, "Add interface cancelled.");
+                }
+            } else if ((ch == '\r' || ch == '\n' || ch == 'e' || ch == 'E') && draft.iface_count > 0) {
+                if (sel[3] >= 0 && sel[3] < draft.iface_count) {
+                    OykIfaceConfig ic;
+                    if (run_dos_edit_iface_dialog(&draft, sel[3], &ic)) {
+                        draft.ifaces[sel[3]] = ic;
+                        sprintf(fb, "Updated interface %s (press S/F2 to Save & Apply).", ic.id);
+                    } else {
+                        strcpy(fb, "Edit interface cancelled.");
+                    }
                 }
             } else if ((ch == 'd' || ch == 'D') && draft.iface_count > 0) {
                 char yn[4], pr[48];
