@@ -57,3 +57,11 @@ Example in a forked C++ file:
 - **Portable core (`ports/compat/`)**: Must remain strict C++98 with zero STL, zero exceptions, zero RTTI, and 16-bit-safe integer widths (`sizeof(int) == 2`).
 - **Config line endings**: Config I/O must accept `CRLF`, `CR`, and `LF`, write `CRLF` by default on MS-DOS/Windows and `LF` on POSIX, preserve original line endings on write-back, and let `node.cfg`'s first line ending override mixed line endings without changing AX.25/KISS/Telnet wire protocols.
 - **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_WIN16_PORT`, and `BUILD_WINDOWS_PORT` `OFF` by default; `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
+
+## 5. Cross-Port Feature Parity & UI Consistency
+
+- **Feature parity**: Whenever possible, maintain feature parity across all ports (POSIX ncurses, X11 GTK+ 2.0, Windows 16/32/64-bit, MS-DOS, and future ports). New functionality, configuration options, and operator workflows added to one port should be implemented across the other ports in the same change unless prevented by target hardware or OS constraints.
+- **Consistent UI & dialog layouts**: Maintain a consistent structure, navigation flow, logical grouping (such as tabs and menu organization), and control layout across all ports for every screen and dialog created.
+- **Permitted platform exceptions**:
+  - **File dialogs**: Windows and GTK builds may use their respective standard/common OS file selection dialogs, while text-mode builds (ncurses, MS-DOS) use the built-in single-pane Norton/Midnight Commander-style file selector.
+  - **Mobile platforms**: Future Android or iOS ports may adapt layouts and navigation patterns where required to comply with Android (Material) or iOS (Human Interface) design guidelines.
