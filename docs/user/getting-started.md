@@ -49,10 +49,13 @@ See [Configuration Reference](configuration.md) for config file search locations
 # Auto-discovers ~/.oyk/node.cfg -> /etc/oyk/node.cfg -> ./node.cfg
 ./build/oyk-node
 
-# Launch X11 GTK+ 2.0 GUI (if built)
+# Launch X11 GTK+ 2.0 GUI (if built), optionally specifying initial window size/position
 ./build/oyk-node-gtk
+./build/oyk-node-gtk --geometry 1024x768
+./build/oyk-node-gtk --geometry 1024x768+40+40
 
 # Override config path or quick parameters from the CLI
+# (Supported identically by oyk-node, oykw16/32/64.exe, and MS-DOS oyknode.exe)
 ./build/oyk-node -c /path/to/node.cfg
 ./build/oyk-node --callsign K7OYK-7 --alias OYKNOD --port 10093
 

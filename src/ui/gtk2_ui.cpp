@@ -75,6 +75,7 @@ struct GtkAppState {
     GtkWidget* log_view = nullptr;
     GtkTextBuffer* log_buffer = nullptr;
     std::string last_rendered_logs;
+    GtkWidget* term_window = nullptr;
 };
 
 void set_status_text(GtkAppState* st, const std::string& msg) {
@@ -227,6 +228,7 @@ void on_deny_incoming_clicked(GtkWidget*, gpointer user_data) {
 }
 
 struct GtkTermWindowState {
+    GtkAppState* app = nullptr;
     node::NodeEngine* engine = nullptr;
     GtkWidget* win = nullptr;
     GtkWidget* port_combo = nullptr;
@@ -491,12 +493,20 @@ void on_gtk_term_destroy(GtkWidget*, gpointer user_data) {
         ts->yapp.reset();
     }
     if (sid != 0) ts->engine->close_local_terminal(sid);
+    if (ts->app && ts->app->term_window == ts->win) {
+        ts->app->term_window = nullptr;
+    }
     delete ts;
 }
 
 void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     auto* st = static_cast<GtkAppState*>(user_data);
+    if (st->term_window != nullptr) {
+        gtk_window_present(GTK_WINDOW(st->term_window));
+        return;
+    }
     auto* ts = new GtkTermWindowState();
+    ts->app = st;
     ts->engine = st->engine;
     ts->yapp.set_send_callback([ts](const std::vector<uint8_t>& pkt) {
         if (ts->sid != 0) {
@@ -505,9 +515,9 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     });
 
     ts->win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    st->term_window = ts->win;
     gtk_window_set_title(GTK_WINDOW(ts->win), "OYK Local Packet Terminal (YAPP)");
     gtk_window_set_default_size(GTK_WINDOW(ts->win), 720, 480);
-    gtk_window_set_transient_for(GTK_WINDOW(ts->win), GTK_WINDOW(st->window));
     g_signal_connect(ts->win, "destroy", G_CALLBACK(on_gtk_term_destroy), ts);
 
     GtkWidget* vbox = gtk_vbox_new(FALSE, 4);
@@ -812,8 +822,12 @@ gboolean on_window_delete(GtkWidget*, GdkEvent*, gpointer user_data) {
 
 } // namespace
 
-Gtk2UI::Gtk2UI(node::NodeEngine& engine, std::atomic<bool>* external_stop_flag)
-    : engine_(engine), external_stop_flag_(external_stop_flag) {}
+Gtk2UI::Gtk2UI(node::NodeEngine& engine,
+               std::atomic<bool>* external_stop_flag,
+               std::string initial_geometry)
+    : engine_(engine),
+      external_stop_flag_(external_stop_flag),
+      initial_geometry_(std::move(initial_geometry)) {}
 
 bool Gtk2UI::run(int& argc, char**& argv) {
     if (!gtk_init_check(&argc, &argv)) {
@@ -826,7 +840,16 @@ bool Gtk2UI::run(int& argc, char**& argv) {
 
     st.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(st.window), "OYK Amateur Radio Packet Node");
-    gtk_window_set_default_size(GTK_WINDOW(st.window), 920, 640);
+
+    int init_w = 920;
+    int init_h = 640;
+    WindowGeometry geom;
+    bool have_geom = !initial_geometry_.empty() && parse_x11_geometry(initial_geometry_, geom);
+    if (have_geom && geom.has_size) {
+        init_w = geom.width;
+        init_h = geom.height;
+    }
+    gtk_window_set_default_size(GTK_WINDOW(st.window), init_w, init_h);
     g_signal_connect(st.window, "delete-event", G_CALLBACK(on_window_delete), &st);
 
     GtkWidget* root_vbox = gtk_vbox_new(FALSE, 4);
@@ -877,7 +900,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
 
     // Upper split: Interfaces (left) + Last 5 New Callsigns Heard (right)
     GtkWidget* top_hpaned = gtk_hpaned_new();
-    gtk_paned_set_position(GTK_PANED(top_hpaned), 520);
+    gtk_paned_set_position(GTK_PANED(top_hpaned), (init_w * 56) / 100);
 
     // Left: Radio Interfaces
     GtkWidget* iface_frame = gtk_frame_new("Radio Interfaces (Active Connections)");
@@ -909,7 +932,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_container_add(GTK_CONTAINER(heard_frame), heard_sc);
     gtk_paned_pack2(GTK_PANED(top_hpaned), heard_frame, TRUE, FALSE);
 
-    gtk_widget_set_size_request(top_hpaned, -1, 175);
+    gtk_widget_set_size_request(top_hpaned, -1, 100);
     gtk_box_pack_start(GTK_BOX(root_vbox), top_hpaned, FALSE, TRUE, 2);
 
     // Middle: Active Connections
@@ -929,7 +952,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sess_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(sess_sc), st.session_tree);
     gtk_container_add(GTK_CONTAINER(st.sessions_frame), sess_sc);
-    gtk_widget_set_size_request(st.sessions_frame, -1, 160);
+    gtk_widget_set_size_request(st.sessions_frame, -1, 90);
     gtk_box_pack_start(GTK_BOX(root_vbox), st.sessions_frame, TRUE, TRUE, 2);
 
     // Lower: Node Activity Log
@@ -946,7 +969,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(log_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(log_sc), st.log_view);
     gtk_container_add(GTK_CONTAINER(log_frame), log_sc);
-    gtk_widget_set_size_request(log_frame, -1, 150);
+    gtk_widget_set_size_request(log_frame, -1, 80);
     gtk_box_pack_start(GTK_BOX(root_vbox), log_frame, TRUE, TRUE, 2);
 
     // Status message line (menu bar at top; no redundant bottom buttons)
@@ -958,10 +981,18 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     refresh_ui(&st);
     guint timer_id = g_timeout_add(250, on_timer_tick, &st);
 
+    if (have_geom) {
+        gtk_window_parse_geometry(GTK_WINDOW(st.window), initial_geometry_.c_str());
+    }
+
     gtk_widget_show_all(st.window);
     gtk_main();
 
     g_source_remove(timer_id);
+    if (st.term_window != nullptr) {
+        gtk_widget_destroy(st.term_window);
+        st.term_window = nullptr;
+    }
     g_object_unref(st.iface_store);
     g_object_unref(st.heard_store);
     g_object_unref(st.session_store);

@@ -16,6 +16,7 @@
 #include "oyk/radio/kiss_tcp_interface.hpp"
 #include "oyk/radio/telnet_interface.hpp"
 #include "oyk/protocol/yapp.hpp"
+#include "oyk/ui/gtk2_ui.hpp"
 
 #include <arpa/inet.h>
 #include <cassert>
@@ -1754,6 +1755,31 @@ void test_ban_lift_chat_and_local_loopback() {
     std::cout << "[PASS] test_ban_lift_chat_and_local_loopback\n";
 }
 
+void test_x11_geometry_parser() {
+    oyk::ui::WindowGeometry g;
+    assert(oyk::ui::parse_x11_geometry("1024x768", g));
+    assert(g.has_size && g.width == 1024 && g.height == 768 && !g.has_pos);
+
+    assert(oyk::ui::parse_x11_geometry("800x600+100+50", g));
+    assert(g.has_size && g.width == 800 && g.height == 600);
+    assert(g.has_pos && g.x == 100 && g.y == 50 && !g.x_from_right && !g.y_from_bottom);
+
+    assert(oyk::ui::parse_x11_geometry("640X480-20+10", g));
+    assert(g.has_size && g.width == 640 && g.height == 480);
+    assert(g.has_pos && g.x == 20 && g.y == 10 && g.x_from_right && !g.y_from_bottom);
+
+    assert(oyk::ui::parse_x11_geometry("+0-0", g));
+    assert(!g.has_size && g.has_pos && g.x == 0 && g.y == 0 && !g.x_from_right && g.y_from_bottom);
+
+    assert(!oyk::ui::parse_x11_geometry("", g));
+    assert(!oyk::ui::parse_x11_geometry("0x600", g));
+    assert(!oyk::ui::parse_x11_geometry("800x0", g));
+    assert(!oyk::ui::parse_x11_geometry("800", g));
+    assert(!oyk::ui::parse_x11_geometry("800x600+10", g));
+    assert(!oyk::ui::parse_x11_geometry("invalid", g));
+    std::cout << "[PASS] test_x11_geometry_parser\n";
+}
+
 } // namespace
 
 int main() {
@@ -1772,6 +1798,7 @@ int main() {
     test_config_line_ending_preservation();
     test_local_terminal_and_yapp();
     test_ban_lift_chat_and_local_loopback();
+    test_x11_geometry_parser();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

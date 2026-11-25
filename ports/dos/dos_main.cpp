@@ -78,6 +78,8 @@ static void vid_clear(oyk_u8 attr) {
     for (int i = 0; i < 80 * 25; ++i) scr[i] = cell;
 }
 
+static int dos_local_term_is_active();
+
 static void render_dos_screen() {
     char line[82];
     char call_s[16];
@@ -86,7 +88,11 @@ static void render_dos_screen() {
     /* Row 0: Top Menu Bar (matching GUI and ncurses menu bar) */
     vid_puts(0, 0,  0x70, "", 80);
     vid_puts(0, 1,  0x30, " Node ", 6);
-    vid_puts(0, 65, 0x70, "F10 / M: Menu ", 15);
+    if (dos_local_term_is_active()) {
+        vid_puts(0, 44, 0x70, "Tab/F9:Term(ACTIVE) F10/M:Menu ", 36);
+    } else {
+        vid_puts(0, 52, 0x70, "Tab/F9:Term  F10/M:Menu ", 28);
+    }
 
     /* Row 1: Header bar */
     sprintf(line, " OYK PACKET NODE (DOS): %-9s | Up:%lus | Conn:%d | EMS:%s",
@@ -244,6 +250,7 @@ struct DosFsEntry {
 };
 
 static oyk_u32 g_dterm_sid = 0;
+static int g_dterm_inited = 0;
 static int g_dterm_connected = 0;
 static int g_dterm_connecting = 0;
 static int g_dterm_is_local = 0;
@@ -254,6 +261,12 @@ static int g_dterm_line_count = 0;
 static char g_dterm_curline[80];
 static int g_dterm_curline_len = 0;
 static char g_dterm_last_yapp[128];
+static char g_dterm_in_buf[160];
+static int g_dterm_in_len = 0;
+
+static int dos_local_term_is_active() {
+    return (g_dterm_connected || g_dterm_connecting) ? 1 : 0;
+}
 
 static void dterm_push_line(const char* s) {
     if (!s) return;
@@ -515,36 +528,37 @@ static void render_dos_terminal(const char* input_buf) {
                 static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_dterm_yapp.total_bytes));
     } else {
-        strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  Esc:Monitor ");
+        strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
     }
     vid_puts(22, 0, 0x30, bar, 80);
 
     char in_row[82];
     sprintf(in_row, "> %.77s", input_buf);
     vid_puts(23, 0, 0x0F, in_row, 80);
-    vid_puts(24, 0, 0x0E, "Downloads save to incoming\\<CALL-SSID>\\<file>", 80);
+    vid_puts(24, 0, 0x0E, "F9/Esc switches to Console without closing active terminal session.", 80);
 }
 
 static void run_dos_local_terminal() {
-    g_dterm_sid = 0;
-    g_dterm_connected = 0;
-    g_dterm_connecting = 0;
-    g_dterm_is_local = 0;
-    g_dterm_line_count = 0;
-    g_dterm_curline_len = 0;
-    g_dterm_last_yapp[0] = '\0';
-    oyk_yapp_init(&g_dterm_yapp, "incoming",
-                  dos_yapp_send_cb, NULL,
-                  dos_yapp_overwrite_cb, NULL);
-    g_node.set_local_event_callback(dos_local_term_event_cb, NULL);
+    if (!g_dterm_inited) {
+        g_dterm_inited = 1;
+        g_dterm_sid = 0;
+        g_dterm_connected = 0;
+        g_dterm_connecting = 0;
+        g_dterm_is_local = 0;
+        g_dterm_line_count = 0;
+        g_dterm_curline_len = 0;
+        g_dterm_last_yapp[0] = '\0';
+        g_dterm_in_buf[0] = '\0';
+        g_dterm_in_len = 0;
+        oyk_yapp_init(&g_dterm_yapp, "incoming",
+                      dos_yapp_send_cb, NULL,
+                      dos_yapp_overwrite_cb, NULL);
+        g_node.set_local_event_callback(dos_local_term_event_cb, NULL);
 
-    dterm_push_line("*** OYK MS-DOS Local Packet Terminal (YAPP / YAPP-C enabled)");
-    dterm_push_line("*** Press F2 to connect (CALLSIGN or CALLSIGN@ip:port)");
-    dterm_push_line("*** Press F3 for Norton Commander file selector (YAPP upload)");
+        dterm_push_line("*** OYK MS-DOS Local Packet Terminal (YAPP / YAPP-C enabled)");
+        dterm_push_line("*** F2:Connect (LOCAL, CHAT, CALL@ip:port) | F3:YAPP Upload | F9/Esc:Console");
+    }
 
-    static char in_buf[160];
-    int in_len = 0;
-    in_buf[0] = '\0';
     clockTicks_t last_draw = 0;
 
     while (!g_break_flag) {
@@ -554,7 +568,7 @@ static void run_dos_local_terminal() {
         g_node.tick();
 
         if (Timer_diff(last_draw, TIMER_GET_CURRENT()) >= TIMER_MS_TO_TICKS(100)) {
-            render_dos_terminal(in_buf);
+            render_dos_terminal(g_dterm_in_buf);
             last_draw = TIMER_GET_CURRENT();
         }
 
@@ -562,7 +576,9 @@ static void run_dos_local_terminal() {
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 60) { /* F2: Connect */
+            if (ext == 67) { /* F9: Switch back to Operator Console without closing session */
+                break;
+            } else if (ext == 60) { /* F2: Connect */
                 char target[64], err[64];
                 prompt_line("Target (LOCAL, CHAT, or CALL@ip:port): ", target, sizeof(target));
                 if (target[0]) {
@@ -622,41 +638,40 @@ static void run_dos_local_terminal() {
                 oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
                 dterm_push_line("*** YAPP transfer aborted.");
             }
-            render_dos_terminal(in_buf);
+            render_dos_terminal(g_dterm_in_buf);
         } else if (ch == 27) {
             break;
         } else if (ch == '\r' || ch == '\n') {
-            in_buf[in_len] = '\0';
+            g_dterm_in_buf[g_dterm_in_len] = '\0';
             char echo[80];
-            sprintf(echo, "> %.77s", in_buf);
+            sprintf(echo, "> %.77s", g_dterm_in_buf);
             dterm_push_line(echo);
             if (g_dterm_connected && g_dterm_sid != 0) {
-                in_buf[in_len++] = '\r';
-                g_node.send_local_bytes(g_dterm_sid, reinterpret_cast<const oyk_u8*>(in_buf),
-                                        static_cast<size_t>(in_len));
+                g_dterm_in_buf[g_dterm_in_len++] = '\r';
+                g_node.send_local_bytes(g_dterm_sid, reinterpret_cast<const oyk_u8*>(g_dterm_in_buf),
+                                        static_cast<size_t>(g_dterm_in_len));
             } else {
                 dterm_push_line("*** Not connected. Press F2 to connect.");
             }
-            in_len = 0;
-            in_buf[0] = '\0';
-            render_dos_terminal(in_buf);
-        } else if ((ch == 8 || ch == 127) && in_len > 0) {
-            in_buf[--in_len] = '\0';
-            render_dos_terminal(in_buf);
-        } else if (ch >= 32 && ch < 127 && in_len < 76) {
-            in_buf[in_len++] = static_cast<char>(ch);
-            in_buf[in_len] = '\0';
-            render_dos_terminal(in_buf);
+            g_dterm_in_len = 0;
+            g_dterm_in_buf[0] = '\0';
+            render_dos_terminal(g_dterm_in_buf);
+        } else if ((ch == 8 || ch == 127) && g_dterm_in_len > 0) {
+            g_dterm_in_buf[--g_dterm_in_len] = '\0';
+            render_dos_terminal(g_dterm_in_buf);
+        } else if (ch >= 32 && ch < 127 && g_dterm_in_len < 76) {
+            g_dterm_in_buf[g_dterm_in_len++] = static_cast<char>(ch);
+            g_dterm_in_buf[g_dterm_in_len] = '\0';
+            render_dos_terminal(g_dterm_in_buf);
         }
     }
 
-    if (g_dterm_sid != 0) {
-        oyk_yapp_reset(&g_dterm_yapp);
-        g_node.close_local_terminal(g_dterm_sid);
-    }
-    g_node.set_local_event_callback(NULL, NULL);
     vid_clear(0x07);
-    strcpy(g_status_line, "Returned from Local Terminal.");
+    if (g_dterm_connected || g_dterm_connecting) {
+        strcpy(g_status_line, "Operator Console (Terminal active in background; Tab/F9 to return).");
+    } else {
+        strcpy(g_status_line, "Returned to Operator Console.");
+    }
 }
 
 static void run_dos_menu_action(int chosen, int* running) {
@@ -773,16 +788,74 @@ static void resolve_dos_config_path(char* out, size_t out_sz) {
     out[0] = '\0';
 }
 
+static void print_dos_usage(const char* prog) {
+    printf("OYK Amateur Radio Packet Node (MS-DOS)\n");
+    printf("Usage: %s [options]\n\n", prog ? prog : "oyknode.exe");
+    printf("Options:\n");
+    printf("  -c, --config <path>      Load configuration file\n");
+    printf("      --callsign <CALL>    Override node callsign (e.g. N0CALL-7)\n");
+    printf("      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n");
+    printf("      --port <UDP_PORT>    Override first AXUDP bind port (default 10093)\n");
+    printf("      --headless           Run without full-screen UI (log to stdout)\n");
+    printf("  -h, --help               Show this help\n");
+}
+
 int main(int argc, char* argv[]) {
     static OykConfig cfg;
     char cfg_path[128];
+    char override_call[16];
+    char override_alias[16];
+    oyk_u16 override_port = 0;
+    int headless = 0;
     char err[96];
     cfg_path[0] = '\0';
+    override_call[0] = '\0';
+    override_alias[0] = '\0';
 
     for (int i = 1; i < argc; ++i) {
-        if ((strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) && i + 1 < argc) {
+        const char* a = argv[i];
+        const char* eq = strchr(a, '=');
+        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0 || strcmp(a, "/?") == 0) {
+            print_dos_usage(argv[0]);
+            return 0;
+        } else if ((strcmp(a, "-c") == 0 || strcmp(a, "--config") == 0) && i + 1 < argc) {
             strncpy(cfg_path, argv[++i], sizeof(cfg_path) - 1);
             cfg_path[sizeof(cfg_path) - 1] = '\0';
+        } else if (strncmp(a, "--config=", 9) == 0 && eq) {
+            strncpy(cfg_path, eq + 1, sizeof(cfg_path) - 1);
+            cfg_path[sizeof(cfg_path) - 1] = '\0';
+        } else if (strcmp(a, "--callsign") == 0 && i + 1 < argc) {
+            strncpy(override_call, argv[++i], sizeof(override_call) - 1);
+            override_call[sizeof(override_call) - 1] = '\0';
+        } else if (strncmp(a, "--callsign=", 11) == 0 && eq) {
+            strncpy(override_call, eq + 1, sizeof(override_call) - 1);
+            override_call[sizeof(override_call) - 1] = '\0';
+        } else if (strcmp(a, "--alias") == 0 && i + 1 < argc) {
+            strncpy(override_alias, argv[++i], sizeof(override_alias) - 1);
+            override_alias[sizeof(override_alias) - 1] = '\0';
+        } else if (strncmp(a, "--alias=", 8) == 0 && eq) {
+            strncpy(override_alias, eq + 1, sizeof(override_alias) - 1);
+            override_alias[sizeof(override_alias) - 1] = '\0';
+        } else if (strcmp(a, "--port") == 0 && i + 1 < argc) {
+            long pv = atol(argv[++i]);
+            if (pv <= 0L || pv > 65535L) {
+                printf("Invalid --port value: %s\n", argv[i]);
+                return 1;
+            }
+            override_port = static_cast<oyk_u16>(pv);
+        } else if (strncmp(a, "--port=", 7) == 0 && eq) {
+            long pv = atol(eq + 1);
+            if (pv <= 0L || pv > 65535L) {
+                printf("Invalid --port value: %s\n", eq + 1);
+                return 1;
+            }
+            override_port = static_cast<oyk_u16>(pv);
+        } else if (strcmp(a, "--headless") == 0) {
+            headless = 1;
+        } else {
+            printf("Unknown or incomplete argument: %s\n", a);
+            print_dos_usage(argv[0]);
+            return 1;
         }
     }
     if (!cfg_path[0]) resolve_dos_config_path(cfg_path, sizeof(cfg_path));
@@ -794,6 +867,30 @@ int main(int argc, char* argv[]) {
         }
     } else {
         oyk_config_init_default(&cfg);
+    }
+
+    if (override_call[0]) {
+        if (!oyk_parse_callsign(override_call, &cfg.callsign)) {
+            printf("Invalid callsign: %s\n", override_call);
+            return 1;
+        }
+    }
+    if (override_alias[0]) {
+        if (!oyk_parse_callsign(override_alias, &cfg.alias)) {
+            printf("Invalid alias: %s\n", override_alias);
+            return 1;
+        }
+    }
+    if (override_port > 0 && cfg.iface_count > 0) {
+        int updated = 0;
+        for (int i = 0; i < cfg.iface_count; ++i) {
+            if (strcmp(cfg.ifaces[i].type, "axudp") == 0) {
+                cfg.ifaces[i].port = override_port;
+                updated = 1;
+                break;
+            }
+        }
+        if (!updated) cfg.ifaces[0].port = override_port;
     }
 
     /* Optional LIM EMS 4.0 initialization (4 x 16KB = 64KB expanded scrollback if available) */
@@ -833,49 +930,76 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    g_vseg = detect_video_seg();
-    vid_clear(0x07);
-
-    int running = 1;
-    clockTicks_t last_draw = TIMER_GET_CURRENT();
-
-    while (running && !g_break_flag) {
-        /* Cooperative mTCP packet pump */
-        PACKET_PROCESS_SINGLE;
-        Arp::driveArp();
-        Tcp::drivePackets();
-        g_node.tick();
-
-        if (kbhit()) {
-            int ch = getch();
-            if (ch == 0 || ch == 0xE0) {
-                int ext = getch();
-                if (ext == 68) { /* F10 */
-                    open_dos_node_menu(&running);
-                }
-            } else if (ch == 'm' || ch == 'M' || ch == 'n' || ch == 'N' || ch == '\r' || ch == '\n') {
-                open_dos_node_menu(&running);
-            } else if (ch == 'a' || ch == 'A') {
-                run_dos_menu_action(0, &running);
-            } else if (ch == 'd' || ch == 'D') {
-                run_dos_menu_action(1, &running);
-            } else if (ch == 'l' || ch == 'L') {
-                run_dos_menu_action(2, &running);
-            } else if (ch == 't' || ch == 'T') {
-                run_dos_menu_action(3, &running);
-            } else if (ch == 'b' || ch == 'B') {
-                run_dos_menu_action(4, &running);
-            } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
-                run_dos_menu_action(5, &running);
+    if (headless) {
+        char call_s[16];
+        oyk_format_callsign(&cfg.callsign, call_s, sizeof(call_s));
+        printf("OYK Packet Node (MS-DOS) %s running in headless mode. Press Ctrl+C to stop.\n", call_s);
+        int printed_logs = 0;
+        while (!g_break_flag) {
+            PACKET_PROCESS_SINGLE;
+            Arp::driveArp();
+            Tcp::drivePackets();
+            g_node.tick();
+            while (printed_logs < g_node.console_log_count()) {
+                printf("%s\n", g_node.console_log_line(printed_logs++));
             }
-            render_dos_screen();
         }
+    } else {
+        g_vseg = detect_video_seg();
+        vid_clear(0x07);
 
-        if (Timer_diff(last_draw, TIMER_GET_CURRENT()) >= TIMER_MS_TO_TICKS(250)) {
-            last_draw = TIMER_GET_CURRENT();
-            render_dos_screen();
+        int running = 1;
+        clockTicks_t last_draw = TIMER_GET_CURRENT();
+
+        while (running && !g_break_flag) {
+            /* Cooperative mTCP packet pump */
+            PACKET_PROCESS_SINGLE;
+            Arp::driveArp();
+            Tcp::drivePackets();
+            g_node.tick();
+
+            if (kbhit()) {
+                int ch = getch();
+                if (ch == 0 || ch == 0xE0) {
+                    int ext = getch();
+                    if (ext == 68) { /* F10 */
+                        open_dos_node_menu(&running);
+                    } else if (ext == 67) { /* F9: Switch to Local Terminal */
+                        run_dos_local_terminal();
+                    }
+                } else if (ch == '\t') {
+                    run_dos_local_terminal();
+                } else if (ch == 'm' || ch == 'M' || ch == 'n' || ch == 'N' || ch == '\r' || ch == '\n') {
+                    open_dos_node_menu(&running);
+                } else if (ch == 'a' || ch == 'A') {
+                    run_dos_menu_action(0, &running);
+                } else if (ch == 'd' || ch == 'D') {
+                    run_dos_menu_action(1, &running);
+                } else if (ch == 'l' || ch == 'L') {
+                    run_dos_menu_action(2, &running);
+                } else if (ch == 't' || ch == 'T') {
+                    run_dos_menu_action(3, &running);
+                } else if (ch == 'b' || ch == 'B') {
+                    run_dos_menu_action(4, &running);
+                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                    run_dos_menu_action(5, &running);
+                }
+                render_dos_screen();
+            }
+
+            if (Timer_diff(last_draw, TIMER_GET_CURRENT()) >= TIMER_MS_TO_TICKS(250)) {
+                last_draw = TIMER_GET_CURRENT();
+                render_dos_screen();
+            }
         }
     }
+
+    if (g_dterm_sid != 0) {
+        oyk_yapp_reset(&g_dterm_yapp);
+        g_node.close_local_terminal(g_dterm_sid);
+        g_dterm_sid = 0;
+    }
+    g_node.set_local_event_callback(NULL, NULL);
 
     if (g_node.begin_shutdown() > 0) {
         clockTicks_t shut_start = TIMER_GET_CURRENT();
