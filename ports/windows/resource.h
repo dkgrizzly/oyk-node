@@ -47,5 +47,7 @@
 #define IDC_LTERM_STATUS    428
 #define IDC_LTERM_INPUT     429
 #define IDC_LTERM_SEND      430
+#define IDC_LTERM_LBL_PORT  431
+#define IDC_LTERM_LBL_TGT   432
 
 #endif /* OYK_WIN_RESOURCE_H */

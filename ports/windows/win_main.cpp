@@ -34,6 +34,10 @@
   #define OYK_HBRUSH(idx)     ((HBRUSH)(INT_PTR)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPCSTR)(s))
+  #define OYK_EDIT_SETSEL(h, a, b) do { \
+      SendMessage((h), EM_SETSEL, (WPARAM)(a), (LPARAM)(b)); \
+      SendMessage((h), EM_SCROLLCARET, 0, 0); \
+  } while (0)
 #else
   /* 16-bit Windows 3.1 */
   #define OYK_DLG_RET         BOOL FAR PASCAL __export
@@ -43,6 +47,7 @@
   #define OYK_HBRUSH(idx)     ((HBRUSH)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPSTR)(s))
+  #define OYK_EDIT_SETSEL(h, a, b) SendMessage((h), EM_SETSEL, 0, MAKELONG((WORD)(a), (WORD)(b)))
   #ifndef INVALID_SOCKET
     #define INVALID_SOCKET    ((SOCKET)(~0))
   #endif
@@ -820,18 +825,85 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
 static void lterm_append_line(const char* line) {
     if (!g_lterm_hwnd || !line) return;
-    HWND lb = GetDlgItem(g_lterm_hwnd, IDC_LTERM_OUTPUT);
-    if (!lb) return;
-    int cnt = static_cast<int>(SendMessage(lb, LB_GETCOUNT, 0, 0));
-    while (cnt >= 300) {
-        SendMessage(lb, LB_DELETESTRING, 0, 0);
-        --cnt;
+    HWND ed = GetDlgItem(g_lterm_hwnd, IDC_LTERM_OUTPUT);
+    if (!ed) return;
+    int cur_len = GetWindowTextLength(ed);
+    if (cur_len > 22000) {
+        OYK_EDIT_SETSEL(ed, 0, 4096);
+        SendMessage(ed, EM_REPLACESEL, FALSE, OYK_LPARAM_STR(""));
+        cur_len = GetWindowTextLength(ed);
     }
-    SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(line));
-    cnt = static_cast<int>(SendMessage(lb, LB_GETCOUNT, 0, 0));
-    if (cnt > 0) {
-        SendMessage(lb, LB_SETTOPINDEX, static_cast<WPARAM>(cnt - 1), 0);
-    }
+    static char buf[320];
+    size_t n = strlen(line);
+    if (n > sizeof(buf) - 3) n = sizeof(buf) - 3;
+    memcpy(buf, line, n);
+    buf[n++] = '\r';
+    buf[n++] = '\n';
+    buf[n] = '\0';
+    OYK_EDIT_SETSEL(ed, cur_len, cur_len);
+    SendMessage(ed, EM_REPLACESEL, FALSE, OYK_LPARAM_STR(buf));
+}
+
+static void layout_lterm_controls(HWND hdlg, int cw, int ch) {
+    const int pad = 8;
+    const int top_h = 22;
+    const int st_h = 22;
+    const int bot_h = 24;
+
+    if (cw < 320) cw = 320;
+    if (ch < 180) ch = 180;
+
+    /* Top bar: Port label + combo + Target label + flex target edit + buttons */
+    const int port_lbl_w = 34;
+    const int port_cb_w = 84;
+    const int tgt_lbl_w = 46;
+    const int conn_w = 66;
+    const int disc_w = 46;
+    const int up_w = 84;
+    int fixed_top = port_lbl_w + port_cb_w + tgt_lbl_w + conn_w + disc_w + up_w + pad * 8;
+    int tgt_w = cw - fixed_top;
+    if (tgt_w < 50) tgt_w = 50;
+
+    int x = pad;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_LBL_PORT), x, pad + 3, port_lbl_w, 16, TRUE);
+    x += port_lbl_w + pad / 2;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_PORT), x, pad, port_cb_w, 120, TRUE);
+    x += port_cb_w + pad;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_LBL_TGT), x, pad + 3, tgt_lbl_w, 16, TRUE);
+    x += tgt_lbl_w + pad / 2;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_TARGET), x, pad + 1, tgt_w, top_h - 2, TRUE);
+    x += tgt_w + pad;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_CONNECT), x, pad, conn_w, top_h, TRUE);
+    x += conn_w + pad / 2;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_DISC), x, pad, disc_w, top_h, TRUE);
+    x += disc_w + pad / 2;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_UPLOAD), x, pad, cw - x - pad, top_h, TRUE);
+
+    /* Bottom input row */
+    int bot_y = ch - pad - bot_h;
+    const int close_w = 68;
+    const int send_w = 64;
+    int in_w = cw - pad * 4 - send_w - close_w;
+    if (in_w < 80) in_w = 80;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_INPUT), pad, bot_y, in_w, bot_h, TRUE);
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_SEND), pad * 2 + in_w, bot_y, send_w, bot_h, TRUE);
+    MoveWindow(GetDlgItem(hdlg, IDCANCEL), pad * 3 + in_w + send_w, bot_y, close_w, bot_h, TRUE);
+
+    /* Status + Abort YAPP row */
+    int st_y = bot_y - pad - st_h;
+    const int abort_w = 86;
+    int st_w = cw - pad * 3 - abort_w;
+    if (st_w < 80) st_w = 80;
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_STATUS), pad, st_y + 3, st_w, 16, TRUE);
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_ABORT), cw - pad - abort_w, st_y, abort_w, st_h, TRUE);
+
+    /* Middle output edit (multi-line without ES_AUTOHSCROLL reflows/word-wraps automatically) */
+    int out_y = pad + top_h + pad;
+    int out_h = st_y - pad - out_y;
+    if (out_h < 40) out_h = 40;
+    HWND ed = GetDlgItem(hdlg, IDC_LTERM_OUTPUT);
+    MoveWindow(ed, pad, out_y, cw - pad * 2, out_h, TRUE);
+    InvalidateRect(ed, NULL, TRUE);
 }
 
 static void lterm_update_status() {
@@ -949,6 +1021,11 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             g_node.set_local_event_callback(win_local_term_event_cb, NULL);
 
             SendDlgItemMessage(hdlg, IDC_LTERM_OUTPUT, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendDlgItemMessage(hdlg, IDC_LTERM_OUTPUT, EM_LIMITTEXT, 28000, 0);
+
+            RECT rc;
+            GetClientRect(hdlg, &rc);
+            layout_lterm_controls(hdlg, rc.right - rc.left, rc.bottom - rc.top);
 
             HWND cb = GetDlgItem(hdlg, IDC_LTERM_PORT);
             s_iface_cnt = 0;
@@ -963,10 +1040,29 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (s_iface_cnt > 0) SendMessage(cb, CB_SETCURSEL, 0, 0);
 
             lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
-            lterm_append_line("*** Select 'local' for local node/CHAT, or a radio port for remote nodes.");
+            lterm_append_line("*** Select 'local' for local node/BBS/CHAT, or a radio port for remote nodes.");
             lterm_update_status();
             return TRUE;
         }
+        case WM_GETMINMAXINFO: {
+#if defined(_WIN32) || defined(_WIN64)
+            LPMINMAXINFO mmi = (LPMINMAXINFO)lp;
+            if (mmi) {
+                mmi->ptMinTrackSize.x = 460;
+                mmi->ptMinTrackSize.y = 260;
+            }
+#else
+            POINT FAR* pts = (POINT FAR*)lp;
+            if (pts) {
+                pts[3].x = 460;
+                pts[3].y = 260;
+            }
+#endif
+            return TRUE;
+        }
+        case WM_SIZE:
+            layout_lterm_controls(hdlg, LOWORD(lp), HIWORD(lp));
+            return TRUE;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_LTERM_CONNECT) {

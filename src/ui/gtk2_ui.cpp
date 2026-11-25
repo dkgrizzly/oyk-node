@@ -519,6 +519,7 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     ts->win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     st->term_window = ts->win;
     gtk_window_set_title(GTK_WINDOW(ts->win), "OYK Local Packet Terminal (YAPP)");
+    gtk_window_set_resizable(GTK_WINDOW(ts->win), TRUE);
     gtk_window_set_default_size(GTK_WINDOW(ts->win), 720, 480);
     g_signal_connect(ts->win, "destroy", G_CALLBACK(on_gtk_term_destroy), ts);
 
@@ -539,7 +540,7 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
 
     gtk_box_pack_start(GTK_BOX(top_bar), gtk_label_new("Callsign:"), FALSE, FALSE, 2);
     ts->call_entry = gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(ts->call_entry), 20);
+    gtk_entry_set_width_chars(GTK_ENTRY(ts->call_entry), 10);
     gtk_box_pack_start(GTK_BOX(top_bar), ts->call_entry, TRUE, TRUE, 2);
 
     ts->btn_connect = gtk_button_new_with_label("Connect");
@@ -560,14 +561,14 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
 
     ts->text_view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(ts->text_view), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(ts->text_view), GTK_WRAP_CHAR);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(ts->text_view), GTK_WRAP_WORD_CHAR);
     PangoFontDescription* mono = pango_font_description_from_string("Monospace 9");
     gtk_widget_modify_font(ts->text_view, mono);
     pango_font_description_free(mono);
     ts->text_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ts->text_view));
 
     GtkWidget* sc = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(sc), ts->text_view);
     gtk_box_pack_start(GTK_BOX(vbox), sc, TRUE, TRUE, 2);
 
