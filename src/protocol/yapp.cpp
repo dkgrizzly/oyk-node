@@ -43,7 +43,7 @@ uint8_t yapp_checksum(const uint8_t* data, std::size_t len) {
 
 bool is_safe_yapp_filename(std::string_view name) {
     if (name.empty() || name.size() > 128) return false;
-    if (name[0] == '.' || name == "." || name == "..") return false;
+    if (name.front() == '.' || name.back() == '.' || name == "." || name == "..") return false;
     if (name.find("..") != std::string_view::npos) return false;
     for (char ch : name) {
         unsigned char c = static_cast<unsigned char>(ch);
@@ -174,6 +174,9 @@ bool YappSession::start_send(const std::filesystem::path& local_file, std::strin
         return false;
     }
     std::string base = local_file.filename().string();
+    while (!base.empty() && base.back() == '.') {
+        base.pop_back();
+    }
     if (!is_safe_yapp_filename(base)) {
         error_out = "File name contains characters not supported by YAPP";
         return false;
@@ -461,6 +464,16 @@ void YappSession::handle_complete_packet(uint8_t type, const std::vector<uint8_t
                 }
 
                 std::string fname = fields.empty() ? "" : fields[0];
+                // Strip trailing periods from legacy DOS/Win16 clients (e.g. "LICENSE." -> "LICENSE")
+                // only after ensuring no path traversal or leading period is present.
+                if (!fname.empty() && fname.front() != '.' &&
+                    fname.find("..") == std::string::npos &&
+                    fname.find('/') == std::string::npos &&
+                    fname.find('\\') == std::string::npos) {
+                    while (!fname.empty() && fname.back() == '.') {
+                        fname.pop_back();
+                    }
+                }
                 if (!is_safe_yapp_filename(fname)) {
                     send_cancel_pkt("Invalid filename (path traversal rejected)");
                     state_ = YappState::Error;

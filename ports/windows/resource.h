@@ -10,6 +10,8 @@
 #define IDM_DENY_INCOMING   202
 #define IDM_TERMINAL        203
 #define IDM_APPROVE_FILES   207
+#define IDM_RIG_CONTROL     209
+#define IDM_SETTINGS        208
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -51,12 +53,108 @@
 #define IDC_LTERM_LBL_PORT  431
 #define IDC_LTERM_LBL_TGT   432
 
-#define IDD_APPROVE         440
-#define IDC_APP_LIST        441
-#define IDC_APP_SUBDIR      442
-#define IDC_APP_APPROVE     443
-#define IDC_APP_DELETE      444
-#define IDC_APP_REFRESH     445
-#define IDC_APP_STATUS      446
+#define IDD_APPROVE           440
+#define IDC_APP_TAB_INC       441
+#define IDC_APP_TAB_APPROVED  442
+#define IDC_APP_TAB_BOX       443
+#define IDC_APP_L_INC         444
+#define IDC_APP_LIST          445
+#define IDC_APP_L_SUB         446
+#define IDC_APP_SUBDIR        447
+#define IDC_APP_APPROVE       448
+#define IDC_APP_DELETE        449
+#define IDC_APP_L_APP         510
+#define IDC_APP_APPROVED_LIST 511
+#define IDC_APP_REMOVE        512
+#define IDC_APP_REFRESH       513
+#define IDC_APP_STATUS        514
+
+#define IDD_SETTINGS        450
+#define IDC_SET_TAB_NODE    451
+#define IDC_SET_TAB_BBS     452
+#define IDC_SET_TAB_CHAT    453
+#define IDC_SET_TAB_IF      454
+#define IDC_SET_TAB_RIG     494
+#define IDC_SET_TAB_BOX     455
+
+#define IDC_SET_L_CALL      456
+#define IDC_SET_CALL        457
+#define IDC_SET_L_ALIAS     458
+#define IDC_SET_ALIAS       459
+#define IDC_SET_L_WELC      460
+#define IDC_SET_WELCOME     461
+#define IDC_SET_L_INFO      462
+#define IDC_SET_INFO        463
+#define IDC_SET_ACCEPT      464
+
+#define IDC_SET_BBS_EN      465
+#define IDC_SET_L_BSSID     466
+#define IDC_SET_BBS_SSID    467
+#define IDC_SET_L_BCALL     468
+#define IDC_SET_BBS_CALL    469
+#define IDC_SET_L_BALIAS    470
+#define IDC_SET_BBS_ALIAS   471
+#define IDC_SET_FILES_EN    472
+#define IDC_SET_L_FPATH     473
+#define IDC_SET_FILES_PATH  474
+#define IDC_SET_L_MPATH     475
+#define IDC_SET_MAIL_PATH   476
+#define IDC_SET_L_BWELC     477
+#define IDC_SET_BBS_WELC    478
+
+#define IDC_SET_CHAT_EN     479
+#define IDC_SET_L_CSSID     480
+#define IDC_SET_CHAT_SSID   481
+#define IDC_SET_L_CCALL     482
+#define IDC_SET_CHAT_CALL   483
+#define IDC_SET_L_CALIAS    484
+#define IDC_SET_CHAT_ALIAS  485
+#define IDC_SET_L_CTOP      486
+#define IDC_SET_CHAT_TOPIC  487
+#define IDC_SET_L_CWELC     488
+#define IDC_SET_CHAT_WELC   489
+
+#define IDC_SET_L_IF        490
+#define IDC_SET_IF_LIST     491
+#define IDC_SET_IF_ADD      492
+#define IDC_SET_IF_REM      493
+
+#define IDD_ADD_IFACE       500
+#define IDC_AIF_ID          501
+#define IDC_AIF_TYPE        502
+#define IDC_AIF_DESC        503
+#define IDC_AIF_HOST        504
+#define IDC_AIF_PORT        505
+#define IDC_AIF_PEER        506
+
+/* Settings Tab 5: Rig Control */
+#define IDC_SET_RIG_EN      520
+#define IDC_SET_L_RPROTO    521
+#define IDC_SET_RIG_PROTO   522
+#define IDC_SET_L_RHOST     523
+#define IDC_SET_RIG_HOST    524
+#define IDC_SET_L_RPORT     525
+#define IDC_SET_RIG_PORT    526
+#define IDC_SET_L_RPOLL     527
+#define IDC_SET_RIG_POLL    528
+#define IDC_SET_RIG_NOTIFY  529
+
+/* Radio / Rig Control Dialog */
+#define IDD_RIG_CONTROL     540
+#define IDC_RIG_HEADER      541
+#define IDC_RIG_STATE       542
+#define IDC_RIG_L_A         543
+#define IDC_RIG_EDIT_A      544
+#define IDC_RIG_L_B         545
+#define IDC_RIG_EDIT_B      546
+#define IDC_RIG_L_C         547
+#define IDC_RIG_EDIT_C      548
+#define IDC_RIG_BTN_1       549
+#define IDC_RIG_BTN_2       550
+#define IDC_RIG_BTN_3       551
+#define IDC_RIG_BTN_4       552
+#define IDC_RIG_BTN_5       553
+#define IDC_RIG_BTN_REF     554
+#define IDC_RIG_STATUS      555
 
 #endif /* OYK_WIN_RESOURCE_H */

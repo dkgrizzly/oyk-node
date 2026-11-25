@@ -24,6 +24,7 @@
 
 #include "../compat/oyk_portable.hpp"
 #include "../compat/oyk_yapp.hpp"
+#include "../compat/oyk_rig.hpp"
 #include "resource.h"
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -137,6 +138,21 @@ static WinIfaceNet g_ifaces[OYK_MAX_INTERFACES];
 static WinTelnetClient g_telnet_clients[OYK_MAX_TELNET_CLIENTS];
 static int g_last_log_count = -1;
 static char g_status_msg[128] = "Ready.";
+static char g_last_header[160] = "";
+static char g_last_badge[32] = "";
+static char g_last_ifaces_txt[512] = "";
+static char g_last_heard_txt[384] = "";
+static char g_last_sess_txt[768] = "";
+
+/* Draggable splitter handle between Radio Interfaces and Last 5 New Callsigns Heard */
+static const int OYK_SPLITTER_W = 8;
+static int g_split_pct = 58;
+static int g_split_x = 0;
+static int g_split_y = 0;
+static int g_split_h = 0;
+static int g_split_drag = 0;
+static int g_client_w = 0;
+static int g_client_h = 0;
 
 /* Local Terminal + YAPP state (static for Win16 stack safety) */
 static HWND g_lterm_hwnd = NULL;
@@ -631,13 +647,69 @@ static void pump_winsock() {
 
 /* ==================== UI Refresh & Dialogs ==================== */
 
+static void update_static_text(HWND ctl, char* cache, size_t cache_sz, const char* text) {
+    if (!ctl || !text) return;
+    if (cache && strcmp(cache, text) == 0) return;
+    if (cache && cache_sz > 0) {
+        strncpy(cache, text, cache_sz - 1);
+        cache[cache_sz - 1] = '\0';
+    }
+    SendMessage(ctl, WM_SETREDRAW, FALSE, 0);
+    SetWindowText(ctl, text);
+    SendMessage(ctl, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(ctl, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+}
+
+static void update_listbox_rows(HWND lb, char* cache, size_t cache_sz,
+                                const char* const* rows, int count, int scroll_bottom) {
+    if (!lb) return;
+    static char joined[1024];
+    size_t pos = 0;
+    joined[0] = '\0';
+    for (int i = 0; i < count; ++i) {
+        const char* r = rows[i] ? rows[i] : "";
+        size_t rl = strlen(r);
+        if (pos + rl + 2 < sizeof(joined)) {
+            memcpy(joined + pos, r, rl);
+            pos += rl;
+            joined[pos++] = '\n';
+            joined[pos] = '\0';
+        }
+    }
+    if (cache && cache_sz > 0) {
+        if (strcmp(cache, joined) == 0) return;
+        strncpy(cache, joined, cache_sz - 1);
+        cache[cache_sz - 1] = '\0';
+    }
+
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < count; ++i) {
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(rows[i]));
+    }
+    if (scroll_bottom && count > 0) {
+        SendMessage(lb, LB_SETTOPINDEX, static_cast<WPARAM>(count - 1), 0);
+    }
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
 static void set_status(const char* text) {
+    if (!text) return;
+    if (strcmp(g_status_msg, text) == 0) return;
     strncpy(g_status_msg, text, sizeof(g_status_msg) - 1);
     g_status_msg[sizeof(g_status_msg) - 1] = '\0';
-    if (g_ctl_status) SetWindowText(g_ctl_status, g_status_msg);
+    if (g_ctl_status) {
+        SendMessage(g_ctl_status, WM_SETREDRAW, FALSE, 0);
+        SetWindowText(g_ctl_status, g_status_msg);
+        SendMessage(g_ctl_status, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(g_ctl_status, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    }
 }
 
 static void refresh_gui() {
+    static char row_buf[16][128];
+    static const char* row_ptrs[16];
     char buf[160];
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
@@ -647,57 +719,68 @@ static void refresh_gui() {
             static_cast<unsigned long>(g_node.uptime_seconds()),
             g_node.total_active_connections(),
             g_node.ban_count());
-    SetWindowText(g_ctl_header, buf);
+    update_static_text(g_ctl_header, g_last_header, sizeof(g_last_header), buf);
 
-    SetWindowText(g_ctl_badge, g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
+    update_static_text(g_ctl_badge, g_last_badge, sizeof(g_last_badge),
+                       g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
 
     /* Radio Interfaces (active connections per interface) */
-    SendMessage(g_ctl_ifaces, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("Port      Type     Conn  Status          RX/TX"));
-    for (int i = 0; i < g_node.iface_count(); ++i) {
+    int n = 0;
+    strcpy(row_buf[n], "Port      Type     Conn  Status          RX/TX");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.iface_count() && n < 16; ++i) {
         const OykIfaceRuntime& r = g_node.iface(i);
-        sprintf(buf, "%-9.9s %-8.8s %-5d %-15.15s %lu/%lu",
+        sprintf(row_buf[n], "%-9.9s %-8.8s %-5d %-15.15s %lu/%lu",
                 r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                 static_cast<unsigned long>(r.rx_frames),
                 static_cast<unsigned long>(r.tx_frames));
-        SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+        row_ptrs[n] = row_buf[n];
+        ++n;
     }
+    update_listbox_rows(g_ctl_ifaces, g_last_ifaces_txt, sizeof(g_last_ifaces_txt), row_ptrs, n, 0);
 
     /* Last 5 New Callsigns Heard */
-    SendMessage(g_ctl_heard, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_heard, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("#  Callsign   Port      Heard"));
-    for (int i = 0; i < g_node.new_heard_count(); ++i) {
+    n = 0;
+    strcpy(row_buf[n], "#  Callsign   Port      Heard");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.new_heard_count() && n < 16; ++i) {
         const OykNewHeard& nh = g_node.new_heard(i);
-        sprintf(buf, "%d. %-10.10s %-9.9s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-        SendMessage(g_ctl_heard, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+        sprintf(row_buf[n], "%d. %-10.10s %-9.9s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
+        row_ptrs[n] = row_buf[n];
+        ++n;
     }
+    update_listbox_rows(g_ctl_heard, g_last_heard_txt, sizeof(g_last_heard_txt), row_ptrs, n, 0);
 
     /* Active Connections */
-    SendMessage(g_ctl_sessions, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_sessions, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("ID    Callsign    Port      Since     Mode"));
-    for (int i = 0; i < g_node.max_sessions(); ++i) {
+    n = 0;
+    strcpy(row_buf[n], "ID    Callsign    Port      Since     Mode");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.max_sessions() && n < 16; ++i) {
         const OykSession& s = g_node.session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
             char cs[12];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
-            sprintf(buf, "#%-4lu %-11.11s %-9.9s %-9.9s %s",
+            sprintf(row_buf[n], "#%-4lu %-11.11s %-9.9s %-9.9s %s",
                     static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local", s.since_hms,
                     s.restricted_ban ? "BAN NOTICE"
                                      : (s.in_bbs ? "BBS"
                                                  : (s.in_chat ? "CHAT"
                                                               : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"))));
-            SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+            row_ptrs[n] = row_buf[n];
+            ++n;
         }
     }
+    update_listbox_rows(g_ctl_sessions, g_last_sess_txt, sizeof(g_last_sess_txt), row_ptrs, n, 0);
 
     /* Node Activity Log */
     int log_n = g_node.console_log_count();
     if (log_n != g_last_log_count) {
         g_last_log_count = log_n;
+        SendMessage(g_ctl_logs, WM_SETREDRAW, FALSE, 0);
         SendMessage(g_ctl_logs, LB_RESETCONTENT, 0, 0);
         for (int i = 0; i < log_n; ++i) {
             SendMessage(g_ctl_logs, LB_ADDSTRING, 0,
@@ -706,6 +789,8 @@ static void refresh_gui() {
         if (log_n > 0) {
             SendMessage(g_ctl_logs, LB_SETTOPINDEX, static_cast<WPARAM>(log_n - 1), 0);
         }
+        SendMessage(g_ctl_logs, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(g_ctl_logs, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
     }
 }
 
@@ -1196,6 +1281,7 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
 static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* count_out) {
     HWND lb = GetDlgItem(hdlg, IDC_APP_LIST);
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
     SendMessage(lb, LB_RESETCONTENT, 0, 0);
     int n = oyk_bbs_list_incoming("incoming", items, 32);
     *count_out = n;
@@ -1207,37 +1293,110 @@ static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* cou
         SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
     }
     if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+static void populate_approved_files_list(HWND hdlg, OykApprovedFile* items, int* count_out) {
+    HWND lb = GetDlgItem(hdlg, IDC_APP_APPROVED_LIST);
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    int n = oyk_bbs_list_approved(g_node.config().bbs_files_path, items, 48);
+    *count_out = n;
+    for (int i = 0; i < n; ++i) {
+        char row[112];
+        sprintf(row, "%-46.46s %lu B",
+                items[i].rel_path,
+                static_cast<unsigned long>(items[i].size));
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+    }
+    if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+static void switch_files_tab(HWND hdlg, int tab) {
+    static const int INC_IDS[] = {
+        IDC_APP_L_INC, IDC_APP_LIST, IDC_APP_L_SUB, IDC_APP_SUBDIR,
+        IDC_APP_APPROVE, IDC_APP_DELETE
+    };
+    static const int APP_IDS[] = {
+        IDC_APP_L_APP, IDC_APP_APPROVED_LIST, IDC_APP_REMOVE
+    };
+    int i;
+    for (i = 0; i < static_cast<int>(sizeof(INC_IDS) / sizeof(INC_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, INC_IDS[i]), (tab == 0) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(APP_IDS) / sizeof(APP_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, APP_IDS[i]), (tab == 1) ? SW_SHOW : SW_HIDE);
+    }
+    SetDlgItemText(hdlg, IDC_APP_TAB_INC, (tab == 0) ? "[ Pending Incoming ]" : "Pending Incoming");
+    SetDlgItemText(hdlg, IDC_APP_TAB_APPROVED, (tab == 1) ? "[ Approved Files ]" : "Approved Files");
+    SetDlgItemText(hdlg, IDC_APP_TAB_BOX,
+                   (tab == 0) ? "Pending Incoming Uploads" : "Approved BBS Files Area");
 }
 
 OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static OykPendingIncoming* s_items = NULL;
     static int s_count = 0;
+    static OykApprovedFile* s_approved = NULL;
+    static int s_app_count = 0;
 
     switch (msg) {
         case WM_INITDIALOG: {
             if (!s_items) s_items = new OykPendingIncoming[32];
+            if (!s_approved) s_approved = new OykApprovedFile[48];
             SendDlgItemMessage(hdlg, IDC_APP_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
             populate_approve_list(hdlg, s_items, &s_count);
+            populate_approved_files_list(hdlg, s_approved, &s_app_count);
+            switch_files_tab(hdlg, 0);
             char st[128];
-            sprintf(st, "Files Area: %.72s (%d pending)", g_node.config().bbs_files_path, s_count);
+            sprintf(st, "Files Area: %.60s (%d pending, %d approved)",
+                    g_node.config().bbs_files_path, s_count, s_app_count);
             SetDlgItemText(hdlg, IDC_APP_STATUS, st);
             return TRUE;
         }
         case WM_DESTROY:
-            if (s_items) {
-                delete[] s_items;
-                s_items = NULL;
-            }
+            if (s_items) { delete[] s_items; s_items = NULL; }
+            if (s_approved) { delete[] s_approved; s_approved = NULL; }
             s_count = 0;
+            s_app_count = 0;
             return TRUE;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_APP_TAB_INC) { switch_files_tab(hdlg, 0); return TRUE; }
+            if (id == IDC_APP_TAB_APPROVED) { switch_files_tab(hdlg, 1); return TRUE; }
             if (id == IDC_APP_REFRESH) {
                 populate_approve_list(hdlg, s_items, &s_count);
+                populate_approved_files_list(hdlg, s_approved, &s_app_count);
                 char st[96];
-                sprintf(st, "Refreshed (%d pending file(s)).", s_count);
+                sprintf(st, "Refreshed (%d pending, %d approved).", s_count, s_app_count);
                 SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+                return TRUE;
+            }
+            if (id == IDC_APP_REMOVE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, LB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= s_app_count) {
+                    SetDlgItemText(hdlg, IDC_APP_STATUS, "Select an approved file first.");
+                    return TRUE;
+                }
+                char prompt[160], err[96];
+                sprintf(prompt, "Remove approved file /%s from the BBS files area?", s_approved[sel].rel_path);
+                if (MessageBox(hdlg, prompt, "Confirm Remove", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    if (oyk_bbs_delete_approved_file(g_node.config().bbs_files_path,
+                                                     s_approved[sel].rel_path, err, sizeof(err))) {
+                        char msg_s[128];
+                        sprintf(msg_s, "Removed approved file /%s", s_approved[sel].rel_path);
+                        g_node.log_message(OYK_LOG_INFO, msg_s);
+                        set_status(msg_s);
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
+                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
+                    } else {
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, err);
+                    }
+                }
                 return TRUE;
             }
             if (id == IDC_APP_APPROVE || id == IDC_APP_DELETE) {
@@ -1274,6 +1433,7 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         set_status(msg_s);
                         SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
                         populate_approve_list(hdlg, s_items, &s_count);
+                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
                     } else {
                         SetDlgItemText(hdlg, IDC_APP_STATUS, err);
                     }
@@ -1308,14 +1468,56 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
+static int hit_test_splitter(int x, int y) {
+    return (g_split_h > 0 &&
+            x >= g_split_x - 2 && x <= g_split_x + OYK_SPLITTER_W + 2 &&
+            y >= g_split_y && y <= g_split_y + g_split_h) ? 1 : 0;
+}
+
+static void paint_splitter_handle(HDC hdc) {
+    if (g_split_h <= 4) return;
+    RECT rc;
+    rc.left = g_split_x;
+    rc.top = g_split_y;
+    rc.right = g_split_x + OYK_SPLITTER_W;
+    rc.bottom = g_split_y + g_split_h;
+    FillRect(hdc, &rc, OYK_HBRUSH(COLOR_BTNFACE + 1));
+
+    HPEN hi_pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNHIGHLIGHT));
+    HPEN sh_pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNSHADOW));
+    HPEN old_pen = (HPEN)SelectObject(hdc, hi_pen);
+
+    int cx = g_split_x + OYK_SPLITTER_W / 2;
+    int cy = g_split_y + g_split_h / 2;
+    int grip_top = cy - 16;
+    int grip_bot = cy + 16;
+    if (grip_top < g_split_y + 4) grip_top = g_split_y + 4;
+    if (grip_bot > g_split_y + g_split_h - 4) grip_bot = g_split_y + g_split_h - 4;
+
+    /* Vertical 3D bevel track + tactile center grip lines */
+    MoveToEx(hdc, cx - 1, grip_top, NULL);
+    LineTo(hdc, cx - 1, grip_bot);
+    SelectObject(hdc, sh_pen);
+    MoveToEx(hdc, cx + 1, grip_top, NULL);
+    LineTo(hdc, cx + 1, grip_bot);
+
+    SelectObject(hdc, old_pen);
+    DeleteObject(hi_pen);
+    DeleteObject(sh_pen);
+}
+
+static void layout_controls(HWND hwnd, int cw, int ch) {
+    if (cw <= 0 || ch <= 0) return;
+    g_client_w = cw;
+    g_client_h = ch;
+
     const int pad = 6;
     const int hdr_h = 20;
     const int st_h = 18;
     const int badge_w = 140;
 
-    MoveWindow(g_ctl_header, pad, pad, cw - badge_w - pad * 3, hdr_h, TRUE);
-    MoveWindow(g_ctl_badge, cw - badge_w - pad, pad, badge_w, hdr_h, TRUE);
+    int hdr_w = cw - badge_w - pad * 3;
+    if (hdr_w < 80) hdr_w = 80;
 
     int body_y = pad + hdr_h + pad;
     int body_h = ch - body_y - st_h - pad * 3;
@@ -1324,16 +1526,763 @@ static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     int top_h = body_h / 3;
     int mid_h = body_h / 3;
     int bot_h = body_h - top_h - mid_h - pad * 2;
-    int left_w = (cw - pad * 3) * 58 / 100;
-    int right_w = cw - pad * 3 - left_w;
+    if (bot_h < 40) bot_h = 40;
 
-    MoveWindow(g_ctl_ifaces, pad, body_y, left_w, top_h, TRUE);
-    MoveWindow(g_ctl_heard, pad * 2 + left_w, body_y, right_w, top_h, TRUE);
-    MoveWindow(g_ctl_sessions, pad, body_y + top_h + pad, cw - pad * 2, mid_h, TRUE);
-    MoveWindow(g_ctl_logs, pad, body_y + top_h + mid_h + pad * 2, cw - pad * 2, bot_h, TRUE);
+    /* Use 32-bit long math so cw*pct NEVER overflows 16-bit signed int on Win16! */
+    int avail_w = cw - pad * 2 - OYK_SPLITTER_W;
+    if (avail_w < 120) avail_w = 120;
+    int left_w = static_cast<int>((static_cast<long>(avail_w) * static_cast<long>(g_split_pct)) / 100L);
+    int min_pane = (avail_w > 220) ? 100 : (avail_w / 3);
+    if (left_w < min_pane) left_w = min_pane;
+    if (left_w > avail_w - min_pane) left_w = avail_w - min_pane;
+    int right_w = avail_w - left_w;
+    if (right_w < 40) right_w = 40;
+
+    g_split_x = pad + left_w;
+    g_split_y = body_y;
+    g_split_h = top_h;
 
     int st_y = ch - st_h - pad;
-    MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, TRUE);
+
+    SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
+    MoveWindow(g_ctl_header, pad, pad, hdr_w, hdr_h, FALSE);
+    MoveWindow(g_ctl_badge, cw - badge_w - pad, pad, badge_w, hdr_h, FALSE);
+    MoveWindow(g_ctl_ifaces, pad, body_y, left_w, top_h, FALSE);
+    MoveWindow(g_ctl_heard, g_split_x + OYK_SPLITTER_W, body_y, right_w, top_h, FALSE);
+    MoveWindow(g_ctl_sessions, pad, body_y + top_h + pad, cw - pad * 2, mid_h, FALSE);
+    MoveWindow(g_ctl_logs, pad, body_y + top_h + mid_h + pad * 2, cw - pad * 2, bot_h, FALSE);
+    MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, FALSE);
+    SendMessage(hwnd, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+static void init_win_interfaces();
+static void shutdown_win_interfaces();
+
+static OykConfig g_set_draft;
+static OykIfaceConfig g_add_if_out;
+static int g_add_if_ok = 0;
+
+/* ==================== Windows Winsock 1.1 Rig Control ==================== */
+
+static OykRigStatus g_win_rig_st;
+static SOCKET g_win_rf_sock = INVALID_SOCKET;
+
+static int win_resolve_ipv4_host(const char* host, unsigned long* ip_out) {
+    if (!host || !host[0] || !ip_out) return 0;
+    unsigned long a = inet_addr(host);
+    if (a != INADDR_NONE) { *ip_out = a; return 1; }
+    struct hostent* he = gethostbyname(host);
+    if (he && he->h_addr_list && he->h_addr_list[0]) {
+        memcpy(ip_out, he->h_addr_list[0], 4);
+        return 1;
+    }
+    return 0;
+}
+
+static int win_rf_send_cmd(const char* cmd, char* err_out, size_t err_sz) {
+    const OykConfig& cfg = g_node.config();
+    if (!cfg.rig_enabled || oyk_rig_parse_protocol(cfg.rig_protocol) != OYK_RIG_PROTO_RADIOFOUNDRY) {
+        strncpy(err_out, "RadioFoundry UDP control is not enabled.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    unsigned long ip = 0;
+    if (!win_resolve_ipv4_host(cfg.rig_host, &ip)) {
+        strncpy(err_out, "Unable to resolve radio host.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    if (g_win_rf_sock == INVALID_SOCKET) {
+        g_win_rf_sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (g_win_rf_sock == INVALID_SOCKET) {
+            strncpy(err_out, "Failed to create UDP socket.", err_sz - 1);
+            err_out[err_sz - 1] = '\0';
+            return 0;
+        }
+        struct sockaddr_in loc;
+        memset(&loc, 0, sizeof(loc));
+        loc.sin_family = AF_INET;
+        loc.sin_addr.s_addr = INADDR_ANY;
+        loc.sin_port = 0;
+        bind(g_win_rf_sock, reinterpret_cast<struct sockaddr*>(&loc), sizeof(loc));
+        u_long nb = 1;
+        ioctlsocket(g_win_rf_sock, FIONBIO, &nb);
+    }
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = ip;
+    dst.sin_port = htons(cfg.rig_port ? cfg.rig_port : static_cast<oyk_u16>(OYK_RF_DEFAULT_PORT));
+    if (sendto(g_win_rf_sock, cmd, static_cast<int>(strlen(cmd)), 0,
+               reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst)) <= 0) {
+        strncpy(err_out, "UDP sendto failed.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(g_win_rf_sock, &rfds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 400000L;
+    if (select(0, &rfds, NULL, NULL, &tv) > 0) {
+        static char rbuf[256];
+        struct sockaddr_in from;
+        int flen = sizeof(from);
+        int n = recvfrom(g_win_rf_sock, rbuf, sizeof(rbuf) - 1, 0,
+                         reinterpret_cast<struct sockaddr*>(&from), &flen);
+        if (n > 0) {
+            rbuf[n] = '\0';
+            if (oyk_rf_parse_status(rbuf, &g_win_rig_st)) {
+                g_win_rig_st.reachable = 1;
+                g_win_rig_st.last_error[0] = '\0';
+                return 1;
+            }
+        }
+    }
+    g_win_rig_st.reachable = 0;
+    strncpy(err_out, "No UDP reply from RadioFoundry radio.", err_sz - 1);
+    err_out[err_sz - 1] = '\0';
+    return 0;
+}
+
+static int win_rigctl_exchange(const char* cmd, char* rep_out, size_t rep_sz,
+                               char* err_out, size_t err_sz) {
+    rep_out[0] = '\0';
+    const OykConfig& cfg = g_node.config();
+    unsigned long ip = 0;
+    if (!win_resolve_ipv4_host(cfg.rig_host, &ip)) {
+        strncpy(err_out, "Unable to resolve rigctld host.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) {
+        strncpy(err_out, "Failed to create TCP socket.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    u_long nb = 1;
+    ioctlsocket(s, FIONBIO, &nb);
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = ip;
+    dst.sin_port = htons(cfg.rig_port ? cfg.rig_port : static_cast<oyk_u16>(OYK_RIGCTL_DEFAULT_PORT));
+    connect(s, reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst));
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(s, &wfds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000L;
+    if (select(0, NULL, &wfds, NULL, &tv) <= 0) {
+        closesocket(s);
+        strncpy(err_out, "Unable to connect to rigctld.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    send(s, cmd, static_cast<int>(strlen(cmd)), 0);
+
+    size_t got = 0;
+    DWORD start_ms = GetTickCount();
+    while (static_cast<DWORD>(GetTickCount() - start_ms) < 500UL && got + 1 < rep_sz) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000L;
+        if (select(0, &rfds, NULL, NULL, &tv) > 0) {
+            int n = recv(s, rep_out + got, static_cast<int>(rep_sz - 1 - got), 0);
+            if (n <= 0) break;
+            got += static_cast<size_t>(n);
+            rep_out[got] = '\0';
+            if (strstr(rep_out, "RPRT ") != NULL || strchr(rep_out, '\n') != NULL) break;
+        }
+    }
+    closesocket(s);
+    if (got == 0) {
+        strncpy(err_out, "No response from rigctld.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
+static int win_rig_refresh(char* err_out, size_t err_sz) {
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    if (!cfg.rig_enabled || proto == OYK_RIG_PROTO_NONE) {
+        strncpy(err_out, "Rig control disabled (enable in Settings -> Rig).", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+        char cmd[16];
+        oyk_rf_build_select(-1, -1, cmd, sizeof(cmd));
+        return win_rf_send_cmd(cmd, err_out, err_sz);
+    }
+    char cmd[16], rep[128];
+    oyk_rigctl_build_get_freq(cmd, sizeof(cmd));
+    if (!win_rigctl_exchange(cmd, rep, sizeof(rep), err_out, err_sz)) {
+        g_win_rig_st.reachable = 0;
+        return 0;
+    }
+    oyk_rig_status_init(&g_win_rig_st, OYK_RIG_PROTO_RIGCTL);
+    int rprt = 0;
+    if (!oyk_rigctl_parse_freq_reply(rep, &g_win_rig_st.freq_hz, &rprt)) {
+        sprintf(err_out, "rigctld error (RPRT %d)", rprt);
+        return 0;
+    }
+    g_win_rig_st.reachable = 1;
+    char oerr[64];
+    oyk_rigctl_build_get_mode(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_mode_reply(rep, g_win_rig_st.mode, sizeof(g_win_rig_st.mode),
+                                    &g_win_rig_st.passband_hz, &rprt);
+    }
+    oyk_rigctl_build_get_ptt(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_ptt_reply(rep, &g_win_rig_st.ptt, &rprt);
+    }
+    oyk_rigctl_build_get_vfo(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_vfo_reply(rep, g_win_rig_st.vfo, sizeof(g_win_rig_st.vfo), &rprt);
+    }
+    return 1;
+}
+
+static void win_rig_update_dlg(HWND hdlg) {
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    static char hdr[128], body[256];
+    sprintf(hdr, "Protocol: %s  |  Endpoint: %s:%u  [%s]",
+            oyk_rig_protocol_name(proto),
+            cfg.rig_host[0] ? cfg.rig_host : "127.0.0.1",
+            static_cast<unsigned int>(cfg.rig_port),
+            cfg.rig_enabled ? (g_win_rig_st.reachable ? "ONLINE" : "NO REPLY") : "DISABLED");
+    SetDlgItemText(hdlg, IDC_RIG_HEADER, hdr);
+
+    if (!cfg.rig_enabled || proto == OYK_RIG_PROTO_NONE) {
+        strcpy(body, "Rig control is disabled.\r\nEnable it in Node -> Settings -> Rig.");
+    } else if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+        if (g_win_rig_st.is_dmr) {
+            sprintf(body, "Zone: %d   Pos: %d   Name: %s\r\nFreq: %lu Hz   DMR CC:%d TS:%d TG:%ld\r\nRaw: %.90s",
+                    g_win_rig_st.zone, g_win_rig_st.pos,
+                    g_win_rig_st.channel_name[0] ? g_win_rig_st.channel_name : "(unknown)",
+                    static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                    g_win_rig_st.color_code, g_win_rig_st.timeslot, g_win_rig_st.talkgroup,
+                    g_win_rig_st.raw_status);
+        } else {
+            sprintf(body, "Zone: %d   Pos: %d   Name: %s\r\nFreq: %lu Hz\r\nRaw: %.90s",
+                    g_win_rig_st.zone, g_win_rig_st.pos,
+                    g_win_rig_st.channel_name[0] ? g_win_rig_st.channel_name : "(unknown)",
+                    static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                    g_win_rig_st.raw_status);
+        }
+    } else {
+        sprintf(body, "Frequency: %lu Hz\r\nMode: %s (%lu Hz)   VFO: %s\r\nPTT: %s",
+                static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                g_win_rig_st.mode[0] ? g_win_rig_st.mode : "(unknown)",
+                static_cast<unsigned long>(g_win_rig_st.passband_hz),
+                g_win_rig_st.vfo[0] ? g_win_rig_st.vfo : "(unknown)",
+                g_win_rig_st.ptt > 0 ? "TX" : (g_win_rig_st.ptt == 0 ? "RX" : "UNKNOWN"));
+    }
+    SetDlgItemText(hdlg, IDC_RIG_STATE, body);
+}
+
+OYK_DLG_RET RigControlDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    switch (msg) {
+        case WM_INITDIALOG: {
+            if (g_win_rig_st.protocol != proto) oyk_rig_status_init(&g_win_rig_st, proto);
+            if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+                SetDlgItemText(hdlg, IDC_RIG_L_A, "Zone (0..):");
+                SetDlgItemText(hdlg, IDC_RIG_L_B, "Pos (0..):");
+                SetDlgItemText(hdlg, IDC_RIG_L_C, "");
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_L_C), SW_HIDE);
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_EDIT_C), SW_HIDE);
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_A, "0");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_B, "0");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_1, "Select Z/Pos");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_2, "Channel -1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_3, "Channel +1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_4, "Zone -1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_5, "Zone +1");
+            } else {
+                SetDlgItemText(hdlg, IDC_RIG_L_A, "Freq (Hz):");
+                SetDlgItemText(hdlg, IDC_RIG_L_B, "Mode:");
+                SetDlgItemText(hdlg, IDC_RIG_L_C, "Passband:");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_A, "145050000");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_B, "FM");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_C, "0");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_1, "Set Freq");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_2, "Set Mode");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_3, "Toggle PTT");
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_BTN_4), SW_HIDE);
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_BTN_5), SW_HIDE);
+            }
+            char err[96];
+            if (win_rig_refresh(err, sizeof(err))) {
+                SetDlgItemText(hdlg, IDC_RIG_STATUS, "Queried radio status.");
+            } else {
+                SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+            }
+            win_rig_update_dlg(hdlg);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            char err[96], cmd[64], rep[128], ea[32], eb[32], ec[32];
+            if (id == IDC_RIG_BTN_REF) {
+                if (win_rig_refresh(err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Refreshed.");
+                else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                win_rig_update_dlg(hdlg);
+                return TRUE;
+            }
+            if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+                if (id == IDC_RIG_BTN_1) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_A, ea, sizeof(ea));
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_B, eb, sizeof(eb));
+                    oyk_rf_build_select(atoi(ea), atoi(eb), cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Selected zone & pos.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_2 || id == IDC_RIG_BTN_3) {
+                    oyk_rf_build_step_channel(id == IDC_RIG_BTN_3 ? 1 : -1, cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Stepped channel.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_4 || id == IDC_RIG_BTN_5) {
+                    oyk_rf_build_step_zone(id == IDC_RIG_BTN_5 ? 1 : -1, cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Stepped zone.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+            } else if (proto == OYK_RIG_PROTO_RIGCTL) {
+                if (id == IDC_RIG_BTN_1) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_A, ea, sizeof(ea));
+                    oyk_u32 hz = static_cast<oyk_u32>(strtoul(ea, NULL, 10));
+                    oyk_rigctl_build_set_freq(hz, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        g_win_rig_st.freq_hz = hz;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, "Frequency updated.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_2) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_B, eb, sizeof(eb));
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_C, ec, sizeof(ec));
+                    oyk_u32 pb = static_cast<oyk_u32>(strtoul(ec, NULL, 10));
+                    oyk_rigctl_build_set_mode(eb, pb, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        strncpy(g_win_rig_st.mode, eb, sizeof(g_win_rig_st.mode) - 1);
+                        g_win_rig_st.passband_hz = pb;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, "Mode updated.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_3) {
+                    int next_ptt = (g_win_rig_st.ptt > 0) ? 0 : 1;
+                    oyk_rigctl_build_set_ptt(next_ptt, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        g_win_rig_st.ptt = next_ptt;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, next_ptt ? "PTT set to TX." : "PTT set to RX.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+            }
+            if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
+static void populate_settings_ifaces(HWND hdlg) {
+    HWND hlist = GetDlgItem(hdlg, IDC_SET_IF_LIST);
+    SendMessage(hlist, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+        const OykIfaceConfig& ic = g_set_draft.ifaces[i];
+        char row[112];
+        if (win_strieq(ic.type, "kiss-serial")) {
+            sprintf(row, "%-10.10s %-11.11s %s @%lu",
+                    ic.id, ic.type, ic.device[0] ? ic.device : "COM1",
+                    static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+        } else {
+            sprintf(row, "%-10.10s %-11.11s %s:%u",
+                    ic.id, ic.type, ic.host[0] ? ic.host : "0.0.0.0",
+                    static_cast<unsigned int>(ic.port));
+        }
+        SendMessage(hlist, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(row));
+    }
+}
+
+OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            SetDlgItemText(hdlg, IDC_AIF_ID, "axudp1");
+            HWND cb = GetDlgItem(hdlg, IDC_AIF_TYPE);
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axudp"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axip"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-serial"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-tcp"));
+            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("telnet"));
+            SendMessage(cb, CB_SETCURSEL, 0, 0);
+            SetDlgItemText(hdlg, IDC_AIF_HOST, "0.0.0.0");
+            SetDlgItemText(hdlg, IDC_AIF_PORT, "10093");
+            g_add_if_ok = 0;
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDOK) {
+                memset(&g_add_if_out, 0, sizeof(g_add_if_out));
+                GetDlgItemText(hdlg, IDC_AIF_ID, g_add_if_out.id, sizeof(g_add_if_out.id));
+                if (!g_add_if_out.id[0]) {
+                    MessageBox(hdlg, "Interface ID cannot be empty.", "Add Interface", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                int tsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_TYPE, CB_GETCURSEL, 0, 0));
+                static const char* TYPES[5] = { "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" };
+                if (tsel < 0 || tsel > 4) tsel = 0;
+                strcpy(g_add_if_out.type, TYPES[tsel]);
+                GetDlgItemText(hdlg, IDC_AIF_DESC, g_add_if_out.description, sizeof(g_add_if_out.description));
+                char host_b[32], port_b[16], peer_b[64];
+                GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
+                GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+                GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
+
+                if (win_strieq(g_add_if_out.type, "kiss-serial")) {
+                    strncpy(g_add_if_out.device, host_b[0] ? host_b : "COM1", sizeof(g_add_if_out.device) - 1);
+                    long bv = atol(port_b);
+                    g_add_if_out.baud = (bv > 0L) ? static_cast<oyk_u32>(bv) : 9600UL;
+                } else {
+                    strncpy(g_add_if_out.host, host_b[0] ? host_b : "0.0.0.0", sizeof(g_add_if_out.host) - 1);
+                    long pv = atol(port_b);
+                    if (pv > 0L && pv <= 65535L) g_add_if_out.port = static_cast<oyk_u16>(pv);
+                    else if (win_strieq(g_add_if_out.type, "telnet")) g_add_if_out.port = 8010;
+                    else if (win_strieq(g_add_if_out.type, "kiss-tcp")) g_add_if_out.port = 8001;
+                    else if (win_strieq(g_add_if_out.type, "axudp")) g_add_if_out.port = 10093;
+                }
+                if (peer_b[0]) {
+                    OykPeerEntry pe;
+                    memset(&pe, 0, sizeof(pe));
+                    if (oyk_parse_peer_spec(peer_b, pe.callsign, sizeof(pe.callsign),
+                                            &pe.ip, &pe.port,
+                                            g_add_if_out.port ? g_add_if_out.port : static_cast<oyk_u16>(10093))) {
+                        g_add_if_out.peers[0] = pe;
+                        g_add_if_out.peer_count = 1;
+                    }
+                }
+                g_add_if_ok = 1;
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
+static void switch_settings_tab(HWND hdlg, int tab) {
+    static const int NODE_IDS[] = {
+        IDC_SET_L_CALL, IDC_SET_CALL, IDC_SET_L_ALIAS, IDC_SET_ALIAS,
+        IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO, IDC_SET_ACCEPT
+    };
+    static const int BBS_IDS[] = {
+        IDC_SET_BBS_EN, IDC_SET_L_BSSID, IDC_SET_BBS_SSID, IDC_SET_L_BCALL, IDC_SET_BBS_CALL,
+        IDC_SET_L_BALIAS, IDC_SET_BBS_ALIAS, IDC_SET_FILES_EN, IDC_SET_L_FPATH, IDC_SET_FILES_PATH,
+        IDC_SET_L_MPATH, IDC_SET_MAIL_PATH, IDC_SET_L_BWELC, IDC_SET_BBS_WELC
+    };
+    static const int CHAT_IDS[] = {
+        IDC_SET_CHAT_EN, IDC_SET_L_CSSID, IDC_SET_CHAT_SSID, IDC_SET_L_CCALL, IDC_SET_CHAT_CALL,
+        IDC_SET_L_CALIAS, IDC_SET_CHAT_ALIAS, IDC_SET_L_CTOP, IDC_SET_CHAT_TOPIC,
+        IDC_SET_L_CWELC, IDC_SET_CHAT_WELC
+    };
+    static const int IF_IDS[] = {
+        IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_REM
+    };
+    static const int RIG_IDS[] = {
+        IDC_SET_RIG_EN, IDC_SET_L_RPROTO, IDC_SET_RIG_PROTO,
+        IDC_SET_L_RHOST, IDC_SET_RIG_HOST, IDC_SET_L_RPORT, IDC_SET_RIG_PORT,
+        IDC_SET_L_RPOLL, IDC_SET_RIG_POLL, IDC_SET_RIG_NOTIFY
+    };
+
+    int i;
+    for (i = 0; i < static_cast<int>(sizeof(NODE_IDS) / sizeof(NODE_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, NODE_IDS[i]), (tab == 0) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(BBS_IDS) / sizeof(BBS_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, BBS_IDS[i]), (tab == 1) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(CHAT_IDS) / sizeof(CHAT_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, CHAT_IDS[i]), (tab == 2) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(IF_IDS) / sizeof(IF_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, IF_IDS[i]), (tab == 3) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(RIG_IDS) / sizeof(RIG_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 4) ? SW_SHOW : SW_HIDE);
+    }
+
+    SetDlgItemText(hdlg, IDC_SET_TAB_NODE, (tab == 0) ? "[ Node ]" : "Node");
+    SetDlgItemText(hdlg, IDC_SET_TAB_BBS,  (tab == 1) ? "[ BBS ]" : "BBS");
+    SetDlgItemText(hdlg, IDC_SET_TAB_CHAT, (tab == 2) ? "[ CHAT ]" : "CHAT");
+    SetDlgItemText(hdlg, IDC_SET_TAB_IF,   (tab == 3) ? "[ Interfaces ]" : "Interfaces");
+    SetDlgItemText(hdlg, IDC_SET_TAB_RIG,  (tab == 4) ? "[ Rig ]" : "Rig");
+
+    static const char* BOX_TITLES[5] = {
+        "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings",
+        "Interface Mappings", "Radio / Rig Control Settings"
+    };
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 5) ? tab : 0]);
+}
+
+OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            g_set_draft = g_node.config();
+            char buf[32];
+            oyk_format_callsign(&g_set_draft.callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.alias.base[0]) oyk_format_callsign(&g_set_draft.alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_ALIAS, buf);
+            CheckDlgButton(hdlg, IDC_SET_ACCEPT, g_set_draft.accept_incoming ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text);
+            SetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text);
+
+            CheckDlgButton(hdlg, IDC_SET_BBS_EN, g_set_draft.bbs_enabled ? 1 : 0);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.bbs_ssid));
+            SetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf);
+            buf[0] = '\0';
+            if (g_set_draft.bbs_callsign.base[0]) oyk_format_callsign(&g_set_draft.bbs_callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_BBS_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.bbs_alias.base[0]) oyk_format_callsign(&g_set_draft.bbs_alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_BBS_ALIAS, buf);
+            CheckDlgButton(hdlg, IDC_SET_FILES_EN, g_set_draft.bbs_files_enabled ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_SET_FILES_PATH, g_set_draft.bbs_files_path);
+            SetDlgItemText(hdlg, IDC_SET_MAIL_PATH, g_set_draft.bbs_mail_path);
+            SetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome);
+
+            CheckDlgButton(hdlg, IDC_SET_CHAT_EN, g_set_draft.chat_enabled ? 1 : 0);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.chat_ssid));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_SSID, buf);
+            buf[0] = '\0';
+            if (g_set_draft.chat_callsign.base[0]) oyk_format_callsign(&g_set_draft.chat_callsign, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_CALL, buf);
+            buf[0] = '\0';
+            if (g_set_draft.chat_alias.base[0]) oyk_format_callsign(&g_set_draft.chat_alias, buf, sizeof(buf));
+            SetDlgItemText(hdlg, IDC_SET_CHAT_ALIAS, buf);
+            SetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, g_set_draft.chat_topic);
+            SetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome);
+
+            CheckDlgButton(hdlg, IDC_SET_RIG_EN, g_set_draft.rig_enabled ? 1 : 0);
+            HWND rcb = GetDlgItem(hdlg, IDC_SET_RIG_PROTO);
+            SendMessage(rcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("rigctl"));
+            SendMessage(rcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("radiofoundry"));
+            SendMessage(rcb, CB_SETCURSEL,
+                        (oyk_rig_parse_protocol(g_set_draft.rig_protocol) == OYK_RIG_PROTO_RADIOFOUNDRY) ? 1 : 0, 0);
+            SetDlgItemText(hdlg, IDC_SET_RIG_HOST, g_set_draft.rig_host[0] ? g_set_draft.rig_host : "127.0.0.1");
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.rig_port ? g_set_draft.rig_port : 4532));
+            SetDlgItemText(hdlg, IDC_SET_RIG_PORT, buf);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.rig_poll_sec));
+            SetDlgItemText(hdlg, IDC_SET_RIG_POLL, buf);
+            CheckDlgButton(hdlg, IDC_SET_RIG_NOTIFY, g_set_draft.rig_notify ? 1 : 0);
+
+            populate_settings_ifaces(hdlg);
+            switch_settings_tab(hdlg, 0);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_SET_TAB_NODE) { switch_settings_tab(hdlg, 0); return TRUE; }
+            if (id == IDC_SET_TAB_BBS)  { switch_settings_tab(hdlg, 1); return TRUE; }
+            if (id == IDC_SET_TAB_CHAT) { switch_settings_tab(hdlg, 2); return TRUE; }
+            if (id == IDC_SET_TAB_IF)   { switch_settings_tab(hdlg, 3); return TRUE; }
+            if (id == IDC_SET_TAB_RIG)  { switch_settings_tab(hdlg, 4); return TRUE; }
+            if (id == IDC_SET_IF_ADD) {
+                if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
+                    MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                if (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ADD_IFACE), hdlg, (DLGPROC)AddIfaceDlgProc) == IDOK && g_add_if_ok) {
+                    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                        if (win_strieq(g_set_draft.ifaces[i].id, g_add_if_out.id)) {
+                            MessageBox(hdlg, "Duplicate interface ID.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                            return TRUE;
+                        }
+                    }
+                    g_set_draft.ifaces[g_set_draft.iface_count++] = g_add_if_out;
+                    populate_settings_ifaces(hdlg);
+                }
+                return TRUE;
+            } else if (id == IDC_SET_IF_REM) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < g_set_draft.iface_count) {
+                    for (int i = sel + 1; i < g_set_draft.iface_count; ++i) {
+                        g_set_draft.ifaces[i - 1] = g_set_draft.ifaces[i];
+                    }
+                    g_set_draft.iface_count--;
+                    populate_settings_ifaces(hdlg);
+                }
+                return TRUE;
+            } else if (id == IDOK) {
+                char buf[32];
+                GetDlgItemText(hdlg, IDC_SET_CALL, buf, sizeof(buf));
+                if (!oyk_parse_callsign_with_default_ssid(buf, OYK_DEFAULT_NODE_SSID, &g_set_draft.callsign)) {
+                    MessageBox(hdlg, "Invalid node callsign.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.alias, 0, sizeof(g_set_draft.alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.alias)) {
+                    MessageBox(hdlg, "Invalid node alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.accept_incoming = (IsDlgButtonChecked(hdlg, IDC_SET_ACCEPT) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text, sizeof(g_set_draft.welcome_text));
+                GetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text, sizeof(g_set_draft.info_text));
+
+                g_set_draft.bbs_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_BBS_EN) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf, sizeof(buf));
+                int bss = atoi(buf);
+                if (bss < 0 || bss > 15) {
+                    MessageBox(hdlg, "BBS SSID must be 0..15.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.bbs_ssid = static_cast<oyk_u8>(bss);
+                GetDlgItemText(hdlg, IDC_SET_BBS_CALL, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.bbs_callsign, 0, sizeof(g_set_draft.bbs_callsign));
+                else if (!oyk_parse_callsign_with_default_ssid(buf, g_set_draft.bbs_ssid, &g_set_draft.bbs_callsign)) {
+                    MessageBox(hdlg, "Invalid BBS callsign override.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_BBS_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.bbs_alias, 0, sizeof(g_set_draft.bbs_alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.bbs_alias)) {
+                    MessageBox(hdlg, "Invalid BBS alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.bbs_files_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_FILES_EN) != 0) ? 1 : 0;
+                char fpath[96], mpath[96];
+                GetDlgItemText(hdlg, IDC_SET_FILES_PATH, fpath, sizeof(fpath));
+                if (fpath[0]) strncpy(g_set_draft.bbs_files_path, fpath, sizeof(g_set_draft.bbs_files_path) - 1);
+                GetDlgItemText(hdlg, IDC_SET_MAIL_PATH, mpath, sizeof(mpath));
+                if (mpath[0]) strncpy(g_set_draft.bbs_mail_path, mpath, sizeof(g_set_draft.bbs_mail_path) - 1);
+                GetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome, sizeof(g_set_draft.bbs_welcome));
+
+                g_set_draft.chat_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_CHAT_EN) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_CHAT_SSID, buf, sizeof(buf));
+                int css = atoi(buf);
+                if (css < 0 || css > 15) {
+                    MessageBox(hdlg, "CHAT SSID must be 0..15.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_set_draft.chat_ssid = static_cast<oyk_u8>(css);
+                GetDlgItemText(hdlg, IDC_SET_CHAT_CALL, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.chat_callsign, 0, sizeof(g_set_draft.chat_callsign));
+                else if (!oyk_parse_callsign_with_default_ssid(buf, g_set_draft.chat_ssid, &g_set_draft.chat_callsign)) {
+                    MessageBox(hdlg, "Invalid CHAT callsign override.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                GetDlgItemText(hdlg, IDC_SET_CHAT_ALIAS, buf, sizeof(buf));
+                if (!buf[0]) memset(&g_set_draft.chat_alias, 0, sizeof(g_set_draft.chat_alias));
+                else if (!oyk_parse_callsign(buf, &g_set_draft.chat_alias)) {
+                    MessageBox(hdlg, "Invalid CHAT alias.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                char ctop[16];
+                GetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, ctop, sizeof(ctop));
+                if (ctop[0]) strncpy(g_set_draft.chat_topic, ctop, sizeof(g_set_draft.chat_topic) - 1);
+                GetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome, sizeof(g_set_draft.chat_welcome));
+
+                g_set_draft.rig_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_RIG_EN) != 0) ? 1 : 0;
+                int rpsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_RIG_PROTO, CB_GETCURSEL, 0, 0));
+                strcpy(g_set_draft.rig_protocol, (rpsel == 1) ? "radiofoundry" : "rigctl");
+                char rhost[32], rport_s[16], rpoll_s[16];
+                GetDlgItemText(hdlg, IDC_SET_RIG_HOST, rhost, sizeof(rhost));
+                if (rhost[0]) strncpy(g_set_draft.rig_host, rhost, sizeof(g_set_draft.rig_host) - 1);
+                GetDlgItemText(hdlg, IDC_SET_RIG_PORT, rport_s, sizeof(rport_s));
+                long rpv = atol(rport_s);
+                if (rpv >= 1L && rpv <= 65535L) g_set_draft.rig_port = static_cast<oyk_u16>(rpv);
+                else g_set_draft.rig_port = (rpsel == 1) ? static_cast<oyk_u16>(4191) : static_cast<oyk_u16>(4532);
+                GetDlgItemText(hdlg, IDC_SET_RIG_POLL, rpoll_s, sizeof(rpoll_s));
+                long rpl = atol(rpoll_s);
+                if (rpl >= 0L && rpl <= 3600L) g_set_draft.rig_poll_sec = static_cast<oyk_u16>(rpl);
+                g_set_draft.rig_notify = (IsDlgButtonChecked(hdlg, IDC_SET_RIG_NOTIFY) != 0) ? 1 : 0;
+
+                static OykConfigApplyResult res;
+                if (!g_node.apply_config(&g_set_draft, 1, &res)) {
+                    MessageBox(hdlg, res.error[0] ? res.error : "Invalid configuration.",
+                               "Settings Error", MB_OK | MB_ICONSTOP);
+                    return TRUE;
+                }
+                if (res.identity_restarted || res.interfaces_changed) {
+                    /* Sign off any Telnet clients still sitting at the login prompt */
+                    if (res.identity_restarted) {
+                        char nc[16], so[128];
+                        oyk_format_callsign(&g_node.config().callsign, nc, sizeof(nc));
+                        sprintf(so, "\r\n*** Node is restarting for configuration changes. "
+                                    "Node will be accessible on %s after restart. 73!\r\n", nc);
+                        for (int i = 0; i < OYK_MAX_TELNET_CLIENTS; ++i) {
+                            if (g_telnet_clients[i].in_use && g_telnet_clients[i].stage != TSTAGE_CLOSING) {
+                                telnet_send_str(g_telnet_clients[i].sock, so);
+                                telnet_begin_close(&g_telnet_clients[i]);
+                            }
+                        }
+                    }
+                    if (res.interfaces_changed) {
+                        shutdown_win_interfaces();
+                        init_win_interfaces();
+                    }
+                }
+                if (!res.saved_to_disk) {
+                    MessageBox(hdlg,
+                               res.warning[0]
+                                   ? res.warning
+                                   : "The configuration file could not be written. Changes remain in "
+                                     "memory only while running and will be lost on exit.",
+                               "Read-Only Configuration",
+                               MB_OK | MB_ICONEXCLAMATION);
+                    set_status("Settings applied IN MEMORY ONLY (config not writable).");
+                } else {
+                    char st[128];
+                    sprintf(st, "Settings saved to %.72s and applied.", res.save_path);
+                    set_status(st);
+                }
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
 }
 
 OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1366,8 +2315,70 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_SIZE:
-            layout_controls(hwnd, LOWORD(lp), HIWORD(lp));
+            layout_controls(hwnd, static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)));
             return 0;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            paint_splitter_handle(hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_SETCURSOR: {
+            if (LOWORD(lp) == HTCLIENT) {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                if (g_split_drag || hit_test_splitter(pt.x, pt.y)) {
+                    SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                    return TRUE;
+                }
+            }
+            break;
+        }
+        case WM_LBUTTONDOWN: {
+            int mx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+            int my = static_cast<int>(static_cast<short>(HIWORD(lp)));
+            if (hit_test_splitter(mx, my)) {
+                g_split_drag = 1;
+                SetCapture(hwnd);
+                SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                return 0;
+            }
+            break;
+        }
+        case WM_MOUSEMOVE: {
+            if (g_split_drag && g_client_w > 40) {
+                int mx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+                const int pad = 6;
+                int avail_w = g_client_w - pad * 2 - OYK_SPLITTER_W;
+                if (avail_w > 40) {
+                    long rel = static_cast<long>(mx - pad - OYK_SPLITTER_W / 2);
+                    int pct = static_cast<int>((rel * 100L) / static_cast<long>(avail_w));
+                    if (pct < 15) pct = 15;
+                    if (pct > 85) pct = 85;
+                    if (pct != g_split_pct) {
+                        g_split_pct = pct;
+                        layout_controls(hwnd, g_client_w, g_client_h);
+                    }
+                }
+                return 0;
+            }
+            break;
+        }
+        case WM_LBUTTONUP: {
+            if (g_split_drag) {
+                g_split_drag = 0;
+                ReleaseCapture();
+                return 0;
+            }
+            break;
+        }
+#ifdef WM_CAPTURECHANGED
+        case WM_CAPTURECHANGED:
+            g_split_drag = 0;
+            return 0;
+#endif
         case WM_TIMER:
             if (wp == 1) {
                 pump_winsock();
@@ -1401,6 +2412,12 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 refresh_gui();
             } else if (id == IDM_APPROVE_FILES) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                refresh_gui();
+            } else if (id == IDM_RIG_CONTROL) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_RIG_CONTROL), hwnd, (DLGPROC)RigControlDlgProc);
+                refresh_gui();
+            } else if (id == IDM_SETTINGS) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {
@@ -1630,6 +2647,10 @@ static void drain_win_shutdown() {
     }
 
     g_node.finish_shutdown();
+    if (g_win_rf_sock != INVALID_SOCKET) {
+        closesocket(g_win_rf_sock);
+        g_win_rf_sock = INVALID_SOCKET;
+    }
     shutdown_win_interfaces();
 }
 
@@ -1821,7 +2842,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     g_hwnd_main = CreateWindow(
         "OYKNodeWinClass",
         "OYK Amateur Radio Packet Node",
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 520,
         NULL, NULL, hinst, NULL);
 

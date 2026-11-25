@@ -232,6 +232,14 @@ void NcursesUI::run() {
             case 'F':
                 modal_approve_incoming_files();
                 break;
+            case 'r':
+            case 'R':
+                modal_rig_control();
+                break;
+            case 's':
+            case 'S':
+                modal_settings();
+                break;
             case 'q':
             case 'Q':
             case 'x':
@@ -522,22 +530,24 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
 }
 
 void NcursesUI::open_node_menu(bool& should_exit) {
-    static const char* ITEMS[7] = {
+    static const char* ITEMS[9] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
-        " [F] Approve Incoming Files...  ",
+        " [F] Manage Files Area...       ",
+        " [R] Radio Control...           ",
+        " [S] Settings...                ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
     // Row offsets inside menu window (with separators after Deny and Ban)
-    static const int ITEM_ROWS[7] = { 1, 2, 4, 5, 6, 7, 9 };
+    static const int ITEM_ROWS[9] = { 1, 2, 4, 5, 6, 7, 8, 9, 11 };
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(36, cols - 2);
-    const int h = 11;
+    const int h = 13;
     if (rows < h + 2 || w < 24) return;
 
     WINDOW* win = newwin(h, w, 1, 1);
@@ -553,9 +563,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         werase(win);
         box(win, 0, 0);
         mvwhline(win, 3, 1, ACS_HLINE, w - 2);
-        mvwhline(win, 8, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 10, 1, ACS_HLINE, w - 2);
 
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < 9; ++i) {
             if (i == sel) wattron(win, A_REVERSE | A_BOLD);
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
@@ -566,9 +576,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         if (ch == ERR) continue;
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
-            sel = (sel + 6) % 7;
+            sel = (sel + 8) % 9;
         } else if (ch == KEY_DOWN) {
-            sel = (sel + 1) % 7;
+            sel = (sel + 1) % 9;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             chosen = sel;
         } else if (ch == 'a' || ch == 'A') {
@@ -579,12 +589,16 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             chosen = 2;
         } else if (ch == 'f' || ch == 'F') {
             chosen = 3;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'r' || ch == 'R') {
             chosen = 4;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 's' || ch == 'S') {
             chosen = 5;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 6;
+        } else if (ch == 'b' || ch == 'B') {
+            chosen = 7;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 8;
         }
     }
 
@@ -606,12 +620,18 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             modal_approve_incoming_files();
             break;
         case 4:
-            modal_terminate_connection();
+            modal_rig_control();
             break;
         case 5:
-            modal_ban_callsign();
+            modal_settings();
             break;
         case 6:
+            modal_terminate_connection();
+            break;
+        case 7:
+            modal_ban_callsign();
+            break;
+        case 8:
             if (modal_confirm_exit()) {
                 should_exit = true;
             }
@@ -1492,7 +1512,7 @@ void NcursesUI::modal_ban_callsign() {
 void NcursesUI::modal_approve_incoming_files() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(76, std::max(54, cols - 4));
+    int w = std::min(78, std::max(56, cols - 2));
     int h = std::min(22, std::max(14, rows - 2));
     if (rows < 12 || cols < 46) return;
 
@@ -1501,10 +1521,12 @@ void NcursesUI::modal_approve_incoming_files() {
     keypad(win, TRUE);
     wtimeout(win, 200);
 
-    auto items = engine_.list_pending_incoming_files();
-    int sel = 0;
-    int top = 0;
-    std::string feedback = "Target BBS Files Area: " + engine_.bbs_files_path();
+    auto pending_items = engine_.list_pending_incoming_files();
+    auto approved_items = engine_.list_approved_files();
+    int tab = 0; // 0 = Pending Incoming, 1 = Approved Files
+    int sel[2] = { 0, 0 };
+    int top[2] = { 0, 0 };
+    std::string feedback = "Files Area: " + engine_.bbs_files_path();
 
     auto prompt_text = [&](const std::string& label, std::string& out) -> bool {
         out.clear();
@@ -1549,76 +1571,129 @@ void NcursesUI::modal_approve_incoming_files() {
         }
     };
 
+    static const char* TAB_LABELS[2] = { " 1:Pending Incoming ", " 2:Approved Files " };
+
     while (true) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
-        int list_h = std::max(1, h - 7);
-        int count = static_cast<int>(items.size());
-        if (sel >= count) sel = std::max(0, count - 1);
-        if (sel < top) top = sel;
-        if (sel >= top + list_h) top = sel - list_h + 1;
+        int list_h = std::max(1, h - 8);
+        int count = (tab == 0) ? static_cast<int>(pending_items.size())
+                               : static_cast<int>(approved_items.size());
+        if (sel[tab] >= count) sel[tab] = std::max(0, count - 1);
+        if (sel[tab] < top[tab]) top[tab] = sel[tab];
+        if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
 
         werase(win);
         box(win, 0, 0);
         if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
-        mvwaddnstr(win, 0, 2, " Approve Incoming Files (incoming/ -> BBS files/) ", w - 4);
+        mvwaddnstr(win, 0, 2, " Manage BBS Files Area ", w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
 
-        mvwaddnstr(win, 1, 2,
-                   clip("Incoming: " + engine_.bbs_incoming_path() + "  ->  Files Area: " +
-                        engine_.bbs_files_path(), w - 4).c_str(),
-                   w - 4);
+        // Row 1: Tab bar matching GTK & Windows (Pending Incoming | Approved Files)
+        int tx = 2;
+        for (int t = 0; t < 2; ++t) {
+            if (t == tab) {
+                if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattron(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattron(win, COLOR_PAIR(CP_MENU));
+            }
+            mvwaddnstr(win, 1, tx, TAB_LABELS[t], w - tx - 2);
+            if (t == tab) {
+                if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattroff(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattroff(win, COLOR_PAIR(CP_MENU));
+            }
+            tx += static_cast<int>(std::string_view(TAB_LABELS[t]).size()) + 1;
+        }
         mvwhline(win, 2, 1, ACS_HLINE, w - 2);
 
-        std::ostringstream hdr;
-        hdr << std::left << std::setw(14) << "Uploader"
-            << std::setw(std::max(16, w - 30)) << "Filename"
-            << std::right << std::setw(10) << "Size";
-        wattron(win, A_BOLD);
-        mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
-        wattroff(win, A_BOLD);
+        if (tab == 0) {
+            std::ostringstream hdr;
+            hdr << std::left << std::setw(14) << "Uploader"
+                << std::setw(std::max(16, w - 30)) << "Filename"
+                << std::right << std::setw(10) << "Size";
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+            wattroff(win, A_BOLD);
 
-        if (items.empty()) {
-            mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
+            if (pending_items.empty()) {
+                mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
+            } else {
+                for (int r = 0; r < list_h; ++r) {
+                    int idx = top[0] + r;
+                    if (idx >= count) break;
+                    const auto& pf = pending_items[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(14) << clip(pf.uploader, 13)
+                        << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
+                        << std::right << std::setw(10) << pf.size_bytes;
+                    if (idx == sel[0]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[0]) wattroff(win, A_REVERSE | A_BOLD);
+                }
+            }
         } else {
-            for (int r = 0; r < list_h; ++r) {
-                int idx = top + r;
-                if (idx >= count) break;
-                const auto& pf = items[static_cast<std::size_t>(idx)];
-                std::ostringstream row;
-                row << std::left << std::setw(14) << clip(pf.uploader, 13)
-                    << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
-                    << std::right << std::setw(10) << pf.size_bytes;
-                if (idx == sel) wattron(win, A_REVERSE | A_BOLD);
-                mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-                if (idx == sel) wattroff(win, A_REVERSE | A_BOLD);
+            std::ostringstream hdr;
+            hdr << std::left << std::setw(std::max(24, w - 16)) << "Approved File Path"
+                << std::right << std::setw(10) << "Size";
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+            wattroff(win, A_BOLD);
+
+            if (approved_items.empty()) {
+                mvwaddnstr(win, 5, 2, "(No approved files in BBS files area)", w - 4);
+            } else {
+                for (int r = 0; r < list_h; ++r) {
+                    int idx = top[1] + r;
+                    if (idx >= count) break;
+                    const auto& af = approved_items[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(std::max(24, w - 16))
+                        << clip(af.rel_path, std::max(23, w - 17))
+                        << std::right << std::setw(10) << af.size_bytes;
+                    if (idx == sel[1]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[1]) wattroff(win, A_REVERSE | A_BOLD);
+                }
             }
         }
 
         mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
         mvwaddnstr(win, h - 2, 2, clip(feedback, w - 4).c_str(), w - 4);
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
-        mvwaddnstr(win, h - 1, 2,
-                   clip("Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close", w - 4).c_str(),
-                   w - 4);
+        mvwhline(win, h - 1, 1, ' ', w - 2);
+        const char* footer = (tab == 0)
+            ? "Tab/1-2:Tabs  Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close"
+            : "Tab/1-2:Tabs  D/Del:Remove Approved File  R:Refresh  Esc:Close";
+        mvwaddnstr(win, h - 1, 2, clip(footer, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
         if (ch == 27 || ch == 'q' || ch == 'Q') break;
-        if (ch == KEY_UP && sel > 0) {
-            --sel;
-        } else if (ch == KEY_DOWN && sel + 1 < count) {
-            ++sel;
+        if (ch == '\t' || ch == KEY_RIGHT || ch == KEY_LEFT || ch == KEY_BTAB) {
+            tab = 1 - tab;
+        } else if (ch == '1') {
+            tab = 0;
+        } else if (ch == '2') {
+            tab = 1;
+        } else if (ch == KEY_UP && sel[tab] > 0) {
+            --sel[tab];
+        } else if (ch == KEY_DOWN && sel[tab] + 1 < count) {
+            ++sel[tab];
         } else if (ch == KEY_PPAGE) {
-            sel = std::max(0, sel - list_h);
+            sel[tab] = std::max(0, sel[tab] - list_h);
         } else if (ch == KEY_NPAGE && count > 0) {
-            sel = std::min(count - 1, sel + list_h);
+            sel[tab] = std::min(count - 1, sel[tab] + list_h);
         } else if (ch == 'r' || ch == 'R') {
-            items = engine_.list_pending_incoming_files();
-            feedback = "Refreshed (" + std::to_string(items.size()) + " pending).";
-        } else if ((ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
-            const auto pf = items[static_cast<std::size_t>(sel)];
+            pending_items = engine_.list_pending_incoming_files();
+            approved_items = engine_.list_approved_files();
+            feedback = "Refreshed (" + std::to_string(pending_items.size()) + " pending, " +
+                       std::to_string(approved_items.size()) + " approved).";
+        } else if (tab == 0 && (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
+            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
             std::string subdir;
             if (!prompt_text("Subfolder in files area (blank=root): ", subdir)) {
                 feedback = "Approval cancelled.";
@@ -1640,23 +1715,790 @@ void NcursesUI::modal_approve_incoming_files() {
             if (ok) {
                 feedback = "Approved -> " + dest_path;
                 set_status("Approved incoming file: " + pf.uploader + "/" + pf.filename);
-                items = engine_.list_pending_incoming_files();
+                pending_items = engine_.list_pending_incoming_files();
+                approved_items = engine_.list_approved_files();
             } else {
                 feedback = "Error: " + err;
             }
-        } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
-            const auto pf = items[static_cast<std::size_t>(sel)];
+        } else if (tab == 0 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
+            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
             if (prompt_yes_no("Delete incoming/" + pf.uploader + "/" + pf.filename + "?")) {
                 std::string err;
                 if (engine_.delete_incoming_file(pf.uploader, pf.filename, err)) {
                     feedback = "Deleted " + pf.uploader + "/" + pf.filename;
                     set_status(feedback);
-                    items = engine_.list_pending_incoming_files();
+                    pending_items = engine_.list_pending_incoming_files();
                 } else {
                     feedback = "Error: " + err;
                 }
             } else {
                 feedback = "Delete cancelled.";
+            }
+        } else if (tab == 1 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
+            const auto af = approved_items[static_cast<std::size_t>(sel[1])];
+            if (prompt_yes_no("Remove approved file /" + af.rel_path + "?")) {
+                std::string err;
+                if (engine_.delete_approved_file(af.rel_path, err)) {
+                    feedback = "Removed approved file /" + af.rel_path;
+                    set_status(feedback);
+                    approved_items = engine_.list_approved_files();
+                } else {
+                    feedback = "Error: " + err;
+                }
+            } else {
+                feedback = "Remove cancelled.";
+            }
+        }
+    }
+
+    delwin(win);
+}
+
+void NcursesUI::modal_rig_control() {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(76, cols - 2);
+    int h = std::min(19, rows - 2);
+    if (w < 54 || h < 14) {
+        set_status("Terminal too small for Radio Control (min 56x16).");
+        return;
+    }
+    int y = std::max(0, (rows - h) / 2);
+    int x = std::max(0, (cols - w) / 2);
+
+    WINDOW* win = newwin(h, w, y, x);
+    if (!win) return;
+    keypad(win, TRUE);
+    wtimeout(win, 250);
+
+    auto prompt_val = [&](const std::string& label, std::string& val) -> bool {
+        curs_set(1);
+        while (true) {
+            mvwhline(win, h - 2, 1, ' ', w - 2);
+            std::string shown = label + val;
+            if (static_cast<int>(shown.size()) > w - 4) {
+                shown = shown.substr(shown.size() - static_cast<std::size_t>(w - 4));
+            }
+            mvwaddnstr(win, h - 2, 2, shown.c_str(), w - 4);
+            wrefresh(win);
+            int c = wgetch(win);
+            if (c == ERR) continue;
+            if (c == 27) { curs_set(0); return false; }
+            if (c == '\n' || c == '\r' || c == KEY_ENTER) { curs_set(0); return true; }
+            if (c == KEY_BACKSPACE || c == 127 || c == 8) {
+                if (!val.empty()) val.pop_back();
+            } else if (c >= 32 && c < 127 && val.size() < 48) {
+                val.push_back(static_cast<char>(c));
+            }
+        }
+    };
+
+    auto& rig = engine_.rig_controller();
+    std::string feedback;
+    {
+        auto rc = rig.config();
+        if (!rc.enabled || rc.protocol == radio::RigProtocol::None) {
+            feedback = "Rig control disabled. Enable it in Node -> Settings -> 5:Rig.";
+        } else {
+            std::string err;
+            if (rig.refresh(err)) feedback = "Queried radio status.";
+            else feedback = err;
+        }
+    }
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+        auto rc = rig.config();
+        auto st = rig.status();
+
+        werase(win);
+        box(win, 0, 0);
+        mvwprintw(win, 0, 2, " Radio / Rig Control ");
+
+        std::ostringstream hdr;
+        hdr << "Protocol: " << radio::rig_protocol_to_string(rc.protocol)
+            << "  |  Endpoint: " << rc.host << ":" << rc.port
+            << "  [" << (rc.enabled ? (st.reachable ? "ONLINE" : "NO REPLY") : "DISABLED") << "]";
+        wattron(win, A_BOLD);
+        mvwaddnstr(win, 2, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+        wattroff(win, A_BOLD);
+        mvwhline(win, 3, 1, ACS_HLINE, w - 2);
+
+        if (rc.protocol == radio::RigProtocol::RadioFoundry) {
+            mvwaddnstr(win, 4, 2, clip("Zone / Pos   : Zone " + std::to_string(st.zone) +
+                                       ", Channel Pos " + std::to_string(st.pos) + " (0-based)", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 5, 2, clip("Channel Name : " + (st.channel_name.empty() ? "(unknown)" : st.channel_name), w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 6, 2, clip("Frequency    : " + std::to_string(st.freq_hz) + " Hz", w - 4).c_str(), w - 4);
+            if (st.is_dmr) {
+                mvwaddnstr(win, 7, 2, clip("DMR Params   : CC " + std::to_string(st.color_code) +
+                                           "  TS " + std::to_string(st.timeslot) +
+                                           "  TG " + std::to_string(st.talkgroup), w - 4).c_str(), w - 4);
+            } else {
+                mvwaddnstr(win, 7, 2, "DMR Params   : (analog / not reported)", w - 4);
+            }
+            mvwaddnstr(win, 8, 2, clip("Notifications: " + std::string(st.notifications_active ? "ACTIVE" : "OFF"), w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 9, 2, clip("Raw Status   : " + (st.raw_status.empty() ? "(none)" : st.raw_status), w - 4).c_str(), w - 4);
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 11, 2, "Commands (RadioFoundry / takRF UDP 4191):", w - 4);
+            wattroff(win, A_BOLD);
+            mvwaddnstr(win, 12, 2, clip(" [Q/R] Query (select)   [Z] Select Zone & Pos   [N] Stop Notify", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 13, 2, clip(" [+/-] Step Channel     [[/]] Step Zone         [Esc] Close", w - 4).c_str(), w - 4);
+        } else {
+            mvwaddnstr(win, 4, 2, clip("Frequency    : " + std::to_string(st.freq_hz) + " Hz", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 5, 2, clip("Mode / PB    : " + (st.mode.empty() ? "(unknown)" : st.mode) +
+                                       " (" + std::to_string(st.passband_hz) + " Hz)", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 6, 2, clip("PTT / VFO    : " + std::string(st.ptt > 0 ? "TX" : (st.ptt == 0 ? "RX" : "UNKNOWN")) +
+                                       "  |  VFO: " + (st.vfo.empty() ? "(unknown)" : st.vfo), w - 4).c_str(), w - 4);
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 11, 2, "Commands (Hamlib rigctld TCP 4532):", w - 4);
+            wattroff(win, A_BOLD);
+            mvwaddnstr(win, 12, 2, clip(" [Q/R] Query Rig        [F] Set Frequency (Hz)  [M] Set Mode", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 13, 2, clip(" [P]   Toggle PTT       [V] Set VFO             [Esc] Close", w - 4).c_str(), w - 4);
+        }
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_WARN));
+        mvwaddnstr(win, h - 3, 2, clip(feedback, w - 4).c_str(), w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_WARN));
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
+        mvwhline(win, h - 1, 1, ' ', w - 2);
+        mvwaddnstr(win, h - 1, 2, "Q/R:Refresh  Esc:Close", w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == 27) break;
+
+        std::string err;
+        if (ch == 'q' || ch == 'Q' || ch == 'r' || ch == 'R') {
+            if (rig.refresh(err)) feedback = "Radio status refreshed.";
+            else feedback = err;
+        } else if (rc.protocol == radio::RigProtocol::RadioFoundry) {
+            if (ch == '+' || ch == '=') {
+                if (rig.step_channel(1, err)) feedback = "Stepped channel +1.";
+                else feedback = err;
+            } else if (ch == '-') {
+                if (rig.step_channel(-1, err)) feedback = "Stepped channel -1.";
+                else feedback = err;
+            } else if (ch == ']') {
+                if (rig.step_zone(1, err)) feedback = "Stepped zone +1.";
+                else feedback = err;
+            } else if (ch == '[') {
+                if (rig.step_zone(-1, err)) feedback = "Stepped zone -1.";
+                else feedback = err;
+            } else if (ch == 'n' || ch == 'N') {
+                if (rig.stop_notifications(err)) feedback = "Notifications stopped (select?notify=0).";
+                else feedback = err;
+            } else if (ch == 'z' || ch == 'Z') {
+                std::string zs = std::to_string(std::max(0, st.zone));
+                std::string ps = std::to_string(std::max(0, st.pos));
+                if (prompt_val("Zone (0-based): ", zs) && prompt_val("Channel Pos (0-based): ", ps)) {
+                    try {
+                        int z = std::stoi(zs);
+                        int p = std::stoi(ps);
+                        if (rig.select_zone_channel(z, p, err)) feedback = "Selected zone " + zs + " pos " + ps + ".";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid zone/pos number."; }
+                }
+            }
+        } else if (rc.protocol == radio::RigProtocol::Rigctl) {
+            if (ch == 'f' || ch == 'F') {
+                std::string fs = std::to_string(st.freq_hz ? st.freq_hz : 145050000ULL);
+                if (prompt_val("Frequency (Hz): ", fs)) {
+                    try {
+                        uint64_t hz = std::stoull(fs);
+                        if (rig.set_frequency(hz, err)) feedback = "Frequency set to " + fs + " Hz.";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid frequency."; }
+                }
+            } else if (ch == 'm' || ch == 'M') {
+                std::string ms = st.mode.empty() ? "FM" : st.mode;
+                std::string pbs = std::to_string(st.passband_hz);
+                if (prompt_val("Mode (FM/USB/LSB/CW/PKTFM): ", ms) && prompt_val("Passband Hz (0=default): ", pbs)) {
+                    try {
+                        int pb = std::stoi(pbs);
+                        if (rig.set_mode(ms, pb, err)) feedback = "Mode set to " + ms + ".";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid passband."; }
+                }
+            } else if (ch == 'p' || ch == 'P') {
+                bool next_tx = !(st.ptt > 0);
+                if (rig.set_ptt(next_tx, err)) feedback = next_tx ? "PTT set to TX." : "PTT set to RX.";
+                else feedback = err;
+            } else if (ch == 'v' || ch == 'V') {
+                std::string vs = st.vfo.empty() ? "VFOA" : st.vfo;
+                if (prompt_val("VFO (VFOA/VFOB): ", vs)) {
+                    if (rig.set_vfo(vs, err)) feedback = "VFO set to " + vs + ".";
+                    else feedback = err;
+                }
+            }
+        }
+    }
+
+    delwin(win);
+}
+
+void NcursesUI::modal_settings() {
+    node::NodeConfig draft = engine_.config();
+
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(78, cols - 2);
+    int h = std::min(20, rows - 2);
+    if (w < 56 || h < 14) {
+        set_status("Terminal too small for Settings UI (min 58x16).");
+        return;
+    }
+    int y = std::max(0, (rows - h) / 2);
+    int x = std::max(0, (cols - w) / 2);
+
+    WINDOW* win = newwin(h, w, y, x);
+    if (!win) return;
+    keypad(win, TRUE);
+    wtimeout(win, 200);
+
+    auto prompt_edit = [&](const std::string& label, std::string& val, std::size_t max_len = 140) -> bool {
+        curs_set(1);
+        while (true) {
+            mvwhline(win, h - 2, 1, ' ', w - 2);
+            std::string shown = label + val;
+            if (static_cast<int>(shown.size()) > w - 4) {
+                shown = shown.substr(shown.size() - static_cast<std::size_t>(w - 4));
+            }
+            mvwaddnstr(win, h - 2, 2, shown.c_str(), w - 4);
+            wrefresh(win);
+            int c = wgetch(win);
+            if (c == ERR) continue;
+            if (c == 27) { curs_set(0); return false; }
+            if (c == '\n' || c == '\r' || c == KEY_ENTER) { curs_set(0); return true; }
+            if (c == KEY_BACKSPACE || c == 127 || c == 8) {
+                if (!val.empty()) val.pop_back();
+            } else if (c >= 32 && c < 127 && val.size() < max_len) {
+                val.push_back(static_cast<char>(c));
+            }
+        }
+    };
+
+    auto show_notice = [&](const std::string& title, const std::string& msg) {
+        int nw = std::min(72, cols - 4);
+        int nh = 8;
+        int ny = std::max(1, (rows - nh) / 2);
+        int nx = std::max(1, (cols - nw) / 2);
+        WINDOW* nwin = newwin(nh, nw, ny, nx);
+        if (!nwin) return;
+        keypad(nwin, TRUE);
+        wtimeout(nwin, 200);
+        werase(nwin);
+        box(nwin, 0, 0);
+        mvwprintw(nwin, 0, 2, " %s ", title.c_str());
+        int lw = nw - 4;
+        std::size_t pos = 0;
+        for (int line = 2; line <= 4 && pos < msg.size(); ++line) {
+            mvwaddnstr(nwin, line, 2, msg.substr(pos, static_cast<std::size_t>(lw)).c_str(), lw);
+            pos += static_cast<std::size_t>(lw);
+        }
+        mvwaddnstr(nwin, nh - 2, 2, "Press any key to continue...", lw);
+        wrefresh(nwin);
+        while (true) {
+            if (external_stop_flag_ && external_stop_flag_->load()) break;
+            int c = wgetch(nwin);
+            if (c != ERR) break;
+        }
+        delwin(nwin);
+    };
+
+    auto iface_summary = [](const radio::RadioInterfaceConfig& ic) -> std::string {
+        auto get_p = [&](const char* k) -> std::string {
+            auto it = ic.params.find(k);
+            return (it != ic.params.end()) ? it->second : "";
+        };
+        if (ic.type == "axudp" || ic.type == "telnet") {
+            std::string bh = get_p("bind_host");
+            std::string bp = get_p("bind_port");
+            return (bh.empty() ? "0.0.0.0" : bh) + ":" + bp;
+        }
+        if (ic.type == "axip") {
+            std::string bh = get_p("bind_host");
+            return (bh.empty() ? "0.0.0.0" : bh) + " (IP proto 93)";
+        }
+        if (ic.type == "kiss-serial") {
+            return get_p("device") + " @" + get_p("baud");
+        }
+        if (ic.type == "kiss-tcp") {
+            return get_p("mode") + " " + get_p("host") + ":" + get_p("port");
+        }
+        return ic.description;
+    };
+
+    // Five logical tabs matching GTK/Windows/DOS: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig
+    static const char* TAB_NAMES[5] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig" };
+    static const char* NODE_LABELS[5] = {
+        "Node Callsign",
+        "Node Alias",
+        "Welcome Message",
+        "Info Message",
+        "Allow Incoming (Default)"
+    };
+    static const char* BBS_LABELS[9] = {
+        "Enable Packet BBS",
+        "BBS SSID (0-15)",
+        "Callsign Override",
+        "BBS Alias",
+        "Enable BBS Files Area",
+        "Case-Insensitive Files",
+        "Files Area Root Path",
+        "Mail Storage Path",
+        "BBS Welcome Message"
+    };
+    static const char* CHAT_LABELS[6] = {
+        "Enable Multi-User CHAT",
+        "CHAT SSID (0-15)",
+        "Callsign Override",
+        "CHAT Alias",
+        "Default Topic",
+        "CHAT Welcome Message"
+    };
+    static const char* RIG_LABELS[6] = {
+        "Enable Rig Control",
+        "Protocol (rigctl/rf)",
+        "Radio Host / IP",
+        "Port (4532 / 4191)",
+        "Poll Interval (sec)",
+        "RadioFoundry Notify"
+    };
+
+    auto tab_item_count = [&](int t) -> int {
+        if (t == 0) return 5;
+        if (t == 1) return 9;
+        if (t == 2) return 6;
+        if (t == 3) return static_cast<int>(draft.interfaces.size());
+        return 6;
+    };
+
+    auto tab_field_label = [&](int t, int idx) -> const char* {
+        if (t == 0) return NODE_LABELS[idx];
+        if (t == 1) return BBS_LABELS[idx];
+        if (t == 2) return CHAT_LABELS[idx];
+        if (t == 4) return RIG_LABELS[idx];
+        return "";
+    };
+
+    auto tab_field_value = [&](int t, int idx) -> std::string {
+        if (t == 0) {
+            switch (idx) {
+                case 0: return draft.callsign.str();
+                case 1: return draft.alias.valid() ? draft.alias.str() : "(none)";
+                case 2: return draft.welcome_text;
+                case 3: return draft.info_text;
+                case 4: return draft.accept_incoming_default ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        }
+        if (t == 1) {
+            switch (idx) {
+                case 0: return draft.bbs.enabled ? "[ON]" : "[OFF]";
+                case 1: return std::to_string(static_cast<int>(draft.bbs.ssid)) +
+                               " (resolves: " + draft.resolved_bbs_callsign().str() + ")";
+                case 2: return draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "(auto from base+SSID)";
+                case 3: return draft.bbs.alias.valid() ? draft.bbs.alias.str() : "(none)";
+                case 4: return draft.bbs.files_enabled ? "[ON]" : "[OFF]";
+                case 5: return draft.bbs.files_case_insensitive ? "[ON]" : "[OFF]";
+                case 6: return draft.bbs.files_path;
+                case 7: return draft.bbs.mail_path;
+                case 8: return draft.bbs.welcome;
+                default: return "";
+            }
+        }
+        if (t == 2) {
+            switch (idx) {
+                case 0: return draft.chat.enabled ? "[ON]" : "[OFF]";
+                case 1: return std::to_string(static_cast<int>(draft.chat.ssid)) +
+                               " (resolves: " + draft.resolved_chat_callsign().str() + ")";
+                case 2: return draft.chat.callsign.valid() ? draft.chat.callsign.str() : "(auto from base+SSID)";
+                case 3: return draft.chat.alias.valid() ? draft.chat.alias.str() : "(none)";
+                case 4: return draft.chat.default_topic;
+                case 5: return draft.chat.welcome;
+                default: return "";
+            }
+        }
+        if (t == 4) {
+            switch (idx) {
+                case 0: return draft.rig.enabled ? "[ON]" : "[OFF]";
+                case 1: return radio::rig_protocol_to_string(draft.rig.protocol);
+                case 2: return draft.rig.host;
+                case 3: return std::to_string(draft.rig.port);
+                case 4: return std::to_string(draft.rig.poll_interval_sec) + " s";
+                case 5: return draft.rig.notify ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        }
+        return "";
+    };
+
+    int tab = 0;
+    int sel[5] = { 0, 0, 0, 0, 0 };
+    int if_scroll = 0;
+    const int content_h = std::max(1, h - 8);
+    std::string feedback = "Config: " + (draft.source_path.empty() ? std::string("./node.cfg") : draft.source_path);
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+
+        int cnt = tab_item_count(tab);
+        if (cnt <= 0) sel[tab] = 0;
+        else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
+        if (tab == 3) {
+            int list_h = std::max(1, content_h - 1);
+            if (sel[3] < if_scroll) if_scroll = sel[3];
+            if (sel[3] >= if_scroll + list_h) if_scroll = sel[3] - list_h + 1;
+        }
+
+        werase(win);
+        box(win, 0, 0);
+        mvwprintw(win, 0, 2, " Node Settings ");
+
+        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces | Rig)
+        int tx = 2;
+        for (int t = 0; t < 5; ++t) {
+            std::string lbl = std::string(" ") + TAB_NAMES[t] + " ";
+            if (t == tab) {
+                if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattron(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattron(win, COLOR_PAIR(CP_MENU));
+            }
+            mvwaddnstr(win, 1, tx, lbl.c_str(), w - tx - 2);
+            if (t == tab) {
+                if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattroff(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattroff(win, COLOR_PAIR(CP_MENU));
+            }
+            tx += static_cast<int>(lbl.size()) + 1;
+        }
+        mvwhline(win, 2, 1, ACS_HLINE, w - 2);
+
+        if (tab != 3) {
+            for (int i = 0; i < cnt && i < content_h; ++i) {
+                std::ostringstream row;
+                row << std::left << std::setw(25) << tab_field_label(tab, i)
+                    << ": " << tab_field_value(tab, i);
+                if (i == sel[tab]) wattron(win, A_REVERSE | A_BOLD);
+                mvwaddnstr(win, 3 + i, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                if (i == sel[tab]) wattroff(win, A_REVERSE | A_BOLD);
+            }
+        } else {
+            wattron(win, A_BOLD | A_UNDERLINE);
+            mvwaddnstr(win, 3, 2,
+                       clip("ID           Type         Endpoint / Device             Peers", w - 4).c_str(),
+                       w - 4);
+            wattroff(win, A_BOLD | A_UNDERLINE);
+            int list_h = std::max(1, content_h - 1);
+            if (cnt == 0) {
+                mvwaddnstr(win, 4, 2, "(no interfaces configured - press A to add)", w - 4);
+            } else {
+                for (int r = 0; r < list_h && if_scroll + r < cnt; ++r) {
+                    int idx = if_scroll + r;
+                    const auto& ic = draft.interfaces[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(13) << clip(ic.id, 12)
+                        << std::setw(13) << clip(ic.type, 12)
+                        << std::setw(30) << clip(iface_summary(ic), 29)
+                        << ic.peers.size();
+                    if (idx == sel[3]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[3]) wattroff(win, A_REVERSE | A_BOLD);
+                }
+            }
+        }
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_WARN));
+        mvwaddnstr(win, h - 3, 2, clip(feedback, w - 4).c_str(), w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_WARN));
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
+        mvwhline(win, h - 1, 1, ' ', w - 2);
+        const char* help_bar = (tab == 3)
+            ? "Tab/1-5:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
+            : "Tab/Left/Right/1-5:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
+        mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == 27) break;
+
+        if (ch == '\t' || ch == KEY_RIGHT) {
+            tab = (tab + 1) % 5;
+            continue;
+        }
+        if (ch == KEY_BTAB || ch == KEY_LEFT) {
+            tab = (tab + 4) % 5;
+            continue;
+        }
+        if (ch >= '1' && ch <= '5') {
+            tab = ch - '1';
+            continue;
+        }
+        if (ch == KEY_UP && sel[tab] > 0) {
+            --sel[tab];
+            continue;
+        }
+        if (ch == KEY_DOWN && sel[tab] + 1 < cnt) {
+            ++sel[tab];
+            continue;
+        }
+
+        if (ch == 's' || ch == 'S' || ch == KEY_F(2)) {
+            auto res = engine_.apply_config(draft, true);
+            if (!res.applied) {
+                feedback = "Error: " + res.error;
+                continue;
+            }
+            if (!res.saved_to_disk) {
+                show_notice("Read-Only Config Notice",
+                            res.warning.empty()
+                                ? ("Config file '" + res.save_path +
+                                   "' is not writable. Changes remain in memory only while running and will be lost on exit.")
+                                : res.warning);
+                set_status("Settings applied IN MEMORY ONLY (config not writable).");
+            } else {
+                std::string st = "Settings saved to " + res.save_path + " and applied.";
+                if (res.signed_off_sessions > 0) {
+                    st += " Signed off " + std::to_string(res.signed_off_sessions) + " session(s).";
+                }
+                if (!res.warning.empty()) {
+                    st += " (" + res.warning + ")";
+                }
+                set_status(st);
+            }
+            break;
+        }
+
+        if (tab == 3) {
+            if (ch == 'a' || ch == 'A') {
+                std::string id, type_s = "axudp", desc;
+                if (!prompt_edit("Interface ID (e.g. axudp1, telnet0): ", id, 24) || id.empty()) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                bool dup = false;
+                for (const auto& existing : draft.interfaces) {
+                    if (existing.id == id) { dup = true; break; }
+                }
+                if (dup) {
+                    feedback = "Duplicate interface ID: " + id;
+                    continue;
+                }
+                if (!prompt_edit("Type [axudp|axip|kiss-serial|kiss-tcp|telnet]: ", type_s, 16)) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                std::transform(type_s.begin(), type_s.end(), type_s.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (type_s != "axudp" && type_s != "axip" && type_s != "kiss-serial" &&
+                    type_s != "kiss-tcp" && type_s != "telnet") {
+                    feedback = "Invalid type '" + type_s + "'.";
+                    continue;
+                }
+                if (!prompt_edit("Description (optional): ", desc, 48)) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                radio::RadioInterfaceConfig ic;
+                ic.id = id;
+                ic.type = type_s;
+                ic.description = desc;
+
+                if (type_s == "axudp") {
+                    std::string host = "0.0.0.0", port = "10093", peer;
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    if (!prompt_edit("Bind UDP port: ", port, 8)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["bind_port"] = port.empty() ? "10093" : port;
+                    ic.params["auto_learn"] = "true";
+                    if (prompt_edit("Static peer (optional, CALL@ip:port): ", peer, 64) && !peer.empty()) {
+                        ic.peers.push_back(peer);
+                    }
+                } else if (type_s == "axip") {
+                    std::string host = "0.0.0.0", peer;
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["auto_learn"] = "true";
+                    if (prompt_edit("Static peer (optional, CALL@ip): ", peer, 64) && !peer.empty()) {
+                        ic.peers.push_back(peer);
+                    }
+                } else if (type_s == "kiss-serial") {
+                    std::string dev = "/dev/ttyUSB0", baud = "9600", kport = "0";
+                    if (!prompt_edit("Serial device: ", dev, 64) || dev.empty()) continue;
+                    if (!prompt_edit("Baud rate: ", baud, 12)) continue;
+                    if (!prompt_edit("KISS port (0-15): ", kport, 4)) continue;
+                    ic.params["device"] = dev;
+                    ic.params["baud"] = baud.empty() ? "9600" : baud;
+                    ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+                } else if (type_s == "kiss-tcp") {
+                    std::string mode = "client", host = "127.0.0.1", port = "8001", kport = "0";
+                    if (!prompt_edit("Mode [client|server]: ", mode, 12)) continue;
+                    if (!prompt_edit("Host: ", host, 48)) continue;
+                    if (!prompt_edit("TCP port: ", port, 8)) continue;
+                    if (!prompt_edit("KISS port (0-15): ", kport, 4)) continue;
+                    ic.params["mode"] = (mode == "server") ? "server" : "client";
+                    ic.params["host"] = host.empty() ? "127.0.0.1" : host;
+                    ic.params["port"] = port.empty() ? "8001" : port;
+                    ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+                } else if (type_s == "telnet") {
+                    std::string host = "0.0.0.0", port = "8010";
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    if (!prompt_edit("Bind TCP port: ", port, 8)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["bind_port"] = port.empty() ? "8010" : port;
+                }
+                draft.interfaces.push_back(std::move(ic));
+                sel[3] = static_cast<int>(draft.interfaces.size()) - 1;
+                feedback = "Added interface '" + id + "' (press S/F2 to Save & Apply).";
+            } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && cnt > 0) {
+                std::string rem_id = draft.interfaces[static_cast<std::size_t>(sel[3])].id;
+                mvwhline(win, h - 2, 1, ' ', w - 2);
+                mvwaddnstr(win, h - 2, 2, ("Remove interface '" + rem_id + "'? [Y/N]: ").c_str(), w - 4);
+                wrefresh(win);
+                int yn = 0;
+                while (true) {
+                    int c = wgetch(win);
+                    if (c == ERR) continue;
+                    if (c == 'y' || c == 'Y') { yn = 1; break; }
+                    if (c == 'n' || c == 'N' || c == 27) { yn = 0; break; }
+                }
+                if (yn) {
+                    draft.interfaces.erase(draft.interfaces.begin() + sel[3]);
+                    feedback = "Removed interface '" + rem_id + "'.";
+                } else {
+                    feedback = "Remove cancelled.";
+                }
+            }
+            continue;
+        }
+
+        if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
+            int f = sel[tab];
+            if (tab == 0 && f == 4) { draft.accept_incoming_default = !draft.accept_incoming_default; continue; }
+            if (tab == 1 && f == 0) { draft.bbs.enabled = !draft.bbs.enabled; continue; }
+            if (tab == 1 && f == 4) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
+            if (tab == 1 && f == 5) { draft.bbs.files_case_insensitive = !draft.bbs.files_case_insensitive; continue; }
+            if (tab == 2 && f == 0) { draft.chat.enabled = !draft.chat.enabled; continue; }
+            if (tab == 4 && f == 0) { draft.rig.enabled = !draft.rig.enabled; continue; }
+            if (tab == 4 && f == 1) {
+                if (draft.rig.protocol == radio::RigProtocol::Rigctl) {
+                    draft.rig.protocol = radio::RigProtocol::RadioFoundry;
+                    if (draft.rig.port == 4532 || draft.rig.port == 0) draft.rig.port = 4191;
+                } else {
+                    draft.rig.protocol = radio::RigProtocol::Rigctl;
+                    if (draft.rig.port == 4191 || draft.rig.port == 0) draft.rig.port = 4532;
+                }
+                continue;
+            }
+            if (tab == 4 && f == 5) { draft.rig.notify = !draft.rig.notify; continue; }
+
+            std::string val;
+            if (tab == 0) {
+                if (f == 0) val = draft.callsign.str();
+                else if (f == 1) val = draft.alias.valid() ? draft.alias.str() : "";
+                else if (f == 2) val = draft.welcome_text;
+                else if (f == 3) val = draft.info_text;
+            } else if (tab == 1) {
+                if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
+                else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
+                else if (f == 3) val = draft.bbs.alias.valid() ? draft.bbs.alias.str() : "";
+                else if (f == 6) val = draft.bbs.files_path;
+                else if (f == 7) val = draft.bbs.mail_path;
+                else if (f == 8) val = draft.bbs.welcome;
+            } else if (tab == 2) {
+                if (f == 1) val = std::to_string(static_cast<int>(draft.chat.ssid));
+                else if (f == 2) val = draft.chat.callsign.valid() ? draft.chat.callsign.str() : "";
+                else if (f == 3) val = draft.chat.alias.valid() ? draft.chat.alias.str() : "";
+                else if (f == 4) val = draft.chat.default_topic;
+                else if (f == 5) val = draft.chat.welcome;
+            } else if (tab == 4) {
+                if (f == 2) val = draft.rig.host;
+                else if (f == 3) val = std::to_string(draft.rig.port);
+                else if (f == 4) val = std::to_string(draft.rig.poll_interval_sec);
+            }
+
+            if (!prompt_edit(std::string(tab_field_label(tab, f)) + ": ", val)) continue;
+
+            if (tab == 0) {
+                if (f == 0) {
+                    auto parsed = node::NodeConfig::parse_callsign_with_default_ssid(val);
+                    if (!parsed) feedback = "Invalid node callsign '" + val + "'.";
+                    else { draft.callsign = *parsed; feedback = "Node callsign updated (press S/F2 to Save & Apply)."; }
+                } else if (f == 1) {
+                    if (val.empty()) draft.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.alias = *p;
+                    else feedback = "Invalid alias '" + val + "'.";
+                } else if (f == 2) {
+                    draft.welcome_text = val;
+                } else if (f == 3) {
+                    draft.info_text = val;
+                }
+            } else if (tab == 1) {
+                if (f == 1) {
+                    try {
+                        int sv = std::stoi(val);
+                        if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
+                        else draft.bbs.ssid = static_cast<uint8_t>(sv);
+                    } catch (...) { feedback = "Invalid SSID number."; }
+                } else if (f == 2) {
+                    if (val.empty()) draft.bbs.callsign = ax25::Callsign{};
+                    else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.bbs.ssid)) draft.bbs.callsign = *p;
+                    else feedback = "Invalid BBS callsign '" + val + "'.";
+                } else if (f == 3) {
+                    if (val.empty()) draft.bbs.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.bbs.alias = *p;
+                    else feedback = "Invalid BBS alias '" + val + "'.";
+                } else if (f == 6) {
+                    if (!val.empty()) draft.bbs.files_path = val;
+                } else if (f == 7) {
+                    if (!val.empty()) draft.bbs.mail_path = val;
+                } else if (f == 8) {
+                    draft.bbs.welcome = val;
+                }
+            } else if (tab == 2) {
+                if (f == 1) {
+                    try {
+                        int sv = std::stoi(val);
+                        if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
+                        else draft.chat.ssid = static_cast<uint8_t>(sv);
+                    } catch (...) { feedback = "Invalid SSID number."; }
+                } else if (f == 2) {
+                    if (val.empty()) draft.chat.callsign = ax25::Callsign{};
+                    else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.chat.ssid)) draft.chat.callsign = *p;
+                    else feedback = "Invalid CHAT callsign '" + val + "'.";
+                } else if (f == 3) {
+                    if (val.empty()) draft.chat.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.chat.alias = *p;
+                    else feedback = "Invalid CHAT alias '" + val + "'.";
+                } else if (f == 4) {
+                    if (!val.empty()) draft.chat.default_topic = val;
+                } else if (f == 5) {
+                    draft.chat.welcome = val;
+                }
+            } else if (tab == 4) {
+                if (f == 2) {
+                    if (!val.empty()) draft.rig.host = val;
+                } else if (f == 3) {
+                    try {
+                        int pv = std::stoi(val);
+                        if (pv < 1 || pv > 65535) feedback = "Port must be 1..65535.";
+                        else draft.rig.port = static_cast<uint16_t>(pv);
+                    } catch (...) { feedback = "Invalid port number."; }
+                } else if (f == 4) {
+                    try {
+                        int iv = std::stoi(val);
+                        if (iv < 0 || iv > 3600) feedback = "Interval must be 0..3600.";
+                        else draft.rig.poll_interval_sec = static_cast<uint32_t>(iv);
+                    } catch (...) { feedback = "Invalid interval."; }
+                }
             }
         }
     }

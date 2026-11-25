@@ -243,6 +243,9 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (lower_sec == "chat") {
                 current_section = "chat";
                 current_iface = nullptr;
+            } else if (lower_sec == "rig" || lower_sec == "radio") {
+                current_section = "rig";
+                current_iface = nullptr;
             } else if (lower_sec.rfind("interface", 0) == 0) {
                 std::string rest = trim(sec.substr(9));
                 // Allow "[interface axudp0]" or "[interface:axudp0]"
@@ -305,6 +308,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                     }
                     cfg.alias = *parsed;
                 }
+            } else if (key == "welcome" || key == "welcome_text") {
+                cfg.welcome_text = val;
             } else if (key == "info" || key == "info_text") {
                 cfg.info_text = val;
             } else if (key == "logpath") {
@@ -384,6 +389,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 }
             } else if (key == "mailpath" || key == "mail_path") {
                 if (!val.empty()) cfg.bbs.mail_path = val;
+            } else if (key == "files_enabled" || key == "filesenabled") {
+                cfg.bbs.files_enabled = parse_bool(val, true);
+            } else if (key == "files_case_insensitive" || key == "filescaseinsensitive") {
+                cfg.bbs.files_case_insensitive = parse_bool(val, true);
             } else if (key == "filespath" || key == "files_path") {
                 if (!val.empty()) cfg.bbs.files_path = val;
             } else if (key == "welcome") {
@@ -430,6 +439,21 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "welcome") {
                 cfg.chat.welcome = val;
             }
+        } else if (current_section == "rig") {
+            if (key == "enabled") {
+                cfg.rig.enabled = parse_bool(val, false);
+            } else if (key == "protocol" || key == "type") {
+                cfg.rig.protocol = radio::rig_protocol_from_string(val);
+            } else if (key == "host" || key == "address") {
+                if (!val.empty()) cfg.rig.host = val;
+            } else if (key == "port") {
+                int pv = std::clamp(std::stoi(val), 0, 65535);
+                cfg.rig.port = static_cast<uint16_t>(pv);
+            } else if (key == "poll_interval_sec" || key == "keepalive_sec") {
+                cfg.rig.poll_interval_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+            } else if (key == "notify") {
+                cfg.rig.notify = parse_bool(val, true);
+            }
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
@@ -443,6 +467,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 current_iface->params[key] = val;
             }
         }
+    }
+
+    if (cfg.rig.port == 0 && cfg.rig.protocol != radio::RigProtocol::None) {
+        cfg.rig.port = radio::rig_default_port(cfg.rig.protocol);
     }
 
     if (cfg.interfaces.empty()) {
@@ -463,6 +491,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     if (alias.valid()) {
         lines.push_back("alias = " + alias.str());
     }
+    lines.push_back("welcome = " + welcome_text);
     lines.push_back("info = " + info_text);
     lines.push_back("accept_incoming = " + std::string(accept_incoming_default ? "true" : "false"));
     lines.push_back("paclen = " + std::to_string(paclen));
@@ -503,6 +532,8 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         lines.push_back("alias = " + bbs.alias.str());
     }
     lines.push_back("mailpath = " + bbs.mail_path);
+    lines.push_back("files_enabled = " + std::string(bbs.files_enabled ? "true" : "false"));
+    lines.push_back("files_case_insensitive = " + std::string(bbs.files_case_insensitive ? "true" : "false"));
     lines.push_back("filespath = " + bbs.files_path);
     lines.push_back("welcome = " + bbs.welcome);
     lines.push_back("max_msg_bytes = " + std::to_string(bbs.max_msg_bytes));
@@ -520,6 +551,15 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     lines.push_back("topic = " + chat.default_topic);
     lines.push_back("welcome = " + chat.welcome);
 
+    lines.push_back("");
+    lines.push_back("[rig]");
+    lines.push_back("enabled = " + std::string(rig.enabled ? "true" : "false"));
+    lines.push_back("protocol = " + radio::rig_protocol_to_string(rig.protocol));
+    lines.push_back("host = " + (rig.host.empty() ? std::string("127.0.0.1") : rig.host));
+    lines.push_back("port = " + std::to_string(rig.port ? rig.port : radio::rig_default_port(rig.protocol)));
+    lines.push_back("poll_interval_sec = " + std::to_string(rig.poll_interval_sec));
+    lines.push_back("notify = " + std::string(rig.notify ? "true" : "false"));
+
     for (const auto& iface : interfaces) {
         lines.push_back("");
         lines.push_back("[interface " + iface.id + "]");
@@ -532,6 +572,16 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         }
         for (const auto& peer : iface.peers) {
             lines.push_back("peer = " + peer);
+        }
+    }
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path p(target);
+    if (p.has_parent_path() && !p.parent_path().empty()) {
+        fs::create_directories(p.parent_path(), ec);
+        if (ec) {
+            return false;
         }
     }
 

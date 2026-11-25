@@ -13,6 +13,7 @@
 #include "oyk/node/node_config.hpp"
 #include "oyk/node/session.hpp"
 #include "oyk/radio/radio_interface.hpp"
+#include "oyk/radio/rig_control.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -71,9 +72,11 @@ struct SessionSnapshot {
 struct NodeSnapshot {
     std::string node_callsign;
     std::string node_alias;
+    std::string welcome_text;
     std::string info_text;
     uint64_t uptime_seconds = 0;
     bool accept_incoming = true;
+    bool manual_deny_incoming = false;
     std::size_t total_active_connections = 0;
 
     std::vector<InterfaceSnapshot> interfaces;
@@ -82,6 +85,17 @@ struct NodeSnapshot {
     std::vector<std::string> banned_callsigns;
     std::vector<BanEntry> ban_entries;
     std::vector<std::string> recent_logs;
+};
+
+struct ConfigApplyResult {
+    bool applied = false;
+    bool saved_to_disk = false;
+    bool identity_restarted = false;
+    bool interfaces_reloaded = false;
+    std::size_t signed_off_sessions = 0;
+    std::string save_path;
+    std::string warning;
+    std::string error;
 };
 
 class NodeEngine {
@@ -126,7 +140,9 @@ public:
     bool unban_callsign(std::string_view callsign_spec, std::string* message_out = nullptr);
     bool is_banned(const ax25::Callsign& call) const;
 
-    // Query APIs (thread-safe)
+    // Query & live configuration APIs (thread-safe)
+    NodeConfig config() const;
+    ConfigApplyResult apply_config(NodeConfig new_cfg, bool save_to_disk = true);
     NodeSnapshot snapshot() const;
     std::vector<MHeardRecord> mheard(std::size_t max_entries = 20) const;
     Logger& logger() noexcept { return logger_; }
@@ -145,9 +161,16 @@ public:
     bool delete_incoming_file(const std::string& uploader,
                               const std::string& filename,
                               std::string& error_out);
+    std::vector<ApprovedFileEntry> list_approved_files() const;
+    bool delete_approved_file(const std::string& rel_path,
+                              std::string& error_out);
 
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }
+
+    // Radio / Rig Control (Hamlib rigctld TCP + RadioFoundry UDP 4191)
+    radio::RigController& rig_controller() noexcept { return rig_controller_; }
+    const radio::RigController& rig_controller() const noexcept { return rig_controller_; }
 
     // Local operator packet terminal (outbound AX.25 binary-safe stream, supports YAPP)
     struct LocalTerminalCallbacks {
@@ -251,6 +274,7 @@ private:
 
     mutable std::mutex state_mutex_;
     bool accept_incoming_ = true;
+    bool manual_deny_incoming_ = false;
     uint64_t next_session_id_ = 1;
 
     std::vector<std::unique_ptr<radio::RadioInterface>> interfaces_;
@@ -264,10 +288,11 @@ private:
     std::deque<NewCallsignRecord> last_new_callsigns_; // Most recent 5 new callsigns (newest first)
     std::map<std::string, MHeardRecord> mheard_;
 
-    // Persistent banlist (banlist.cfg), packet BBS, and multi-user CHAT conference room
+    // Persistent banlist (banlist.cfg), packet BBS, multi-user CHAT, and rig control
     BanList ban_list_;
     BbsServer bbs_server_;
     ChatRoom chat_room_;
+    radio::RigController rig_controller_;
 
     std::thread timer_thread_;
 };

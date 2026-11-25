@@ -2193,6 +2193,587 @@ void test_bbs_files_area_traversal_and_approval() {
     std::cout << "[PASS] test_bbs_files_area_traversal_and_approval\n";
 }
 
+void test_live_settings_reconfig_and_readonly_fs() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_settings_reconfig";
+    std::error_code ec;
+    fs::permissions(tmp_root, fs::perms::owner_all, fs::perm_options::replace, ec);
+    fs::remove_all(tmp_root, ec);
+    fs::create_directories(tmp_root + "/files");
+    const std::string cfg_path = tmp_root + "/node.cfg";
+
+    // 1. Start node with AXUDP interface, BBS enabled (SSID 11), CHAT enabled (SSID 12)
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign{"K7OYK", 7};
+    cfg.alias = ax25::Callsign{"OYKNOD", 0};
+    cfg.welcome_text = "Initial Welcome Banner";
+    cfg.info_text = "Initial Node Info";
+    cfg.source_path = cfg_path;
+    cfg.logging.log_path = tmp_root + "/logs";
+    cfg.bbs.enabled = true;
+    cfg.bbs.ssid = 11;
+    cfg.bbs.files_enabled = true;
+    cfg.bbs.mail_path = tmp_root + "/mail";
+    cfg.bbs.files_path = tmp_root + "/files";
+    cfg.chat.enabled = true;
+    cfg.chat.ssid = 12;
+
+    radio::RadioInterfaceConfig ax;
+    ax.id = "axudp0";
+    ax.type = "axudp";
+    ax.description = "Primary AXUDP";
+    ax.params["bind_host"] = "127.0.0.1";
+    ax.params["bind_port"] = "19451";
+    ax.params["auto_learn"] = "true";
+    cfg.interfaces.push_back(ax);
+    assert(cfg.save_to_file(cfg_path));
+
+    node::NodeEngine engine(cfg);
+    std::string err;
+    assert(engine.start(err));
+
+    // Verify BBS Files Area toggle ON -> OFF -> ON via apply_config()
+    {
+        uint64_t sid = 0;
+        std::string rx_accum;
+        std::mutex rx_mtx;
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.append(reinterpret_cast<const char*>(b.data()), b.size());
+        };
+        assert(engine.open_local_terminal("local", "BBS", cbs, sid, nullptr, err));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+        // Disable files_enabled (no callsign/SSID change -> session stays connected!)
+        node::NodeConfig upd = engine.config();
+        upd.bbs.files_enabled = false;
+        upd.welcome_text = "Updated Welcome Banner!";
+        upd.info_text = "Updated Node Info!";
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk);
+        assert(!res.identity_restarted);
+        assert(res.signed_off_sessions == 0);
+
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.clear();
+        }
+        std::string cmd = "FILES\r";
+        assert(engine.send_local_terminal_bytes(sid, std::vector<uint8_t>(cmd.begin(), cmd.end())));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Files Area is currently disabled") != std::string::npos);
+        }
+
+        // Re-enable files_enabled
+        upd.bbs.files_enabled = true;
+        res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk);
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.clear();
+        }
+        assert(engine.send_local_terminal_bytes(sid, std::vector<uint8_t>(cmd.begin(), cmd.end())));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Files Area: /") != std::string::npos);
+        }
+        engine.close_local_terminal(sid);
+    }
+
+    // 2. Verify updated welcome & info messages on fresh local node session
+    {
+        uint64_t sid = 0;
+        std::string rx_accum;
+        std::mutex rx_mtx;
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.append(reinterpret_cast<const char*>(b.data()), b.size());
+        };
+        assert(engine.open_local_terminal("local", "LOCAL", cbs, sid, nullptr, err));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Updated Welcome Banner!") != std::string::npos);
+        }
+        engine.close_local_terminal(sid);
+    }
+
+    // 3. Add and remove an interface mapping live via apply_config()
+    {
+        node::NodeConfig upd = engine.config();
+        radio::RadioInterfaceConfig ax2;
+        ax2.id = "axudp1";
+        ax2.type = "axudp";
+        ax2.description = "Secondary AXUDP";
+        ax2.params["bind_host"] = "127.0.0.1";
+        ax2.params["bind_port"] = "19452";
+        ax2.params["auto_learn"] = "true";
+        upd.interfaces.push_back(ax2);
+
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.interfaces_reloaded);
+        assert(engine.find_interface("axudp1") != nullptr);
+        assert(engine.snapshot().interfaces.size() == 2);
+
+        // Remove secondary interface
+        upd.interfaces.pop_back();
+        res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.interfaces_reloaded);
+        assert(engine.find_interface("axudp1") == nullptr);
+        assert(engine.snapshot().interfaces.size() == 1);
+    }
+
+    // 4. Callsign/SSID change signs off active Node, BBS, and CHAT sessions with
+    //    appropriate new callsign/SSID or unavailability notices, then re-enables incoming
+    {
+        std::mutex m;
+        std::string rx_node, rx_bbs, rx_chat;
+        bool closed_node = false, closed_bbs = false, closed_chat = false;
+
+        auto make_cbs = [&](std::string& buf, bool& closed) {
+            node::NodeEngine::LocalTerminalCallbacks cbs;
+            cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+                std::lock_guard<std::mutex> lk(m);
+                buf.append(reinterpret_cast<const char*>(b.data()), b.size());
+            };
+            cbs.on_closed = [&](uint64_t, const std::string&) {
+                std::lock_guard<std::mutex> lk(m);
+                closed = true;
+            };
+            return cbs;
+        };
+
+        uint64_t s_node = 0, s_bbs = 0, s_chat = 0;
+        assert(engine.open_local_terminal("local", "LOCAL", make_cbs(rx_node, closed_node), s_node, nullptr, err));
+        assert(engine.open_local_terminal("local", "BBS", make_cbs(rx_bbs, closed_bbs), s_bbs, nullptr, err));
+        assert(engine.open_local_terminal("local", "CHAT", make_cbs(rx_chat, closed_chat), s_chat, nullptr, err));
+
+        node::NodeConfig upd = engine.config();
+        upd.callsign = ax25::Callsign{"W1AW", 7};
+        upd.bbs.enabled = true;
+        upd.bbs.ssid = 10;     // BBS moves to W1AW-10
+        upd.chat.enabled = false; // CHAT becomes unavailable!
+        upd.accept_incoming_default = true;
+
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.identity_restarted);
+        assert(res.signed_off_sessions == 3);
+        assert(engine.accept_incoming() == true);
+
+        {
+            std::lock_guard<std::mutex> lk(m);
+            assert(closed_node && closed_bbs && closed_chat);
+            assert(rx_node.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_node.find("W1AW-7") != std::string::npos);
+            assert(rx_bbs.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_bbs.find("W1AW-10") != std::string::npos);
+            assert(rx_chat.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_chat.find("not be available") != std::string::npos);
+        }
+    }
+
+    // 5. Manually disabled incoming connections MUST STAY DISABLED after config edit
+    {
+        engine.set_accept_incoming(false);
+        assert(!engine.accept_incoming());
+        node::NodeConfig upd = engine.config();
+        upd.callsign = ax25::Callsign{"W2AW", 7};
+        upd.accept_incoming_default = true;
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.identity_restarted);
+        assert(!engine.accept_incoming()); // Must remain disabled!
+
+        // Manually re-enabling works
+        engine.set_accept_incoming(true);
+        assert(engine.accept_incoming());
+    }
+
+    engine.stop();
+
+    // 6. Read-only filesystem / unwritable config graceful operation
+    {
+        const std::string ro_dir = tmp_root + "/ro_env";
+        fs::create_directories(ro_dir);
+        const std::string ro_cfg_path = ro_dir + "/node.cfg";
+
+        node::NodeConfig ro_cfg;
+        ro_cfg.callsign = ax25::Callsign{"K7RO", 7};
+        ro_cfg.source_path = ro_cfg_path;
+        ro_cfg.logging.log_path = ro_dir + "/logs"; // Uncreatable once ro_dir is 0555!
+        ro_cfg.bbs.mail_path = ro_dir + "/mail";
+        ro_cfg.bbs.files_path = ro_dir + "/files";
+        radio::RadioInterfaceConfig ro_ax;
+        ro_ax.id = "axudp0";
+        ro_ax.type = "axudp";
+        ro_ax.params["bind_host"] = "127.0.0.1";
+        ro_ax.params["bind_port"] = "19453";
+        ro_cfg.interfaces.push_back(ro_ax);
+        assert(ro_cfg.save_to_file(ro_cfg_path));
+
+        // Lock down file and directory read-only (0444 file, 0555 dir)
+        fs::permissions(ro_cfg_path, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
+        fs::permissions(ro_dir, fs::perms::owner_read | fs::perms::owner_exec |
+                                fs::perms::group_read | fs::perms::group_exec |
+                                fs::perms::others_read | fs::perms::others_exec);
+
+        node::NodeConfig loaded_ro;
+        assert(node::NodeConfig::load_from_file(ro_cfg_path, loaded_ro, err));
+
+        node::NodeEngine ro_engine(loaded_ro);
+        // Must start gracefully even though log directory cannot be created!
+        assert(ro_engine.start(err));
+
+        // Apply settings change on read-only config -> applied in memory, warning returned
+        node::NodeConfig edit = ro_engine.config();
+        edit.callsign = ax25::Callsign{"K7MEM", 7};
+        edit.info_text = "In-memory read-only test";
+        auto res = ro_engine.apply_config(edit, true);
+        assert(res.applied);
+        assert(!res.saved_to_disk);
+        assert(res.warning.find("not writable") != std::string::npos);
+        assert(res.warning.find("memory only") != std::string::npos);
+        assert(ro_engine.config().callsign.str() == "K7MEM-7");
+        assert(ro_engine.config().info_text == "In-memory read-only test");
+
+        ro_engine.stop();
+
+        // Restore write permissions so cleanup succeeds
+        fs::permissions(ro_dir, fs::perms::owner_all);
+        fs::permissions(ro_cfg_path, fs::perms::owner_all);
+    }
+
+    fs::remove_all(tmp_root, ec);
+    std::cout << "[PASS] test_live_settings_reconfig_and_readonly_fs\n";
+}
+
+void test_files_dots_case_insensitivity_and_approved_removal() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_files_case_and_dots";
+    std::error_code ec;
+    fs::remove_all(tmp_root, ec);
+    const std::string files_dir = tmp_root + "/files";
+    const std::string inc_dir = tmp_root + "/incoming";
+    const std::string mail_dir = tmp_root + "/mail";
+    fs::create_directories(files_dir + "/docs");
+    fs::create_directories(inc_dir);
+
+    // 1. Leading and trailing periods MUST be rejected by filename validator
+    assert(!protocol::is_safe_yapp_filename(".hidden"));
+    assert(!protocol::is_safe_yapp_filename("LICENSE."));
+    assert(!protocol::is_safe_yapp_filename("file.."));
+    assert(!protocol::is_safe_yapp_filename("."));
+    assert(protocol::is_safe_yapp_filename("LICENSE"));
+    assert(protocol::is_safe_yapp_filename("readme.txt"));
+
+    // 2. Legacy DOS/Win16 YAPP sender sending "LICENSE." -> receiver saves as "LICENSE" (no trailing dot!)
+    {
+        protocol::YappSession rx(inc_dir);
+        rx.set_remote_callsign(ax25::Callsign{"KR4OYK", 7});
+        rx.set_send_callback([](const std::vector<uint8_t>&) {});
+        std::vector<uint8_t> plain;
+        // Send ENQ 0x01
+        std::vector<uint8_t> enq = {0x05, 0x01};
+        rx.feed_bytes(enq.data(), enq.size(), plain);
+        // Send SOH header with "LICENSE.\0" + "5\0" + "00000000\0"
+        std::string hdr_pay = std::string("LICENSE.") + '\0' + "5" + '\0' + "00000000" + '\0';
+        std::vector<uint8_t> soh;
+        soh.push_back(0x01);
+        soh.push_back(static_cast<uint8_t>(hdr_pay.size()));
+        soh.insert(soh.end(), hdr_pay.begin(), hdr_pay.end());
+        rx.feed_bytes(soh.data(), soh.size(), plain);
+        assert(rx.progress().filename == "LICENSE");
+        assert(fs::exists(inc_dir + "/KR4OYK-7/LICENSE"));
+        assert(!fs::exists(inc_dir + "/KR4OYK-7/LICENSE."));
+        rx.reset();
+    }
+
+    // 3. Populate files area with UPPER, lower, and MixedCase files
+    auto write_f = [](const std::string& p, const std::string& content) {
+        std::ofstream ofs(p, std::ios::binary | std::ios::trunc);
+        ofs << content;
+    };
+    write_f(files_dir + "/LICENSE", "GPLv3 License Text");
+    write_f(files_dir + "/notes.txt", "Lowercase Notes");
+    write_f(files_dir + "/docs/ReadMe.txt", "Mixed Case Readme");
+    write_f(files_dir + "/LEGACY.", "Pre-existing trailing-dot file");
+    write_f(tmp_root + "/outside.txt", "TOP SECRET");
+
+    node::BbsServer bbs;
+    std::string err;
+    assert(bbs.configure("K7OYK-11", "OYKBBS", mail_dir, files_dir, inc_dir, "Welcome", 4096, err));
+    bbs.set_files_enabled(true);
+    bbs.set_files_case_insensitive(true);
+    auto now_tp = std::chrono::system_clock::now();
+    (void)bbs.enter(1, "W1AW-7", "axudp0", true, false, false, now_tp);
+
+    // Step 1: exact match
+    assert(bbs.handle_line(1, "TYPE LICENSE", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+    // Step 2: forced UPPERCASE ("license" -> "LICENSE")
+    assert(bbs.handle_line(1, "TYPE license", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+    // Step 3: forced lowercase ("NOTES.TXT" -> "notes.txt")
+    assert(bbs.handle_line(1, "TYPE NOTES.TXT", now_tp).response_text.find("Lowercase Notes") != std::string::npos);
+    // Step 4: case-insensitive glob/directory scan ("DOCS/readme.TXT" -> "docs/ReadMe.txt")
+    assert(bbs.handle_line(1, "TYPE DOCS/readme.TXT", now_tp).response_text.find("Mixed Case Readme") != std::string::npos);
+    // Case-insensitive CD + TYPE
+    assert(bbs.handle_line(1, "CD DOCS", now_tp).response_text.find("Files Area: /docs") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE README.TXT", now_tp).response_text.find("Mixed Case Readme") != std::string::npos);
+    (void)bbs.handle_line(1, "CD /", now_tp);
+
+    // Disable case-insensitive matching -> "license" MUST fail, "LICENSE" MUST succeed
+    bbs.set_files_case_insensitive(false);
+    assert(bbs.handle_line(1, "TYPE license", now_tp).response_text.find("File not found") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE LICENSE", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+
+    // 4. List & remove previously approved files (including legacy trailing-dot cleanup)
+    auto approved = node::BbsServer::list_approved_files(files_dir);
+    assert(approved.size() == 4);
+
+    // Reject path traversal deletion!
+    assert(!node::BbsServer::delete_approved_file(files_dir, "../outside.txt", err));
+    assert(fs::exists(tmp_root + "/outside.txt"));
+
+    // Delete approved files cleanly (including nested and legacy trailing-dot file)
+    assert(node::BbsServer::delete_approved_file(files_dir, "docs/ReadMe.txt", err));
+    assert(!fs::exists(files_dir + "/docs/ReadMe.txt"));
+    assert(node::BbsServer::delete_approved_file(files_dir, "LEGACY.", err));
+    assert(!fs::exists(files_dir + "/LEGACY."));
+    assert(node::BbsServer::list_approved_files(files_dir).size() == 2);
+
+    fs::remove_all(tmp_root, ec);
+    std::cout << "[PASS] test_files_dots_case_insensitivity_and_approved_removal\n";
+}
+
+void test_rig_control_rigctl_and_radiofoundry() {
+    namespace fs = std::filesystem;
+
+    // 1. Protocol command builders & parsers
+    assert(radio::rf_build_select_cmd() == "select");
+    assert(radio::rf_build_select_cmd(2, 5) == "select?zone=2&pos=5");
+    assert(radio::rf_build_select_cmd(1, -1) == "select?zone=1");
+    assert(radio::rf_build_stop_notify_cmd() == "select?notify=0");
+    assert(radio::rf_build_step_channel_cmd(1) == "step?channel=1");
+    assert(radio::rf_build_step_channel_cmd(-1) == "step?channel=-1");
+    assert(radio::rf_build_step_zone_cmd(1) == "step?zone=1");
+
+    radio::RigStatus st;
+    assert(radio::rf_parse_status_text("zone=2 pos=5 name=\"Local Rptr\" freq=446.000 cc=1 ts=2 tg=3100", st));
+    assert(st.zone == 2 && st.pos == 5 && st.channel_name == "Local Rptr");
+    assert(st.freq_hz == 446000000ULL && st.is_dmr && st.color_code == 1 && st.timeslot == 2 && st.talkgroup == 3100);
+
+    radio::RigStatus st2;
+    assert(radio::rf_parse_status_text("zone: 0\npos: 3\nname: Simplex\nfreq: 146520000 Hz\n", st2));
+    assert(st2.zone == 0 && st2.pos == 3 && st2.channel_name == "Simplex" && st2.freq_hz == 146520000ULL);
+
+    int rcode = 99;
+    assert(radio::rigctl_parse_rprt("RPRT 0", rcode) && rcode == 0);
+    assert(radio::rigctl_parse_rprt("RPRT -1", rcode) && rcode == -1);
+    assert(!radio::rigctl_parse_rprt("145050000", rcode));
+
+    // 2. Live loopback mock Hamlib rigctld TCP server
+    int tcp_srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    assert(tcp_srv >= 0);
+    int reuse = 1;
+    setsockopt(tcp_srv, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    sockaddr_in taddr{};
+    taddr.sin_family = AF_INET;
+    taddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    taddr.sin_port = 0;
+    assert(::bind(tcp_srv, reinterpret_cast<sockaddr*>(&taddr), sizeof(taddr)) == 0);
+    assert(::listen(tcp_srv, 8) == 0);
+    socklen_t tlen = sizeof(taddr);
+    assert(::getsockname(tcp_srv, reinterpret_cast<sockaddr*>(&taddr), &tlen) == 0);
+    uint16_t rigctl_port = ntohs(taddr.sin_port);
+
+    std::atomic<bool> stop_tcp{false};
+    uint64_t mock_freq = 145050000ULL;
+    std::string mock_mode = "FM";
+    int mock_pb = 12500;
+    int mock_ptt = 0;
+    std::string mock_vfo = "VFOA";
+    std::thread tcp_thr([&]() {
+        while (!stop_tcp.load()) {
+            pollfd pfd{};
+            pfd.fd = tcp_srv;
+            pfd.events = POLLIN;
+            if (::poll(&pfd, 1, 50) <= 0) continue;
+            int cli = ::accept(tcp_srv, nullptr, nullptr);
+            if (cli < 0) continue;
+            char buf[256];
+            ssize_t n = ::recv(cli, buf, sizeof(buf) - 1, 0);
+            if (n > 0) {
+                buf[n] = '\0';
+                std::string cmd(buf);
+                while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r')) cmd.pop_back();
+                std::string rep;
+                if (cmd == "f") rep = std::to_string(mock_freq) + "\n";
+                else if (cmd.rfind("F ", 0) == 0) { mock_freq = std::stoull(cmd.substr(2)); rep = "RPRT 0\n"; }
+                else if (cmd == "m") rep = mock_mode + "\n" + std::to_string(mock_pb) + "\n";
+                else if (cmd.rfind("M ", 0) == 0) {
+                    std::istringstream iss(cmd.substr(2));
+                    iss >> mock_mode >> mock_pb;
+                    rep = "RPRT 0\n";
+                } else if (cmd == "t") rep = std::to_string(mock_ptt) + "\n";
+                else if (cmd.rfind("T ", 0) == 0) { mock_ptt = std::stoi(cmd.substr(2)); rep = "RPRT 0\n"; }
+                else if (cmd == "v") rep = mock_vfo + "\n";
+                else if (cmd.rfind("V ", 0) == 0) { mock_vfo = cmd.substr(2); rep = "RPRT 0\n"; }
+                else rep = "RPRT -1\n";
+                (void)::send(cli, rep.data(), rep.size(), 0);
+            }
+            ::close(cli);
+        }
+    });
+
+    radio::RigController rig;
+    radio::RigConfig rcfg;
+    rcfg.enabled = true;
+    rcfg.protocol = radio::RigProtocol::Rigctl;
+    rcfg.host = "127.0.0.1";
+    rcfg.port = rigctl_port;
+    rig.configure(rcfg);
+
+    std::string err;
+    assert(rig.refresh(err));
+    auto rs = rig.status();
+    assert(rs.reachable && rs.freq_hz == 145050000ULL && rs.mode == "FM" && rs.passband_hz == 12500 && rs.ptt == 0 && rs.vfo == "VFOA");
+    assert(rig.set_frequency(432100000ULL, err));
+    assert(rig.set_mode("PKTFM", 15000, err));
+    assert(rig.set_ptt(true, err));
+    assert(rig.set_vfo("VFOB", err));
+    assert(rig.refresh(err));
+    rs = rig.status();
+    assert(rs.freq_hz == 432100000ULL && rs.mode == "PKTFM" && rs.passband_hz == 15000 && rs.ptt == 1 && rs.vfo == "VFOB");
+
+    stop_tcp.store(true);
+    tcp_thr.join();
+    ::close(tcp_srv);
+
+    // 3. Live loopback mock RadioFoundry UDP 4191 server (including unsolicited notification)
+    int udp_srv = ::socket(AF_INET, SOCK_DGRAM, 0);
+    assert(udp_srv >= 0);
+    sockaddr_in uaddr{};
+    uaddr.sin_family = AF_INET;
+    uaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    uaddr.sin_port = 0;
+    assert(::bind(udp_srv, reinterpret_cast<sockaddr*>(&uaddr), sizeof(uaddr)) == 0);
+    socklen_t ulen = sizeof(uaddr);
+    assert(::getsockname(udp_srv, reinterpret_cast<sockaddr*>(&uaddr), &ulen) == 0);
+    uint16_t rf_port = ntohs(uaddr.sin_port);
+
+    std::atomic<bool> stop_udp{false};
+    int cur_zone = 0;
+    int cur_pos = 0;
+    bool notify_on = true;
+    sockaddr_in last_client{};
+    bool have_client = false;
+    std::mutex rf_mtx;
+    std::thread udp_thr([&]() {
+        while (!stop_udp.load()) {
+            pollfd pfd{};
+            pfd.fd = udp_srv;
+            pfd.events = POLLIN;
+            if (::poll(&pfd, 1, 50) <= 0) continue;
+            char buf[256];
+            sockaddr_in cli{};
+            socklen_t clen = sizeof(cli);
+            ssize_t n = ::recvfrom(udp_srv, buf, sizeof(buf) - 1, 0,
+                                   reinterpret_cast<sockaddr*>(&cli), &clen);
+            if (n <= 0) continue;
+            buf[n] = '\0';
+            std::string req(buf);
+            std::lock_guard<std::mutex> lk(rf_mtx);
+            last_client = cli;
+            have_client = true;
+            if (req == "select?notify=0") {
+                notify_on = false;
+            } else if (req.rfind("select?zone=", 0) == 0) {
+                std::size_t amp = req.find("&pos=");
+                cur_zone = std::stoi(req.substr(12, amp - 12));
+                cur_pos = (amp != std::string::npos) ? std::stoi(req.substr(amp + 5)) : 0;
+            } else if (req.rfind("step?channel=", 0) == 0) {
+                cur_pos += std::stoi(req.substr(13));
+            } else if (req.rfind("step?zone=", 0) == 0) {
+                cur_zone += std::stoi(req.substr(10));
+                cur_pos = 0;
+            }
+            std::string rep = "zone=" + std::to_string(cur_zone) + " pos=" + std::to_string(cur_pos) +
+                              " name=RFCh freq=446.500 cc=1 ts=1 tg=99";
+            (void)::sendto(udp_srv, rep.data(), rep.size(), 0,
+                           reinterpret_cast<const sockaddr*>(&cli), clen);
+        }
+    });
+
+    radio::RigConfig rfcfg;
+    rfcfg.enabled = true;
+    rfcfg.protocol = radio::RigProtocol::RadioFoundry;
+    rfcfg.host = "127.0.0.1";
+    rfcfg.port = rf_port;
+    rfcfg.notify = true;
+    rig.configure(rfcfg);
+
+    assert(rig.refresh(err));
+    assert(rig.status().reachable && rig.status().zone == 0 && rig.status().pos == 0);
+    assert(rig.select_zone_channel(2, 5, err));
+    assert(rig.status().zone == 2 && rig.status().pos == 5 && rig.status().talkgroup == 99);
+    assert(rig.step_channel(1, err));
+    assert(rig.status().zone == 2 && rig.status().pos == 6);
+    assert(rig.step_zone(-1, err));
+    assert(rig.status().zone == 1 && rig.status().pos == 0);
+
+    // Radio sends an unsolicited front-panel channel change notification -> poll() receives it!
+    {
+        std::lock_guard<std::mutex> lk(rf_mtx);
+        assert(have_client);
+        const std::string async_note = "zone=4 pos=2 name=TAC310 freq=444.200 cc=3 ts=2 tg=310";
+        (void)::sendto(udp_srv, async_note.data(), async_note.size(), 0,
+                       reinterpret_cast<const sockaddr*>(&last_client), sizeof(last_client));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    rig.poll();
+    assert(rig.status().zone == 4 && rig.status().pos == 2 &&
+           rig.status().channel_name == "TAC310" && rig.status().talkgroup == 310);
+
+    assert(rig.stop_notifications(err));
+    assert(!rig.status().notifications_active);
+    {
+        std::lock_guard<std::mutex> lk(rf_mtx);
+        assert(!notify_on);
+    }
+
+    stop_udp.store(true);
+    udp_thr.join();
+    ::close(udp_srv);
+    rig.stop();
+
+    // 4. [rig] config save & reload round-trip
+    const std::string cfg_path = "/tmp/oyk_test_rig_node.cfg";
+    fs::remove(cfg_path);
+    node::NodeConfig cfg = node::NodeConfig::make_default();
+    cfg.rig.enabled = true;
+    cfg.rig.protocol = radio::RigProtocol::RadioFoundry;
+    cfg.rig.host = "192.168.7.1";
+    cfg.rig.port = 4191;
+    cfg.rig.poll_interval_sec = 45;
+    cfg.rig.notify = false;
+    assert(cfg.save_to_file(cfg_path));
+
+    node::NodeConfig loaded;
+    assert(node::NodeConfig::load_from_file(cfg_path, loaded, err));
+    assert(loaded.rig.enabled);
+    assert(loaded.rig.protocol == radio::RigProtocol::RadioFoundry);
+    assert(loaded.rig.host == "192.168.7.1");
+    assert(loaded.rig.port == 4191);
+    assert(loaded.rig.poll_interval_sec == 45);
+    assert(!loaded.rig.notify);
+    fs::remove(cfg_path);
+
+    std::cout << "[PASS] test_rig_control_rigctl_and_radiofoundry\n";
+}
+
 } // namespace
 
 int main() {
@@ -2214,6 +2795,9 @@ int main() {
     test_x11_geometry_parser();
     test_bbs_ssid11_persistence_and_privacy();
     test_bbs_files_area_traversal_and_approval();
+    test_live_settings_reconfig_and_readonly_fs();
+    test_files_dots_case_insensitivity_and_approved_removal();
+    test_rig_control_rigctl_and_radiofoundry();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

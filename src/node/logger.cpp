@@ -198,11 +198,15 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (ec) {
-        error_out = "Failed to create log directory '" + dir.string() + "': " + ec.message();
-        return false;
+        error_out = "Log directory '" + dir.string() + "' is not writable (" + ec.message() +
+                    "); logging to console memory only.";
+        configured_ = true;
+        push_console_locked("[WARN] " + error_out);
+        return true;
     }
 
     const std::string today = format_date_yyyymmdd(std::chrono::system_clock::now());
+    std::vector<std::string> failed_files;
 
     for (const auto& [name, mask] : config_.log_files) {
         if (mask == LOG_SILENT || name.empty()) continue;
@@ -227,13 +231,18 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
 
         open_target_locked(target, today);
         if (!target.stream.is_open()) {
-            error_out = "Failed to open log file: " + target.full_path;
-            return false;
+            failed_files.push_back(target.full_path);
+            continue;
         }
         targets_.push_back(std::move(target));
     }
 
     configured_ = true;
+    if (!failed_files.empty()) {
+        error_out = "Log file(s) not writable (read-only filesystem?): " + failed_files.front() +
+                    "; continuing with in-memory console logging.";
+        push_console_locked("[WARN] " + error_out);
+    }
     return true;
 }
 

@@ -48,6 +48,12 @@ struct PendingIncomingFile {
     uint64_t size_bytes = 0;
 };
 
+struct ApprovedFileEntry {
+    std::string rel_path;    // Relative path inside files_path (using '/')
+    std::string full_path;   // Full filesystem path inside files_path
+    uint64_t size_bytes = 0;
+};
+
 struct BbsActionResult {
     std::string response_text;
     std::vector<uint8_t> tx_bytes; // Raw binary bytes (used for YAPP transfers)
@@ -95,6 +101,10 @@ public:
     const std::string& mail_path() const noexcept { return mail_path_; }
     const std::string& files_path() const noexcept { return files_path_; }
     const std::string& incoming_root() const noexcept { return incoming_root_; }
+    bool files_enabled() const noexcept { return files_enabled_; }
+    void set_files_enabled(bool enabled) noexcept { files_enabled_ = enabled; }
+    bool files_case_insensitive() const noexcept { return files_case_insensitive_; }
+    void set_files_case_insensitive(bool enabled) noexcept { files_case_insensitive_ = enabled; }
 
     // Strictly validates and resolves a virtual path inside files_root.
     // Rejects directory traversal (.., \, drive letters, null bytes, and symlinks escaping root).
@@ -106,7 +116,21 @@ public:
                                         std::string& resolved_rel_out,
                                         std::string& error_out);
 
-    // Sysop incoming queue management (incoming/<CALLSIGN-SSID>/<file> -> files_path/<subdir>/<file>)
+    // Resolves a BBS files-area path with optional case-insensitive fallback:
+    //   1. Exact case-sensitive match
+    //   2. Forced UPPERCASE
+    //   3. Forced lowercase
+    //   4. Case-insensitive directory/glob scan inside files_root
+    static bool resolve_files_path_with_case(const std::string& files_root,
+                                             const std::string& current_rel_dir,
+                                             const std::string& user_arg,
+                                             bool allow_parent_in_root,
+                                             bool case_insensitive,
+                                             std::string& resolved_abs_out,
+                                             std::string& resolved_rel_out,
+                                             std::string& error_out);
+
+    // Sysop incoming queue & approved files management
     static std::vector<PendingIncomingFile> list_pending_incoming(const std::string& incoming_root);
     static bool approve_incoming_file(const std::string& incoming_root,
                                       const std::string& files_root,
@@ -120,6 +144,10 @@ public:
     static bool delete_incoming_file(const std::string& incoming_root,
                                      const std::string& uploader,
                                      const std::string& filename,
+                                     std::string& error_out);
+    static std::vector<ApprovedFileEntry> list_approved_files(const std::string& files_root);
+    static bool delete_approved_file(const std::string& files_root,
+                                     const std::string& rel_path,
                                      std::string& error_out);
 
 private:
@@ -173,6 +201,9 @@ private:
     std::string bbs_alias_ = "OYKBBS";
     std::string mail_path_ = "mail";
     std::string files_path_ = "files";
+    bool files_enabled_ = true;
+    bool files_case_insensitive_ = true;
+    bool loaded_once_ = false;
     std::string incoming_root_ = "incoming";
     std::string welcome_ = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
     std::size_t max_msg_bytes_ = 8192;

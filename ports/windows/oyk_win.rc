@@ -12,7 +12,9 @@ BEGIN
         MENUITEM "&Deny Incoming Connections",   IDM_DENY_INCOMING
         MENUITEM SEPARATOR
         MENUITEM "&Local Terminal...",           IDM_TERMINAL
-        MENUITEM "Approve Incoming &Files...",   IDM_APPROVE_FILES
+        MENUITEM "Manage &Files Area...",        IDM_APPROVE_FILES
+        MENUITEM "&Radio Control...",            IDM_RIG_CONTROL
+        MENUITEM "&Settings...",                 IDM_SETTINGS
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
         MENUITEM SEPARATOR
@@ -80,18 +82,152 @@ BEGIN
     PUSHBUTTON      "Close", IDCANCEL, 304, 210, 50, 14
 END
 
-IDD_APPROVE DIALOG 16, 16, 316, 214
+IDD_APPROVE DIALOG 16, 16, 332, 232
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Approve Incoming Files (incoming\\ -> BBS files\\)"
+CAPTION "Manage BBS Files Area"
 FONT 8, "MS Sans Serif"
 BEGIN
-    LTEXT           "Pending incoming files (Uploader / Filename / Size):", -1, 8, 8, 300, 10
-    LISTBOX         IDC_APP_LIST, 8, 20, 300, 112, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Dest Subfolder:", -1, 8, 139, 58, 10
-    EDITTEXT        IDC_APP_SUBDIR, 68, 137, 240, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Select a file to approve and move into the BBS files area.", IDC_APP_STATUS, 8, 156, 300, 12
-    DEFPUSHBUTTON   "&Approve && Move", IDC_APP_APPROVE, 8, 174, 78, 14
-    PUSHBUTTON      "&Delete / Reject", IDC_APP_DELETE, 92, 174, 74, 14
-    PUSHBUTTON      "&Refresh", IDC_APP_REFRESH, 172, 174, 52, 14
-    PUSHBUTTON      "Close", IDCANCEL, 252, 174, 56, 14
+    PUSHBUTTON      "[ Pending Incoming ]", IDC_APP_TAB_INC, 8, 6, 92, 15
+    PUSHBUTTON      "Approved Files", IDC_APP_TAB_APPROVED, 102, 6, 86, 15
+
+    GROUPBOX        "Pending Incoming Uploads", IDC_APP_TAB_BOX, 8, 24, 316, 162
+
+    /* Tab 1: Pending Incoming */
+    LTEXT           "Pending incoming files (Uploader / Filename / Size):", IDC_APP_L_INC, 14, 38, 298, 10
+    LISTBOX         IDC_APP_LIST, 14, 50, 304, 88, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Dest Subfolder:", IDC_APP_L_SUB, 14, 145, 58, 10
+    EDITTEXT        IDC_APP_SUBDIR, 74, 143, 244, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Approve && Move", IDC_APP_APPROVE, 14, 164, 78, 15
+    PUSHBUTTON      "&Delete / Reject", IDC_APP_DELETE, 98, 164, 74, 15
+
+    /* Tab 2: Approved Files */
+    LTEXT           "Approved files currently available in the BBS files area:", IDC_APP_L_APP, 14, 38, 298, 10
+    LISTBOX         IDC_APP_APPROVED_LIST, 14, 50, 304, 108, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Remove Selected File", IDC_APP_REMOVE, 14, 164, 96, 15
+
+    LTEXT           "Manage pending uploads and approved BBS files.", IDC_APP_STATUS, 8, 192, 316, 12
+    PUSHBUTTON      "&Refresh", IDC_APP_REFRESH, 8, 210, 56, 15
+    DEFPUSHBUTTON   "Close", IDCANCEL, 268, 210, 56, 15
+END
+
+IDD_SETTINGS DIALOG 12, 12, 348, 204
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "OYK Node Settings"
+FONT 8, "MS Sans Serif"
+BEGIN
+    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces | Rig */
+    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 56, 15
+    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 64, 6, 52, 15
+    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 118, 6, 54, 15
+    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 174, 6, 68, 15
+    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 244, 6, 54, 15
+
+    GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 152
+
+    /* Tab 1: Node */
+    LTEXT           "Node Callsign (CALL-SSID):", IDC_SET_L_CALL, 14, 42, 92, 10
+    EDITTEXT        IDC_SET_CALL, 110, 40, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Node Alias:", IDC_SET_L_ALIAS, 14, 62, 92, 10
+    EDITTEXT        IDC_SET_ALIAS, 110, 60, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Welcome Message:", IDC_SET_L_WELC, 14, 82, 92, 10
+    EDITTEXT        IDC_SET_WELCOME, 110, 80, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Info Message:", IDC_SET_L_INFO, 14, 102, 92, 10
+    EDITTEXT        IDC_SET_INFO, 110, 100, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Allow incoming connections by default", IDC_SET_ACCEPT, 14, 124, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+
+    /* Tab 2: BBS */
+    CHECKBOX        "Enable Packet BBS", IDC_SET_BBS_EN, 14, 38, 120, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "BBS SSID (0-15):", IDC_SET_L_BSSID, 14, 56, 70, 10
+    EDITTEXT        IDC_SET_BBS_SSID, 88, 54, 34, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Callsign Override:", IDC_SET_L_BCALL, 130, 56, 62, 10
+    EDITTEXT        IDC_SET_BBS_CALL, 196, 54, 64, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Alias:", IDC_SET_L_BALIAS, 266, 56, 20, 10
+    EDITTEXT        IDC_SET_BBS_ALIAS, 288, 54, 46, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Enable BBS Files Area (FILES/GET/UPLOAD)", IDC_SET_FILES_EN, 14, 75, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Files Area Root Path:", IDC_SET_L_FPATH, 14, 94, 82, 10
+    EDITTEXT        IDC_SET_FILES_PATH, 100, 92, 234, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Mail Storage Path:", IDC_SET_L_MPATH, 14, 114, 82, 10
+    EDITTEXT        IDC_SET_MAIL_PATH, 100, 112, 234, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "BBS Welcome Msg:", IDC_SET_L_BWELC, 14, 134, 82, 10
+    EDITTEXT        IDC_SET_BBS_WELC, 100, 132, 234, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    /* Tab 3: CHAT */
+    CHECKBOX        "Enable Multi-User CHAT Conference", IDC_SET_CHAT_EN, 14, 38, 170, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "CHAT SSID (0-15):", IDC_SET_L_CSSID, 14, 58, 70, 10
+    EDITTEXT        IDC_SET_CHAT_SSID, 88, 56, 34, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Callsign Override:", IDC_SET_L_CCALL, 130, 58, 62, 10
+    EDITTEXT        IDC_SET_CHAT_CALL, 196, 56, 64, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Alias:", IDC_SET_L_CALIAS, 266, 58, 20, 10
+    EDITTEXT        IDC_SET_CHAT_ALIAS, 288, 56, 46, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Default Topic:", IDC_SET_L_CTOP, 14, 80, 82, 10
+    EDITTEXT        IDC_SET_CHAT_TOPIC, 100, 78, 120, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "CHAT Welcome Msg:", IDC_SET_L_CWELC, 14, 102, 82, 10
+    EDITTEXT        IDC_SET_CHAT_WELC, 100, 100, 234, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    /* Tab 4: Interfaces */
+    LTEXT           "Configured radio / network interface mappings:", IDC_SET_L_IF, 14, 38, 220, 10
+    LISTBOX         IDC_SET_IF_LIST, 14, 52, 320, 94, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Add Interface...", IDC_SET_IF_ADD, 14, 152, 74, 15
+    PUSHBUTTON      "&Remove Selected", IDC_SET_IF_REM, 94, 152, 78, 15
+
+    /* Tab 5: Rig Control */
+    CHECKBOX        "Enable Radio / Rig Control", IDC_SET_RIG_EN, 14, 38, 160, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Protocol:", IDC_SET_L_RPROTO, 14, 58, 76, 10
+    COMBOBOX        IDC_SET_RIG_PROTO, 94, 56, 110, 52, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Radio Host / IP:", IDC_SET_L_RHOST, 14, 78, 76, 10
+    EDITTEXT        IDC_SET_RIG_HOST, 94, 76, 140, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port (4532/4191):", IDC_SET_L_RPORT, 14, 98, 76, 10
+    EDITTEXT        IDC_SET_RIG_PORT, 94, 96, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Poll Interval (s):", IDC_SET_L_RPOLL, 14, 118, 76, 10
+    EDITTEXT        IDC_SET_RIG_POLL, 94, 116, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Receive RadioFoundry UDP 4191 change notifications", IDC_SET_RIG_NOTIFY, 14, 138, 230, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+
+    DEFPUSHBUTTON   "&Save && Apply", IDOK, 206, 182, 68, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 278, 182, 64, 15
+END
+
+IDD_RIG_CONTROL DIALOG 16, 16, 304, 178
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Radio / Rig Control"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "", IDC_RIG_HEADER, 8, 8, 288, 12
+    EDITTEXT        IDC_RIG_STATE, 8, 22, 288, 44, ES_MULTILINE | ES_READONLY | WS_BORDER
+    LTEXT           "Freq (Hz):", IDC_RIG_L_A, 8, 74, 54, 10
+    EDITTEXT        IDC_RIG_EDIT_A, 64, 72, 84, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Mode / Pos:", IDC_RIG_L_B, 156, 74, 48, 10
+    EDITTEXT        IDC_RIG_EDIT_B, 206, 72, 90, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Passband:", IDC_RIG_L_C, 8, 94, 54, 10
+    EDITTEXT        IDC_RIG_EDIT_C, 64, 92, 84, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    PUSHBUTTON      "Set Freq", IDC_RIG_BTN_1, 8, 114, 68, 15
+    PUSHBUTTON      "Set Mode", IDC_RIG_BTN_2, 80, 114, 68, 15
+    PUSHBUTTON      "Toggle PTT", IDC_RIG_BTN_3, 152, 114, 68, 15
+    PUSHBUTTON      "Zone -1", IDC_RIG_BTN_4, 224, 114, 72, 15
+    PUSHBUTTON      "Zone +1", IDC_RIG_BTN_5, 8, 134, 68, 15
+    PUSHBUTTON      "&Refresh", IDC_RIG_BTN_REF, 80, 134, 68, 15
+
+    LTEXT           "", IDC_RIG_STATUS, 8, 156, 226, 12
+    DEFPUSHBUTTON   "Close", IDCANCEL, 240, 154, 56, 15
+END
+
+IDD_ADD_IFACE DIALOG 24, 24, 248, 142
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add Interface Mapping"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Interface ID:", -1, 8, 10, 56, 10
+    EDITTEXT        IDC_AIF_ID, 68, 8, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Type:", -1, 8, 28, 56, 10
+    COMBOBOX        IDC_AIF_TYPE, 68, 26, 172, 68, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Description:", -1, 8, 46, 56, 10
+    EDITTEXT        IDC_AIF_DESC, 68, 44, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Host / Device:", -1, 8, 64, 56, 10
+    EDITTEXT        IDC_AIF_HOST, 68, 62, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port / Baud:", -1, 8, 82, 56, 10
+    EDITTEXT        IDC_AIF_PORT, 68, 80, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Peer (opt):", -1, 8, 100, 56, 10
+    EDITTEXT        IDC_AIF_PEER, 68, 98, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    DEFPUSHBUTTON   "Add", IDOK, 124, 120, 54, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 186, 120, 54, 14
 END

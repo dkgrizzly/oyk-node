@@ -35,6 +35,7 @@ if(NOT WIN32)
         src/radio/kiss_serial_interface.cpp
         src/radio/kiss_tcp_interface.cpp
         src/radio/telnet_interface.cpp
+        src/radio/rig_control.cpp
         src/protocol/yapp.cpp
         src/node/logger.cpp
         src/node/ban_list.cpp
@@ -207,6 +208,7 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${_win64_res}"
                         -o "${_win64_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32
@@ -217,6 +219,8 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.hpp"
                     "${_win64_res}"
                 COMMENT "Building 64-bit Windows GUI executable (oykw64.exe)"
             )
@@ -250,6 +254,7 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${_win32_res}"
                         -o "${_win32_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32
@@ -260,6 +265,8 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.hpp"
                     "${_win32_res}"
                 COMMENT "Building 32-bit Windows GUI executable (oykw32.exe)"
             )
@@ -312,8 +319,13 @@ if(BUILD_TESTS AND NOT WIN32)
         tests/test_portable.cpp
         ports/compat/oyk_portable.cpp
         ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/dos/dos_usb.cpp
     )
-    target_include_directories(oyk_portable_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat)
+    target_include_directories(oyk_portable_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos
+    )
     set_target_properties(oyk_portable_tests PROPERTIES
         CXX_STANDARD 98
         CXX_STANDARD_REQUIRED ON

@@ -7,6 +7,7 @@
 #include "oyk/core/line_ending.hpp"
 #include "oyk/node/logger.hpp"
 #include "oyk/radio/radio_interface.hpp"
+#include "oyk/radio/rig_control.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -21,6 +22,8 @@ struct BbsConfig {
     ax25::Callsign callsign;             // Optional explicit callsign override
     ax25::Callsign alias{"OYKBBS", 0};   // Optional BBS alias
     std::string mail_path = "mail/";     // Directory for persisted M<id>.MSG files
+    bool files_enabled = true;           // Enable/disable BBS files area commands
+    bool files_case_insensitive = true;  // Case-insensitive lookup (exact -> UPPER -> lower -> glob)
     std::string files_path = "files/";   // Root directory for BBS downloadable files area
     std::string welcome = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
     std::size_t max_msg_bytes = 8192;
@@ -40,6 +43,7 @@ struct NodeConfig {
 
     ax25::Callsign callsign{"N0CALL", DEFAULT_NODE_SSID};
     ax25::Callsign alias{"OYKNOD", 0};
+    std::string welcome_text = "Type HELP or ? for commands.";
     std::string info_text = "OYK C++ Modular Amateur Radio Packet Node";
     std::string source_path; // Path of loaded config file (empty if built-in defaults)
     core::LineEnding line_ending = core::platform_default_line_ending();
@@ -48,6 +52,7 @@ struct NodeConfig {
     LogConfig logging;
     BbsConfig bbs;
     ChatConfig chat;
+    radio::RigConfig rig;
     std::string banlist_path; // Optional override from banlist= in [node]
 
     bool accept_incoming_default = true;
