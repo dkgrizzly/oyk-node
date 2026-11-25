@@ -1073,17 +1073,26 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 return TRUE;
             }
             if (id == IDCANCEL) {
-                if (g_lterm_sid != 0) {
-                    oyk_yapp_reset(&g_lterm_yapp);
-                    g_node.close_local_terminal(g_lterm_sid);
-                }
-                g_node.set_local_event_callback(NULL, NULL);
-                g_lterm_hwnd = NULL;
-                EndDialog(hdlg, IDCANCEL);
+                DestroyWindow(hdlg);
                 return TRUE;
             }
             break;
         }
+        case WM_CLOSE:
+            DestroyWindow(hdlg);
+            return TRUE;
+        case WM_DESTROY:
+            if (g_lterm_sid != 0) {
+                oyk_yapp_reset(&g_lterm_yapp);
+                g_node.close_local_terminal(g_lterm_sid);
+                g_lterm_sid = 0;
+            }
+            g_lterm_connected = 0;
+            g_lterm_connecting = 0;
+            g_lterm_is_local = 0;
+            g_node.set_local_event_callback(NULL, NULL);
+            g_lterm_hwnd = NULL;
+            return TRUE;
     }
     return FALSE;
 }
@@ -1167,7 +1176,17 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 set_status("New incoming connections are now DENIED.");
                 refresh_gui();
             } else if (id == IDM_TERMINAL) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL), hwnd, (DLGPROC)TerminalDlgProc);
+                if (g_lterm_hwnd && IsWindow(g_lterm_hwnd)) {
+                    ShowWindow(g_lterm_hwnd, SW_RESTORE);
+                    BringWindowToTop(g_lterm_hwnd);
+                    SetActiveWindow(g_lterm_hwnd);
+                } else {
+                    g_lterm_hwnd = CreateDialog(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL),
+                                                NULL, (DLGPROC)TerminalDlgProc);
+                    if (g_lterm_hwnd) {
+                        ShowWindow(g_lterm_hwnd, SW_SHOW);
+                    }
+                }
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {
@@ -1198,6 +1217,10 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_DESTROY:
+            if (g_lterm_hwnd && IsWindow(g_lterm_hwnd)) {
+                DestroyWindow(g_lterm_hwnd);
+                g_lterm_hwnd = NULL;
+            }
             KillTimer(hwnd, 1);
             KillTimer(hwnd, 2);
             PostQuitMessage(0);
@@ -1396,8 +1419,118 @@ static void drain_win_shutdown() {
     shutdown_win_interfaces();
 }
 
+struct WinCliOpts {
+    char config_path[128];
+    char override_call[16];
+    char override_alias[16];
+    oyk_u16 override_port;
+    int headless;
+    int show_help;
+    char error[96];
+};
+
+static int split_win_cmdline(const char* cmdline, char* storage, size_t storage_sz,
+                             char* argv[], int max_argv) {
+    int argc = 0;
+    size_t spos = 0;
+    const char* p = cmdline ? cmdline : "";
+    while (*p && argc < max_argv) {
+        while (*p && isspace(static_cast<unsigned char>(*p))) ++p;
+        if (!*p) break;
+        if (spos + 1 >= storage_sz) break;
+        argv[argc++] = storage + spos;
+        int in_quote = 0;
+        while (*p) {
+            if (*p == '"') {
+                in_quote = !in_quote;
+                ++p;
+                continue;
+            }
+            if (!in_quote && isspace(static_cast<unsigned char>(*p))) break;
+            if (spos + 1 < storage_sz) storage[spos++] = *p;
+            ++p;
+        }
+        storage[spos++] = '\0';
+    }
+    return argc;
+}
+
+static int parse_win_cli(const char* cmdline, WinCliOpts* opts) {
+    memset(opts, 0, sizeof(*opts));
+    static char arg_store[512];
+    char* argv[24];
+    int argc = split_win_cmdline(cmdline, arg_store, sizeof(arg_store), argv, 24);
+
+    for (int i = 0; i < argc; ++i) {
+        const char* a = argv[i];
+        const char* eq = strchr(a, '=');
+        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0 || strcmp(a, "/?") == 0) {
+            opts->show_help = 1;
+            return 1;
+        } else if (strcmp(a, "-c") == 0 || strcmp(a, "--config") == 0) {
+            if (i + 1 >= argc) { strcpy(opts->error, "Missing path for --config"); return 0; }
+            strncpy(opts->config_path, argv[++i], sizeof(opts->config_path) - 1);
+        } else if (strncmp(a, "--config=", 9) == 0 && eq) {
+            strncpy(opts->config_path, eq + 1, sizeof(opts->config_path) - 1);
+        } else if (strcmp(a, "--callsign") == 0) {
+            if (i + 1 >= argc) { strcpy(opts->error, "Missing value for --callsign"); return 0; }
+            strncpy(opts->override_call, argv[++i], sizeof(opts->override_call) - 1);
+        } else if (strncmp(a, "--callsign=", 11) == 0 && eq) {
+            strncpy(opts->override_call, eq + 1, sizeof(opts->override_call) - 1);
+        } else if (strcmp(a, "--alias") == 0) {
+            if (i + 1 >= argc) { strcpy(opts->error, "Missing value for --alias"); return 0; }
+            strncpy(opts->override_alias, argv[++i], sizeof(opts->override_alias) - 1);
+        } else if (strncmp(a, "--alias=", 8) == 0 && eq) {
+            strncpy(opts->override_alias, eq + 1, sizeof(opts->override_alias) - 1);
+        } else if (strcmp(a, "--port") == 0) {
+            if (i + 1 >= argc) { strcpy(opts->error, "Missing value for --port"); return 0; }
+            long pv = atol(argv[++i]);
+            if (pv <= 0L || pv > 65535L) { strcpy(opts->error, "Invalid --port value"); return 0; }
+            opts->override_port = static_cast<oyk_u16>(pv);
+        } else if (strncmp(a, "--port=", 7) == 0 && eq) {
+            long pv = atol(eq + 1);
+            if (pv <= 0L || pv > 65535L) { strcpy(opts->error, "Invalid --port value"); return 0; }
+            opts->override_port = static_cast<oyk_u16>(pv);
+        } else if (strcmp(a, "--headless") == 0) {
+            opts->headless = 1;
+        } else if (a[0] != '-' && !opts->config_path[0]) {
+            /* Backward-compatible bare config path argument */
+            strncpy(opts->config_path, a, sizeof(opts->config_path) - 1);
+        } else {
+            sprintf(opts->error, "Unknown option: %.60s", a);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void show_win_usage() {
+    MessageBox(NULL,
+               "OYK Amateur Radio Packet Node (Windows)\n\n"
+               "Options:\n"
+               "  -c, --config <path>      Load configuration file\n"
+               "      --callsign <CALL>    Override node callsign (e.g. N0CALL-7)\n"
+               "      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n"
+               "      --port <UDP_PORT>    Override first AXUDP bind port\n"
+               "      --headless           Run without showing GUI window\n"
+               "  -h, --help               Show this help",
+               "OYK Packet Node - Usage",
+               MB_OK | MB_ICONINFORMATION);
+}
+
 int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     g_hinst = hinst;
+
+    static WinCliOpts cli;
+    if (!parse_win_cli(cmdline, &cli)) {
+        MessageBox(NULL, cli.error, "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+        show_win_usage();
+        return 1;
+    }
+    if (cli.show_help) {
+        show_win_usage();
+        return 0;
+    }
 
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(1, 1), &wsa) != 0) {
@@ -1408,8 +1541,8 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     static OykConfig cfg;
     char cfg_path[128], err[96];
     cfg_path[0] = '\0';
-    if (cmdline && cmdline[0]) {
-        strncpy(cfg_path, cmdline, sizeof(cfg_path) - 1);
+    if (cli.config_path[0]) {
+        strncpy(cfg_path, cli.config_path, sizeof(cfg_path) - 1);
         cfg_path[sizeof(cfg_path) - 1] = '\0';
     } else {
         resolve_win_config(cfg_path, sizeof(cfg_path));
@@ -1423,6 +1556,32 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         }
     } else {
         oyk_config_init_default(&cfg);
+    }
+
+    if (cli.override_call[0]) {
+        if (!oyk_parse_callsign(cli.override_call, &cfg.callsign)) {
+            MessageBox(NULL, "Invalid --callsign value.", "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+            WSACleanup();
+            return 1;
+        }
+    }
+    if (cli.override_alias[0]) {
+        if (!oyk_parse_callsign(cli.override_alias, &cfg.alias)) {
+            MessageBox(NULL, "Invalid --alias value.", "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+            WSACleanup();
+            return 1;
+        }
+    }
+    if (cli.override_port > 0 && cfg.iface_count > 0) {
+        int updated = 0;
+        for (int i = 0; i < cfg.iface_count; ++i) {
+            if (win_strieq(cfg.ifaces[i].type, "axudp")) {
+                cfg.ifaces[i].port = cli.override_port;
+                updated = 1;
+                break;
+            }
+        }
+        if (!updated) cfg.ifaces[0].port = cli.override_port;
     }
 
     if (!g_node.init(&cfg, win_tx_callback, NULL, err, sizeof(err))) {
@@ -1452,11 +1611,16 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 520,
         NULL, NULL, hinst, NULL);
 
-    ShowWindow(g_hwnd_main, nshow);
-    UpdateWindow(g_hwnd_main);
+    if (!cli.headless) {
+        ShowWindow(g_hwnd_main, nshow);
+        UpdateWindow(g_hwnd_main);
+    }
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0) > 0) {
+        if (g_lterm_hwnd && IsDialogMessage(g_lterm_hwnd, &msg)) {
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }

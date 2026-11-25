@@ -82,10 +82,70 @@ void print_clipped(int y, int x, int max_w, const std::string& text) {
 
 } // namespace
 
+struct NcursesUI::TermState {
+    std::mutex mtx;
+    uint64_t sid = 0;
+    bool connecting = false;
+    bool connected = false;
+    bool is_local = false;
+    std::string port_id;
+    ax25::Callsign remote_call{"UNKNOWN", 0};
+    std::deque<std::string> lines;
+    std::string cur_line;
+    std::string input;
+    protocol::YappSession yapp{"incoming"};
+    std::string last_yapp_status;
+
+    void append_line(const std::string& s) {
+        lines.push_back(s);
+        while (lines.size() > 400) lines.pop_front();
+    }
+
+    void append_bytes(const std::vector<uint8_t>& raw) {
+        for (uint8_t b : raw) {
+            if (b == '\r' || b == '\n') {
+                if (!cur_line.empty() || b == '\r') {
+                    append_line(cur_line);
+                    cur_line.clear();
+                }
+            } else if (b >= 0x20 && b < 0x7F) {
+                cur_line.push_back(static_cast<char>(b));
+            }
+        }
+    }
+};
+
 NcursesUI::NcursesUI(node::NodeEngine& engine, std::atomic<bool>* external_stop_flag)
     : engine_(engine),
       external_stop_flag_(external_stop_flag),
-      status_message_("Ready. Press F10 or M to open the Node menu.") {}
+      status_message_("Ready. Press F10/M for Node menu or Tab/F9 for Local Terminal.") {}
+
+NcursesUI::~NcursesUI() {
+    close_terminal_session();
+}
+
+bool NcursesUI::has_active_terminal() const {
+    if (!term_state_) return false;
+    std::lock_guard<std::mutex> lk(term_state_->mtx);
+    return term_state_->connected || term_state_->connecting;
+}
+
+void NcursesUI::close_terminal_session() {
+    if (!term_state_) return;
+    uint64_t sid = 0;
+    {
+        std::lock_guard<std::mutex> lk(term_state_->mtx);
+        sid = term_state_->sid;
+        term_state_->sid = 0;
+        term_state_->connected = false;
+        term_state_->connecting = false;
+        term_state_->is_local = false;
+        term_state_->yapp.reset();
+    }
+    if (sid != 0) {
+        engine_.close_local_terminal(sid);
+    }
+}
 
 void NcursesUI::set_status(const std::string& msg) {
     status_message_ = msg;
@@ -116,6 +176,13 @@ void NcursesUI::run() {
             break;
         }
 
+        if (term_state_) {
+            std::lock_guard<std::mutex> lk(term_state_->mtx);
+            if (!term_state_->is_local && term_state_->yapp.awaiting_overwrite()) {
+                status_message_ = "Background terminal: YAPP overwrite confirmation needed (press Tab)";
+            }
+        }
+
         node::NodeSnapshot snap = engine_.snapshot();
         draw_screen(snap);
 
@@ -125,6 +192,10 @@ void NcursesUI::run() {
         }
 
         switch (ch) {
+            case '\t':
+            case KEY_F(9):
+                modal_local_terminal();
+                break;
             case KEY_F(10):
             case 'm':
             case 'M':
@@ -169,6 +240,7 @@ void NcursesUI::run() {
                 break;
         }
     }
+    close_terminal_session();
 }
 
 void NcursesUI::draw_box(int y, int x, int h, int w, const std::string& title) {
@@ -258,7 +330,9 @@ void NcursesUI::draw_menu_bar(int cols) {
     else attroff(A_BOLD);
 
     if (has_colors_) attron(COLOR_PAIR(CP_MENU));
-    const std::string hint = "F10 / M: Menu ";
+    const std::string hint = has_active_terminal()
+        ? "Tab/F9: Terminal (ACTIVE) | F10/M: Menu "
+        : "Tab/F9: Terminal | F10/M: Menu ";
     if (cols > static_cast<int>(hint.size()) + 10) {
         mvaddnstr(0, cols - static_cast<int>(hint.size()), hint.c_str(),
                   static_cast<int>(hint.size()));
@@ -699,52 +773,21 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
 }
 
 void NcursesUI::modal_local_terminal() {
-    struct TermState {
-        std::mutex mtx;
-        uint64_t sid = 0;
-        bool connecting = false;
-        bool connected = false;
-        bool is_local = false;
-        std::string port_id;
-        ax25::Callsign remote_call{"UNKNOWN", 0};
-        std::deque<std::string> lines;
-        std::string cur_line;
-        protocol::YappSession yapp{"incoming"};
-        std::string last_yapp_status;
-
-        void append_line(const std::string& s) {
-            lines.push_back(s);
-            while (lines.size() > 400) lines.pop_front();
-        }
-
-        void append_bytes(const std::vector<uint8_t>& raw) {
-            for (uint8_t b : raw) {
-                if (b == '\r' || b == '\n') {
-                    if (!cur_line.empty() || b == '\r') {
-                        append_line(cur_line);
-                        cur_line.clear();
-                    }
-                } else if (b >= 0x20 && b < 0x7F) {
-                    cur_line.push_back(static_cast<char>(b));
-                }
+    if (!term_state_) {
+        term_state_ = std::make_shared<TermState>();
+        auto ts_init = term_state_;
+        ts_init->yapp.set_send_callback([this, ts_init](const std::vector<uint8_t>& pkt) {
+            if (ts_init->sid != 0) {
+                engine_.send_local_terminal_bytes(ts_init->sid, pkt);
             }
-        }
-    };
-
-    auto ts = std::make_shared<TermState>();
-    ts->yapp.set_send_callback([this, ts](const std::vector<uint8_t>& pkt) {
-        if (ts->sid != 0) {
-            engine_.send_local_terminal_bytes(ts->sid, pkt);
-        }
-    });
-
-    {
-        std::lock_guard<std::mutex> lk(ts->mtx);
-        ts->append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled)");
-        ts->append_line("*** Downloads save to incoming/<CALLSIGN-SSID>/<file>");
-        ts->append_line("*** F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  Esc:Close");
-        ts->append_line("*** Commands: /connect <port> <call[@ip:port]>, /send, /disc, /ports");
+        });
+        std::lock_guard<std::mutex> lk(ts_init->mtx);
+        ts_init->append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
+        ts_init->append_line("*** Downloads save to incoming/<CALLSIGN-SSID>/<file>");
+        ts_init->append_line("*** F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
+        ts_init->append_line("*** Commands: /connect <port> <call>, /send, /disc, /ports, /console");
     }
+    auto ts = term_state_;
 
     auto start_connect = [&](const std::string& port, const std::string& target) {
         uint64_t old_sid = 0;
@@ -912,7 +955,7 @@ void NcursesUI::modal_local_terminal() {
         return allow;
     };
 
-    std::string input;
+    std::string& input = ts->input;
     curs_set(1);
 
     while (true) {
@@ -922,7 +965,7 @@ void NcursesUI::modal_local_terminal() {
         std::string pending_overwrite_path;
         {
             std::lock_guard<std::mutex> lk(ts->mtx);
-            if (ts->yapp.awaiting_overwrite()) {
+            if (!ts->is_local && ts->yapp.awaiting_overwrite()) {
                 pending_overwrite_path = ts->yapp.progress().target_path;
             }
         }
@@ -952,11 +995,12 @@ void NcursesUI::modal_local_terminal() {
             std::lock_guard<std::mutex> lk(ts->mtx);
             yp = ts->yapp.progress();
             if (ts->connected) {
-                header = " LOCAL TERMINAL | CONNECTED: " + ts->remote_call.str() + " via " + ts->port_id;
+                header = " LOCAL TERMINAL | CONNECTED: " + ts->remote_call.str() + " via " + ts->port_id +
+                         (ts->is_local ? " (LOCAL - YAPP disabled)" : "");
             } else if (ts->connecting) {
                 header = " LOCAL TERMINAL | CONNECTING: " + ts->remote_call.str() + " via " + ts->port_id + "...";
             } else {
-                header = " LOCAL TERMINAL | DISCONNECTED (F2 to Connect)";
+                header = " LOCAL TERMINAL | DISCONNECTED (F2:Connect | F9/Esc:Console)";
             }
             int body_h = std::max(1, rows - 4);
             int total = static_cast<int>(ts->lines.size());
@@ -985,7 +1029,7 @@ void NcursesUI::modal_local_terminal() {
         }
 
         // YAPP / hotkey bar
-        std::string bar = "F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  Esc:Close";
+        std::string bar = "F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console";
         if (yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
             bar = yp.status_message + " (" + std::to_string(yp.bytes_transferred) +
                   (yp.total_bytes > 0 ? ("/" + std::to_string(yp.total_bytes)) : "") + " B)";
@@ -1005,7 +1049,7 @@ void NcursesUI::modal_local_terminal() {
 
         int ch = getch();
         if (ch == ERR || ch == KEY_RESIZE) continue;
-        if (ch == 27) break;
+        if (ch == 27 || ch == KEY_F(9)) break;
 
         if (ch == KEY_F(2)) {
             prompt_connect();
@@ -1110,11 +1154,11 @@ void NcursesUI::modal_local_terminal() {
                     std::lock_guard<std::mutex> lk(ts->mtx);
                     ts->yapp.cancel("Cancelled by user");
                     ts->append_line("*** YAPP transfer aborted.");
-                } else if (cmd == "/quit" || cmd == "/exit") {
+                } else if (cmd == "/console" || cmd == "/bg" || cmd == "/quit" || cmd == "/exit") {
                     break;
                 } else {
                     std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Commands: /connect <port> <call>, /send, /disc, /ports, /abort, /quit");
+                    ts->append_line("*** Commands: /connect <port> <call>, /send, /disc, /ports, /abort, /console");
                 }
             } else {
                 uint64_t sid = 0;
@@ -1141,17 +1185,10 @@ void NcursesUI::modal_local_terminal() {
         }
     }
 
-    uint64_t sid = 0;
-    {
-        std::lock_guard<std::mutex> lk(ts->mtx);
-        sid = ts->sid;
-        ts->yapp.reset();
-    }
-    if (sid != 0) {
-        engine_.close_local_terminal(sid);
-    }
     curs_set(0);
-    set_status("Closed Local Terminal.");
+    set_status(has_active_terminal()
+                   ? "Returned to Operator Console (Local Terminal session still active; press Tab/F9 to return)."
+                   : "Returned to Operator Console.");
 }
 
 void NcursesUI::modal_terminate_connection() {
