@@ -165,15 +165,16 @@ bool NodeEngine::start(std::string& error_out) {
             const std::string bbs_call = config_.resolved_bbs_callsign().str();
             const std::string bbs_alias = config_.bbs.alias.valid() ? config_.bbs.alias.str() : "";
             const std::string mail_dir = config_.resolved_bbs_mail_path();
+            const std::string files_dir = config_.resolved_bbs_files_path();
             std::string bbs_err;
-            if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir,
+            if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir, files_dir, "incoming",
                                        config_.bbs.welcome, config_.bbs.max_msg_bytes, bbs_err)) {
                 log_msg(LOG_WARNING, "BBS startup warning: " + bbs_err);
             } else {
                 log_msg(LOG_INFO, "BBS active on " + bbs_call +
                                   (!bbs_alias.empty() ? " (" + bbs_alias + ")" : "") +
                                   " (" + std::to_string(bbs_server_.active_message_count()) + " msgs in " +
-                                  mail_dir + ")");
+                                  mail_dir + ", files: " + files_dir + ")");
             }
         }
         if (config_.chat.enabled) {
@@ -584,11 +585,18 @@ void NodeEngine::apply_bbs_result_locked(const BbsActionResult& res,
                                          uint64_t actor_sid,
                                          std::vector<PendingTx>& pending,
                                          std::vector<PendingLocalEvent>& pending_local) {
+    if (!res.log_info.empty()) {
+        log_msg(LOG_INFO, res.log_info);
+    }
     auto it = sessions_.find(actor_sid);
     if (it == sessions_.end() || !it->second) return;
     Session& actor = *it->second;
     if (!res.response_text.empty() && actor.state() == SessionState::Connected) {
         deliver_text_locked(actor, res.response_text, pending, pending_local);
+    }
+    if (!res.tx_bytes.empty() && actor.state() == SessionState::Connected && !actor.is_local_loopback()) {
+        auto bev = actor.queue_bytes(res.tx_bytes);
+        queue_session_frames(actor, bev.tx_frames, pending);
     }
     if (res.left_bbs) {
         if (res.disconnect_session) {
@@ -732,7 +740,7 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
 
             if (direct_bbs) {
                 auto bbs_res = bbs_server_.enter(sid, config_.callsign.str(), "local",
-                                                 true, true, current_time());
+                                                 true, true, true, current_time());
                 apply_bbs_result_locked(bbs_res, sid, pending, pending_local);
             } else if (direct_chat) {
                 auto chat_res = chat_room_.join(sid, config_.callsign.str(), "local", true);
@@ -1040,7 +1048,7 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                                           frame.source.str() + " on " + meta.interface_id);
                         bool is_sysop = (frame.source.base() == config_.callsign.base());
                         auto bres = bbs_server_.enter(sid, frame.source.str(), meta.interface_id,
-                                                      true, is_sysop, now_tp);
+                                                      true, is_sysop, false, now_tp);
                         apply_bbs_result_locked(bres, sid, pending, pending_local);
                     } else if (is_for_chat(frame.destination)) {
                         raw->set_mode(SessionMode::Chat);
@@ -1167,11 +1175,18 @@ void NodeEngine::process_session_events(Session& sess,
             if (sessions_.find(sid) == sessions_.end()) return;
         }
     } else if (sess.mode() == SessionMode::Bbs) {
-        const auto now_tp = current_time();
-        for (const auto& line : ev.rx_lines) {
-            auto bres = bbs_server_.handle_line(sid, line, now_tp);
+        if (bbs_server_.is_yapp_active(sid) && !ev.rx_data.empty()) {
+            auto bres = bbs_server_.handle_raw_bytes(sid, ev.rx_data);
             apply_bbs_result_locked(bres, sid, pending, pending_local);
             if (sessions_.find(sid) == sessions_.end()) return;
+        } else {
+            const auto now_tp = current_time();
+            for (const auto& line : ev.rx_lines) {
+                auto bres = bbs_server_.handle_line(sid, line, now_tp);
+                apply_bbs_result_locked(bres, sid, pending, pending_local);
+                if (sessions_.find(sid) == sessions_.end()) return;
+                if (bbs_server_.is_yapp_active(sid)) break;
+            }
         }
     } else if (sess.mode() == SessionMode::RestrictedBan) {
         for (const auto& line : ev.rx_lines) {
@@ -1241,7 +1256,8 @@ void NodeEngine::execute_pending_commands(const std::vector<PendingCommand>& pen
                     bool is_sysop = sess.is_local_loopback() ||
                                     (sess.remote_call().base() == config_.callsign.base());
                     auto bres = bbs_server_.enter(sess.id(), sess.remote_call().str(),
-                                                  sess.interface_id(), false, is_sysop, current_time());
+                                                  sess.interface_id(), false, is_sysop,
+                                                  sess.is_local_loopback(), current_time());
                     apply_bbs_result_locked(bres, sess.id(), pending, pending_local);
                 }
             } else if (result.enter_chat) {
@@ -1531,6 +1547,62 @@ std::vector<MHeardRecord> NodeEngine::mheard(std::size_t max_entries) const {
         out.resize(max_entries);
     }
     return out;
+}
+
+std::string NodeEngine::bbs_files_path() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return bbs_server_.files_path();
+}
+
+std::string NodeEngine::bbs_incoming_path() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return bbs_server_.incoming_root();
+}
+
+std::vector<PendingIncomingFile> NodeEngine::list_pending_incoming_files() const {
+    std::string inc;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        inc = bbs_server_.incoming_root();
+    }
+    return BbsServer::list_pending_incoming(inc);
+}
+
+bool NodeEngine::approve_incoming_file(const std::string& uploader,
+                                       const std::string& filename,
+                                       const std::string& dest_subdir,
+                                       bool allow_overwrite,
+                                       std::string& dest_path_out,
+                                       bool& already_exists_out,
+                                       std::string& error_out) {
+    std::string inc, files_dir;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        inc = bbs_server_.incoming_root();
+        files_dir = bbs_server_.files_path();
+    }
+    bool ok = BbsServer::approve_incoming_file(inc, files_dir, uploader, filename, dest_subdir,
+                                               allow_overwrite, dest_path_out, already_exists_out, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, "Sysop approved incoming file " + uploader + "/" + filename +
+                          " -> " + dest_path_out);
+    }
+    return ok;
+}
+
+bool NodeEngine::delete_incoming_file(const std::string& uploader,
+                                      const std::string& filename,
+                                      std::string& error_out) {
+    std::string inc;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        inc = bbs_server_.incoming_root();
+    }
+    bool ok = BbsServer::delete_incoming_file(inc, uploader, filename, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, "Sysop deleted incoming file " + uploader + "/" + filename);
+    }
+    return ok;
 }
 
 radio::RadioInterface* NodeEngine::find_interface(const std::string& id) const {

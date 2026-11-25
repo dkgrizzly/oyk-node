@@ -793,6 +793,157 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
     gtk_widget_destroy(dlg);
 }
 
+void populate_incoming_store(node::NodeEngine* engine, GtkListStore* store) {
+    gtk_list_store_clear(store);
+    auto items = engine->list_pending_incoming_files();
+    for (const auto& pf : items) {
+        GtkTreeIter iter;
+        std::string sz_str = std::to_string(pf.size_bytes) + " B";
+        gtk_list_store_append(store, &iter);
+        gtk_list_store_set(store, &iter,
+                           0, pf.uploader.c_str(),
+                           1, pf.filename.c_str(),
+                           2, sz_str.c_str(),
+                           -1);
+    }
+}
+
+void on_approve_files_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        "Approve Incoming Files (incoming/ -> BBS files/)",
+        GTK_WINDOW(st->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        "Approve & Move", 1,
+        "Delete / Reject", 2,
+        "Refresh", 3,
+        GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 580, 380);
+
+    GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
+
+    std::string hdr_txt = "Incoming: " + st->engine->bbs_incoming_path() +
+                          "   ->   BBS Files Area: " + st->engine->bbs_files_path();
+    GtkWidget* hdr_lbl = gtk_label_new(hdr_txt.c_str());
+    gtk_misc_set_alignment(GTK_MISC(hdr_lbl), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(vbox), hdr_lbl, FALSE, FALSE, 4);
+
+    GtkListStore* inc_store = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    GtkWidget* tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(inc_store));
+    add_text_column(GTK_TREE_VIEW(tv), "Uploader", 0, 120);
+    add_text_column(GTK_TREE_VIEW(tv), "Filename", 1, 260);
+    add_text_column(GTK_TREE_VIEW(tv), "Size", 2, 90);
+
+    GtkWidget* sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(sc), tv);
+    gtk_box_pack_start(GTK_BOX(vbox), sc, TRUE, TRUE, 4);
+
+    GtkWidget* sub_hbox = gtk_hbox_new(FALSE, 6);
+    gtk_box_pack_start(GTK_BOX(sub_hbox),
+                       gtk_label_new("Destination subfolder (blank = files area root):"),
+                       FALSE, FALSE, 4);
+    GtkWidget* sub_entry = gtk_entry_new();
+    gtk_box_pack_start(GTK_BOX(sub_hbox), sub_entry, TRUE, TRUE, 4);
+    gtk_box_pack_start(GTK_BOX(vbox), sub_hbox, FALSE, FALSE, 4);
+
+    GtkWidget* fb_lbl = gtk_label_new("Select a pending upload to approve or delete.");
+    gtk_misc_set_alignment(GTK_MISC(fb_lbl), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(vbox), fb_lbl, FALSE, FALSE, 4);
+
+    populate_incoming_store(st->engine, inc_store);
+    gtk_widget_show_all(dlg);
+
+    while (true) {
+        gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp == 3) {
+            populate_incoming_store(st->engine, inc_store);
+            gtk_label_set_text(GTK_LABEL(fb_lbl), "Refreshed pending incoming files.");
+            continue;
+        }
+        if (resp != 1 && resp != 2) break;
+
+        GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(tv));
+        GtkTreeModel* model = nullptr;
+        GtkTreeIter iter;
+        if (!gtk_tree_selection_get_selected(sel, &model, &iter)) {
+            gtk_label_set_text(GTK_LABEL(fb_lbl), "Please select a file from the list first.");
+            continue;
+        }
+        gchar* uploader_raw = nullptr;
+        gchar* fname_raw = nullptr;
+        gtk_tree_model_get(model, &iter, 0, &uploader_raw, 1, &fname_raw, -1);
+        std::string uploader = uploader_raw ? uploader_raw : "";
+        std::string fname = fname_raw ? fname_raw : "";
+        if (uploader_raw) g_free(uploader_raw);
+        if (fname_raw) g_free(fname_raw);
+
+        if (resp == 1) {
+            std::string subdir = gtk_entry_get_text(GTK_ENTRY(sub_entry));
+            std::string dest_path, err;
+            bool exists = false;
+            bool ok = st->engine->approve_incoming_file(uploader, fname, subdir,
+                                                        false, dest_path, exists, err);
+            if (!ok && exists) {
+                GtkWidget* md = gtk_message_dialog_new(
+                    GTK_WINDOW(dlg),
+                    static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+                    GTK_MESSAGE_WARNING,
+                    GTK_BUTTONS_YES_NO,
+                    "File already exists in BBS files area:\n%s\n\nOverwrite existing file?",
+                    dest_path.c_str());
+                gtk_window_set_title(GTK_WINDOW(md), "Confirm Overwrite");
+                gint ow = gtk_dialog_run(GTK_DIALOG(md));
+                gtk_widget_destroy(md);
+                if (ow == GTK_RESPONSE_YES) {
+                    ok = st->engine->approve_incoming_file(uploader, fname, subdir,
+                                                           true, dest_path, exists, err);
+                } else {
+                    gtk_label_set_text(GTK_LABEL(fb_lbl), "Overwrite declined; file remains in incoming/.");
+                    continue;
+                }
+            }
+            if (ok) {
+                std::string msg = "Approved " + uploader + "/" + fname + " -> " + dest_path;
+                gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
+                set_status_text(st, msg);
+                populate_incoming_store(st->engine, inc_store);
+                refresh_ui(st);
+            } else {
+                gtk_label_set_text(GTK_LABEL(fb_lbl), ("Error: " + err).c_str());
+            }
+        } else if (resp == 2) {
+            GtkWidget* confirm = gtk_message_dialog_new(
+                GTK_WINDOW(dlg),
+                static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+                GTK_MESSAGE_QUESTION,
+                GTK_BUTTONS_YES_NO,
+                "Delete incoming file %s/%s?",
+                uploader.c_str(), fname.c_str());
+            gtk_window_set_title(GTK_WINDOW(confirm), "Confirm Delete");
+            gint cresp = gtk_dialog_run(GTK_DIALOG(confirm));
+            gtk_widget_destroy(confirm);
+            if (cresp == GTK_RESPONSE_YES) {
+                std::string err;
+                if (st->engine->delete_incoming_file(uploader, fname, err)) {
+                    std::string msg = "Deleted incoming file " + uploader + "/" + fname;
+                    gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
+                    set_status_text(st, msg);
+                    populate_incoming_store(st->engine, inc_store);
+                    refresh_ui(st);
+                } else {
+                    gtk_label_set_text(GTK_LABEL(fb_lbl), ("Error: " + err).c_str());
+                }
+            }
+        }
+    }
+
+    g_object_unref(inc_store);
+    gtk_widget_destroy(dlg);
+}
+
 bool confirm_and_exit(GtkAppState* st) {
     auto snap = st->engine->snapshot();
     std::string msg = (snap.total_active_connections > 0)
@@ -868,6 +1019,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_deny  = gtk_menu_item_new_with_mnemonic("_Deny Incoming Connections");
     GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
     GtkWidget* mi_lterm = gtk_menu_item_new_with_mnemonic("_Local Terminal...");
+    GtkWidget* mi_files = gtk_menu_item_new_with_mnemonic("Approve Incoming _Files...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
     GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
@@ -876,6 +1028,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_signal_connect(mi_allow, "activate", G_CALLBACK(on_allow_incoming_clicked), &st);
     g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
     g_signal_connect(mi_lterm, "activate", G_CALLBACK(on_local_terminal_clicked), &st);
+    g_signal_connect(mi_files, "activate", G_CALLBACK(on_approve_files_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
@@ -884,6 +1037,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_deny);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_lterm);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_files);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);

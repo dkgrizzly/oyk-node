@@ -163,12 +163,16 @@ std::string BbsServer::message_file_path(uint64_t id) const {
 bool BbsServer::configure(std::string bbs_callsign,
                           std::string bbs_alias,
                           std::string mail_path,
+                          std::string files_path,
+                          std::string incoming_root,
                           std::string welcome,
                           std::size_t max_msg_bytes,
                           std::string& error_out) {
     if (!bbs_callsign.empty()) bbs_callsign_ = std::move(bbs_callsign);
     bbs_alias_ = std::move(bbs_alias);
     mail_path_ = mail_path.empty() ? "mail" : std::move(mail_path);
+    files_path_ = files_path.empty() ? "files" : std::move(files_path);
+    incoming_root_ = incoming_root.empty() ? "incoming" : std::move(incoming_root);
     if (!welcome.empty()) welcome_ = std::move(welcome);
     max_msg_bytes_ = std::clamp<std::size_t>(max_msg_bytes, 256, 65536);
 
@@ -282,6 +286,277 @@ bool BbsServer::has_session(uint64_t session_id) const {
     return sessions_.count(session_id) > 0;
 }
 
+bool BbsServer::is_yapp_active(uint64_t session_id) const {
+    auto it = sessions_.find(session_id);
+    if (it == sessions_.end()) return false;
+    return it->second.yapp_active;
+}
+
+namespace {
+
+bool path_is_within_root(const std::filesystem::path& root_canon,
+                         const std::filesystem::path& cand_canon) {
+    auto rit = root_canon.begin();
+    auto cit = cand_canon.begin();
+    for (; rit != root_canon.end(); ++rit, ++cit) {
+        if (cit == cand_canon.end() || *rit != *cit) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool BbsServer::resolve_safe_files_path(const std::string& files_root,
+                                        const std::string& current_rel_dir,
+                                        const std::string& user_arg,
+                                        bool allow_parent_in_root,
+                                        std::string& resolved_abs_out,
+                                        std::string& resolved_rel_out,
+                                        std::string& error_out) {
+    namespace fs = std::filesystem;
+    resolved_abs_out.clear();
+    resolved_rel_out.clear();
+
+    for (unsigned char c : user_arg) {
+        if (c < 0x20 || c >= 0x7F) {
+            error_out = "Access denied: invalid characters in path.";
+            return false;
+        }
+        if (c == ':') {
+            error_out = "Access denied: drive specifiers are not permitted.";
+            return false;
+        }
+        if (c == '\\') {
+            error_out = "Access denied: backslashes are not permitted in BBS paths.";
+            return false;
+        }
+    }
+
+    std::vector<std::string> stack;
+    auto push_rel = [&](const std::string& rel) {
+        std::size_t i = 0;
+        while (i < rel.size()) {
+            while (i < rel.size() && rel[i] == '/') ++i;
+            std::size_t j = i;
+            while (j < rel.size() && rel[j] != '/') ++j;
+            if (j > i) {
+                std::string seg = rel.substr(i, j - i);
+                if (seg != "." && seg != "..") stack.push_back(seg);
+            }
+            i = j;
+        }
+    };
+
+    std::string arg = trim(user_arg);
+    if (!arg.empty() && arg.front() == '/') {
+        // Virtual root of the BBS files area (never the host filesystem root)
+        stack.clear();
+    } else {
+        push_rel(current_rel_dir);
+    }
+
+    std::size_t i = 0;
+    while (i < arg.size()) {
+        while (i < arg.size() && arg[i] == '/') ++i;
+        std::size_t j = i;
+        while (j < arg.size() && arg[j] != '/') ++j;
+        if (j > i) {
+            std::string seg = arg.substr(i, j - i);
+            if (seg == ".") {
+                // Current directory inside files root
+            } else if (seg == "..") {
+                if (!allow_parent_in_root) {
+                    error_out = "Access denied: directory traversal is not permitted.";
+                    return false;
+                }
+                if (stack.empty()) {
+                    error_out = "Access denied: cannot navigate above BBS files area root.";
+                    return false;
+                }
+                stack.pop_back();
+            } else {
+                if (!protocol::is_safe_yapp_filename(seg)) {
+                    error_out = "Access denied: invalid path component '" + seg + "'.";
+                    return false;
+                }
+                stack.push_back(seg);
+            }
+        }
+        i = j;
+    }
+
+    std::error_code ec;
+    fs::path root_abs = fs::absolute(fs::path(files_root.empty() ? "files" : files_root), ec);
+    if (ec) {
+        error_out = "Unable to resolve BBS files area root.";
+        return false;
+    }
+    fs::path root_canon = fs::weakly_canonical(root_abs, ec);
+    if (ec) root_canon = root_abs.lexically_normal();
+
+    fs::path cand = root_canon;
+    std::string rel_joined;
+    for (const auto& seg : stack) {
+        cand /= seg;
+        if (!rel_joined.empty()) rel_joined.push_back('/');
+        rel_joined += seg;
+    }
+
+    fs::path cand_canon = fs::weakly_canonical(cand, ec);
+    if (ec) {
+        error_out = "Access denied: unable to validate target path.";
+        return false;
+    }
+    if (!path_is_within_root(root_canon, cand_canon)) {
+        error_out = "Access denied: target escapes BBS files area root.";
+        return false;
+    }
+
+    resolved_abs_out = cand_canon.string();
+    resolved_rel_out = rel_joined;
+    return true;
+}
+
+std::vector<PendingIncomingFile> BbsServer::list_pending_incoming(const std::string& incoming_root) {
+    namespace fs = std::filesystem;
+    std::vector<PendingIncomingFile> out;
+    std::error_code ec;
+    fs::path root(incoming_root.empty() ? "incoming" : incoming_root);
+    if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) {
+        return out;
+    }
+
+    for (const auto& dir_ent : fs::directory_iterator(root, ec)) {
+        if (ec) break;
+        if (!dir_ent.is_directory(ec) || ec) continue;
+        std::string uploader = dir_ent.path().filename().string();
+        if (!protocol::is_safe_yapp_filename(uploader)) continue;
+
+        for (const auto& file_ent : fs::directory_iterator(dir_ent.path(), ec)) {
+            if (ec) break;
+            if (!file_ent.is_regular_file(ec) || ec) continue;
+            std::string fname = file_ent.path().filename().string();
+            if (!protocol::is_safe_yapp_filename(fname)) continue;
+            PendingIncomingFile pf;
+            pf.uploader = uploader;
+            pf.filename = fname;
+            pf.full_path = file_ent.path().string();
+            pf.size_bytes = file_ent.file_size(ec);
+            if (ec) pf.size_bytes = 0;
+            out.push_back(std::move(pf));
+        }
+    }
+
+    std::sort(out.begin(), out.end(), [](const PendingIncomingFile& a, const PendingIncomingFile& b) {
+        if (a.uploader != b.uploader) return a.uploader < b.uploader;
+        return a.filename < b.filename;
+    });
+    return out;
+}
+
+bool BbsServer::approve_incoming_file(const std::string& incoming_root,
+                                      const std::string& files_root,
+                                      const std::string& uploader,
+                                      const std::string& filename,
+                                      const std::string& dest_subdir,
+                                      bool allow_overwrite,
+                                      std::string& dest_path_out,
+                                      bool& already_exists_out,
+                                      std::string& error_out) {
+    namespace fs = std::filesystem;
+    dest_path_out.clear();
+    already_exists_out = false;
+
+    if (!protocol::is_safe_yapp_filename(uploader) || !protocol::is_safe_yapp_filename(filename)) {
+        error_out = "Invalid uploader or filename.";
+        return false;
+    }
+
+    std::error_code ec;
+    fs::path inc_root = fs::weakly_canonical(
+        fs::absolute(fs::path(incoming_root.empty() ? "incoming" : incoming_root), ec), ec);
+    fs::path src_path = fs::weakly_canonical(inc_root / uploader / filename, ec);
+    if (ec || !path_is_within_root(inc_root, src_path) || !fs::is_regular_file(src_path, ec)) {
+        error_out = "Incoming file not found or invalid.";
+        return false;
+    }
+
+    std::string dest_dir_abs;
+    std::string dest_dir_rel;
+    if (!resolve_safe_files_path(files_root, "", dest_subdir, false,
+                                 dest_dir_abs, dest_dir_rel, error_out)) {
+        return false;
+    }
+
+    fs::create_directories(dest_dir_abs, ec);
+    if (ec) {
+        error_out = "Unable to create files area directory: " + ec.message();
+        return false;
+    }
+
+    fs::path root_canon = fs::weakly_canonical(
+        fs::absolute(fs::path(files_root.empty() ? "files" : files_root), ec), ec);
+    fs::path dest_file = fs::weakly_canonical(fs::path(dest_dir_abs) / filename, ec);
+    if (ec || !path_is_within_root(root_canon, dest_file)) {
+        error_out = "Access denied: destination escapes BBS files area.";
+        return false;
+    }
+
+    if (fs::exists(dest_file, ec)) {
+        if (!allow_overwrite) {
+            already_exists_out = true;
+            dest_path_out = dest_file.string();
+            error_out = "File already exists in files area: " + dest_file.string();
+            return false;
+        }
+        fs::remove(dest_file, ec);
+        if (ec) {
+            error_out = "Unable to overwrite existing file: " + ec.message();
+            return false;
+        }
+    }
+
+    fs::rename(src_path, dest_file, ec);
+    if (ec) {
+        ec.clear();
+        fs::copy_file(src_path, dest_file, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error_out = "Failed to move file to files area: " + ec.message();
+            return false;
+        }
+        fs::remove(src_path, ec);
+    }
+
+    dest_path_out = dest_file.string();
+    return true;
+}
+
+bool BbsServer::delete_incoming_file(const std::string& incoming_root,
+                                     const std::string& uploader,
+                                     const std::string& filename,
+                                     std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (!protocol::is_safe_yapp_filename(uploader) || !protocol::is_safe_yapp_filename(filename)) {
+        error_out = "Invalid uploader or filename.";
+        return false;
+    }
+    std::error_code ec;
+    fs::path inc_root = fs::weakly_canonical(
+        fs::absolute(fs::path(incoming_root.empty() ? "incoming" : incoming_root), ec), ec);
+    fs::path src_path = fs::weakly_canonical(inc_root / uploader / filename, ec);
+    if (ec || !path_is_within_root(inc_root, src_path) || !fs::is_regular_file(src_path, ec)) {
+        error_out = "Incoming file not found.";
+        return false;
+    }
+    if (!fs::remove(src_path, ec) || ec) {
+        error_out = "Failed to delete incoming file: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
 std::size_t BbsServer::active_message_count() const {
     std::size_t n = 0;
     for (const auto& [_, m] : messages_) {
@@ -310,17 +585,25 @@ BbsActionResult BbsServer::enter(uint64_t session_id,
                                  const std::string& interface_id,
                                  bool direct_connect,
                                  bool is_sysop,
+                                 bool is_local_loopback,
                                  std::chrono::system_clock::time_point /*now*/) {
     BbsSessionState st;
     st.session_id = session_id;
     st.callsign = to_upper(trim(callsign));
     st.base_callsign = base_call(st.callsign);
+    if (auto parsed = ax25::Callsign::parse(st.callsign)) {
+        st.parsed_call = *parsed;
+    } else {
+        st.parsed_call = ax25::Callsign("UNKNOWN", 0);
+    }
     st.interface_id = interface_id;
     st.direct_connect = direct_connect;
     st.is_sysop = is_sysop;
-    sessions_[session_id] = st;
+    st.is_local_loopback = is_local_loopback;
+    sessions_[session_id] = std::move(st);
 
-    const std::size_t unread = unread_count_for(st.callsign);
+    const BbsSessionState& ref = sessions_[session_id];
+    const std::size_t unread = unread_count_for(ref.callsign);
     const std::size_t total = active_message_count();
 
     std::ostringstream oss;
@@ -329,7 +612,7 @@ BbsActionResult BbsServer::enter(uint64_t session_id,
     if (!bbs_alias_.empty()) oss << " (" << bbs_alias_ << ")";
     oss << " Packet BBS ***\r"
         << welcome_ << "\r"
-        << "Hello " << st.base_callsign
+        << "Hello " << ref.base_callsign
         << ". Active msgs: " << total
         << " | Unread personal mail: " << unread << "\r";
     if (unread > 0) {
@@ -344,6 +627,116 @@ BbsActionResult BbsServer::enter(uint64_t session_id,
 
 void BbsServer::leave(uint64_t session_id) {
     sessions_.erase(session_id);
+}
+
+std::string BbsServer::format_files_listing(const std::string& abs_dir,
+                                            const std::string& rel_dir) const {
+    namespace fs = std::filesystem;
+    std::ostringstream oss;
+    oss << "Files Area: /" << rel_dir << "\r";
+    std::error_code ec;
+    if (!fs::exists(abs_dir, ec) || !fs::is_directory(abs_dir, ec)) {
+        oss << "(empty - no approved files yet)\r";
+        return oss.str();
+    }
+
+    fs::path root_canon = fs::weakly_canonical(fs::absolute(fs::path(files_path_), ec), ec);
+
+    struct FileRow {
+        std::string name;
+        bool is_dir = false;
+        uint64_t size = 0;
+    };
+    std::vector<FileRow> rows;
+    for (const auto& entry : fs::directory_iterator(abs_dir, ec)) {
+        if (ec) break;
+        std::string fname = entry.path().filename().string();
+        if (!protocol::is_safe_yapp_filename(fname)) continue;
+        fs::path ent_canon = fs::weakly_canonical(entry.path(), ec);
+        if (ec || !path_is_within_root(root_canon, ent_canon)) continue;
+        FileRow r;
+        r.name = fname;
+        r.is_dir = entry.is_directory(ec);
+        if (!r.is_dir) {
+            if (!entry.is_regular_file(ec)) continue;
+            r.size = entry.file_size(ec);
+            if (ec) r.size = 0;
+        }
+        rows.push_back(std::move(r));
+    }
+
+    std::sort(rows.begin(), rows.end(), [](const FileRow& a, const FileRow& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return a.name < b.name;
+    });
+
+    if (rows.empty()) {
+        oss << "(no files in this directory)\r";
+        return oss.str();
+    }
+
+    oss << "Name                             Size\r"
+        << "-------------------------------- ----------\r";
+    for (const auto& r : rows) {
+        oss << std::left << std::setw(32) << r.name.substr(0, 32) << " ";
+        if (r.is_dir) {
+            oss << "<DIR>\r";
+        } else {
+            oss << std::right << std::setw(10) << r.size << "\r";
+        }
+    }
+    oss << "Use: CD <dir>, TYPE <file>, GET <file> (YAPP download), UPLOAD (YAPP upload)\r";
+    return oss.str();
+}
+
+BbsActionResult BbsServer::handle_raw_bytes(uint64_t session_id,
+                                            const std::vector<uint8_t>& data) {
+    BbsActionResult res;
+    auto it = sessions_.find(session_id);
+    if (it == sessions_.end() || !it->second.yapp_active || !it->second.yapp) return res;
+    BbsSessionState& st = it->second;
+
+    std::vector<uint8_t> tx_accum;
+    st.yapp->set_send_callback([&tx_accum](const std::vector<uint8_t>& pkt) {
+        tx_accum.insert(tx_accum.end(), pkt.begin(), pkt.end());
+    });
+
+    std::vector<uint8_t> plain;
+    st.yapp->feed_bytes(data.data(), data.size(), plain);
+    res.tx_bytes = std::move(tx_accum);
+
+    auto prog = st.yapp->progress();
+    if (prog.state == protocol::YappState::Complete ||
+        prog.state == protocol::YappState::Aborted ||
+        prog.state == protocol::YappState::Error) {
+        st.yapp_active = false;
+        bool was_upload = st.yapp_expect_upload;
+        st.yapp_expect_upload = false;
+
+        std::ostringstream oss;
+        oss << "\r*** " << prog.status_message << "\r";
+        if (was_upload && prog.state == protocol::YappState::Complete) {
+            oss << "*** File stored in incoming queue pending sysop approval.\r";
+            res.log_info = "BBS incoming upload from " + st.callsign + ": " + prog.target_path +
+                           " (" + std::to_string(prog.bytes_transferred) +
+                           " bytes) - pending sysop approval";
+        }
+        oss << prompt_string();
+        res.response_text = oss.str();
+        st.yapp->reset();
+    } else if (!st.yapp->is_active() && !plain.empty()) {
+        // User typed Ctrl-X / abort text while waiting to begin upload
+        for (uint8_t b : plain) {
+            if (b == protocol::YAPP_CAN || b == 0x03) {
+                st.yapp_active = false;
+                st.yapp_expect_upload = false;
+                st.yapp->reset();
+                res.response_text = "\r*** YAPP upload cancelled.\r" + prompt_string();
+                break;
+            }
+        }
+    }
+    return res;
 }
 
 std::string BbsServer::format_list(const std::vector<const BbsMessage*>& msgs) const {
@@ -504,6 +897,11 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             << "  SR <n>          - Reply to message #<n>\r"
             << "  K <n> [n2...]   - Kill (delete) message(s)\r"
             << "  KM              - Kill all read personal messages to me\r"
+            << "  FILES / DIR [d] - List files in BBS files area\r"
+            << "  CD <dir> / PWD  - Navigate BBS files area subdirectories\r"
+            << "  TYPE <file>     - View text file from BBS files area\r"
+            << "  GET / D <file>  - Download file via YAPP / YAPP-C\r"
+            << "  UPLOAD / YU     - Upload file via YAPP (queued in incoming/)\r"
             << "  I  / INFO       - BBS status and statistics\r"
             << "  B  / BYE / Q    - Exit BBS\r"
             << prompt_string();
@@ -775,6 +1173,169 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
         }
         oss << prompt_string();
         res.response_text = oss.str();
+        return res;
+    }
+
+    // Files Area: list directory (F / FILES / DIR [subdir])
+    if (cmd == "F" || cmd == "FILES" || cmd == "DIR") {
+        std::string arg_path = (tokens.size() >= 2) ? tokens[1] : "";
+        std::string abs_dir, rel_dir, perr;
+        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, arg_path, false,
+                                     abs_dir, rel_dir, perr)) {
+            res.response_text = perr + "\r" + prompt_string();
+            return res;
+        }
+        res.response_text = format_files_listing(abs_dir, rel_dir) + prompt_string();
+        return res;
+    }
+
+    // Files Area: print current virtual directory (PWD)
+    if (cmd == "PWD") {
+        res.response_text = "Files Area: /" + st.cur_files_rel + "\r" + prompt_string();
+        return res;
+    }
+
+    // Files Area: change directory (CD [dir])
+    if (cmd == "CD") {
+        if (tokens.size() < 2 || tokens[1] == "/") {
+            st.cur_files_rel.clear();
+            res.response_text = "Files Area: /\r" + prompt_string();
+            return res;
+        }
+        std::string abs_dir, rel_dir, perr;
+        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], true,
+                                     abs_dir, rel_dir, perr)) {
+            res.response_text = perr + "\r" + prompt_string();
+            return res;
+        }
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (!fs::exists(abs_dir, ec) || !fs::is_directory(abs_dir, ec)) {
+            res.response_text = "Directory not found: /" + rel_dir + "\r" + prompt_string();
+            return res;
+        }
+        st.cur_files_rel = rel_dir;
+        res.response_text = "Files Area: /" + st.cur_files_rel + "\r" + prompt_string();
+        return res;
+    }
+
+    // Files Area: display text file (TYPE <file>)
+    if (cmd == "TYPE" || cmd == "CAT") {
+        if (tokens.size() < 2) {
+            res.response_text = "Usage: TYPE <filename>\r" + prompt_string();
+            return res;
+        }
+        std::string abs_file, rel_file, perr;
+        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], false,
+                                     abs_file, rel_file, perr)) {
+            res.response_text = perr + "\r" + prompt_string();
+            return res;
+        }
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (!fs::is_regular_file(abs_file, ec)) {
+            res.response_text = "File not found: /" + rel_file + "\r" + prompt_string();
+            return res;
+        }
+        std::ifstream ifs(abs_file, std::ios::binary);
+        if (!ifs.is_open()) {
+            res.response_text = "Unable to open file.\r" + prompt_string();
+            return res;
+        }
+        std::ostringstream oss;
+        oss << "--- /" << rel_file << " ---\r";
+        std::size_t shown = 0;
+        constexpr std::size_t MAX_TYPE_BYTES = 8192;
+        char ch = 0;
+        while (ifs.get(ch) && shown < MAX_TYPE_BYTES) {
+            unsigned char u = static_cast<unsigned char>(ch);
+            if (u == '\n') {
+                oss << '\r';
+                ++shown;
+            } else if (u == '\r') {
+                // Skip raw CR to normalize to AX.25 CR
+            } else if (u == '\t' || (u >= 0x20 && u <= 0x7E)) {
+                oss << ch;
+                ++shown;
+            }
+        }
+        if (ifs.good()) {
+            oss << "\r*** (truncated at " << MAX_TYPE_BYTES
+                << " bytes; use GET " << tokens[1] << " for full YAPP download)";
+        }
+        oss << "\r--- EOF ---\r" << prompt_string();
+        res.response_text = oss.str();
+        return res;
+    }
+
+    // Files Area: YAPP Download (D / GET / DOWNLOAD / YAPP <file>)
+    if (cmd == "D" || cmd == "GET" || cmd == "DOWNLOAD" || cmd == "YAPP") {
+        if (tokens.size() < 2) {
+            res.response_text = "Usage: GET <filename>\r" + prompt_string();
+            return res;
+        }
+        if (st.is_local_loopback) {
+            res.response_text = "*** YAPP file transfer is disallowed when both sides are local.\r" +
+                                prompt_string();
+            return res;
+        }
+        std::string abs_file, rel_file, perr;
+        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], false,
+                                     abs_file, rel_file, perr)) {
+            res.response_text = perr + "\r" + prompt_string();
+            return res;
+        }
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (!fs::is_regular_file(abs_file, ec)) {
+            res.response_text = "File not found: /" + rel_file + "\r" + prompt_string();
+            return res;
+        }
+        if (!st.yapp) {
+            st.yapp = std::make_unique<protocol::YappSession>(incoming_root_);
+        }
+        st.yapp->reset();
+        st.yapp->set_incoming_root(incoming_root_);
+        st.yapp->set_remote_callsign(st.parsed_call);
+
+        std::vector<uint8_t> tx_accum;
+        st.yapp->set_send_callback([&tx_accum](const std::vector<uint8_t>& pkt) {
+            tx_accum.insert(tx_accum.end(), pkt.begin(), pkt.end());
+        });
+        std::string yerr;
+        if (!st.yapp->start_send(abs_file, yerr)) {
+            res.response_text = "*** YAPP download error: " + yerr + "\r" + prompt_string();
+            return res;
+        }
+        st.yapp_active = true;
+        st.yapp_expect_upload = false;
+        res.tx_bytes = std::move(tx_accum);
+        res.log_info = "BBS YAPP download started by " + st.callsign + ": /" + rel_file;
+        return res;
+    }
+
+    // Files Area: YAPP Upload into incoming/<CALLSIGN-SSID>/<filename> (U / UPLOAD / YU)
+    if (cmd == "U" || cmd == "UPLOAD" || cmd == "YU") {
+        if (st.is_local_loopback) {
+            res.response_text = "*** YAPP file transfer is disallowed when both sides are local.\r" +
+                                prompt_string();
+            return res;
+        }
+        if (!st.yapp) {
+            st.yapp = std::make_unique<protocol::YappSession>(incoming_root_);
+        }
+        st.yapp->reset();
+        st.yapp->set_incoming_root(incoming_root_);
+        st.yapp->set_remote_callsign(st.parsed_call);
+        // Never allow remote uploads to overwrite an existing file in incoming/
+        st.yapp->set_overwrite_callback([](const std::filesystem::path&, const std::string&) {
+            return false;
+        });
+        st.yapp_active = true;
+        st.yapp_expect_upload = true;
+        res.response_text = "*** Ready for YAPP upload into incoming/" +
+                            protocol::format_yapp_peer_dir(st.parsed_call) +
+                            "/. Start YAPP send now (Ctrl-X to cancel).\r";
         return res;
     }
 

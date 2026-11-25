@@ -41,6 +41,7 @@ private:
     bool modal_file_selector(const std::string& title, std::string& selected_path_out);
     void modal_terminate_connection();
     void modal_ban_callsign();
+    void modal_approve_incoming_files();
     bool modal_confirm_exit();
 
     void draw_box(int y, int x, int h, int w, const std::string& title);

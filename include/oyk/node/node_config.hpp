@@ -21,6 +21,7 @@ struct BbsConfig {
     ax25::Callsign callsign;             // Optional explicit callsign override
     ax25::Callsign alias{"OYKBBS", 0};   // Optional BBS alias
     std::string mail_path = "mail/";     // Directory for persisted M<id>.MSG files
+    std::string files_path = "files/";   // Root directory for BBS downloadable files area
     std::string welcome = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
     std::size_t max_msg_bytes = 8192;
 };
@@ -69,6 +70,9 @@ struct NodeConfig {
 
     // Resolves BBS mail storage directory relative to config file directory if relative.
     std::string resolved_bbs_mail_path() const;
+
+    // Resolves BBS files area root directory relative to config file directory if relative.
+    std::string resolved_bbs_files_path() const;
 
     // Resolves CHAT callsign: explicit chat.callsign if valid, else <callsign.base()>-<chat.ssid>.
     ax25::Callsign resolved_chat_callsign() const;

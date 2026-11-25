@@ -228,6 +228,10 @@ void NcursesUI::run() {
             case 'L':
                 modal_local_terminal();
                 break;
+            case 'f':
+            case 'F':
+                modal_approve_incoming_files();
+                break;
             case 'q':
             case 'Q':
             case 'x':
@@ -518,21 +522,22 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
 }
 
 void NcursesUI::open_node_menu(bool& should_exit) {
-    static const char* ITEMS[6] = {
+    static const char* ITEMS[7] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
+        " [F] Approve Incoming Files...  ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
     // Row offsets inside menu window (with separators after Deny and Ban)
-    static const int ITEM_ROWS[6] = { 1, 2, 4, 5, 6, 8 };
+    static const int ITEM_ROWS[7] = { 1, 2, 4, 5, 6, 7, 9 };
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(36, cols - 2);
-    const int h = 10;
+    const int h = 11;
     if (rows < h + 2 || w < 24) return;
 
     WINDOW* win = newwin(h, w, 1, 1);
@@ -548,9 +553,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         werase(win);
         box(win, 0, 0);
         mvwhline(win, 3, 1, ACS_HLINE, w - 2);
-        mvwhline(win, 7, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 8, 1, ACS_HLINE, w - 2);
 
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 7; ++i) {
             if (i == sel) wattron(win, A_REVERSE | A_BOLD);
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
@@ -561,9 +566,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         if (ch == ERR) continue;
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
-            sel = (sel + 5) % 6;
+            sel = (sel + 6) % 7;
         } else if (ch == KEY_DOWN) {
-            sel = (sel + 1) % 6;
+            sel = (sel + 1) % 7;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             chosen = sel;
         } else if (ch == 'a' || ch == 'A') {
@@ -572,12 +577,14 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             chosen = 1;
         } else if (ch == 'l' || ch == 'L') {
             chosen = 2;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'f' || ch == 'F') {
             chosen = 3;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 4;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 5;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 6;
         }
     }
 
@@ -596,12 +603,15 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             modal_local_terminal();
             break;
         case 3:
-            modal_terminate_connection();
+            modal_approve_incoming_files();
             break;
         case 4:
-            modal_ban_callsign();
+            modal_terminate_connection();
             break;
         case 5:
+            modal_ban_callsign();
+            break;
+        case 6:
             if (modal_confirm_exit()) {
                 should_exit = true;
             }
@@ -1476,6 +1486,181 @@ void NcursesUI::modal_ban_callsign() {
     }
 
     curs_set(0);
+    delwin(win);
+}
+
+void NcursesUI::modal_approve_incoming_files() {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(76, std::max(54, cols - 4));
+    int h = std::min(22, std::max(14, rows - 2));
+    if (rows < 12 || cols < 46) return;
+
+    WINDOW* win = newwin(h, w, (rows - h) / 2, (cols - w) / 2);
+    if (!win) return;
+    keypad(win, TRUE);
+    wtimeout(win, 200);
+
+    auto items = engine_.list_pending_incoming_files();
+    int sel = 0;
+    int top = 0;
+    std::string feedback = "Target BBS Files Area: " + engine_.bbs_files_path();
+
+    auto prompt_text = [&](const std::string& label, std::string& out) -> bool {
+        out.clear();
+        curs_set(1);
+        while (true) {
+            mvwaddnstr(win, h - 2, 2, std::string(w - 4, ' ').c_str(), w - 4);
+            std::string shown = label + out;
+            if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+            mvwaddnstr(win, h - 2, 2, clip(shown, w - 4).c_str(), w - 4);
+            if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+            wmove(win, h - 2, std::min(w - 3, 2 + static_cast<int>(shown.size())));
+            wrefresh(win);
+            int c = wgetch(win);
+            if (c == ERR) continue;
+            if (c == 27) {
+                curs_set(0);
+                return false;
+            }
+            if (c == '\n' || c == '\r' || c == KEY_ENTER) {
+                curs_set(0);
+                return true;
+            }
+            if ((c == KEY_BACKSPACE || c == 127 || c == '\b') && !out.empty()) {
+                out.pop_back();
+            } else if (c >= 0x20 && c < 0x7F && out.size() < 48) {
+                out.push_back(static_cast<char>(c));
+            }
+        }
+    };
+
+    auto prompt_yes_no = [&](const std::string& question) -> bool {
+        while (true) {
+            mvwaddnstr(win, h - 2, 2, std::string(w - 4, ' ').c_str(), w - 4);
+            if (has_colors_) wattron(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
+            mvwaddnstr(win, h - 2, 2, clip(question + " [Y/N]: ", w - 4).c_str(), w - 4);
+            if (has_colors_) wattroff(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
+            wrefresh(win);
+            int c = wgetch(win);
+            if (c == ERR) continue;
+            if (c == 'y' || c == 'Y') return true;
+            if (c == 'n' || c == 'N' || c == 27) return false;
+        }
+    };
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+        int list_h = std::max(1, h - 7);
+        int count = static_cast<int>(items.size());
+        if (sel >= count) sel = std::max(0, count - 1);
+        if (sel < top) top = sel;
+        if (sel >= top + list_h) top = sel - list_h + 1;
+
+        werase(win);
+        box(win, 0, 0);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+        mvwaddnstr(win, 0, 2, " Approve Incoming Files (incoming/ -> BBS files/) ", w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+
+        mvwaddnstr(win, 1, 2,
+                   clip("Incoming: " + engine_.bbs_incoming_path() + "  ->  Files Area: " +
+                        engine_.bbs_files_path(), w - 4).c_str(),
+                   w - 4);
+        mvwhline(win, 2, 1, ACS_HLINE, w - 2);
+
+        std::ostringstream hdr;
+        hdr << std::left << std::setw(14) << "Uploader"
+            << std::setw(std::max(16, w - 30)) << "Filename"
+            << std::right << std::setw(10) << "Size";
+        wattron(win, A_BOLD);
+        mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+        wattroff(win, A_BOLD);
+
+        if (items.empty()) {
+            mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
+        } else {
+            for (int r = 0; r < list_h; ++r) {
+                int idx = top + r;
+                if (idx >= count) break;
+                const auto& pf = items[static_cast<std::size_t>(idx)];
+                std::ostringstream row;
+                row << std::left << std::setw(14) << clip(pf.uploader, 13)
+                    << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
+                    << std::right << std::setw(10) << pf.size_bytes;
+                if (idx == sel) wattron(win, A_REVERSE | A_BOLD);
+                mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                if (idx == sel) wattroff(win, A_REVERSE | A_BOLD);
+            }
+        }
+
+        mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
+        mvwaddnstr(win, h - 2, 2, clip(feedback, w - 4).c_str(), w - 4);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
+        mvwaddnstr(win, h - 1, 2,
+                   clip("Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close", w - 4).c_str(),
+                   w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == 27 || ch == 'q' || ch == 'Q') break;
+        if (ch == KEY_UP && sel > 0) {
+            --sel;
+        } else if (ch == KEY_DOWN && sel + 1 < count) {
+            ++sel;
+        } else if (ch == KEY_PPAGE) {
+            sel = std::max(0, sel - list_h);
+        } else if (ch == KEY_NPAGE && count > 0) {
+            sel = std::min(count - 1, sel + list_h);
+        } else if (ch == 'r' || ch == 'R') {
+            items = engine_.list_pending_incoming_files();
+            feedback = "Refreshed (" + std::to_string(items.size()) + " pending).";
+        } else if ((ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
+            const auto pf = items[static_cast<std::size_t>(sel)];
+            std::string subdir;
+            if (!prompt_text("Subfolder in files area (blank=root): ", subdir)) {
+                feedback = "Approval cancelled.";
+                continue;
+            }
+            std::string dest_path, err;
+            bool exists = false;
+            bool ok = engine_.approve_incoming_file(pf.uploader, pf.filename, subdir,
+                                                    false, dest_path, exists, err);
+            if (!ok && exists) {
+                if (prompt_yes_no("File exists in files area. Overwrite " + pf.filename + "?")) {
+                    ok = engine_.approve_incoming_file(pf.uploader, pf.filename, subdir,
+                                                       true, dest_path, exists, err);
+                } else {
+                    feedback = "Overwrite declined; file kept in incoming/.";
+                    continue;
+                }
+            }
+            if (ok) {
+                feedback = "Approved -> " + dest_path;
+                set_status("Approved incoming file: " + pf.uploader + "/" + pf.filename);
+                items = engine_.list_pending_incoming_files();
+            } else {
+                feedback = "Error: " + err;
+            }
+        } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
+            const auto pf = items[static_cast<std::size_t>(sel)];
+            if (prompt_yes_no("Delete incoming/" + pf.uploader + "/" + pf.filename + "?")) {
+                std::string err;
+                if (engine_.delete_incoming_file(pf.uploader, pf.filename, err)) {
+                    feedback = "Deleted " + pf.uploader + "/" + pf.filename;
+                    set_status(feedback);
+                    items = engine_.list_pending_incoming_files();
+                } else {
+                    feedback = "Error: " + err;
+                }
+            } else {
+                feedback = "Delete cancelled.";
+            }
+        }
+    }
+
     delwin(win);
 }
 

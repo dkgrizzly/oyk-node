@@ -97,11 +97,12 @@ ssid = 11
 # callsign = N0CALL-11
 alias = OYKBBS
 mailpath = mail/
+filespath = files/
 welcome = Welcome to OYK Packet BBS! Type H for help, B to exit.
 max_msg_bytes = 8192
 ```
 
-Messages are persisted under `mailpath` as human-readable `M<id>.MSG` files. Users can connect directly to the BBS callsign/SSID (or alias `OYKBBS`) over any radio interface or Local Terminal, or type `BBS` from the node command shell. Inside the BBS, `H` lists commands (`L`/`LL`/`LM`/`LN`/`LB`/`LP`/`L>`/`L<`/`L@`/`LC`/`LS` list/search, `R`/`RM` read, `SP`/`SB`/`ST`/`SR` send/reply ending with `/EX` or `Ctrl-Z`, `K`/`KM` kill, `I` info, `B` exit).
+Messages are persisted under `mailpath` as human-readable `M<id>.MSG` files. Downloadable files are served strictly from `filespath` (all directory traversal attempts such as `../`, `..\`, drive prefixes, or symlinks escaping `filespath` are rejected). Remote YAPP uploads (`UPLOAD`/`YU`) are saved to `incoming/<CALLSIGN-SSID>/<filename>` without overwriting existing files, and remain invisible in the BBS files area until the sysop approves and moves them into `filespath` via **Node → Approve Incoming Files...**. Users can connect directly to the BBS callsign/SSID (or alias `OYKBBS`) over any radio interface or Local Terminal, or type `BBS` from the node command shell. Inside the BBS, `H` lists commands (`L`/`LL`/`LM`/`LN`/`LB`/`LP`/`L>`/`L<`/`L@`/`LC`/`LS` list/search, `R`/`RM` read, `SP`/`SB`/`ST`/`SR` send/reply ending with `/EX` or `Ctrl-Z`, `K`/`KM` kill, `FILES`/`DIR`/`CD`/`PWD`/`TYPE`/`GET`/`UPLOAD` files area, `I` info, `B` exit).
 
 ### `[chat]`
 

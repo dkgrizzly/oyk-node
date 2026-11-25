@@ -172,6 +172,7 @@ struct OykConfig {
     OykCallsign bbs_callsign;
     OykCallsign bbs_alias;
     char bbs_mail_path[96];
+    char bbs_files_path[96];
     char bbs_welcome[96];
     oyk_u16 bbs_max_msg_bytes;
 
@@ -230,6 +231,12 @@ struct OykBbsMsgMeta {
     oyk_u16 size;
 };
 
+struct OykPendingIncoming {
+    char uploader[16];
+    char filename[32];
+    oyk_u32 size;
+};
+
 struct OykSession {
     oyk_u32 id;
     int iface_idx;
@@ -254,6 +261,9 @@ struct OykSession {
     char bbs_draft_subj[48];
     oyk_u16 bbs_draft_len;
     char bbs_draft_body[OYK_MAX_BBS_BODY];
+    char bbs_files_rel[64];
+    int bbs_yapp_active;
+    int bbs_yapp_upload;
     int restricted_ban;
     int appeal_eligible;
     char ban_key[12];
@@ -350,10 +360,37 @@ void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 
+/* BBS Files Area path validation & Sysop incoming file approval helpers */
+int oyk_bbs_resolve_safe_path(const char* files_root,
+                              const char* cur_rel,
+                              const char* user_arg,
+                              int allow_parent_in_root,
+                              char* abs_out, size_t abs_sz,
+                              char* rel_out, size_t rel_sz,
+                              char* err_out, size_t err_sz);
+int oyk_bbs_list_incoming(const char* incoming_root,
+                          OykPendingIncoming* out, int max_out);
+int oyk_bbs_approve_incoming_file(const char* incoming_root,
+                                  const char* files_root,
+                                  const char* uploader,
+                                  const char* filename,
+                                  const char* dest_subdir,
+                                  int allow_overwrite,
+                                  char* dest_out, size_t dest_sz,
+                                  int* already_exists_out,
+                                  char* err_out, size_t err_sz);
+int oyk_bbs_delete_incoming_file(const char* incoming_root,
+                                 const char* uploader,
+                                 const char* filename,
+                                 char* err_out, size_t err_sz);
+
+struct OykYappSession;
+
 /* Cooperative portable packet node engine */
 class OykPortableNode {
 public:
     OykPortableNode();
+    ~OykPortableNode();
 
     int init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ctx,
              char* err_out, size_t err_sz);
@@ -422,6 +459,7 @@ private:
     int is_for_chat(const OykCallsign* dst) const;
     void record_heard(const OykCallsign* src, int iface_idx);
     void send_text(OykSession* sess, const char* text);
+    void send_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len);
     void send_disc(OykSession* sess);
     void bbs_load_index();
     int bbs_save_index() const;
@@ -433,6 +471,9 @@ private:
     void bbs_send_prompt(OykSession* sess);
     void bbs_send_msg(OykSession* sess, OykBbsMsgMeta* m);
     void bbs_enter(OykSession* sess, int direct_connect);
+    void bbs_cleanup_yapp(OykSession* sess);
+    static int bbs_yapp_send_trampoline(const oyk_u8* data, size_t len, void* ctx);
+    void bbs_handle_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len);
     void handle_bbs_line(OykSession* sess, const char* line);
     void chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text);
     void chat_join(OykSession* sess, int direct_connect);
@@ -476,6 +517,9 @@ private:
     oyk_u32 bbs_next_id_;
     int bbs_msg_count_;
     OykBbsMsgMeta bbs_msgs_[OYK_MAX_BBS_MSGS];
+    OykYappSession* bbs_yapp_;
+    oyk_u32 bbs_yapp_sid_;
+    OykSession* bbs_yapp_tx_sess_;
 };
 
 #endif /* OYK_PORTABLE_HPP */
