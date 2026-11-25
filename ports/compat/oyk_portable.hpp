@@ -435,6 +435,7 @@ public:
     int init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ctx,
              char* err_out, size_t err_sz);
     int begin_shutdown();
+    int begin_shutdown_with_notice(const char* notice_line);
     int disconnecting_count() const;
     void finish_shutdown();
     void shutdown();
