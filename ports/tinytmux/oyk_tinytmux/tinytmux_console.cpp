@@ -56,22 +56,13 @@ static const TinyTmuxDriverOpt TINYTMUX_DRIVERS[7] = {
     { "telnet",         "Plaintext Telnet User Port" }
 };
 
-static const char* cycle_iface_type(const char* cur) {
-    for (int i = 0; i < 7; ++i) {
-        if (strieq_ci(cur, TINYTMUX_DRIVERS[i].type)) {
-            return TINYTMUX_DRIVERS[(i + 1) % 7].type;
-        }
-    }
-    return TINYTMUX_DRIVERS[0].type;
-}
-
 TinyTmuxConsole::TinyTmuxConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL), now_ms_(0),
       term_type_(TMUX_TERM_VT100), view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
       files_tab_(0), pending_count_(0), approved_count_(0),
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
-      wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
+      wiz_edit_idx_(-1), wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
       lterm_sid_(0), lterm_is_local_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
@@ -113,6 +104,7 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     files_sel_[1] = 0;
     prompt_kind_ = PROMPT_NONE;
     prompt_len_ = 0;
+    wiz_edit_idx_ = -1;
     wiz_step_ = 0;
     wiz_drv_ = 0;
     wiz_last_drv_ = -1;
@@ -356,6 +348,8 @@ void TinyTmuxConsole::render() {
     }
     if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
         render_add_iface_wizard();
+    } else if (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE) {
+        render_edit_iface_dialog();
     } else if (prompt_kind_ == PROMPT_CONFIRM_FORMAT) {
         render_confirm_format_modal();
     } else if (prompt_kind_ != PROMPT_NONE) {
@@ -366,7 +360,11 @@ void TinyTmuxConsole::render() {
          (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD &&
           (wiz_step_ == 1 || wiz_step_ == 2) &&
           wiz_focus_ < wizard_step_field_count()) ||
-         (prompt_kind_ != PROMPT_NONE && prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD))) {
+         (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE &&
+          wiz_focus_ >= 1 && wiz_focus_ < edit_iface_field_count()) ||
+         (prompt_kind_ != PROMPT_NONE &&
+          prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD &&
+          prompt_kind_ != PROMPT_SETTINGS_EDIT_IFACE))) {
         write_str("\033[?25h");
     }
 }
@@ -756,7 +754,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[22;1H%s N:New  D:Delete  Enter:Cycle Type  H:Edit Host/Dev  S/F2:Save  Esc:Cancel \033[0m",
+        sprintf(buf, "\033[22;1H%s N/A:New  Enter/E:Edit  D:Delete  H:Host/Dev  S/F2:Save  Esc:Cancel     \033[0m",
                 sgr_menubar());
         write_str(buf);
     }
@@ -988,10 +986,73 @@ int TinyTmuxConsole::wizard_step_field_count() const {
     return 0;
 }
 
+int TinyTmuxConsole::edit_iface_field_count() const {
+    return (wiz_drv_ == 0) ? 6 : 5;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::open_add_iface_wizard() {
+    if (draft_.iface_count >= OYK_MAX_INTERFACES) {
+        strcpy(dialog_fb_, "Maximum interface slots reached.");
+        render();
+        return;
+    }
+    prompt_kind_ = PROMPT_SETTINGS_ADD_WIZARD;
+    wiz_edit_idx_ = -1;
+    wiz_step_ = 0;
+    wiz_drv_ = 0;
+    wiz_last_drv_ = -1;
+    wiz_focus_ = 0;
+    wiz_btn_ = 1;
+    wiz_err_[0] = '\0';
+    wiz_id_[0] = '\0';
+    wiz_desc_[0] = '\0';
+    wiz_ep_[0] = '\0';
+    wiz_port_[0] = '\0';
+    wiz_peer_[0] = '\0';
+    render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::open_edit_iface_dialog(int edit_idx) {
+    if (edit_idx < 0 || edit_idx >= draft_.iface_count) return;
+    prompt_kind_ = PROMPT_SETTINGS_EDIT_IFACE;
+    wiz_edit_idx_ = edit_idx;
+    wiz_focus_ = 0;
+    wiz_btn_ = 0; /* Save */
+    wiz_err_[0] = '\0';
+
+    const OykIfaceConfig& ic = draft_.ifaces[edit_idx];
+    wiz_drv_ = 0;
+    for (int i = 0; i < 7; ++i) {
+        if (strieq_ci(ic.type, TINYTMUX_DRIVERS[i].type)) {
+            wiz_drv_ = i;
+            break;
+        }
+    }
+    wiz_last_drv_ = wiz_drv_;
+    con_str_copy(wiz_id_, sizeof(wiz_id_), ic.id);
+    con_str_copy(wiz_desc_, sizeof(wiz_desc_), ic.description);
+    wiz_peer_[0] = '\0';
+    if (strieq_ci(ic.type, "ppp") || strieq_ci(ic.type, "kiss-serial") ||
+        strieq_ci(ic.type, "usb-cdc-serial")) {
+        con_str_copy(wiz_ep_, sizeof(wiz_ep_), ic.device[0] ? ic.device : "ser0");
+        sprintf(wiz_port_, "%lu",
+                static_cast<unsigned long>(ic.baud ? ic.baud : (strieq_ci(ic.type, "kiss-serial") ? 9600UL : 115200UL)));
+    } else {
+        con_str_copy(wiz_ep_, sizeof(wiz_ep_), ic.host[0] ? ic.host : "0.0.0.0");
+        sprintf(wiz_port_, "%u", static_cast<unsigned int>(ic.port));
+        if (ic.peer_count > 0 && (wiz_drv_ == 0 || wiz_drv_ == 1)) {
+            oyk_format_peer_spec(&ic.peers[0], wiz_peer_, sizeof(wiz_peer_));
+        }
+    }
+    render();
+}
+
 OYK_FLASHMEM void TinyTmuxConsole::wizard_apply_driver_defaults() {
     const char* t = TINYTMUX_DRIVERS[wiz_drv_].type;
-    oyk_derive_default_iface_id(&draft_, t, wiz_id_, sizeof(wiz_id_));
-    wiz_desc_[0] = '\0';
+    if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
+        oyk_derive_default_iface_id(&draft_, t, wiz_id_, sizeof(wiz_id_));
+        wiz_desc_[0] = '\0';
+    }
     wiz_peer_[0] = '\0';
     if (strieq_ci(t, "usb-cdc-net")) {
         strcpy(wiz_ep_, "192.168.7.2");
@@ -1015,12 +1076,15 @@ OYK_FLASHMEM void TinyTmuxConsole::wizard_apply_driver_defaults() {
     wiz_last_drv_ = wiz_drv_;
 }
 
-OYK_FLASHMEM void TinyTmuxConsole::wizard_commit() {
-    if (draft_.iface_count >= OYK_MAX_INTERFACES) {
+OYK_FLASHMEM void TinyTmuxConsole::commit_iface_fields(int slot) {
+    if (slot < 0 || slot >= OYK_MAX_INTERFACES) return;
+    int is_new = (slot >= draft_.iface_count) ? 1 : 0;
+    if (is_new && draft_.iface_count >= OYK_MAX_INTERFACES) {
         strcpy(dialog_fb_, "Maximum interface slots reached.");
         return;
     }
-    OykIfaceConfig& ic = draft_.ifaces[draft_.iface_count];
+    OykIfaceConfig old_ic = draft_.ifaces[slot];
+    OykIfaceConfig& ic = draft_.ifaces[slot];
     memset(&ic, 0, sizeof(ic));
     con_str_copy(ic.id, sizeof(ic.id), wiz_id_);
     con_str_copy(ic.type, sizeof(ic.type), TINYTMUX_DRIVERS[wiz_drv_].type);
@@ -1052,19 +1116,39 @@ OYK_FLASHMEM void TinyTmuxConsole::wizard_commit() {
         } else if (strieq_ci(ic.type, "axudp")) {
             ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 10093U;
         }
-        if (wiz_peer_[0] && (strieq_ci(ic.type, "axudp") || strieq_ci(ic.type, "axip"))) {
-            OykPeerEntry pe;
-            memset(&pe, 0, sizeof(pe));
-            if (oyk_parse_peer_spec(wiz_peer_, pe.callsign, sizeof(pe.callsign),
-                                    &pe.ip, &pe.port, ic.port ? ic.port : 10093U)) {
-                ic.peers[0] = pe;
-                ic.peer_count = 1;
+        if (strieq_ci(ic.type, "axudp") || strieq_ci(ic.type, "axip")) {
+            if (!is_new && old_ic.peer_count > 1 &&
+                (strieq_ci(old_ic.type, "axudp") || strieq_ci(old_ic.type, "axip"))) {
+                for (int p = 1; p < old_ic.peer_count && ic.peer_count < OYK_MAX_PEERS; ++p) {
+                    ic.peers[ic.peer_count++] = old_ic.peers[p];
+                }
+            }
+            if (wiz_peer_[0]) {
+                OykPeerEntry pe;
+                memset(&pe, 0, sizeof(pe));
+                if (oyk_parse_peer_spec(wiz_peer_, pe.callsign, sizeof(pe.callsign),
+                                        &pe.ip, &pe.port, ic.port ? ic.port : 10093U)) {
+                    if (ic.peer_count > 0 && !is_new) {
+                        for (int p = (ic.peer_count < OYK_MAX_PEERS ? ic.peer_count : OYK_MAX_PEERS - 1); p > 0; --p) {
+                            ic.peers[p] = ic.peers[p - 1];
+                        }
+                        ic.peers[0] = pe;
+                        if (ic.peer_count < OYK_MAX_PEERS) ic.peer_count++;
+                    } else {
+                        ic.peers[0] = pe;
+                        ic.peer_count = 1;
+                    }
+                }
             }
         }
     }
-    settings_sel_[3] = draft_.iface_count;
-    draft_.iface_count++;
-    sprintf(dialog_fb_, "Added %s (%s) to draft (press S/F2 to save).", ic.id, ic.type);
+    settings_sel_[3] = slot;
+    if (is_new) {
+        draft_.iface_count++;
+        sprintf(dialog_fb_, "Added %s (%s) to draft (press S/F2 to save).", ic.id, ic.type);
+    } else {
+        sprintf(dialog_fb_, "Updated %s (%s) in draft (press S/F2 to save).", ic.id, ic.type);
+    }
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
@@ -1189,6 +1273,67 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
     write_str(buf);
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
+    char buf[192];
+    const int top = 4, left = 6, h = 16, w = 68;
+    draw_dec_box(top, left, h, w, "Edit Interface", 1);
+
+    sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
+            top + 1, left + 2, sgr_title(), "Edit interface settings and select Save to update draft:");
+    write_str(buf);
+
+    char drv_lbl[32];
+    sprintf(drv_lbl, "< %s >", TINYTMUX_DRIVERS[wiz_drv_].type);
+    sprintf(buf, "\033[%d;%dHDriver (Lt/Rt) : %s %-36.36s \033[0m",
+            top + 3, left + 3, (wiz_focus_ == 0) ? sgr_menubar() : "", drv_lbl);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHInterface ID   : %s %-36.36s \033[0m",
+            top + 4, left + 3, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_id_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHDescription    : %s %-36.36s \033[0m",
+            top + 5, left + 3, (wiz_focus_ == 2) ? sgr_menubar() : "", wiz_desc_);
+    write_str(buf);
+
+    const int is_ser = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? 1 : 0;
+    const char* ep_lbl = is_ser ? "Serial Device  "
+                                : (wiz_drv_ == 4 ? "Host / IP      " : "Bind Host/IP   ");
+    sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
+            top + 6, left + 3, ep_lbl, (wiz_focus_ == 3) ? sgr_menubar() : "", wiz_ep_);
+    write_str(buf);
+
+    if (wiz_drv_ == 1) {
+        sprintf(buf, "\033[%d;%dHStatic Peer    : %s %-36.36s \033[0m",
+                top + 7, left + 3, (wiz_focus_ == 4) ? sgr_menubar() : "", wiz_peer_);
+        write_str(buf);
+    } else {
+        const char* p_lbl = is_ser ? "Baud Rate      "
+                                   : (wiz_drv_ == 6 ? "TCP Port       " : "UDP Port       ");
+        sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
+                top + 7, left + 3, p_lbl, (wiz_focus_ == 4) ? sgr_menubar() : "", wiz_port_);
+        write_str(buf);
+        if (wiz_drv_ == 0) {
+            sprintf(buf, "\033[%d;%dHStatic Peer    : %s %-36.36s \033[0m",
+                    top + 8, left + 3, (wiz_focus_ == 5) ? sgr_menubar() : "", wiz_peer_);
+            write_str(buf);
+        }
+    }
+
+    if (wiz_err_[0]) {
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 12, left + 2, sgr_warn(), wiz_err_);
+        write_str(buf);
+    }
+
+    draw_dec_hdiv(top + 13, left, w);
+
+    int fcnt = edit_iface_field_count();
+    int on_bar = (wiz_focus_ == fcnt);
+    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
+            top + 14, left + 2,
+            (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
+            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
+    write_str(buf);
+}
+
 OYK_FLASHMEM void TinyTmuxConsole::render_confirm_format_modal() {
     static const char* NAMES[3] = {
         "microSD Card (SDIO)", "QSPI Flash (FlexSPI2 CS1)", "Internal 4 MB Flash (LittleFS)"
@@ -1307,9 +1452,7 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
         else begin_prompt(PROMPT_SETTINGS_VALUE, "CHAT Welcome Message:", draft_.chat_welcome);
     } else if (settings_tab_ == 3) {
         if (idx >= 0 && idx < draft_.iface_count) {
-            con_str_copy(draft_.ifaces[idx].type, sizeof(draft_.ifaces[idx].type),
-                         cycle_iface_type(draft_.ifaces[idx].type));
-            render();
+            open_edit_iface_dialog(idx);
         }
     } else if (settings_tab_ == 4) {
         if (idx == 0) { draft_.rig_enabled = draft_.rig_enabled ? 0 : 1; render(); }
@@ -1559,11 +1702,134 @@ OYK_FLASHMEM int TinyTmuxConsole::wizard_try_advance() {
         return 0;
     }
     if (wiz_step_ == 3) {
-        wizard_commit();
+        commit_iface_fields(draft_.iface_count);
         prompt_kind_ = PROMPT_NONE;
         return 1;
     }
     return 0;
+}
+
+OYK_FLASHMEM int TinyTmuxConsole::edit_iface_try_save() {
+    wiz_err_[0] = '\0';
+    if (!wiz_id_[0]) {
+        strcpy(wiz_err_, "Interface ID cannot be empty.");
+        wiz_focus_ = 1;
+        return 0;
+    }
+    for (int i = 0; i < draft_.iface_count; ++i) {
+        if (i == wiz_edit_idx_) continue;
+        if (strieq_ci(draft_.ifaces[i].id, wiz_id_)) {
+            sprintf(wiz_err_, "Duplicate interface ID: %.24s", wiz_id_);
+            wiz_focus_ = 1;
+            return 0;
+        }
+    }
+    if (!wiz_ep_[0]) {
+        strcpy(wiz_err_, (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                             ? "Serial device cannot be empty."
+                             : "Host / IP cannot be empty.");
+        wiz_focus_ = 3;
+        return 0;
+    }
+    if (wiz_drv_ != 1 && !wiz_port_[0]) {
+        strcpy(wiz_err_, (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                             ? "Baud rate cannot be empty."
+                             : "Port cannot be empty.");
+        wiz_focus_ = 4;
+        return 0;
+    }
+    commit_iface_fields(wiz_edit_idx_);
+    prompt_kind_ = PROMPT_NONE;
+    wiz_edit_idx_ = -1;
+    return 1;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_edit_iface_key(int key) {
+    if (key == 27) {
+        prompt_kind_ = PROMPT_NONE;
+        wiz_edit_idx_ = -1;
+        strcpy(dialog_fb_, "Edit interface cancelled.");
+        render();
+        return;
+    }
+    int fcnt = edit_iface_field_count();
+    if (wiz_focus_ > fcnt) wiz_focus_ = fcnt;
+
+    if (key == TMUX_KEY_UP) {
+        wiz_focus_ = (wiz_focus_ + fcnt) % (fcnt + 1);
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_DOWN || key == '\t') {
+        wiz_focus_ = (wiz_focus_ + 1) % (fcnt + 1);
+        render();
+        return;
+    }
+
+    if (wiz_focus_ == fcnt) {
+        if (key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) wiz_btn_ = (wiz_btn_ == 0) ? 1 : 0;
+        else if (key == '\r' || key == '\n' || key == ' ') {
+            if (wiz_btn_ == 1) {
+                prompt_kind_ = PROMPT_NONE;
+                wiz_edit_idx_ = -1;
+                strcpy(dialog_fb_, "Edit interface cancelled.");
+            } else {
+                edit_iface_try_save();
+            }
+        } else {
+            return;
+        }
+        render();
+        return;
+    }
+
+    if (wiz_focus_ == 0) {
+        if (key == TMUX_KEY_LEFT) {
+            wiz_drv_ = (wiz_drv_ + 6) % 7;
+            wizard_apply_driver_defaults();
+            wiz_err_[0] = '\0';
+            render();
+        } else if (key == TMUX_KEY_RIGHT || key == ' ') {
+            wiz_drv_ = (wiz_drv_ + 1) % 7;
+            wizard_apply_driver_defaults();
+            wiz_err_[0] = '\0';
+            render();
+        } else if (key == '\r' || key == '\n') {
+            edit_iface_try_save();
+            render();
+        }
+        return;
+    }
+
+    char* target = NULL;
+    size_t cap = 0;
+    if (wiz_focus_ == 1) { target = wiz_id_; cap = sizeof(wiz_id_); }
+    else if (wiz_focus_ == 2) { target = wiz_desc_; cap = sizeof(wiz_desc_); }
+    else if (wiz_focus_ == 3) { target = wiz_ep_; cap = sizeof(wiz_ep_); }
+    else if (wiz_focus_ == 4) {
+        if (wiz_drv_ == 1) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+        else { target = wiz_port_; cap = sizeof(wiz_port_); }
+    } else {
+        target = wiz_peer_; cap = sizeof(wiz_peer_);
+    }
+
+    if (key == '\r' || key == '\n') {
+        edit_iface_try_save();
+        render();
+    } else if (target && (key == 8 || key == 127)) {
+        size_t n = strlen(target);
+        if (n > 0) target[n - 1] = '\0';
+        wiz_err_[0] = '\0';
+        render();
+    } else if (target && key >= 0x20 && key < 0x7F) {
+        size_t n = strlen(target);
+        if (n + 1 < cap) {
+            target[n] = static_cast<char>(key);
+            target[n + 1] = '\0';
+        }
+        wiz_err_[0] = '\0';
+        render();
+    }
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
@@ -1699,6 +1965,10 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
 void TinyTmuxConsole::handle_prompt_key(int key) {
     if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
         handle_add_wizard_key(key);
+        return;
+    }
+    if (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE) {
+        handle_edit_iface_key(key);
         return;
     }
 
@@ -1963,24 +2233,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Interface Device (ser0/usbh0) or Host IP:", cur);
         }
     } else if (settings_tab_ == 3 && (key == 'n' || key == 'N' || key == 'a' || key == 'A')) {
-        if (draft_.iface_count >= OYK_MAX_INTERFACES) {
-            strcpy(dialog_fb_, "Maximum interface slots reached.");
-            render();
-        } else {
-            prompt_kind_ = PROMPT_SETTINGS_ADD_WIZARD;
-            wiz_step_ = 0;
-            wiz_drv_ = 0;
-            wiz_last_drv_ = -1;
-            wiz_focus_ = 0;
-            wiz_btn_ = 1;
-            wiz_id_[0] = '\0';
-            wiz_desc_[0] = '\0';
-            wiz_ep_[0] = '\0';
-            wiz_port_[0] = '\0';
-            wiz_peer_[0] = '\0';
-            wiz_err_[0] = '\0';
-            render();
-        }
+        open_add_iface_wizard();
     } else if (settings_tab_ == 3 && (key == 'd' || key == 'D' || key == 'x' || key == 'X')) {
         if (draft_.iface_count > 0) {
             int idx = settings_sel_[3];

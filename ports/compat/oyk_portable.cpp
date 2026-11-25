@@ -396,6 +396,35 @@ int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
     return 1;
 }
 
+void oyk_format_peer_spec(const OykPeerEntry* peer, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!peer) return;
+    oyk_u8 oct[4];
+    memcpy(oct, &peer->ip, 4);
+    char buf[64];
+    if (peer->callsign[0] && peer->port > 0) {
+        sprintf(buf, "%s@%u.%u.%u.%u:%u", peer->callsign,
+                static_cast<unsigned int>(oct[0]), static_cast<unsigned int>(oct[1]),
+                static_cast<unsigned int>(oct[2]), static_cast<unsigned int>(oct[3]),
+                static_cast<unsigned int>(peer->port));
+    } else if (peer->callsign[0]) {
+        sprintf(buf, "%s@%u.%u.%u.%u", peer->callsign,
+                static_cast<unsigned int>(oct[0]), static_cast<unsigned int>(oct[1]),
+                static_cast<unsigned int>(oct[2]), static_cast<unsigned int>(oct[3]));
+    } else if (peer->port > 0) {
+        sprintf(buf, "%u.%u.%u.%u:%u",
+                static_cast<unsigned int>(oct[0]), static_cast<unsigned int>(oct[1]),
+                static_cast<unsigned int>(oct[2]), static_cast<unsigned int>(oct[3]),
+                static_cast<unsigned int>(peer->port));
+    } else {
+        sprintf(buf, "%u.%u.%u.%u",
+                static_cast<unsigned int>(oct[0]), static_cast<unsigned int>(oct[1]),
+                static_cast<unsigned int>(oct[2]), static_cast<unsigned int>(oct[3]));
+    }
+    safe_copy(out, out_sz, buf);
+}
+
 oyk_u16 oyk_crc16_fcs(const oyk_u8* data, size_t len) {
     oyk_u16 crc = 0xFFFFU;
     for (size_t i = 0; i < len; ++i) {

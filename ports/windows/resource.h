@@ -119,6 +119,7 @@
 #define IDC_SET_IF_LIST     491
 #define IDC_SET_IF_ADD      492
 #define IDC_SET_IF_REM      493
+#define IDC_SET_IF_EDIT     496
 
 #define IDD_ADD_IFACE       500
 #define IDC_AIF_ID          501
@@ -183,5 +184,18 @@
 #define IDC_AIF_ERR         579
 #define IDC_AIF_BACK        580
 #define IDC_AIF_NEXT        581
+
+/* Single-View Edit Interface Dialog */
+#define IDD_EDIT_IFACE      590
+#define IDC_EIF_DRV         591
+#define IDC_EIF_ID          592
+#define IDC_EIF_DESC        593
+#define IDC_EIF_L_HOST      594
+#define IDC_EIF_HOST        595
+#define IDC_EIF_L_PORT      596
+#define IDC_EIF_PORT        597
+#define IDC_EIF_L_PEER      598
+#define IDC_EIF_PEER        599
+#define IDC_EIF_ERR         600
 
 #endif /* OYK_WIN_RESOURCE_H */

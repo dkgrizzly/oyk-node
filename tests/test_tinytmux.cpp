@@ -1206,6 +1206,48 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(strcmp(node->iface(2).cfg.id, "usbnet0") == 0);
     assert(strcmp(node->iface(3).cfg.id, "usbnet1") == 0);
 
+    /* 6. Edit Interface single-view dialog via 'e' on Settings Tab 4 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s4"), 2);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->settings_tab() == 3);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H\x1b[B"), 6); /* Home, Down -> axudp1 */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "Edit Interface") != NULL);
+    assert(strstr(cap->buf, "1/4") == NULL);
+    assert(strstr(cap->buf, "< Back") == NULL);
+    assert(strstr(cap->buf, "axudp1") != NULL);
+    assert(strstr(cap->buf, "0.0.0.0") != NULL);
+    assert(strstr(cap->buf, "10093") != NULL);
+    assert(strstr(cap->buf, "[  Save  ]") != NULL);
+    /* Move to Interface ID (field 1), test conflicting ID rejection and same-ID acceptance */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[B"), 3);
+    const char* dup_id = node->iface(0).cfg.id;
+    char edit_seq[64];
+    sprintf(edit_seq, "\x7f\x7f\x7f\x7f\x7f\x7f%s", dup_id);
+    con->feed_input(reinterpret_cast<const oyk_u8*>(edit_seq), strlen(edit_seq));
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+    assert(strstr(cap->buf, "Duplicate interface ID") != NULL);
+    memset(edit_seq, 0x7f, strlen(dup_id));
+    strcpy(edit_seq + strlen(dup_id), "axudp1");
+    con->feed_input(reinterpret_cast<const oyk_u8*>(edit_seq), strlen(edit_seq));
+    /* Tab across Description -> Host ("0.0.0.0" -> "127.0.0.1") and Port ("10093" -> "10193"), then Save directly */
+    const char* fields_seq = "\t\t\x7f\x7f\x7f\x7f\x7f\x7f\x7f" "127.0.0.1\t" "\x7f\x7f\x7f\x7f\x7f" "10193";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(fields_seq), strlen(fields_seq));
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r\x1bOQ"), 4);
+    assert(node->iface_count() == 4);
+    assert(strcmp(node->iface(1).cfg.id, "axudp1") == 0);
+    assert(strcmp(node->iface(1).cfg.host, "127.0.0.1") == 0);
+    assert(node->iface(1).cfg.port == 10193);
+
+    /* Open Edit Interface and cancel with Esc */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s4e"), 3);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(550UL);
+    assert(strstr(cap->buf, "Edit interface cancelled.") != NULL);
+
     delete cap;
     delete con;
     delete bridge;

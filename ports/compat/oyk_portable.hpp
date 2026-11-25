@@ -376,6 +376,7 @@ int oyk_parse_ipv4(const char* text, oyk_u32* net_ip_out);
 /* Parse "CALLSIGN@ip:port", "CALLSIGN ip:port", or "ip:port" peer spec. */
 int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
                         oyk_u32* net_ip_out, oyk_u16* port_out, oyk_u16 default_port);
+void oyk_format_peer_spec(const OykPeerEntry* peer, char* out, size_t out_sz);
 
 oyk_u16 oyk_crc16_fcs(const oyk_u8* data, size_t len);
 int oyk_verify_fcs(const oyk_u8* data, size_t total_len);
