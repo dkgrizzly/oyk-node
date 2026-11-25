@@ -2451,6 +2451,103 @@ void test_live_settings_reconfig_and_readonly_fs() {
     std::cout << "[PASS] test_live_settings_reconfig_and_readonly_fs\n";
 }
 
+void test_files_dots_case_insensitivity_and_approved_removal() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_files_case_and_dots";
+    std::error_code ec;
+    fs::remove_all(tmp_root, ec);
+    const std::string files_dir = tmp_root + "/files";
+    const std::string inc_dir = tmp_root + "/incoming";
+    const std::string mail_dir = tmp_root + "/mail";
+    fs::create_directories(files_dir + "/docs");
+    fs::create_directories(inc_dir);
+
+    // 1. Leading and trailing periods MUST be rejected by filename validator
+    assert(!protocol::is_safe_yapp_filename(".hidden"));
+    assert(!protocol::is_safe_yapp_filename("LICENSE."));
+    assert(!protocol::is_safe_yapp_filename("file.."));
+    assert(!protocol::is_safe_yapp_filename("."));
+    assert(protocol::is_safe_yapp_filename("LICENSE"));
+    assert(protocol::is_safe_yapp_filename("readme.txt"));
+
+    // 2. Legacy DOS/Win16 YAPP sender sending "LICENSE." -> receiver saves as "LICENSE" (no trailing dot!)
+    {
+        protocol::YappSession rx(inc_dir);
+        rx.set_remote_callsign(ax25::Callsign{"KR4OYK", 7});
+        rx.set_send_callback([](const std::vector<uint8_t>&) {});
+        std::vector<uint8_t> plain;
+        // Send ENQ 0x01
+        std::vector<uint8_t> enq = {0x05, 0x01};
+        rx.feed_bytes(enq.data(), enq.size(), plain);
+        // Send SOH header with "LICENSE.\0" + "5\0" + "00000000\0"
+        std::string hdr_pay = std::string("LICENSE.") + '\0' + "5" + '\0' + "00000000" + '\0';
+        std::vector<uint8_t> soh;
+        soh.push_back(0x01);
+        soh.push_back(static_cast<uint8_t>(hdr_pay.size()));
+        soh.insert(soh.end(), hdr_pay.begin(), hdr_pay.end());
+        rx.feed_bytes(soh.data(), soh.size(), plain);
+        assert(rx.progress().filename == "LICENSE");
+        assert(fs::exists(inc_dir + "/KR4OYK-7/LICENSE"));
+        assert(!fs::exists(inc_dir + "/KR4OYK-7/LICENSE."));
+        rx.reset();
+    }
+
+    // 3. Populate files area with UPPER, lower, and MixedCase files
+    auto write_f = [](const std::string& p, const std::string& content) {
+        std::ofstream ofs(p, std::ios::binary | std::ios::trunc);
+        ofs << content;
+    };
+    write_f(files_dir + "/LICENSE", "GPLv3 License Text");
+    write_f(files_dir + "/notes.txt", "Lowercase Notes");
+    write_f(files_dir + "/docs/ReadMe.txt", "Mixed Case Readme");
+    write_f(files_dir + "/LEGACY.", "Pre-existing trailing-dot file");
+    write_f(tmp_root + "/outside.txt", "TOP SECRET");
+
+    node::BbsServer bbs;
+    std::string err;
+    assert(bbs.configure("K7OYK-11", "OYKBBS", mail_dir, files_dir, inc_dir, "Welcome", 4096, err));
+    bbs.set_files_enabled(true);
+    bbs.set_files_case_insensitive(true);
+    auto now_tp = std::chrono::system_clock::now();
+    (void)bbs.enter(1, "W1AW-7", "axudp0", true, false, false, now_tp);
+
+    // Step 1: exact match
+    assert(bbs.handle_line(1, "TYPE LICENSE", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+    // Step 2: forced UPPERCASE ("license" -> "LICENSE")
+    assert(bbs.handle_line(1, "TYPE license", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+    // Step 3: forced lowercase ("NOTES.TXT" -> "notes.txt")
+    assert(bbs.handle_line(1, "TYPE NOTES.TXT", now_tp).response_text.find("Lowercase Notes") != std::string::npos);
+    // Step 4: case-insensitive glob/directory scan ("DOCS/readme.TXT" -> "docs/ReadMe.txt")
+    assert(bbs.handle_line(1, "TYPE DOCS/readme.TXT", now_tp).response_text.find("Mixed Case Readme") != std::string::npos);
+    // Case-insensitive CD + TYPE
+    assert(bbs.handle_line(1, "CD DOCS", now_tp).response_text.find("Files Area: /docs") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE README.TXT", now_tp).response_text.find("Mixed Case Readme") != std::string::npos);
+    (void)bbs.handle_line(1, "CD /", now_tp);
+
+    // Disable case-insensitive matching -> "license" MUST fail, "LICENSE" MUST succeed
+    bbs.set_files_case_insensitive(false);
+    assert(bbs.handle_line(1, "TYPE license", now_tp).response_text.find("File not found") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE LICENSE", now_tp).response_text.find("GPLv3 License Text") != std::string::npos);
+
+    // 4. List & remove previously approved files (including legacy trailing-dot cleanup)
+    auto approved = node::BbsServer::list_approved_files(files_dir);
+    assert(approved.size() == 4);
+
+    // Reject path traversal deletion!
+    assert(!node::BbsServer::delete_approved_file(files_dir, "../outside.txt", err));
+    assert(fs::exists(tmp_root + "/outside.txt"));
+
+    // Delete approved files cleanly (including nested and legacy trailing-dot file)
+    assert(node::BbsServer::delete_approved_file(files_dir, "docs/ReadMe.txt", err));
+    assert(!fs::exists(files_dir + "/docs/ReadMe.txt"));
+    assert(node::BbsServer::delete_approved_file(files_dir, "LEGACY.", err));
+    assert(!fs::exists(files_dir + "/LEGACY."));
+    assert(node::BbsServer::list_approved_files(files_dir).size() == 2);
+
+    fs::remove_all(tmp_root, ec);
+    std::cout << "[PASS] test_files_dots_case_insensitivity_and_approved_removal\n";
+}
+
 } // namespace
 
 int main() {
@@ -2473,6 +2570,7 @@ int main() {
     test_bbs_ssid11_persistence_and_privacy();
     test_bbs_files_area_traversal_and_approval();
     test_live_settings_reconfig_and_readonly_fs();
+    test_files_dots_case_insensitivity_and_approved_removal();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

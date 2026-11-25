@@ -851,6 +851,7 @@ void oyk_config_init_default(OykConfig* cfg) {
 
     cfg->bbs_enabled = 1;
     cfg->bbs_files_enabled = 1;
+    cfg->bbs_files_case_insensitive = 1;
     cfg->bbs_ssid = 11;
     memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
     oyk_parse_callsign("OYKBBS", &cfg->bbs_alias);
@@ -1114,6 +1115,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 if (v[0]) safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), v);
             } else if (stricmp_ascii(k, "files_enabled") == 0 || stricmp_ascii(k, "filesenabled") == 0) {
                 cfg->bbs_files_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "files_case_insensitive") == 0 || stricmp_ascii(k, "filescaseinsensitive") == 0) {
+                cfg->bbs_files_case_insensitive = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "filespath") == 0 || stricmp_ascii(k, "files_path") == 0) {
                 if (v[0]) safe_copy(cfg->bbs_files_path, sizeof(cfg->bbs_files_path), v);
             } else if (stricmp_ascii(k, "welcome") == 0) {
@@ -1197,6 +1200,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     }
     fprintf(fp, "mailpath = %s%s", cfg->bbs_mail_path, nl);
     fprintf(fp, "files_enabled = %s%s", cfg->bbs_files_enabled ? "true" : "false", nl);
+    fprintf(fp, "files_case_insensitive = %s%s", cfg->bbs_files_case_insensitive ? "true" : "false", nl);
     fprintf(fp, "filespath = %s%s", cfg->bbs_files_path, nl);
     fprintf(fp, "welcome = %s%s", cfg->bbs_welcome, nl);
     fprintf(fp, "max_msg_bytes = %u%s", static_cast<unsigned int>(cfg->bbs_max_msg_bytes), nl);
@@ -2421,6 +2425,88 @@ int oyk_bbs_delete_incoming_file(const char* incoming_root,
     }
     if (remove(src_path) != 0) {
         safe_copy(err_out, err_sz, "Failed to delete incoming file.");
+        return 0;
+    }
+    return 1;
+}
+
+static void walk_approved_dir(const char* dir_path, const char* rel_prefix,
+                              int depth, OykApprovedFile* out, int max_out, int* total) {
+    if (depth > 4 || *total >= max_out) return;
+    OykDirEnt* ents = new OykDirEnt[24];
+    int n = oyk_list_dir_entries(dir_path, ents, 24);
+    for (int i = 0; i < n && *total < max_out; ++i) {
+        if (!ents[i].name[0] || strcmp(ents[i].name, ".") == 0 || strcmp(ents[i].name, "..") == 0) continue;
+        char child_abs[192], child_rel[96];
+        join_path(dir_path, ents[i].name, child_abs, sizeof(child_abs));
+        if (rel_prefix && rel_prefix[0]) {
+            if (strlen(rel_prefix) + 1 + strlen(ents[i].name) >= sizeof(child_rel)) continue;
+            sprintf(child_rel, "%s/%s", rel_prefix, ents[i].name);
+        } else {
+            safe_copy(child_rel, sizeof(child_rel), ents[i].name);
+        }
+        if (ents[i].is_dir) {
+            walk_approved_dir(child_abs, child_rel, depth + 1, out, max_out, total);
+        } else {
+            safe_copy(out[*total].rel_path, sizeof(out[*total].rel_path), child_rel);
+            out[*total].size = ents[i].size;
+            ++(*total);
+        }
+    }
+    delete[] ents;
+}
+
+int oyk_bbs_list_approved(const char* files_root,
+                          OykApprovedFile* out, int max_out) {
+    if (!out || max_out <= 0) return 0;
+    const char* root = (files_root && files_root[0]) ? files_root : "files";
+    int total = 0;
+    walk_approved_dir(root, "", 0, out, max_out, &total);
+    return total;
+}
+
+int oyk_bbs_delete_approved_file(const char* files_root,
+                                 const char* rel_path,
+                                 char* err_out, size_t err_sz) {
+    if (!rel_path || !rel_path[0] ||
+        strstr(rel_path, "..") != NULL ||
+        strchr(rel_path, '\\') != NULL ||
+        strchr(rel_path, ':') != NULL) {
+        safe_copy(err_out, err_sz, "Access denied: invalid file path.");
+        return 0;
+    }
+    const char* root = (files_root && files_root[0]) ? files_root : "files";
+    char cur[192];
+    safe_copy(cur, sizeof(cur), root);
+    size_t rlen = strlen(cur);
+    while (rlen > 1 && (cur[rlen - 1] == '/' || cur[rlen - 1] == '\\')) {
+        cur[--rlen] = '\0';
+    }
+
+    int segs = 0;
+    const char* p = rel_path;
+    while (*p) {
+        while (*p == '/') ++p;
+        if (!*p) break;
+        char seg[40];
+        size_t sl = 0;
+        while (*p && *p != '/' && sl < sizeof(seg) - 1) seg[sl++] = *p++;
+        seg[sl] = '\0';
+        if (sl == 0 || strcmp(seg, ".") == 0 || strcmp(seg, "..") == 0) {
+            safe_copy(err_out, err_sz, "Access denied: invalid path component.");
+            return 0;
+        }
+        char next_p[192];
+        join_path(cur, seg, next_p, sizeof(next_p));
+        safe_copy(cur, sizeof(cur), next_p);
+        ++segs;
+    }
+    if (segs == 0 || !oyk_is_regular_file(cur)) {
+        safe_copy(err_out, err_sz, "Approved file not found.");
+        return 0;
+    }
+    if (remove(cur) != 0) {
+        safe_copy(err_out, err_sz, "Failed to remove approved file.");
         return 0;
     }
     return 1;

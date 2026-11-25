@@ -170,6 +170,7 @@ struct OykConfig {
 
     int bbs_enabled;
     int bbs_files_enabled;
+    int bbs_files_case_insensitive;
     oyk_u8 bbs_ssid;  /* Default 11 -> <callsign.base>-11 */
     OykCallsign bbs_callsign;
     OykCallsign bbs_alias;
@@ -236,6 +237,11 @@ struct OykBbsMsgMeta {
 struct OykPendingIncoming {
     char uploader[16];
     char filename[32];
+    oyk_u32 size;
+};
+
+struct OykApprovedFile {
+    char rel_path[96];
     oyk_u32 size;
 };
 
@@ -395,6 +401,11 @@ int oyk_bbs_approve_incoming_file(const char* incoming_root,
 int oyk_bbs_delete_incoming_file(const char* incoming_root,
                                  const char* uploader,
                                  const char* filename,
+                                 char* err_out, size_t err_sz);
+int oyk_bbs_list_approved(const char* files_root,
+                          OykApprovedFile* out, int max_out);
+int oyk_bbs_delete_approved_file(const char* files_root,
+                                 const char* rel_path,
                                  char* err_out, size_t err_sz);
 
 struct OykYappSession;

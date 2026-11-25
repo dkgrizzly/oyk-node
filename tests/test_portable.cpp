@@ -409,6 +409,7 @@ static void test_portable_yapp_and_local_terminal() {
     assert(oyk_yapp_is_safe_filename("sub\\file.txt") == 0);
     assert(oyk_yapp_is_safe_filename("C:autoexec.bat") == 0);
     assert(oyk_yapp_is_safe_filename(".hidden") == 0);
+    assert(oyk_yapp_is_safe_filename("LICENSE.") == 0);
     assert(oyk_yapp_is_safe_filename("CON") == 0);
     assert(oyk_yapp_is_safe_filename("COM1.TXT") == 0);
 
@@ -642,7 +643,15 @@ static void test_portable_bbs() {
                                              "", 1, dst_out, sizeof(dst_out),
                                              &exists, perr, sizeof(perr)) == 1);
         assert(oyk_bbs_list_incoming(OYK_T_BBS_INC, plist, 8) == pcnt - 1);
-        remove(dst_out);
+
+        /* Verify approved file appears in oyk_bbs_list_approved & can be removed safely */
+        OykApprovedFile* alist = new OykApprovedFile[8];
+        int acnt = oyk_bbs_list_approved(OYK_T_BBS_FILES, alist, 8);
+        assert(acnt >= 1);
+        assert(oyk_bbs_delete_approved_file(OYK_T_BBS_FILES, "../escape.txt", perr, sizeof(perr)) == 0);
+        assert(oyk_bbs_delete_approved_file(OYK_T_BBS_FILES, alist[0].rel_path, perr, sizeof(perr)) == 1);
+        assert(oyk_bbs_list_approved(OYK_T_BBS_FILES, alist, 8) == acnt - 1);
+        delete[] alist;
         delete[] plist;
     }
 

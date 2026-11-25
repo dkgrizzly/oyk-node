@@ -677,16 +677,19 @@ static void run_dos_local_terminal() {
 
 static void run_dos_approve_incoming_files() {
     static OykPendingIncoming items[32];
-    int count = oyk_bbs_list_incoming("incoming", items, 32);
-    int sel = 0;
-    int top = 0;
+    static OykApprovedFile approved[32];
+    int inc_count = oyk_bbs_list_incoming("incoming", items, 32);
+    int app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
+    int tab = 0; /* 0 = Pending Incoming, 1 = Approved Files */
+    int sel[2] = { 0, 0 };
+    int top[2] = { 0, 0 };
     char feedback[78];
-    sprintf(feedback, "Target BBS Files Area: %.50s", g_node.config().bbs_files_path);
+    sprintf(feedback, "BBS Files Area: %.56s", g_node.config().bbs_files_path);
 
     const int panel_x = 4;
     const int panel_w = 72;
-    const int list_y = 5;
-    const int list_h = 13;
+    const int list_y = 6;
+    const int list_h = 12;
 
     while (!g_break_flag) {
         PACKET_PROCESS_SINGLE;
@@ -694,32 +697,50 @@ static void run_dos_approve_incoming_files() {
         Tcp::drivePackets();
         g_node.tick();
 
-        if (sel >= count) sel = (count > 0) ? (count - 1) : 0;
-        if (sel < top) top = sel;
-        if (sel >= top + list_h) top = sel - list_h + 1;
+        int count = (tab == 0) ? inc_count : app_count;
+        if (sel[tab] >= count) sel[tab] = (count > 0) ? (count - 1) : 0;
+        if (sel[tab] < top[tab]) top[tab] = sel[tab];
+        if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
 
         vid_puts(2, panel_x, 0x1F,
-                 "+-[ Approve Incoming Files (incoming/ -> BBS files/) ]-----------------+", panel_w);
-        char hdr[74];
-        sprintf(hdr, "| Incoming: incoming/  ->  Files Area: %-30.30s |",
-                g_node.config().bbs_files_path);
-        vid_puts(3, panel_x, 0x1E, hdr, panel_w);
-        vid_puts(4, panel_x, 0x1F,
-                 "| Uploader      Filename                                     Size     |", panel_w);
+                 "+-[ Manage BBS Files Area ]--------------------------------------------+", panel_w);
+        vid_puts(3, panel_x, 0x70, "", panel_w);
+        vid_puts(3, panel_x, 0x1F, "|", 1);
+        vid_puts(3, panel_x + 2, (tab == 0) ? 0x1F : 0x70, " 1:Pending Incoming ", 20);
+        vid_puts(3, panel_x + 23, (tab == 1) ? 0x1F : 0x70, " 2:Approved Files ", 18);
+        vid_puts(3, panel_x + panel_w - 1, 0x1F, "|", 1);
+
+        if (tab == 0) {
+            vid_puts(4, panel_x, 0x1E,
+                     "| Uploader      Filename                                     Size     |", panel_w);
+        } else {
+            vid_puts(4, panel_x, 0x1E,
+                     "| Approved File Path                                         Size     |", panel_w);
+        }
+        vid_puts(5, panel_x, 0x1F,
+                 "+----------------------------------------------------------------------+", panel_w);
 
         for (int i = 0; i < list_h; ++i) {
-            int idx = top + i;
+            int idx = top[tab] + i;
             if (count == 0 && i == 1) {
                 vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
                 vid_puts(list_y + i, panel_x + 1, 0x1F,
-                         " (No pending files in incoming\\<CALLSIGN-SSID>\\)", panel_w - 2);
+                         (tab == 0) ? " (No pending files in incoming\\<CALLSIGN-SSID>\\)"
+                                    : " (No approved files in BBS files area)",
+                         panel_w - 2);
                 vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
             } else if (idx < count) {
                 char row[72];
-                sprintf(row, " %-13.13s %-42.42s %9lu ",
-                        items[idx].uploader, items[idx].filename,
-                        static_cast<unsigned long>(items[idx].size));
-                oyk_u8 attr = (idx == sel) ? 0x30 : 0x1F;
+                if (tab == 0) {
+                    sprintf(row, " %-13.13s %-42.42s %9lu ",
+                            items[idx].uploader, items[idx].filename,
+                            static_cast<unsigned long>(items[idx].size));
+                } else {
+                    sprintf(row, " %-56.56s %9lu ",
+                            approved[idx].rel_path,
+                            static_cast<unsigned long>(approved[idx].size));
+                }
+                oyk_u8 attr = (idx == sel[tab]) ? 0x30 : 0x1F;
                 vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
                 vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
                 vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
@@ -732,28 +753,39 @@ static void run_dos_approve_incoming_files() {
         vid_puts(list_y + list_h, panel_x, 0x1F,
                  "+----------------------------------------------------------------------+", panel_w);
         vid_puts(list_y + list_h + 1, panel_x, 0x30,
-                 " Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close               ", panel_w);
+                 (tab == 0)
+                     ? " Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close        "
+                     : " Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close           ",
+                 panel_w);
         vid_puts(24, 0, 0x0E, feedback, 80);
 
         if (!kbhit()) continue;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72 && sel > 0) --sel;
-            else if (ext == 80 && sel + 1 < count) ++sel;
-            else if (ext == 73) sel = (sel > list_h) ? (sel - list_h) : 0;
-            else if (ext == 81 && count > 0) sel = (sel + list_h < count) ? (sel + list_h) : (count - 1);
+            if (ext == 72 && sel[tab] > 0) --sel[tab];
+            else if (ext == 80 && sel[tab] + 1 < count) ++sel[tab];
+            else if (ext == 75 || ext == 77) tab = 1 - tab;
+            else if (ext == 73) sel[tab] = (sel[tab] > list_h) ? (sel[tab] - list_h) : 0;
+            else if (ext == 81 && count > 0) sel[tab] = (sel[tab] + list_h < count) ? (sel[tab] + list_h) : (count - 1);
         } else if (ch == 27 || ch == 'q' || ch == 'Q') {
             break;
+        } else if (ch == '\t') {
+            tab = 1 - tab;
+        } else if (ch == '1') {
+            tab = 0;
+        } else if (ch == '2') {
+            tab = 1;
         } else if (ch == 'r' || ch == 'R') {
-            count = oyk_bbs_list_incoming("incoming", items, 32);
-            sprintf(feedback, "Refreshed (%d pending file(s)).", count);
-        } else if ((ch == '\r' || ch == '\n' || ch == 'a' || ch == 'A') && count > 0) {
+            inc_count = oyk_bbs_list_incoming("incoming", items, 32);
+            app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
+            sprintf(feedback, "Refreshed (%d pending, %d approved).", inc_count, app_count);
+        } else if (tab == 0 && (ch == '\r' || ch == '\n' || ch == 'a' || ch == 'A') && count > 0) {
             char subdir[48], dest[160], err[80];
             prompt_line("Subfolder in files area (blank=root): ", subdir, sizeof(subdir));
             int exists = 0;
             int ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                   items[sel].uploader, items[sel].filename,
+                                                   items[sel[0]].uploader, items[sel[0]].filename,
                                                    subdir, 0, dest, sizeof(dest),
                                                    &exists, err, sizeof(err));
             if (!ok && exists) {
@@ -761,7 +793,7 @@ static void run_dos_approve_incoming_files() {
                 prompt_line("File exists in files area. Overwrite? [Y/N]: ", yn, sizeof(yn));
                 if (yn[0] == 'y' || yn[0] == 'Y') {
                     ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                       items[sel].uploader, items[sel].filename,
+                                                       items[sel[0]].uploader, items[sel[0]].filename,
                                                        subdir, 1, dest, sizeof(dest),
                                                        &exists, err, sizeof(err));
                 } else {
@@ -771,36 +803,58 @@ static void run_dos_approve_incoming_files() {
             }
             if (ok) {
                 char lmsg[96];
-                sprintf(lmsg, "Approved %s/%s -> %.52s", items[sel].uploader, items[sel].filename, dest);
+                sprintf(lmsg, "Approved %s/%s -> %.52s", items[sel[0]].uploader, items[sel[0]].filename, dest);
                 g_node.log_message(OYK_LOG_INFO, lmsg);
                 strncpy(feedback, lmsg, sizeof(feedback) - 1);
                 feedback[sizeof(feedback) - 1] = '\0';
                 strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
                 g_status_line[sizeof(g_status_line) - 1] = '\0';
-                count = oyk_bbs_list_incoming("incoming", items, 32);
+                inc_count = oyk_bbs_list_incoming("incoming", items, 32);
+                app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
             } else {
                 sprintf(feedback, "Error: %.68s", err);
             }
-        } else if ((ch == 'd' || ch == 'D') && count > 0) {
+        } else if (tab == 0 && (ch == 'd' || ch == 'D') && count > 0) {
             char cp[72], yn[4], err[80];
-            sprintf(cp, "Delete incoming\\%s\\%s? [Y/N]: ", items[sel].uploader, items[sel].filename);
+            sprintf(cp, "Delete incoming\\%s\\%s? [Y/N]: ", items[sel[0]].uploader, items[sel[0]].filename);
             prompt_line(cp, yn, sizeof(yn));
             if (yn[0] == 'y' || yn[0] == 'Y') {
-                if (oyk_bbs_delete_incoming_file("incoming", items[sel].uploader, items[sel].filename,
+                if (oyk_bbs_delete_incoming_file("incoming", items[sel[0]].uploader, items[sel[0]].filename,
                                                  err, sizeof(err))) {
                     char lmsg[80];
-                    sprintf(lmsg, "Deleted incoming file %s/%s", items[sel].uploader, items[sel].filename);
+                    sprintf(lmsg, "Deleted incoming file %s/%s", items[sel[0]].uploader, items[sel[0]].filename);
                     g_node.log_message(OYK_LOG_INFO, lmsg);
                     strncpy(feedback, lmsg, sizeof(feedback) - 1);
                     feedback[sizeof(feedback) - 1] = '\0';
                     strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
                     g_status_line[sizeof(g_status_line) - 1] = '\0';
-                    count = oyk_bbs_list_incoming("incoming", items, 32);
+                    inc_count = oyk_bbs_list_incoming("incoming", items, 32);
                 } else {
                     sprintf(feedback, "Error: %.68s", err);
                 }
             } else {
                 strcpy(feedback, "Delete cancelled.");
+            }
+        } else if (tab == 1 && (ch == 'd' || ch == 'D') && count > 0) {
+            char cp[72], yn[4], err[80];
+            sprintf(cp, "Remove approved /%.40s? [Y/N]: ", approved[sel[1]].rel_path);
+            prompt_line(cp, yn, sizeof(yn));
+            if (yn[0] == 'y' || yn[0] == 'Y') {
+                if (oyk_bbs_delete_approved_file(g_node.config().bbs_files_path,
+                                                 approved[sel[1]].rel_path, err, sizeof(err))) {
+                    char lmsg[96];
+                    sprintf(lmsg, "Removed approved file /%.56s", approved[sel[1]].rel_path);
+                    g_node.log_message(OYK_LOG_INFO, lmsg);
+                    strncpy(feedback, lmsg, sizeof(feedback) - 1);
+                    feedback[sizeof(feedback) - 1] = '\0';
+                    strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
+                    g_status_line[sizeof(g_status_line) - 1] = '\0';
+                    app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
+                } else {
+                    sprintf(feedback, "Error: %.68s", err);
+                }
+            } else {
+                strcpy(feedback, "Remove cancelled.");
             }
         }
     }
@@ -1186,7 +1240,7 @@ static void open_dos_node_menu(int* running) {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
-        " [F] Approve Incoming Files...  ",
+        " [F] Manage Files Area...       ",
         " [S] Settings...                ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",

@@ -388,6 +388,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 if (!val.empty()) cfg.bbs.mail_path = val;
             } else if (key == "files_enabled" || key == "filesenabled") {
                 cfg.bbs.files_enabled = parse_bool(val, true);
+            } else if (key == "files_case_insensitive" || key == "filescaseinsensitive") {
+                cfg.bbs.files_case_insensitive = parse_bool(val, true);
             } else if (key == "filespath" || key == "files_path") {
                 if (!val.empty()) cfg.bbs.files_path = val;
             } else if (key == "welcome") {
@@ -509,6 +511,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     }
     lines.push_back("mailpath = " + bbs.mail_path);
     lines.push_back("files_enabled = " + std::string(bbs.files_enabled ? "true" : "false"));
+    lines.push_back("files_case_insensitive = " + std::string(bbs.files_case_insensitive ? "true" : "false"));
     lines.push_back("filespath = " + bbs.files_path);
     lines.push_back("welcome = " + bbs.welcome);
     lines.push_back("max_msg_bytes = " + std::to_string(bbs.max_msg_bytes));

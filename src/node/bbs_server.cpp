@@ -426,6 +426,119 @@ bool BbsServer::resolve_safe_files_path(const std::string& files_root,
     return true;
 }
 
+bool BbsServer::resolve_files_path_with_case(const std::string& files_root,
+                                             const std::string& current_rel_dir,
+                                             const std::string& user_arg,
+                                             bool allow_parent_in_root,
+                                             bool case_insensitive,
+                                             std::string& resolved_abs_out,
+                                             std::string& resolved_rel_out,
+                                             std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (!resolve_safe_files_path(files_root, current_rel_dir, user_arg, allow_parent_in_root,
+                                 resolved_abs_out, resolved_rel_out, error_out)) {
+        return false;
+    }
+
+    // 1. Exact case-sensitive match first
+    std::error_code ec;
+    if (resolved_rel_out.empty() || fs::exists(resolved_abs_out, ec)) {
+        return true;
+    }
+    if (!case_insensitive) {
+        return true;
+    }
+
+    auto to_lower_str = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+
+    // 2. Forced UPPERCASE match
+    {
+        std::string up_arg = to_upper(resolved_rel_out);
+        std::string cand_abs, cand_rel, dummy_err;
+        if (resolve_safe_files_path(files_root, "", up_arg, false, cand_abs, cand_rel, dummy_err) &&
+            fs::exists(cand_abs, ec) && !ec) {
+            resolved_abs_out = std::move(cand_abs);
+            resolved_rel_out = std::move(cand_rel);
+            return true;
+        }
+    }
+
+    // 3. Forced lowercase match
+    {
+        std::string low_arg = to_lower_str(resolved_rel_out);
+        std::string cand_abs, cand_rel, dummy_err;
+        if (resolve_safe_files_path(files_root, "", low_arg, false, cand_abs, cand_rel, dummy_err) &&
+            fs::exists(cand_abs, ec) && !ec) {
+            resolved_abs_out = std::move(cand_abs);
+            resolved_rel_out = std::move(cand_rel);
+            return true;
+        }
+    }
+
+    // 4. Case-insensitive glob / directory scan segment-by-segment inside files_root
+    fs::path root_abs = fs::absolute(fs::path(files_root.empty() ? "files" : files_root), ec);
+    if (ec) return true;
+    fs::path root_canon = fs::weakly_canonical(root_abs, ec);
+    if (ec) root_canon = root_abs.lexically_normal();
+
+    std::vector<std::string> segs;
+    {
+        std::size_t pos = 0;
+        while (pos < resolved_rel_out.size()) {
+            std::size_t slash = resolved_rel_out.find('/', pos);
+            if (slash == std::string::npos) {
+                segs.push_back(resolved_rel_out.substr(pos));
+                break;
+            }
+            if (slash > pos) segs.push_back(resolved_rel_out.substr(pos, slash - pos));
+            pos = slash + 1;
+        }
+    }
+
+    fs::path cur = root_canon;
+    std::string matched_rel;
+    bool all_matched = !segs.empty();
+    for (const auto& seg : segs) {
+        if (!fs::is_directory(cur, ec) || ec) {
+            all_matched = false;
+            break;
+        }
+        std::string want_low = to_lower_str(seg);
+        std::vector<std::string> matches;
+        for (const auto& ent : fs::directory_iterator(cur, ec)) {
+            if (ec) break;
+            std::string ename = ent.path().filename().string();
+            if (to_lower_str(ename) == want_low) {
+                matches.push_back(ename);
+            }
+        }
+        if (matches.empty()) {
+            all_matched = false;
+            break;
+        }
+        std::sort(matches.begin(), matches.end());
+        fs::path next = cur / matches.front();
+        fs::path next_canon = fs::weakly_canonical(next, ec);
+        if (ec || !path_is_within_root(root_canon, next_canon)) {
+            all_matched = false;
+            break;
+        }
+        cur = next_canon;
+        if (!matched_rel.empty()) matched_rel.push_back('/');
+        matched_rel += matches.front();
+    }
+
+    if (all_matched && fs::exists(cur, ec) && !ec) {
+        resolved_abs_out = cur.string();
+        resolved_rel_out = matched_rel;
+    }
+    return true;
+}
+
 std::vector<PendingIncomingFile> BbsServer::list_pending_incoming(const std::string& incoming_root) {
     namespace fs = std::filesystem;
     std::vector<PendingIncomingFile> out;
@@ -559,6 +672,103 @@ bool BbsServer::delete_incoming_file(const std::string& incoming_root,
     }
     if (!fs::remove(src_path, ec) || ec) {
         error_out = "Failed to delete incoming file: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+std::vector<ApprovedFileEntry> BbsServer::list_approved_files(const std::string& files_root) {
+    namespace fs = std::filesystem;
+    std::vector<ApprovedFileEntry> out;
+    std::error_code ec;
+    fs::path root_abs = fs::absolute(fs::path(files_root.empty() ? "files" : files_root), ec);
+    if (ec || !fs::exists(root_abs, ec) || !fs::is_directory(root_abs, ec)) {
+        return out;
+    }
+    fs::path root_canon = fs::weakly_canonical(root_abs, ec);
+    if (ec) root_canon = root_abs.lexically_normal();
+
+    auto walk = [&](auto& self, const fs::path& dir, const std::string& rel_prefix, int depth) -> void {
+        if (depth > 8) return;
+        std::error_code lec;
+        for (const auto& ent : fs::directory_iterator(dir, lec)) {
+            if (lec) break;
+            std::string name = ent.path().filename().string();
+            if (name.empty() || name == "." || name == "..") continue;
+            fs::path cand_canon = fs::weakly_canonical(ent.path(), lec);
+            if (lec || !path_is_within_root(root_canon, cand_canon)) continue;
+            std::string rel = rel_prefix.empty() ? name : (rel_prefix + "/" + name);
+            if (ent.is_directory(lec) && !lec && !ent.is_symlink(lec)) {
+                self(self, ent.path(), rel, depth + 1);
+            } else if (ent.is_regular_file(lec) && !lec) {
+                ApprovedFileEntry afe;
+                afe.rel_path = rel;
+                afe.full_path = cand_canon.string();
+                afe.size_bytes = ent.file_size(lec);
+                if (lec) afe.size_bytes = 0;
+                out.push_back(std::move(afe));
+            }
+        }
+    };
+    walk(walk, root_canon, "", 0);
+
+    std::sort(out.begin(), out.end(), [](const ApprovedFileEntry& a, const ApprovedFileEntry& b) {
+        return a.rel_path < b.rel_path;
+    });
+    return out;
+}
+
+bool BbsServer::delete_approved_file(const std::string& files_root,
+                                     const std::string& rel_path,
+                                     std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (rel_path.empty() || rel_path.find("..") != std::string::npos ||
+        rel_path.find('\\') != std::string::npos || rel_path.find(':') != std::string::npos) {
+        error_out = "Access denied: invalid file path.";
+        return false;
+    }
+
+    std::error_code ec;
+    fs::path root_abs = fs::absolute(fs::path(files_root.empty() ? "files" : files_root), ec);
+    if (ec) {
+        error_out = "Unable to resolve BBS files area root.";
+        return false;
+    }
+    fs::path root_canon = fs::weakly_canonical(root_abs, ec);
+    if (ec) root_canon = root_abs.lexically_normal();
+
+    fs::path cand = root_canon;
+    std::size_t pos = 0;
+    int seg_count = 0;
+    while (pos < rel_path.size()) {
+        while (pos < rel_path.size() && rel_path[pos] == '/') ++pos;
+        if (pos >= rel_path.size()) break;
+        std::size_t slash = rel_path.find('/', pos);
+        std::string seg = (slash == std::string::npos) ? rel_path.substr(pos) : rel_path.substr(pos, slash - pos);
+        if (seg.empty() || seg == "." || seg == "..") {
+            error_out = "Access denied: invalid path component.";
+            return false;
+        }
+        cand /= seg;
+        ++seg_count;
+        pos = (slash == std::string::npos) ? rel_path.size() : (slash + 1);
+    }
+    if (seg_count == 0) {
+        error_out = "No file specified.";
+        return false;
+    }
+
+    fs::path target_canon = fs::weakly_canonical(cand, ec);
+    if (ec || !path_is_within_root(root_canon, target_canon) || target_canon == root_canon) {
+        error_out = "Access denied: target escapes BBS files area.";
+        return false;
+    }
+    if (!fs::is_regular_file(target_canon, ec) || ec) {
+        error_out = "Approved file not found.";
+        return false;
+    }
+    if (!fs::remove(target_canon, ec) || ec) {
+        error_out = "Failed to remove approved file: " + ec.message();
         return false;
     }
     return true;
@@ -1202,8 +1412,8 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
     if (cmd == "F" || cmd == "FILES" || cmd == "DIR") {
         std::string arg_path = (tokens.size() >= 2) ? tokens[1] : "";
         std::string abs_dir, rel_dir, perr;
-        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, arg_path, false,
-                                     abs_dir, rel_dir, perr)) {
+        if (!resolve_files_path_with_case(files_path_, st.cur_files_rel, arg_path, false,
+                                          files_case_insensitive_, abs_dir, rel_dir, perr)) {
             res.response_text = perr + "\r" + prompt_string();
             return res;
         }
@@ -1225,8 +1435,8 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             return res;
         }
         std::string abs_dir, rel_dir, perr;
-        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], true,
-                                     abs_dir, rel_dir, perr)) {
+        if (!resolve_files_path_with_case(files_path_, st.cur_files_rel, tokens[1], true,
+                                          files_case_insensitive_, abs_dir, rel_dir, perr)) {
             res.response_text = perr + "\r" + prompt_string();
             return res;
         }
@@ -1248,8 +1458,8 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             return res;
         }
         std::string abs_file, rel_file, perr;
-        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], false,
-                                     abs_file, rel_file, perr)) {
+        if (!resolve_files_path_with_case(files_path_, st.cur_files_rel, tokens[1], false,
+                                          files_case_insensitive_, abs_file, rel_file, perr)) {
             res.response_text = perr + "\r" + prompt_string();
             return res;
         }
@@ -1302,8 +1512,8 @@ BbsActionResult BbsServer::handle_line(uint64_t session_id,
             return res;
         }
         std::string abs_file, rel_file, perr;
-        if (!resolve_safe_files_path(files_path_, st.cur_files_rel, tokens[1], false,
-                                     abs_file, rel_file, perr)) {
+        if (!resolve_files_path_with_case(files_path_, st.cur_files_rel, tokens[1], false,
+                                          files_case_insensitive_, abs_file, rel_file, perr)) {
             res.response_text = perr + "\r" + prompt_string();
             return res;
         }

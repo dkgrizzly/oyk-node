@@ -12,7 +12,7 @@ BEGIN
         MENUITEM "&Deny Incoming Connections",   IDM_DENY_INCOMING
         MENUITEM SEPARATOR
         MENUITEM "&Local Terminal...",           IDM_TERMINAL
-        MENUITEM "Approve Incoming &Files...",   IDM_APPROVE_FILES
+        MENUITEM "Manage &Files Area...",        IDM_APPROVE_FILES
         MENUITEM "&Settings...",                 IDM_SETTINGS
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
@@ -81,20 +81,32 @@ BEGIN
     PUSHBUTTON      "Close", IDCANCEL, 304, 210, 50, 14
 END
 
-IDD_APPROVE DIALOG 16, 16, 316, 214
+IDD_APPROVE DIALOG 16, 16, 332, 232
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Approve Incoming Files (incoming\\ -> BBS files\\)"
+CAPTION "Manage BBS Files Area"
 FONT 8, "MS Sans Serif"
 BEGIN
-    LTEXT           "Pending incoming files (Uploader / Filename / Size):", -1, 8, 8, 300, 10
-    LISTBOX         IDC_APP_LIST, 8, 20, 300, 112, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Dest Subfolder:", -1, 8, 139, 58, 10
-    EDITTEXT        IDC_APP_SUBDIR, 68, 137, 240, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Select a file to approve and move into the BBS files area.", IDC_APP_STATUS, 8, 156, 300, 12
-    DEFPUSHBUTTON   "&Approve && Move", IDC_APP_APPROVE, 8, 174, 78, 14
-    PUSHBUTTON      "&Delete / Reject", IDC_APP_DELETE, 92, 174, 74, 14
-    PUSHBUTTON      "&Refresh", IDC_APP_REFRESH, 172, 174, 52, 14
-    PUSHBUTTON      "Close", IDCANCEL, 252, 174, 56, 14
+    PUSHBUTTON      "[ Pending Incoming ]", IDC_APP_TAB_INC, 8, 6, 92, 15
+    PUSHBUTTON      "Approved Files", IDC_APP_TAB_APPROVED, 102, 6, 86, 15
+
+    GROUPBOX        "Pending Incoming Uploads", IDC_APP_TAB_BOX, 8, 24, 316, 162
+
+    /* Tab 1: Pending Incoming */
+    LTEXT           "Pending incoming files (Uploader / Filename / Size):", IDC_APP_L_INC, 14, 38, 298, 10
+    LISTBOX         IDC_APP_LIST, 14, 50, 304, 88, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Dest Subfolder:", IDC_APP_L_SUB, 14, 145, 58, 10
+    EDITTEXT        IDC_APP_SUBDIR, 74, 143, 244, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Approve && Move", IDC_APP_APPROVE, 14, 164, 78, 15
+    PUSHBUTTON      "&Delete / Reject", IDC_APP_DELETE, 98, 164, 74, 15
+
+    /* Tab 2: Approved Files */
+    LTEXT           "Approved files currently available in the BBS files area:", IDC_APP_L_APP, 14, 38, 298, 10
+    LISTBOX         IDC_APP_APPROVED_LIST, 14, 50, 304, 108, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Remove Selected File", IDC_APP_REMOVE, 14, 164, 96, 15
+
+    LTEXT           "Manage pending uploads and approved BBS files.", IDC_APP_STATUS, 8, 192, 316, 12
+    PUSHBUTTON      "&Refresh", IDC_APP_REFRESH, 8, 210, 56, 15
+    DEFPUSHBUTTON   "Close", IDCANCEL, 268, 210, 56, 15
 END
 
 IDD_SETTINGS DIALOG 12, 12, 348, 204

@@ -52,13 +52,21 @@
 #define IDC_LTERM_LBL_PORT  431
 #define IDC_LTERM_LBL_TGT   432
 
-#define IDD_APPROVE         440
-#define IDC_APP_LIST        441
-#define IDC_APP_SUBDIR      442
-#define IDC_APP_APPROVE     443
-#define IDC_APP_DELETE      444
-#define IDC_APP_REFRESH     445
-#define IDC_APP_STATUS      446
+#define IDD_APPROVE           440
+#define IDC_APP_TAB_INC       441
+#define IDC_APP_TAB_APPROVED  442
+#define IDC_APP_TAB_BOX       443
+#define IDC_APP_L_INC         444
+#define IDC_APP_LIST          445
+#define IDC_APP_L_SUB         446
+#define IDC_APP_SUBDIR        447
+#define IDC_APP_APPROVE       448
+#define IDC_APP_DELETE        449
+#define IDC_APP_L_APP         510
+#define IDC_APP_APPROVED_LIST 511
+#define IDC_APP_REMOVE        512
+#define IDC_APP_REFRESH       513
+#define IDC_APP_STATUS        514
 
 #define IDD_SETTINGS        450
 #define IDC_SET_TAB_NODE    451
