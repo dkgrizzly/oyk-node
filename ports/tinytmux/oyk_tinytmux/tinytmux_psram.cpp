@@ -8,6 +8,17 @@
 #include <string.h>
 
 static TinyTmuxPsramInfo g_psram_info;
+static TinyTmuxMarchCStatus g_marchc_status;
+static size_t s_mc_done = 0;
+
+static const char* const s_marchc_pass_names[6] = {
+    "1/6 up w0",
+    "2/6 up r0,w1",
+    "3/6 up r1,w0",
+    "4/6 dn r0,w1",
+    "5/6 dn r1,w0",
+    "6/6 up r0"
+};
 
 #if !defined(OYK_TARGET_IMXRT1060)
 static oyk_u32* s_sim_buf[TINYTMUX_PSRAM_MAX_CHIPS] = { NULL, NULL };
@@ -208,6 +219,10 @@ static void finalize_psram_summary(TinyTmuxPsramInfo* info, oyk_u32 elapsed_ms) 
 
 const TinyTmuxPsramInfo* tinytmux_psram_init_and_test() {
     memset(&g_psram_info, 0, sizeof(g_psram_info));
+    memset(&g_marchc_status, 0, sizeof(g_marchc_status));
+    g_marchc_status.fail_chip = -1;
+    g_marchc_status.active_chip = -1;
+    s_mc_done = 0;
     oyk_u32 t0 = tinytmux_board_millis();
     hardware_probe_and_test(&g_psram_info);
     oyk_u32 t1 = tinytmux_board_millis();
@@ -221,6 +236,184 @@ const TinyTmuxPsramInfo* tinytmux_psram_retest() {
 
 const TinyTmuxPsramInfo* tinytmux_psram_info() {
     return &g_psram_info;
+}
+
+const char* tinytmux_psram_footprint_label(int chip_idx) {
+    if (chip_idx == 0) {
+        return "Small pads (U5 / CS0 / Pin 48, closer to microSD)";
+    }
+    if (chip_idx == 1) {
+        return "Large pads (U6 / CS1 / Pin 51, closer to Ethernet)";
+    }
+    return "Unknown footprint";
+}
+
+static volatile oyk_u32* marchc_chip_ptr(int chip_idx, size_t* words_out) {
+#if !defined(OYK_TARGET_IMXRT1060)
+    if (chip_idx >= 0 && chip_idx < TINYTMUX_PSRAM_MAX_CHIPS &&
+        s_sim_buf[chip_idx] != NULL && s_sim_words[chip_idx] >= 16) {
+        if (words_out) *words_out = s_sim_words[chip_idx];
+        return s_sim_buf[chip_idx];
+    }
+    if (words_out) *words_out = 0;
+    return NULL;
+#else
+    if (chip_idx >= 0 && chip_idx < TINYTMUX_PSRAM_MAX_CHIPS &&
+        g_psram_info.chips[chip_idx].detected && g_psram_info.chips[chip_idx].size_bytes >= 64) {
+        if (words_out) *words_out = static_cast<size_t>(g_psram_info.chips[chip_idx].size_bytes / 4UL);
+        return reinterpret_cast<volatile oyk_u32*>(g_psram_info.chips[chip_idx].base_addr);
+    }
+    if (words_out) *words_out = 0;
+    return NULL;
+#endif
+}
+
+static void marchc_record_failure(int chip_idx, size_t word_idx, oyk_u32 expect_val, oyk_u32 actual_val, oyk_u32 now_ms) {
+    oyk_u32 addr = g_psram_info.chips[chip_idx].base_addr + static_cast<oyk_u32>(word_idx * 4UL);
+    g_marchc_status.state = TMUX_MARCHC_FAILED;
+    g_marchc_status.chip_result[chip_idx] = TMUX_MARCHC_CHIP_FAIL;
+    g_marchc_status.fail_chip = chip_idx;
+    g_marchc_status.fail_pass = g_marchc_status.active_pass;
+    g_marchc_status.fail_addr = addr;
+    g_marchc_status.fail_expected = expect_val;
+    g_marchc_status.fail_actual = actual_val;
+    g_marchc_status.elapsed_ms = (now_ms >= g_marchc_status.start_ms) ? (now_ms - g_marchc_status.start_ms) : 0UL;
+    g_psram_info.chips[chip_idx].passed = 0;
+    g_psram_info.chips[chip_idx].fail_addr = addr;
+    finalize_psram_summary(&g_psram_info, g_marchc_status.elapsed_ms);
+}
+
+int tinytmux_psram_marchc_start(oyk_u32 now_ms) {
+    memset(&g_marchc_status, 0, sizeof(g_marchc_status));
+    g_marchc_status.fail_chip = -1;
+    g_marchc_status.active_chip = -1;
+    g_marchc_status.start_ms = now_ms;
+    s_mc_done = 0;
+
+    int first_chip = -1;
+    for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
+        size_t w = 0;
+        if (g_psram_info.chips[i].detected && marchc_chip_ptr(i, &w) != NULL) {
+            g_marchc_status.chip_result[i] = TMUX_MARCHC_CHIP_PENDING;
+            if (first_chip < 0) first_chip = i;
+        } else {
+            g_marchc_status.chip_result[i] = TMUX_MARCHC_CHIP_NONE;
+        }
+    }
+    if (first_chip < 0) {
+        g_marchc_status.state = TMUX_MARCHC_IDLE;
+        safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label), "No PSRAM");
+        return 0;
+    }
+
+    g_marchc_status.state = TMUX_MARCHC_RUNNING;
+    g_marchc_status.active_chip = first_chip;
+    g_marchc_status.active_pass = 0;
+    g_marchc_status.chip_result[first_chip] = TMUX_MARCHC_CHIP_RUNNING;
+    safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label), s_marchc_pass_names[0]);
+    return 1;
+}
+
+int tinytmux_psram_marchc_step(oyk_u32 now_ms, size_t max_words_per_step) {
+    if (g_marchc_status.state != TMUX_MARCHC_RUNNING) return 0;
+    if (max_words_per_step == 0) max_words_per_step = 4096;
+
+    int chip = g_marchc_status.active_chip;
+    size_t words = 0;
+    volatile oyk_u32* base = marchc_chip_ptr(chip, &words);
+    if (!base || words < 16) {
+        marchc_record_failure(chip >= 0 ? chip : 0, 0, 0UL, 0xFFFFFFFFUL, now_ms);
+        return 0;
+    }
+
+    int pass = g_marchc_status.active_pass;
+    size_t budget = max_words_per_step;
+    while (budget > 0 && s_mc_done < words) {
+        size_t idx = (pass == 3 || pass == 4) ? (words - 1U - s_mc_done) : s_mc_done;
+        if (pass == 0) {
+            psram_wr32(chip, base, idx, 0UL);
+        } else if (pass == 1 || pass == 3) {
+            oyk_u32 got = base[idx];
+            if (got != 0UL) {
+                marchc_record_failure(chip, idx, 0UL, got, now_ms);
+                return 0;
+            }
+            psram_wr32(chip, base, idx, 0xFFFFFFFFUL);
+        } else if (pass == 2 || pass == 4) {
+            oyk_u32 got = base[idx];
+            if (got != 0xFFFFFFFFUL) {
+                marchc_record_failure(chip, idx, 0xFFFFFFFFUL, got, now_ms);
+                return 0;
+            }
+            psram_wr32(chip, base, idx, 0UL);
+        } else {
+            oyk_u32 got = base[idx];
+            if (got != 0UL) {
+                marchc_record_failure(chip, idx, 0UL, got, now_ms);
+                return 0;
+            }
+        }
+        s_mc_done++;
+        budget--;
+    }
+
+    oyk_u32 pct = (static_cast<oyk_u32>(pass) * 100UL +
+                   static_cast<oyk_u32>((s_mc_done * 100UL) / words)) / 6UL;
+    if (pct > 100UL) pct = 100UL;
+    g_marchc_status.chip_percent[chip] = static_cast<oyk_u8>(pct);
+    g_marchc_status.elapsed_ms = (now_ms >= g_marchc_status.start_ms) ? (now_ms - g_marchc_status.start_ms) : 0UL;
+
+    if (s_mc_done < words) {
+        return 1;
+    }
+
+    s_mc_done = 0;
+    if (pass + 1 < 6) {
+        g_marchc_status.active_pass = pass + 1;
+        safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label),
+                        s_marchc_pass_names[g_marchc_status.active_pass]);
+        return 1;
+    }
+
+    g_marchc_status.chip_percent[chip] = 100;
+    g_marchc_status.chip_result[chip] = TMUX_MARCHC_CHIP_PASS;
+    g_psram_info.chips[chip].passed = 1;
+    g_psram_info.chips[chip].fail_addr = 0UL;
+
+    int next_chip = -1;
+    for (int i = chip + 1; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
+        size_t nw = 0;
+        if (g_marchc_status.chip_result[i] == TMUX_MARCHC_CHIP_PENDING && marchc_chip_ptr(i, &nw) != NULL) {
+            next_chip = i;
+            break;
+        }
+    }
+    if (next_chip >= 0) {
+        g_marchc_status.active_chip = next_chip;
+        g_marchc_status.active_pass = 0;
+        g_marchc_status.chip_result[next_chip] = TMUX_MARCHC_CHIP_RUNNING;
+        safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label),
+                        s_marchc_pass_names[0]);
+        return 1;
+    }
+
+    g_marchc_status.active_chip = -1;
+    g_marchc_status.state = TMUX_MARCHC_PASSED;
+    safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label), "Complete");
+    finalize_psram_summary(&g_psram_info, g_marchc_status.elapsed_ms);
+    return 0;
+}
+
+void tinytmux_psram_marchc_cancel() {
+    if (g_marchc_status.state == TMUX_MARCHC_RUNNING) {
+        g_marchc_status.state = TMUX_MARCHC_CANCELLED;
+        g_marchc_status.active_chip = -1;
+        safe_copy_psram(g_marchc_status.pass_label, sizeof(g_marchc_status.pass_label), "Cancelled");
+    }
+}
+
+const TinyTmuxMarchCStatus* tinytmux_psram_marchc_status() {
+    return &g_marchc_status;
 }
 
 void tinytmux_psram_format_short(const TinyTmuxPsramInfo* info, char* out, size_t out_sz) {

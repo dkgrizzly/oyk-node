@@ -365,11 +365,54 @@ static void test_psram_detection_and_self_test() {
     tinytmux_psram_format_short(info, tag, sizeof(tag));
     assert(strcmp(tag, "ERR") == 0);
 
-    /* Restore healthy 2-chip 16 MB state and clear buffers before free */
+    /* Restore healthy 2-chip 16 MB state and verify full cooperative March C- pass, fault footprint, and cancel */
     tinytmux_psram_set_sim_fault_mask(0, 0);
     tinytmux_psram_set_sim_fault_mask(1, 0);
     info = tinytmux_psram_retest();
     assert(info->usable_chip_count == 2);
+
+    /* Full March C- across both chips in small chunks */
+    assert(tinytmux_psram_marchc_start(1000UL) == 1);
+    assert(tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING);
+    for (int step = 0; step < 64 && tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING; ++step) {
+        tinytmux_psram_marchc_step(1000UL + static_cast<oyk_u32>(step * 20), 512);
+    }
+    const TinyTmuxMarchCStatus* mc = tinytmux_psram_marchc_status();
+    assert(mc->state == TMUX_MARCHC_PASSED);
+    assert(mc->chip_percent[0] == 100 && mc->chip_percent[1] == 100);
+    assert(mc->chip_result[0] == TMUX_MARCHC_CHIP_PASS && mc->chip_result[1] == TMUX_MARCHC_CHIP_PASS);
+
+    /* Fault on CS1 (large pads) detected cleanly by March C- */
+    tinytmux_psram_set_sim_fault_mask(1, 0x00000100UL);
+    assert(tinytmux_psram_marchc_start(2000UL) == 1);
+    for (int step = 0; step < 64 && tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING; ++step) {
+        tinytmux_psram_marchc_step(2000UL + static_cast<oyk_u32>(step * 20), 512);
+    }
+    mc = tinytmux_psram_marchc_status();
+    assert(mc->state == TMUX_MARCHC_FAILED);
+    assert(mc->fail_chip == 1);
+    assert(strstr(tinytmux_psram_footprint_label(mc->fail_chip), "Large pads") != NULL);
+
+    /* Fault on CS0 (small pads) detected cleanly by March C- */
+    tinytmux_psram_set_sim_fault_mask(1, 0);
+    tinytmux_psram_set_sim_fault_mask(0, 0x00000008UL);
+    assert(tinytmux_psram_marchc_start(3000UL) == 1);
+    for (int step = 0; step < 64 && tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING; ++step) {
+        tinytmux_psram_marchc_step(3000UL + static_cast<oyk_u32>(step * 20), 512);
+    }
+    mc = tinytmux_psram_marchc_status();
+    assert(mc->state == TMUX_MARCHC_FAILED);
+    assert(mc->fail_chip == 0);
+    assert(strstr(tinytmux_psram_footprint_label(mc->fail_chip), "Small pads") != NULL);
+
+    /* Mid-run cancellation */
+    tinytmux_psram_set_sim_fault_mask(0, 0);
+    assert(tinytmux_psram_marchc_start(4000UL) == 1);
+    tinytmux_psram_marchc_step(4010UL, 256);
+    assert(tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING);
+    tinytmux_psram_marchc_cancel();
+    assert(tinytmux_psram_marchc_status()->state == TMUX_MARCHC_CANCELLED);
+
     tinytmux_psram_set_sim_chips(NULL, 0, 0, 0, NULL, 0, 0, 0);
     delete[] sim_cs1;
     delete[] sim_cs0;
@@ -715,13 +758,23 @@ static void test_vt100_console_full_parity() {
     assert(strstr(cap->buf, "PSRAM:16M") != NULL);
     assert(strstr(cap->buf, "USBH:-") != NULL);
 
-    /* Open PSRAM Diagnostics via Node Menu (M -> P), run retest (T), close (Esc) */
+    /* Open PSRAM Diagnostics via Node Menu (M -> P), run quick retest (T) & cooperative March C- (M), close (Esc) */
     cap->len = 0; cap->buf[0] = '\0';
     const char* psram_seq = "mp";
     con->feed_input(reinterpret_cast<const oyk_u8*>(psram_seq), strlen(psram_seq));
     assert(con->view_mode() == TMUX_VIEW_PSRAM);
     assert(strstr(cap->buf, "PSRAM DIAGNOSTICS") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    assert(tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING);
+    assert(strstr(cap->buf, "March C-") != NULL);
+    for (int s = 0; s < 16 && tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING; ++s) {
+        cap->len = 0; cap->buf[0] = '\0';
+        con->tick(t += 150UL);
+    }
+    assert(tinytmux_psram_marchc_status()->state == TMUX_MARCHC_PASSED);
+    assert(strstr(cap->buf, "PASSED") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);

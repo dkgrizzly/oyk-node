@@ -171,6 +171,7 @@ private:
     char esc_buf_[16];
     int esc_len_;
     oyk_u32 esc_start_ms_;
+    oyk_u32 last_marchc_redraw_ms_;
 };
 
 #endif /* OYK_TINYTMUX_CONSOLE_HPP */
