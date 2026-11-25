@@ -19,7 +19,8 @@
  *   - Zero STL, zero exceptions, zero RTTI, bounded static buffers
  */
 
-#include "../compat/oyk_portable.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
 
 /* PPP Protocol Identifiers */
 #define OYK_PPP_PROTO_IP    0x0021U

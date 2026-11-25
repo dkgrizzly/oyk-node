@@ -13,7 +13,9 @@ enum TinyTmuxVKey {
     TMUX_KEY_RIGHT = 0x103,
     TMUX_KEY_LEFT  = 0x104,
     TMUX_KEY_F2    = 0x105,
-    TMUX_KEY_F10   = 0x106
+    TMUX_KEY_F10   = 0x106,
+    TMUX_KEY_HOME  = 0x107,
+    TMUX_KEY_END   = 0x108
 };
 
 static int strieq_ci(const char* a, const char* b) {
@@ -54,7 +56,9 @@ TinyTmuxConsole::TinyTmuxConsole()
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
       lterm_sid_(0), lterm_is_local_(0),
-      lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0) {
+      lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
+      esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0) {
+    esc_buf_[0] = '\0';
     strcpy(status_line_, "TinyTMUX Ready. M:Menu  Tab:Term  S:Settings  F:Files  R:Radio");
     dialog_fb_[0] = '\0';
     files_sel_[0] = 0;
@@ -89,6 +93,7 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     lterm_line_count_ = 0;
     lterm_curline_len_ = 0;
     lterm_input_len_ = 0;
+    reset_escape();
     if (node_) draft_ = node_->config();
     push_lterm_line("*** OYK TinyTMUX Local Terminal (Esc:Console, /local, /bbs, /chat, /disc)");
 }
@@ -901,6 +906,12 @@ void TinyTmuxConsole::handle_menu_key(int key) {
     } else if (key == TMUX_KEY_DOWN) {
         menu_sel_ = (menu_sel_ + 1) % 10;
         render();
+    } else if (key == TMUX_KEY_HOME) {
+        menu_sel_ = 0;
+        render();
+    } else if (key == TMUX_KEY_END) {
+        menu_sel_ = 9;
+        render();
     } else if (key == '\r' || key == '\n') {
         static const int KEYS[10] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'x' };
         int k = KEYS[menu_sel_];
@@ -941,6 +952,13 @@ void TinyTmuxConsole::handle_files_key(int key) {
     } else if (key == TMUX_KEY_DOWN) {
         int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
         if (cnt > 0) files_sel_[files_tab_] = (files_sel_[files_tab_] + 1) % cnt;
+        render();
+    } else if (key == TMUX_KEY_HOME) {
+        files_sel_[files_tab_] = 0;
+        render();
+    } else if (key == TMUX_KEY_END) {
+        int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
+        if (cnt > 0) files_sel_[files_tab_] = cnt - 1;
         render();
     } else if (files_tab_ == 0 && (key == 'a' || key == 'A' || key == '\r' || key == '\n')) {
         if (pending_count_ > 0) {
@@ -1052,6 +1070,12 @@ void TinyTmuxConsole::handle_settings_key(int key) {
     } else if (key == TMUX_KEY_DOWN && cnt > 0) {
         settings_sel_[settings_tab_] = (settings_sel_[settings_tab_] + 1) % cnt;
         render();
+    } else if (key == TMUX_KEY_HOME && cnt > 0) {
+        settings_sel_[settings_tab_] = 0;
+        render();
+    } else if (key == TMUX_KEY_END && cnt > 0) {
+        settings_sel_[settings_tab_] = cnt - 1;
+        render();
     } else if (key == TMUX_KEY_F2 || key == 's' || key == 'S') {
         save_and_apply_settings();
     } else if (key == '\r' || key == '\n' || key == 'e' || key == 'E') {
@@ -1154,38 +1178,166 @@ void TinyTmuxConsole::handle_lterm_key(int key) {
     }
 }
 
+void TinyTmuxConsole::reset_escape() {
+    esc_state_ = ESC_IDLE;
+    esc_len_ = 0;
+    esc_buf_[0] = '\0';
+}
+
+void TinyTmuxConsole::dispatch_key(int key) {
+    if (!node_) return;
+    if (prompt_kind_ != PROMPT_NONE) {
+        handle_prompt_key(key);
+        return;
+    }
+
+    switch (view_) {
+        case TMUX_VIEW_CONSOLE:    handle_console_key(key); break;
+        case TMUX_VIEW_MENU:       handle_menu_key(key); break;
+        case TMUX_VIEW_LOCAL_TERM: handle_lterm_key(key); break;
+        case TMUX_VIEW_FILES:      handle_files_key(key); break;
+        case TMUX_VIEW_RIG:        handle_rig_key(key); break;
+        case TMUX_VIEW_SETTINGS:   handle_settings_key(key); break;
+        case TMUX_VIEW_PSRAM:      handle_psram_key(key); break;
+    }
+}
+
+void TinyTmuxConsole::process_csi_final(char final_ch) {
+    switch (final_ch) {
+        case 'A': dispatch_key(TMUX_KEY_UP); break;
+        case 'B': dispatch_key(TMUX_KEY_DOWN); break;
+        case 'C': dispatch_key(TMUX_KEY_RIGHT); break;
+        case 'D': dispatch_key(TMUX_KEY_LEFT); break;
+        case 'Z': dispatch_key(TMUX_KEY_LEFT); break;
+        case 'H': dispatch_key(TMUX_KEY_HOME); break;
+        case 'F': dispatch_key(TMUX_KEY_END); break;
+        case '~': {
+            int num = atoi(esc_buf_);
+            if (num == 1 || num == 7) dispatch_key(TMUX_KEY_HOME);
+            else if (num == 4 || num == 8) dispatch_key(TMUX_KEY_END);
+            else if (num == 5) dispatch_key(TMUX_KEY_UP);
+            else if (num == 6) dispatch_key(TMUX_KEY_DOWN);
+            else if (num == 12) dispatch_key(TMUX_KEY_F2);
+            else if (num == 21) dispatch_key(TMUX_KEY_F10);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void TinyTmuxConsole::process_ss3_final(char ch) {
+    switch (ch) {
+        case 'A': dispatch_key(TMUX_KEY_UP); break;
+        case 'B': dispatch_key(TMUX_KEY_DOWN); break;
+        case 'C': dispatch_key(TMUX_KEY_RIGHT); break;
+        case 'D': dispatch_key(TMUX_KEY_LEFT); break;
+        case 'H': dispatch_key(TMUX_KEY_HOME); break;
+        case 'F': dispatch_key(TMUX_KEY_END); break;
+        case 'Q': dispatch_key(TMUX_KEY_F2); break;
+        case 'M': dispatch_key('\r'); break;
+        default:
+            break;
+    }
+}
+
+void TinyTmuxConsole::tick(oyk_u32 now_ms) {
+    now_ms_ = now_ms;
+    if (!node_) return;
+    if (esc_state_ == ESC_GOT_ESC) {
+        if ((now_ms_ - esc_start_ms_) >= 40UL) {
+            reset_escape();
+            dispatch_key(27);
+        }
+    } else if (esc_state_ != ESC_IDLE) {
+        if ((now_ms_ - esc_start_ms_) >= 100UL) {
+            reset_escape();
+        }
+    }
+}
+
 void TinyTmuxConsole::feed_input(const oyk_u8* data, size_t len) {
     if (!node_ || !data) return;
     for (size_t i = 0; i < len; ++i) {
-        int key = data[i];
-        if (key == 27 && i + 2 < len && data[i + 1] == '[') {
-            oyk_u8 code = data[i + 2];
-            if (code == 'A') { key = TMUX_KEY_UP; i += 2; }
-            else if (code == 'B') { key = TMUX_KEY_DOWN; i += 2; }
-            else if (code == 'C') { key = TMUX_KEY_RIGHT; i += 2; }
-            else if (code == 'D') { key = TMUX_KEY_LEFT; i += 2; }
-            else if (i + 4 < len && code == '1' && data[i + 3] == '2' && data[i + 4] == '~') {
-                key = TMUX_KEY_F2; i += 4;
-            } else if (i + 4 < len && code == '2' && data[i + 3] == '1' && data[i + 4] == '~') {
-                key = TMUX_KEY_F10; i += 4;
-            }
-        } else if (key == 27 && i + 2 < len && data[i + 1] == 'O') {
-            if (data[i + 2] == 'Q') { key = TMUX_KEY_F2; i += 2; }
-        }
+        oyk_u8 b = data[i];
+        switch (esc_state_) {
+            case ESC_IDLE:
+                if (b == 0x1BU) {
+                    esc_state_ = ESC_GOT_ESC;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                    esc_start_ms_ = now_ms_;
+                } else if (b == 0x9BU) {
+                    esc_state_ = ESC_CSI;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                    esc_start_ms_ = now_ms_;
+                } else {
+                    dispatch_key(static_cast<int>(b));
+                }
+                break;
 
-        if (prompt_kind_ != PROMPT_NONE) {
-            handle_prompt_key(key);
-            continue;
-        }
+            case ESC_GOT_ESC:
+                if (b == '[') {
+                    esc_state_ = ESC_CSI;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                } else if (b == 'O') {
+                    esc_state_ = ESC_SS3;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                } else if (b == 0x1BU) {
+                    reset_escape();
+                    dispatch_key(27);
+                } else {
+                    reset_escape();
+                    dispatch_key(27);
+                    dispatch_key(static_cast<int>(b));
+                }
+                break;
 
-        switch (view_) {
-            case TMUX_VIEW_CONSOLE:    handle_console_key(key); break;
-            case TMUX_VIEW_MENU:       handle_menu_key(key); break;
-            case TMUX_VIEW_LOCAL_TERM: handle_lterm_key(key); break;
-            case TMUX_VIEW_FILES:      handle_files_key(key); break;
-            case TMUX_VIEW_RIG:        handle_rig_key(key); break;
-            case TMUX_VIEW_SETTINGS:   handle_settings_key(key); break;
-            case TMUX_VIEW_PSRAM:      handle_psram_key(key); break;
+            case ESC_CSI:
+                if (b == 0x1BU) {
+                    esc_state_ = ESC_GOT_ESC;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                    esc_start_ms_ = now_ms_;
+                } else if (esc_len_ == 0 && b == '[') {
+                    esc_state_ = ESC_CSI_LINUX;
+                } else if (b >= 0x20U && b <= 0x3FU) {
+                    if (esc_len_ < 15) {
+                        esc_buf_[esc_len_++] = static_cast<char>(b);
+                        esc_buf_[esc_len_] = '\0';
+                    }
+                } else if (b >= 0x40U && b <= 0x7EU) {
+                    char final_ch = static_cast<char>(b);
+                    esc_buf_[esc_len_] = '\0';
+                    process_csi_final(final_ch);
+                    reset_escape();
+                } else {
+                    reset_escape();
+                }
+                break;
+
+            case ESC_CSI_LINUX:
+                reset_escape();
+                if (b == 'B') {
+                    dispatch_key(TMUX_KEY_F2);
+                }
+                break;
+
+            case ESC_SS3:
+                if (b == 0x1BU) {
+                    esc_state_ = ESC_GOT_ESC;
+                    esc_len_ = 0;
+                    esc_buf_[0] = '\0';
+                    esc_start_ms_ = now_ms_;
+                } else {
+                    char ch = static_cast<char>(b);
+                    reset_escape();
+                    process_ss3_final(ch);
+                }
+                break;
         }
     }
 }

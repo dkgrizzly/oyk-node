@@ -9,7 +9,8 @@
  * matching the TinyTMUX 8-UART + Dual USB-CDC + 10/100 Ethernet board layout.
  */
 
-#include "../compat/oyk_portable.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
 
 #define TINYTMUX_UART_COUNT          8
 #define TINYTMUX_USB_CDC_COUNT       2
@@ -66,9 +67,19 @@ const TinyTmuxUartMap* tinytmux_uart_info(int logical_port);
 /* Decodes a 6-byte Ethernet MAC address from NXP IMXRT1060 OCOTP MAC0/MAC1 fuse words. */
 void tinytmux_decode_ocotp_mac(oyk_u32 ocotp_mac0, oyk_u32 ocotp_mac1, oyk_u8 mac_out[6]);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+void tinytmux_early_puts(const char* s);
+void tinytmux_early_puthex(oyk_u32 v);
+#ifdef __cplusplus
+}
+#endif
+
 /* Board HAL interface (implemented for IMXRT1060 hardware; mockable on host tests). */
 void tinytmux_board_init();
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]);
+void tinytmux_board_set_status_led(int on);
 void tinytmux_board_set_link_led(int speed_100mbps);
 void tinytmux_board_set_usbh_vbus(int on);
 const TinyTmuxPsramInfo* tinytmux_board_psram_info();

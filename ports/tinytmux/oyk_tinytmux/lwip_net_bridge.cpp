@@ -2,12 +2,13 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "lwip_net_bridge.hpp"
+#include "tinytmux_enet.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(OYK_HAS_LWIP)
+#if defined(OYK_HAS_LWIP) && OYK_HAS_LWIP
 #include "lwip/init.h"
 #include "lwip/ip_addr.h"
 #include "lwip/netif.h"
@@ -93,6 +94,19 @@ void TinyTmuxNetBridge::set_ethernet_udp_tx_hook(TinyTmuxEnetUdpTxFn fn, void* c
     enet_udp_tx_ctx_ = ctx;
 }
 
+#if defined(TEENSYDUINO)
+static int enet_rigctl_tcp_trampoline(oyk_u32 host_ip_net,
+                                      oyk_u16 port_host,
+                                      const char* cmd,
+                                      size_t cmd_len,
+                                      char* reply_out,
+                                      size_t reply_cap,
+                                      void* /*ctx*/) {
+    return tinytmux_enet_rigctl_tcp_exchange(host_ip_net, port_host,
+                                            cmd, cmd_len, reply_out, reply_cap);
+}
+#endif
+
 void TinyTmuxNetBridge::set_rig_tcp_hook(TinyTmuxRigTcpExchangeFn fn, void* ctx) {
     rig_tcp_fn_ = fn;
     rig_tcp_ctx_ = ctx;
@@ -139,14 +153,24 @@ int TinyTmuxNetBridge::init(OykPortableNode* node, oyk_u32 now_ms) {
     last_poll_ms_ = now_ms;
     if (!node_) return 0;
 
-#if defined(OYK_HAS_LWIP)
+#if defined(OYK_HAS_LWIP) && OYK_HAS_LWIP
     lwip_init();
 #endif
+    oyk_u8 mac[6];
+    tinytmux_board_read_mac(mac);
+    tinytmux_enet_init(mac);
 
     usb_host_.init();
     usb_host_.set_acm_rx_callback(usb_acm_rx_trampoline, this);
     usb_host_.set_ax25_rx_callback(usb_ax25_rx_trampoline, this);
     usb_host_.set_udp_rx_callback(usb_udp_rx_trampoline, this);
+
+#if defined(TEENSYDUINO)
+    if (!rig_tcp_fn_) {
+        rig_tcp_fn_ = enet_rigctl_tcp_trampoline;
+        rig_tcp_ctx_ = this;
+    }
+#endif
 
     return rebind_interfaces(now_ms);
 }
@@ -598,9 +622,10 @@ void TinyTmuxNetBridge::on_ethernet_udp_rx(oyk_u32 src_ip_net,
 
 void TinyTmuxNetBridge::poll(oyk_u32 now_ms) {
     last_poll_ms_ = now_ms;
-#if defined(OYK_HAS_LWIP)
+#if defined(OYK_HAS_LWIP) && OYK_HAS_LWIP
     sys_check_timeouts();
 #endif
+    tinytmux_enet_poll(this, now_ms);
     usb_host_.poll();
 
     oyk_u8 rx_tmp[128];
@@ -742,10 +767,15 @@ int TinyTmuxNetBridge::send_rf_udp_datagram(const char* payload, size_t len) {
         }
     }
 
-    /* Fall back to Ethernet UDP hook when present */
+    /* Fall back to Ethernet UDP hook or lwIP UDP when present */
     if (enet_udp_tx_fn_ && (enet_up_ || dst_ip != 0)) {
         if (enet_udp_tx_fn_(dst_ip, dst_port, dst_port,
                             reinterpret_cast<const oyk_u8*>(payload), len, enet_udp_tx_ctx_)) {
+            return 1;
+        }
+    } else if (enet_up_ && dst_ip != 0) {
+        if (tinytmux_enet_send_axudp(dst_ip, dst_port, dst_port,
+                                     reinterpret_cast<const oyk_u8*>(payload), len)) {
             return 1;
         }
     }
@@ -970,7 +1000,13 @@ int TinyTmuxNetBridge::handle_node_tx(int iface_idx,
         if (enet_tx_fn_) {
             return enet_tx_fn_(is_axip, peer_ip, peer_port, raw, n, enet_tx_ctx_);
         }
-        return 1;
+        if (is_axip) {
+            return tinytmux_enet_send_axip(peer_ip, raw, n);
+        }
+        return tinytmux_enet_send_axudp(peer_ip,
+                                       node_->iface(iface_idx).cfg.port ? node_->iface(iface_idx).cfg.port : static_cast<oyk_u16>(10093),
+                                       peer_port ? peer_port : static_cast<oyk_u16>(10093),
+                                       raw, n);
     }
 
     if (b.kind == TMUX_IF_KISS_SERIAL && b.logical_uart >= 0) {

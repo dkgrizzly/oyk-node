@@ -23,7 +23,8 @@
  *       [X] Close Menu
  */
 
-#include "../compat/oyk_portable.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
 #include "tinytmux_psram.hpp"
 #include "lwip_net_bridge.hpp"
 
@@ -46,6 +47,7 @@ public:
     void init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, void* tx_ctx);
     void set_net_bridge(TinyTmuxNetBridge* bridge);
     void set_now_ms(oyk_u32 now_ms) { now_ms_ = now_ms; }
+    void tick(oyk_u32 now_ms);
 
     /* Render current screen as ANSI/VT100 escape sequences */
     void render();
@@ -60,6 +62,7 @@ public:
 
     TinyTmuxViewMode view_mode() const { return view_; }
     int settings_tab() const { return settings_tab_; }
+    int current_settings_sel() const { return settings_sel_[settings_tab_]; }
     int files_tab() const { return files_tab_; }
     int has_active_terminal() const { return (lterm_sid_ != 0) ? 1 : 0; }
     const char* status_line() const { return status_line_; }
@@ -80,7 +83,19 @@ private:
         PROMPT_RIG_RF_SELECT
     };
 
+    enum EscState {
+        ESC_IDLE = 0,
+        ESC_GOT_ESC,
+        ESC_CSI,
+        ESC_CSI_LINUX,
+        ESC_SS3
+    };
+
     void write_str(const char* s);
+    void reset_escape();
+    void dispatch_key(int key);
+    void process_csi_final(char final_ch);
+    void process_ss3_final(char ch);
     void render_console();
     void render_menu();
     void render_local_terminal();
@@ -151,6 +166,11 @@ private:
     int lterm_curline_len_;
     char lterm_input_[128];
     int lterm_input_len_;
+
+    EscState esc_state_;
+    char esc_buf_[16];
+    int esc_len_;
+    oyk_u32 esc_start_ms_;
 };
 
 #endif /* OYK_TINYTMUX_CONSOLE_HPP */

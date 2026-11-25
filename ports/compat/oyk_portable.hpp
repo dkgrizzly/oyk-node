@@ -28,10 +28,18 @@ typedef unsigned long  oyk_u32;
 
 /* Tunable memory bounds (defaults fit comfortably within 640KB IBM XT conventional RAM) */
 #ifndef OYK_MAX_INTERFACES
+#if defined(TEENSYDUINO)
+#define OYK_MAX_INTERFACES   10
+#else
 #define OYK_MAX_INTERFACES   4
 #endif
+#endif
 #ifndef OYK_MAX_SESSIONS
+#if defined(TEENSYDUINO)
+#define OYK_MAX_SESSIONS     16
+#else
 #define OYK_MAX_SESSIONS     8
+#endif
 #endif
 #ifndef OYK_MAX_MHEARD
 #define OYK_MAX_MHEARD       16

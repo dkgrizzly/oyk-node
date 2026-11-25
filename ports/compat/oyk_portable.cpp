@@ -19,9 +19,22 @@
 #include <direct.h>
 #include <dos.h>
 #define OYK_MKDIR(p) mkdir(p)
-#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#elif defined(OYK_TARGET_IMXRT1060) || defined(TEENSYDUINO) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
 #include <sys/stat.h>
+#if (defined(OYK_HAS_FATFS) && OYK_HAS_FATFS) || defined(TEENSYDUINO)
+extern "C" {
+int oyk_imxrt_mkdir(const char* path);
+int oyk_imxrt_is_regular_file(const char* path);
+int oyk_imxrt_is_directory(const char* path);
+void* oyk_imxrt_opendir(const char* dir_path);
+int oyk_imxrt_readdir(void* dir_handle, char* name_out, size_t name_sz,
+                      int* is_dir_out, oyk_u32* size_out);
+void oyk_imxrt_closedir(void* dir_handle);
+}
+#define OYK_MKDIR(p) oyk_imxrt_mkdir(p)
+#else
 #define OYK_MKDIR(p) ((void)(p), -1)
+#endif
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -2151,8 +2164,24 @@ static int oyk_list_dir_entries(const char* dir_path, OykDirEnt* out, int max_ou
             }
         } while (_dos_findnext(&fi) == 0);
     }
-#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#elif defined(OYK_TARGET_IMXRT1060) || defined(TEENSYDUINO) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#if (defined(OYK_HAS_FATFS) && OYK_HAS_FATFS) || defined(TEENSYDUINO)
+    void* dh = oyk_imxrt_opendir(dir_path);
+    if (!dh) return 0;
+    char dname[64];
+    int dis_dir = 0;
+    oyk_u32 dsz = 0;
+    while (count < max_out && oyk_imxrt_readdir(dh, dname, sizeof(dname), &dis_dir, &dsz)) {
+        if (!oyk_yapp_is_safe_filename(dname)) continue;
+        safe_copy(out[count].name, sizeof(out[count].name), dname);
+        out[count].is_dir = dis_dir ? 1 : 0;
+        out[count].size = dis_dir ? 0UL : dsz;
+        ++count;
+    }
+    oyk_imxrt_closedir(dh);
+#else
     (void)dir_path;
+#endif
 #else
     DIR* d = opendir(dir_path);
     if (!d) return 0;
@@ -2200,10 +2229,14 @@ static int oyk_is_regular_file(const char* path) {
     struct find_t fi;
     if (_dos_findfirst(path, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) != 0) return 0;
     return (fi.attrib & _A_SUBDIR) ? 0 : 1;
-#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#elif defined(OYK_TARGET_IMXRT1060) || defined(TEENSYDUINO) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#if (defined(OYK_HAS_FATFS) && OYK_HAS_FATFS) || defined(TEENSYDUINO)
+    return oyk_imxrt_is_regular_file(path);
+#else
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     return S_ISREG(st.st_mode) ? 1 : 0;
+#endif
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;
@@ -2223,10 +2256,14 @@ static int oyk_is_directory(const char* path) {
     char pat[192];
     join_path(path, "*.*", pat, sizeof(pat));
     return (_dos_findfirst(pat, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) == 0) ? 1 : 0;
-#elif defined(OYK_TARGET_IMXRT1060) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#elif defined(OYK_TARGET_IMXRT1060) || defined(TEENSYDUINO) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
+#if (defined(OYK_HAS_FATFS) && OYK_HAS_FATFS) || defined(TEENSYDUINO)
+    return oyk_imxrt_is_directory(path);
+#else
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     return S_ISDIR(st.st_mode) ? 1 : 0;
+#endif
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;
