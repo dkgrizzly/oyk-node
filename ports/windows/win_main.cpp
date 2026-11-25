@@ -137,6 +137,21 @@ static WinIfaceNet g_ifaces[OYK_MAX_INTERFACES];
 static WinTelnetClient g_telnet_clients[OYK_MAX_TELNET_CLIENTS];
 static int g_last_log_count = -1;
 static char g_status_msg[128] = "Ready.";
+static char g_last_header[160] = "";
+static char g_last_badge[32] = "";
+static char g_last_ifaces_txt[512] = "";
+static char g_last_heard_txt[384] = "";
+static char g_last_sess_txt[768] = "";
+
+/* Draggable splitter handle between Radio Interfaces and Last 5 New Callsigns Heard */
+static const int OYK_SPLITTER_W = 8;
+static int g_split_pct = 58;
+static int g_split_x = 0;
+static int g_split_y = 0;
+static int g_split_h = 0;
+static int g_split_drag = 0;
+static int g_client_w = 0;
+static int g_client_h = 0;
 
 /* Local Terminal + YAPP state (static for Win16 stack safety) */
 static HWND g_lterm_hwnd = NULL;
@@ -631,13 +646,69 @@ static void pump_winsock() {
 
 /* ==================== UI Refresh & Dialogs ==================== */
 
+static void update_static_text(HWND ctl, char* cache, size_t cache_sz, const char* text) {
+    if (!ctl || !text) return;
+    if (cache && strcmp(cache, text) == 0) return;
+    if (cache && cache_sz > 0) {
+        strncpy(cache, text, cache_sz - 1);
+        cache[cache_sz - 1] = '\0';
+    }
+    SendMessage(ctl, WM_SETREDRAW, FALSE, 0);
+    SetWindowText(ctl, text);
+    SendMessage(ctl, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(ctl, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+}
+
+static void update_listbox_rows(HWND lb, char* cache, size_t cache_sz,
+                                const char* const* rows, int count, int scroll_bottom) {
+    if (!lb) return;
+    static char joined[1024];
+    size_t pos = 0;
+    joined[0] = '\0';
+    for (int i = 0; i < count; ++i) {
+        const char* r = rows[i] ? rows[i] : "";
+        size_t rl = strlen(r);
+        if (pos + rl + 2 < sizeof(joined)) {
+            memcpy(joined + pos, r, rl);
+            pos += rl;
+            joined[pos++] = '\n';
+            joined[pos] = '\0';
+        }
+    }
+    if (cache && cache_sz > 0) {
+        if (strcmp(cache, joined) == 0) return;
+        strncpy(cache, joined, cache_sz - 1);
+        cache[cache_sz - 1] = '\0';
+    }
+
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < count; ++i) {
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(rows[i]));
+    }
+    if (scroll_bottom && count > 0) {
+        SendMessage(lb, LB_SETTOPINDEX, static_cast<WPARAM>(count - 1), 0);
+    }
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
 static void set_status(const char* text) {
+    if (!text) return;
+    if (strcmp(g_status_msg, text) == 0) return;
     strncpy(g_status_msg, text, sizeof(g_status_msg) - 1);
     g_status_msg[sizeof(g_status_msg) - 1] = '\0';
-    if (g_ctl_status) SetWindowText(g_ctl_status, g_status_msg);
+    if (g_ctl_status) {
+        SendMessage(g_ctl_status, WM_SETREDRAW, FALSE, 0);
+        SetWindowText(g_ctl_status, g_status_msg);
+        SendMessage(g_ctl_status, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(g_ctl_status, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    }
 }
 
 static void refresh_gui() {
+    static char row_buf[16][128];
+    static const char* row_ptrs[16];
     char buf[160];
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
@@ -647,57 +718,68 @@ static void refresh_gui() {
             static_cast<unsigned long>(g_node.uptime_seconds()),
             g_node.total_active_connections(),
             g_node.ban_count());
-    SetWindowText(g_ctl_header, buf);
+    update_static_text(g_ctl_header, g_last_header, sizeof(g_last_header), buf);
 
-    SetWindowText(g_ctl_badge, g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
+    update_static_text(g_ctl_badge, g_last_badge, sizeof(g_last_badge),
+                       g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
 
     /* Radio Interfaces (active connections per interface) */
-    SendMessage(g_ctl_ifaces, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("Port      Type     Conn  Status          RX/TX"));
-    for (int i = 0; i < g_node.iface_count(); ++i) {
+    int n = 0;
+    strcpy(row_buf[n], "Port      Type     Conn  Status          RX/TX");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.iface_count() && n < 16; ++i) {
         const OykIfaceRuntime& r = g_node.iface(i);
-        sprintf(buf, "%-9.9s %-8.8s %-5d %-15.15s %lu/%lu",
+        sprintf(row_buf[n], "%-9.9s %-8.8s %-5d %-15.15s %lu/%lu",
                 r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                 static_cast<unsigned long>(r.rx_frames),
                 static_cast<unsigned long>(r.tx_frames));
-        SendMessage(g_ctl_ifaces, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+        row_ptrs[n] = row_buf[n];
+        ++n;
     }
+    update_listbox_rows(g_ctl_ifaces, g_last_ifaces_txt, sizeof(g_last_ifaces_txt), row_ptrs, n, 0);
 
     /* Last 5 New Callsigns Heard */
-    SendMessage(g_ctl_heard, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_heard, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("#  Callsign   Port      Heard"));
-    for (int i = 0; i < g_node.new_heard_count(); ++i) {
+    n = 0;
+    strcpy(row_buf[n], "#  Callsign   Port      Heard");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.new_heard_count() && n < 16; ++i) {
         const OykNewHeard& nh = g_node.new_heard(i);
-        sprintf(buf, "%d. %-10.10s %-9.9s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-        SendMessage(g_ctl_heard, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+        sprintf(row_buf[n], "%d. %-10.10s %-9.9s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
+        row_ptrs[n] = row_buf[n];
+        ++n;
     }
+    update_listbox_rows(g_ctl_heard, g_last_heard_txt, sizeof(g_last_heard_txt), row_ptrs, n, 0);
 
     /* Active Connections */
-    SendMessage(g_ctl_sessions, LB_RESETCONTENT, 0, 0);
-    SendMessage(g_ctl_sessions, LB_ADDSTRING, 0,
-                OYK_LPARAM_STR("ID    Callsign    Port      Since     Mode"));
-    for (int i = 0; i < g_node.max_sessions(); ++i) {
+    n = 0;
+    strcpy(row_buf[n], "ID    Callsign    Port      Since     Mode");
+    row_ptrs[n] = row_buf[n];
+    ++n;
+    for (int i = 0; i < g_node.max_sessions() && n < 16; ++i) {
         const OykSession& s = g_node.session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
             char cs[12];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
-            sprintf(buf, "#%-4lu %-11.11s %-9.9s %-9.9s %s",
+            sprintf(row_buf[n], "#%-4lu %-11.11s %-9.9s %-9.9s %s",
                     static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local", s.since_hms,
                     s.restricted_ban ? "BAN NOTICE"
                                      : (s.in_bbs ? "BBS"
                                                  : (s.in_chat ? "CHAT"
                                                               : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"))));
-            SendMessage(g_ctl_sessions, LB_ADDSTRING, 0, OYK_LPARAM_STR(buf));
+            row_ptrs[n] = row_buf[n];
+            ++n;
         }
     }
+    update_listbox_rows(g_ctl_sessions, g_last_sess_txt, sizeof(g_last_sess_txt), row_ptrs, n, 0);
 
     /* Node Activity Log */
     int log_n = g_node.console_log_count();
     if (log_n != g_last_log_count) {
         g_last_log_count = log_n;
+        SendMessage(g_ctl_logs, WM_SETREDRAW, FALSE, 0);
         SendMessage(g_ctl_logs, LB_RESETCONTENT, 0, 0);
         for (int i = 0; i < log_n; ++i) {
             SendMessage(g_ctl_logs, LB_ADDSTRING, 0,
@@ -706,6 +788,8 @@ static void refresh_gui() {
         if (log_n > 0) {
             SendMessage(g_ctl_logs, LB_SETTOPINDEX, static_cast<WPARAM>(log_n - 1), 0);
         }
+        SendMessage(g_ctl_logs, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(g_ctl_logs, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
     }
 }
 
@@ -1308,14 +1392,56 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
+static int hit_test_splitter(int x, int y) {
+    return (g_split_h > 0 &&
+            x >= g_split_x - 2 && x <= g_split_x + OYK_SPLITTER_W + 2 &&
+            y >= g_split_y && y <= g_split_y + g_split_h) ? 1 : 0;
+}
+
+static void paint_splitter_handle(HDC hdc) {
+    if (g_split_h <= 4) return;
+    RECT rc;
+    rc.left = g_split_x;
+    rc.top = g_split_y;
+    rc.right = g_split_x + OYK_SPLITTER_W;
+    rc.bottom = g_split_y + g_split_h;
+    FillRect(hdc, &rc, OYK_HBRUSH(COLOR_BTNFACE + 1));
+
+    HPEN hi_pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNHIGHLIGHT));
+    HPEN sh_pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNSHADOW));
+    HPEN old_pen = (HPEN)SelectObject(hdc, hi_pen);
+
+    int cx = g_split_x + OYK_SPLITTER_W / 2;
+    int cy = g_split_y + g_split_h / 2;
+    int grip_top = cy - 16;
+    int grip_bot = cy + 16;
+    if (grip_top < g_split_y + 4) grip_top = g_split_y + 4;
+    if (grip_bot > g_split_y + g_split_h - 4) grip_bot = g_split_y + g_split_h - 4;
+
+    /* Vertical 3D bevel track + tactile center grip lines */
+    MoveToEx(hdc, cx - 1, grip_top, NULL);
+    LineTo(hdc, cx - 1, grip_bot);
+    SelectObject(hdc, sh_pen);
+    MoveToEx(hdc, cx + 1, grip_top, NULL);
+    LineTo(hdc, cx + 1, grip_bot);
+
+    SelectObject(hdc, old_pen);
+    DeleteObject(hi_pen);
+    DeleteObject(sh_pen);
+}
+
+static void layout_controls(HWND hwnd, int cw, int ch) {
+    if (cw <= 0 || ch <= 0) return;
+    g_client_w = cw;
+    g_client_h = ch;
+
     const int pad = 6;
     const int hdr_h = 20;
     const int st_h = 18;
     const int badge_w = 140;
 
-    MoveWindow(g_ctl_header, pad, pad, cw - badge_w - pad * 3, hdr_h, TRUE);
-    MoveWindow(g_ctl_badge, cw - badge_w - pad, pad, badge_w, hdr_h, TRUE);
+    int hdr_w = cw - badge_w - pad * 3;
+    if (hdr_w < 80) hdr_w = 80;
 
     int body_y = pad + hdr_h + pad;
     int body_h = ch - body_y - st_h - pad * 3;
@@ -1324,16 +1450,34 @@ static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     int top_h = body_h / 3;
     int mid_h = body_h / 3;
     int bot_h = body_h - top_h - mid_h - pad * 2;
-    int left_w = (cw - pad * 3) * 58 / 100;
-    int right_w = cw - pad * 3 - left_w;
+    if (bot_h < 40) bot_h = 40;
 
-    MoveWindow(g_ctl_ifaces, pad, body_y, left_w, top_h, TRUE);
-    MoveWindow(g_ctl_heard, pad * 2 + left_w, body_y, right_w, top_h, TRUE);
-    MoveWindow(g_ctl_sessions, pad, body_y + top_h + pad, cw - pad * 2, mid_h, TRUE);
-    MoveWindow(g_ctl_logs, pad, body_y + top_h + mid_h + pad * 2, cw - pad * 2, bot_h, TRUE);
+    /* Use 32-bit long math so cw*pct NEVER overflows 16-bit signed int on Win16! */
+    int avail_w = cw - pad * 2 - OYK_SPLITTER_W;
+    if (avail_w < 120) avail_w = 120;
+    int left_w = static_cast<int>((static_cast<long>(avail_w) * static_cast<long>(g_split_pct)) / 100L);
+    int min_pane = (avail_w > 220) ? 100 : (avail_w / 3);
+    if (left_w < min_pane) left_w = min_pane;
+    if (left_w > avail_w - min_pane) left_w = avail_w - min_pane;
+    int right_w = avail_w - left_w;
+    if (right_w < 40) right_w = 40;
+
+    g_split_x = pad + left_w;
+    g_split_y = body_y;
+    g_split_h = top_h;
 
     int st_y = ch - st_h - pad;
-    MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, TRUE);
+
+    SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
+    MoveWindow(g_ctl_header, pad, pad, hdr_w, hdr_h, FALSE);
+    MoveWindow(g_ctl_badge, cw - badge_w - pad, pad, badge_w, hdr_h, FALSE);
+    MoveWindow(g_ctl_ifaces, pad, body_y, left_w, top_h, FALSE);
+    MoveWindow(g_ctl_heard, g_split_x + OYK_SPLITTER_W, body_y, right_w, top_h, FALSE);
+    MoveWindow(g_ctl_sessions, pad, body_y + top_h + pad, cw - pad * 2, mid_h, FALSE);
+    MoveWindow(g_ctl_logs, pad, body_y + top_h + mid_h + pad * 2, cw - pad * 2, bot_h, FALSE);
+    MoveWindow(g_ctl_status, pad, st_y, cw - pad * 2, st_h, FALSE);
+    SendMessage(hwnd, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
 static void init_win_interfaces();
@@ -1705,8 +1849,70 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_SIZE:
-            layout_controls(hwnd, LOWORD(lp), HIWORD(lp));
+            layout_controls(hwnd, static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)));
             return 0;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            paint_splitter_handle(hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_SETCURSOR: {
+            if (LOWORD(lp) == HTCLIENT) {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                if (g_split_drag || hit_test_splitter(pt.x, pt.y)) {
+                    SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                    return TRUE;
+                }
+            }
+            break;
+        }
+        case WM_LBUTTONDOWN: {
+            int mx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+            int my = static_cast<int>(static_cast<short>(HIWORD(lp)));
+            if (hit_test_splitter(mx, my)) {
+                g_split_drag = 1;
+                SetCapture(hwnd);
+                SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                return 0;
+            }
+            break;
+        }
+        case WM_MOUSEMOVE: {
+            if (g_split_drag && g_client_w > 40) {
+                int mx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+                const int pad = 6;
+                int avail_w = g_client_w - pad * 2 - OYK_SPLITTER_W;
+                if (avail_w > 40) {
+                    long rel = static_cast<long>(mx - pad - OYK_SPLITTER_W / 2);
+                    int pct = static_cast<int>((rel * 100L) / static_cast<long>(avail_w));
+                    if (pct < 15) pct = 15;
+                    if (pct > 85) pct = 85;
+                    if (pct != g_split_pct) {
+                        g_split_pct = pct;
+                        layout_controls(hwnd, g_client_w, g_client_h);
+                    }
+                }
+                return 0;
+            }
+            break;
+        }
+        case WM_LBUTTONUP: {
+            if (g_split_drag) {
+                g_split_drag = 0;
+                ReleaseCapture();
+                return 0;
+            }
+            break;
+        }
+#ifdef WM_CAPTURECHANGED
+        case WM_CAPTURECHANGED:
+            g_split_drag = 0;
+            return 0;
+#endif
         case WM_TIMER:
             if (wp == 1) {
                 pump_winsock();
@@ -2163,7 +2369,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     g_hwnd_main = CreateWindow(
         "OYKNodeWinClass",
         "OYK Amateur Radio Packet Node",
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 520,
         NULL, NULL, hinst, NULL);
 
