@@ -3,7 +3,7 @@
 
 # oyk-node
 
-A modular Amateur Radio AX.25 Packet Node written in C++ with native local operator consoles for Linux (`ncurses` and X11 `GTK+ 2.0`), MS-DOS, and Windows.
+A modular Amateur Radio AX.25 Packet Node written in C++ with native local operator consoles for Linux (`ncurses` and X11 `GTK+ 2.0`), MS-DOS, Windows, and Teensy 4.1 / IMXRT1060 (`TinyTMUX`).
 
 ## Features
 
@@ -11,7 +11,7 @@ A modular Amateur Radio AX.25 Packet Node written in C++ with native local opera
 - **Modular Radio Interfaces**: Built-in drivers for `axudp`, `axip` (IP protocol 93 / RFC 1226), `kiss-serial`, `kiss-tcp` (client and server modes), and incoming `telnet`.
 - **Packet Node Commands**: `HELP`/`?`, `INFO`, `PORTS`, `USERS`, `MHEARD`, cross-port `CONNECT <port> <callsign>`, and `BYE`/`QUIT`, with an extension hook for future standalone BBS and Chat executables.
 - **Logging & Ban Management**: Severity-bitmask file/console logging with daily rotation, persistent `banlist.cfg`, soft/hard bans, and restricted notification & appeal sessions.
-- **Local Operator Interfaces**: Consistent top `Node` menu bar (`Allow/Deny Incoming`, `Terminate Connection`, `Ban/Unban Callsign`, `Exit`), per-interface active connection counts, last 5 new callsigns heard, live session list, and activity log across `ncurses`, X11 `GTK+ 2.0`, MS-DOS, and Windows 16/32/64-bit.
+- **Local Operator Interfaces**: Consistent top `Node` menu bar (`Allow/Deny Incoming`, `Terminate Connection`, `Ban/Unban Callsign`, `Exit`), per-interface active connection counts, last 5 new callsigns heard, live session list, and activity log across `ncurses`, X11 `GTK+ 2.0`, MS-DOS, Windows 16/32/64-bit, and Teensy 4.1 / TinyTMUX VT100.
 
 ## Dependencies
 
@@ -30,7 +30,7 @@ ctest --test-dir build --output-on-failure
 
 - **X11 GTK+ 2.0 GUI (`oyk-node-gtk`)**: Built automatically when `libgtk2.0-dev` is installed.
 - **Headless / no ncurses**: Pass `-DBUILD_NCURSES_UI=OFF`.
-- **MS-DOS & Windows Ports** *(opt-in)*: Disabled by default; enable with `-DBUILD_MSDOS_PORT=ON`, `-DBUILD_WIN16_PORT=ON`, or `-DBUILD_WINDOWS_PORT=ON` (see [Porting & Testing Guide](docs/dev/porting-and-testing.md)).
+- **MS-DOS, Windows & Embedded Ports** *(opt-in)*: Disabled by default; enable with `-DBUILD_MSDOS_PORT=ON`, `-DBUILD_WIN16_PORT=ON`, `-DBUILD_WINDOWS_PORT=ON` (see [Porting & Testing Guide](docs/dev/porting-and-testing.md)), or `-DBUILD_TINYTMUX_PORT=ON` for Teensy 4.1 / IMXRT1060 (see [TinyTMUX Port README](ports/tinytmux/README.md)).
 
 ## Running
 
