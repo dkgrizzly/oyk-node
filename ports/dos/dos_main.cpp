@@ -794,7 +794,7 @@ static void print_dos_usage(const char* prog) {
     printf("Usage: %s [options]\n\n", prog ? prog : "oyknode.exe");
     printf("Options:\n");
     printf("  -c, --config <path>      Load configuration file\n");
-    printf("      --callsign <CALL>    Override node callsign (e.g. N0CALL-7)\n");
+    printf("      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n");
     printf("      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n");
     printf("      --port <UDP_PORT>    Override first AXUDP bind port (default 10093)\n");
     printf("      --headless           Run without full-screen UI (log to stdout)\n");
@@ -871,7 +871,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (override_call[0]) {
-        if (!oyk_parse_callsign(override_call, &cfg.callsign)) {
+        if (!oyk_parse_callsign_with_default_ssid(override_call, cfg.callsign.ssid, &cfg.callsign)) {
             printf("Invalid callsign: %s\n", override_call);
             return 1;
         }

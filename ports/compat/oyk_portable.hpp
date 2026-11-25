@@ -307,7 +307,11 @@ OykLineEnding oyk_detect_first_eol(const char* buf, size_t len,
                                    OykLineEnding fallback,
                                    int* found_any_out, int* mixed_out);
 
+#define OYK_DEFAULT_NODE_SSID     7U
+
 int oyk_parse_callsign(const char* text, OykCallsign* out);
+/* Parses callsign; if no explicit '-SSID' is given, takes base callsign and uses default_ssid. */
+int oyk_parse_callsign_with_default_ssid(const char* text, oyk_u8 default_ssid, OykCallsign* out);
 void oyk_format_callsign(const OykCallsign* call, char* out, size_t out_sz);
 int oyk_callsign_eq(const OykCallsign* a, const OykCallsign* b);
 /* Parse dotted-quad IPv4 into network-byte-order oyk_u32; returns 1 on success. */

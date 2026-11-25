@@ -39,7 +39,8 @@ cp configs/banlist.cfg ~/.oyk/banlist.cfg
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `callsign` | `N0CALL-7` | Node AX.25 callsign with optional SSID (`0`–`15`). |
+| `callsign` | `N0CALL-7` | Node AX.25 callsign (`CALL` or `CALL-SSID`). When no `-SSID` is specified, it is taken as the base callsign and the node defaults to SSID `7`. |
+| `ssid` | `7` | Optional node SSID (`0`–`15`) when `callsign` is given without `-SSID`. |
 | `alias` | `OYKNOD` | Secondary node callsign/alias accepted on incoming connections. |
 | `info` | `OYK C++ Modular Amateur Radio Packet Node` | Description returned by remote `INFO` command and beacons. |
 | `accept_incoming` | `true` | Initial policy for accepting new incoming connections. |

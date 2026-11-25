@@ -118,6 +118,16 @@ static void test_portable_eol_and_config() {
                    "[interface telnet1]\rtype = telnet\rbind_port = 8023\r");
     assert(oyk_config_load(cfg_cr, cfg, err, sizeof(err)));
     assert(cfg->line_ending == OYK_EOL_CR);
+    assert(strcmp(cfg->callsign.base, "W1MAC") == 0 && cfg->callsign.ssid == 7);
+    {
+        OykCallsign c_def, c_zero, c_five;
+        assert(oyk_parse_callsign_with_default_ssid("KR4OYK", OYK_DEFAULT_NODE_SSID, &c_def) == 1);
+        assert(strcmp(c_def.base, "KR4OYK") == 0 && c_def.ssid == 7);
+        assert(oyk_parse_callsign_with_default_ssid("KR4OYK-0", OYK_DEFAULT_NODE_SSID, &c_zero) == 1);
+        assert(strcmp(c_zero.base, "KR4OYK") == 0 && c_zero.ssid == 0);
+        assert(oyk_parse_callsign_with_default_ssid("KR4OYK-5", OYK_DEFAULT_NODE_SSID, &c_five) == 1);
+        assert(strcmp(c_five.base, "KR4OYK") == 0 && c_five.ssid == 5);
+    }
     assert(cfg->iface_count == 3);
     assert(cfg->ifaces[0].port == 10093);
     assert(cfg->ifaces[1].port == 8010);

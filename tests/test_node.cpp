@@ -242,6 +242,32 @@ void test_config_loader() {
     found = node::NodeConfig::find_default_config({p1, p2, p3});
     assert(found.has_value() && *found == p1);
 
+    // Base callsign without SSID defaults to node SSID 7; explicit -0 / -N / ssid= override it
+    {
+        node::NodeConfig c_base;
+        assert(node::NodeConfig::load_from_file(p1, c_base, err));
+        assert(c_base.callsign == ax25::Callsign("W1CCC", 7));
+        assert(c_base.resolved_bbs_callsign() == ax25::Callsign("W1CCC", 11));
+        assert(c_base.resolved_chat_callsign() == ax25::Callsign("W1CCC", 12));
+
+        { std::ofstream f(p2); f << "[node]\ncallsign = W2BBB-0\n"; }
+        node::NodeConfig c_zero;
+        assert(node::NodeConfig::load_from_file(p2, c_zero, err));
+        assert(c_zero.callsign == ax25::Callsign("W2BBB", 0));
+
+        { std::ofstream f(p3); f << "[node]\ncallsign = W3AAA\nssid = 5\n"; }
+        node::NodeConfig c_ssid;
+        assert(node::NodeConfig::load_from_file(p3, c_ssid, err));
+        assert(c_ssid.callsign == ax25::Callsign("W3AAA", 5));
+
+        auto cli_base = node::NodeConfig::parse_callsign_with_default_ssid("KR4OYK", 7);
+        assert(cli_base.has_value() && *cli_base == ax25::Callsign("KR4OYK", 7));
+        auto cli_zero = node::NodeConfig::parse_callsign_with_default_ssid("KR4OYK-0", 7);
+        assert(cli_zero.has_value() && *cli_zero == ax25::Callsign("KR4OYK", 0));
+        auto cli_nine = node::NodeConfig::parse_callsign_with_default_ssid("KR4OYK-9", 7);
+        assert(cli_nine.has_value() && *cli_nine == ax25::Callsign("KR4OYK", 9));
+    }
+
     std::remove(p1.c_str());
     std::remove(p2.c_str());
     std::remove(p3.c_str());

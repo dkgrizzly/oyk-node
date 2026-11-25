@@ -26,7 +26,7 @@ void print_usage(const char* prog) {
         << "Usage: " << prog << " [options]\n\n"
         << "Options:\n"
         << "  -c, --config <path>          Load configuration file\n"
-        << "      --callsign <CALL>        Override node callsign (e.g. N0CALL-7)\n"
+        << "      --callsign <CALL>        Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n"
         << "      --alias <ALIAS>          Override node alias (e.g. OYKNOD)\n"
         << "      --port <UDP_PORT>        Override first AXUDP bind port (default 10093)\n"
         << "  -g, --geometry <WxH[+X+Y]>   Initial window size/position (e.g. 1024x768)\n"
@@ -113,7 +113,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (!override_call.empty()) {
-        auto parsed = oyk::ax25::Callsign::parse(override_call);
+        auto parsed = oyk::node::NodeConfig::parse_callsign_with_default_ssid(
+            override_call, cfg.callsign.ssid());
         if (!parsed) {
             std::cerr << "Invalid callsign: " << override_call << "\n";
             return 1;
