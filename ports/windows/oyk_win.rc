@@ -13,6 +13,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Local Terminal...",           IDM_TERMINAL
         MENUITEM "Manage &Files Area...",        IDM_APPROVE_FILES
+        MENUITEM "&Radio Control...",            IDM_RIG_CONTROL
         MENUITEM "&Settings...",                 IDM_SETTINGS
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
@@ -114,11 +115,12 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "OYK Node Settings"
 FONT 8, "MS Sans Serif"
 BEGIN
-    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces */
-    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 64, 15
-    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 72, 6, 64, 15
-    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 138, 6, 64, 15
-    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 204, 6, 72, 15
+    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces | Rig */
+    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 56, 15
+    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 64, 6, 52, 15
+    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 118, 6, 54, 15
+    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 174, 6, 68, 15
+    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 244, 6, 54, 15
 
     GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 152
 
@@ -168,8 +170,45 @@ BEGIN
     PUSHBUTTON      "&Add Interface...", IDC_SET_IF_ADD, 14, 152, 74, 15
     PUSHBUTTON      "&Remove Selected", IDC_SET_IF_REM, 94, 152, 78, 15
 
+    /* Tab 5: Rig Control */
+    CHECKBOX        "Enable Radio / Rig Control", IDC_SET_RIG_EN, 14, 38, 160, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Protocol:", IDC_SET_L_RPROTO, 14, 58, 76, 10
+    COMBOBOX        IDC_SET_RIG_PROTO, 94, 56, 110, 52, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Radio Host / IP:", IDC_SET_L_RHOST, 14, 78, 76, 10
+    EDITTEXT        IDC_SET_RIG_HOST, 94, 76, 140, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port (4532/4191):", IDC_SET_L_RPORT, 14, 98, 76, 10
+    EDITTEXT        IDC_SET_RIG_PORT, 94, 96, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Poll Interval (s):", IDC_SET_L_RPOLL, 14, 118, 76, 10
+    EDITTEXT        IDC_SET_RIG_POLL, 94, 116, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Receive RadioFoundry UDP 4191 change notifications", IDC_SET_RIG_NOTIFY, 14, 138, 230, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+
     DEFPUSHBUTTON   "&Save && Apply", IDOK, 206, 182, 68, 15
     PUSHBUTTON      "Cancel", IDCANCEL, 278, 182, 64, 15
+END
+
+IDD_RIG_CONTROL DIALOG 16, 16, 304, 178
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Radio / Rig Control"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "", IDC_RIG_HEADER, 8, 8, 288, 12
+    EDITTEXT        IDC_RIG_STATE, 8, 22, 288, 44, ES_MULTILINE | ES_READONLY | WS_BORDER
+    LTEXT           "Freq (Hz):", IDC_RIG_L_A, 8, 74, 54, 10
+    EDITTEXT        IDC_RIG_EDIT_A, 64, 72, 84, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Mode / Pos:", IDC_RIG_L_B, 156, 74, 48, 10
+    EDITTEXT        IDC_RIG_EDIT_B, 206, 72, 90, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Passband:", IDC_RIG_L_C, 8, 94, 54, 10
+    EDITTEXT        IDC_RIG_EDIT_C, 64, 92, 84, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    PUSHBUTTON      "Set Freq", IDC_RIG_BTN_1, 8, 114, 68, 15
+    PUSHBUTTON      "Set Mode", IDC_RIG_BTN_2, 80, 114, 68, 15
+    PUSHBUTTON      "Toggle PTT", IDC_RIG_BTN_3, 152, 114, 68, 15
+    PUSHBUTTON      "Zone -1", IDC_RIG_BTN_4, 224, 114, 72, 15
+    PUSHBUTTON      "Zone +1", IDC_RIG_BTN_5, 8, 134, 68, 15
+    PUSHBUTTON      "&Refresh", IDC_RIG_BTN_REF, 80, 134, 68, 15
+
+    LTEXT           "", IDC_RIG_STATUS, 8, 156, 226, 12
+    DEFPUSHBUTTON   "Close", IDCANCEL, 240, 154, 56, 15
 END
 
 IDD_ADD_IFACE DIALOG 24, 24, 248, 142

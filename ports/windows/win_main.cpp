@@ -24,6 +24,7 @@
 
 #include "../compat/oyk_portable.hpp"
 #include "../compat/oyk_yapp.hpp"
+#include "../compat/oyk_rig.hpp"
 #include "resource.h"
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -1562,6 +1563,357 @@ static OykConfig g_set_draft;
 static OykIfaceConfig g_add_if_out;
 static int g_add_if_ok = 0;
 
+/* ==================== Windows Winsock 1.1 Rig Control ==================== */
+
+static OykRigStatus g_win_rig_st;
+static SOCKET g_win_rf_sock = INVALID_SOCKET;
+
+static int win_resolve_ipv4_host(const char* host, unsigned long* ip_out) {
+    if (!host || !host[0] || !ip_out) return 0;
+    unsigned long a = inet_addr(host);
+    if (a != INADDR_NONE) { *ip_out = a; return 1; }
+    struct hostent* he = gethostbyname(host);
+    if (he && he->h_addr_list && he->h_addr_list[0]) {
+        memcpy(ip_out, he->h_addr_list[0], 4);
+        return 1;
+    }
+    return 0;
+}
+
+static int win_rf_send_cmd(const char* cmd, char* err_out, size_t err_sz) {
+    const OykConfig& cfg = g_node.config();
+    if (!cfg.rig_enabled || oyk_rig_parse_protocol(cfg.rig_protocol) != OYK_RIG_PROTO_RADIOFOUNDRY) {
+        strncpy(err_out, "RadioFoundry UDP control is not enabled.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    unsigned long ip = 0;
+    if (!win_resolve_ipv4_host(cfg.rig_host, &ip)) {
+        strncpy(err_out, "Unable to resolve radio host.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    if (g_win_rf_sock == INVALID_SOCKET) {
+        g_win_rf_sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (g_win_rf_sock == INVALID_SOCKET) {
+            strncpy(err_out, "Failed to create UDP socket.", err_sz - 1);
+            err_out[err_sz - 1] = '\0';
+            return 0;
+        }
+        struct sockaddr_in loc;
+        memset(&loc, 0, sizeof(loc));
+        loc.sin_family = AF_INET;
+        loc.sin_addr.s_addr = INADDR_ANY;
+        loc.sin_port = 0;
+        bind(g_win_rf_sock, reinterpret_cast<struct sockaddr*>(&loc), sizeof(loc));
+        u_long nb = 1;
+        ioctlsocket(g_win_rf_sock, FIONBIO, &nb);
+    }
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = ip;
+    dst.sin_port = htons(cfg.rig_port ? cfg.rig_port : static_cast<oyk_u16>(OYK_RF_DEFAULT_PORT));
+    if (sendto(g_win_rf_sock, cmd, static_cast<int>(strlen(cmd)), 0,
+               reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst)) <= 0) {
+        strncpy(err_out, "UDP sendto failed.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(g_win_rf_sock, &rfds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 400000L;
+    if (select(0, &rfds, NULL, NULL, &tv) > 0) {
+        static char rbuf[256];
+        struct sockaddr_in from;
+        int flen = sizeof(from);
+        int n = recvfrom(g_win_rf_sock, rbuf, sizeof(rbuf) - 1, 0,
+                         reinterpret_cast<struct sockaddr*>(&from), &flen);
+        if (n > 0) {
+            rbuf[n] = '\0';
+            if (oyk_rf_parse_status(rbuf, &g_win_rig_st)) {
+                g_win_rig_st.reachable = 1;
+                g_win_rig_st.last_error[0] = '\0';
+                return 1;
+            }
+        }
+    }
+    g_win_rig_st.reachable = 0;
+    strncpy(err_out, "No UDP reply from RadioFoundry radio.", err_sz - 1);
+    err_out[err_sz - 1] = '\0';
+    return 0;
+}
+
+static int win_rigctl_exchange(const char* cmd, char* rep_out, size_t rep_sz,
+                               char* err_out, size_t err_sz) {
+    rep_out[0] = '\0';
+    const OykConfig& cfg = g_node.config();
+    unsigned long ip = 0;
+    if (!win_resolve_ipv4_host(cfg.rig_host, &ip)) {
+        strncpy(err_out, "Unable to resolve rigctld host.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) {
+        strncpy(err_out, "Failed to create TCP socket.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    u_long nb = 1;
+    ioctlsocket(s, FIONBIO, &nb);
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = ip;
+    dst.sin_port = htons(cfg.rig_port ? cfg.rig_port : static_cast<oyk_u16>(OYK_RIGCTL_DEFAULT_PORT));
+    connect(s, reinterpret_cast<struct sockaddr*>(&dst), sizeof(dst));
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(s, &wfds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000L;
+    if (select(0, NULL, &wfds, NULL, &tv) <= 0) {
+        closesocket(s);
+        strncpy(err_out, "Unable to connect to rigctld.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    send(s, cmd, static_cast<int>(strlen(cmd)), 0);
+
+    size_t got = 0;
+    DWORD start_ms = GetTickCount();
+    while (static_cast<DWORD>(GetTickCount() - start_ms) < 500UL && got + 1 < rep_sz) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000L;
+        if (select(0, &rfds, NULL, NULL, &tv) > 0) {
+            int n = recv(s, rep_out + got, static_cast<int>(rep_sz - 1 - got), 0);
+            if (n <= 0) break;
+            got += static_cast<size_t>(n);
+            rep_out[got] = '\0';
+            if (strstr(rep_out, "RPRT ") != NULL || strchr(rep_out, '\n') != NULL) break;
+        }
+    }
+    closesocket(s);
+    if (got == 0) {
+        strncpy(err_out, "No response from rigctld.", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
+static int win_rig_refresh(char* err_out, size_t err_sz) {
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    if (!cfg.rig_enabled || proto == OYK_RIG_PROTO_NONE) {
+        strncpy(err_out, "Rig control disabled (enable in Settings -> Rig).", err_sz - 1);
+        err_out[err_sz - 1] = '\0';
+        return 0;
+    }
+    if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+        char cmd[16];
+        oyk_rf_build_select(-1, -1, cmd, sizeof(cmd));
+        return win_rf_send_cmd(cmd, err_out, err_sz);
+    }
+    char cmd[16], rep[128];
+    oyk_rigctl_build_get_freq(cmd, sizeof(cmd));
+    if (!win_rigctl_exchange(cmd, rep, sizeof(rep), err_out, err_sz)) {
+        g_win_rig_st.reachable = 0;
+        return 0;
+    }
+    oyk_rig_status_init(&g_win_rig_st, OYK_RIG_PROTO_RIGCTL);
+    int rprt = 0;
+    if (!oyk_rigctl_parse_freq_reply(rep, &g_win_rig_st.freq_hz, &rprt)) {
+        sprintf(err_out, "rigctld error (RPRT %d)", rprt);
+        return 0;
+    }
+    g_win_rig_st.reachable = 1;
+    char oerr[64];
+    oyk_rigctl_build_get_mode(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_mode_reply(rep, g_win_rig_st.mode, sizeof(g_win_rig_st.mode),
+                                    &g_win_rig_st.passband_hz, &rprt);
+    }
+    oyk_rigctl_build_get_ptt(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_ptt_reply(rep, &g_win_rig_st.ptt, &rprt);
+    }
+    oyk_rigctl_build_get_vfo(cmd, sizeof(cmd));
+    if (win_rigctl_exchange(cmd, rep, sizeof(rep), oerr, sizeof(oerr))) {
+        oyk_rigctl_parse_vfo_reply(rep, g_win_rig_st.vfo, sizeof(g_win_rig_st.vfo), &rprt);
+    }
+    return 1;
+}
+
+static void win_rig_update_dlg(HWND hdlg) {
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    static char hdr[128], body[256];
+    sprintf(hdr, "Protocol: %s  |  Endpoint: %s:%u  [%s]",
+            oyk_rig_protocol_name(proto),
+            cfg.rig_host[0] ? cfg.rig_host : "127.0.0.1",
+            static_cast<unsigned int>(cfg.rig_port),
+            cfg.rig_enabled ? (g_win_rig_st.reachable ? "ONLINE" : "NO REPLY") : "DISABLED");
+    SetDlgItemText(hdlg, IDC_RIG_HEADER, hdr);
+
+    if (!cfg.rig_enabled || proto == OYK_RIG_PROTO_NONE) {
+        strcpy(body, "Rig control is disabled.\r\nEnable it in Node -> Settings -> Rig.");
+    } else if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+        if (g_win_rig_st.is_dmr) {
+            sprintf(body, "Zone: %d   Pos: %d   Name: %s\r\nFreq: %lu Hz   DMR CC:%d TS:%d TG:%ld\r\nRaw: %.90s",
+                    g_win_rig_st.zone, g_win_rig_st.pos,
+                    g_win_rig_st.channel_name[0] ? g_win_rig_st.channel_name : "(unknown)",
+                    static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                    g_win_rig_st.color_code, g_win_rig_st.timeslot, g_win_rig_st.talkgroup,
+                    g_win_rig_st.raw_status);
+        } else {
+            sprintf(body, "Zone: %d   Pos: %d   Name: %s\r\nFreq: %lu Hz\r\nRaw: %.90s",
+                    g_win_rig_st.zone, g_win_rig_st.pos,
+                    g_win_rig_st.channel_name[0] ? g_win_rig_st.channel_name : "(unknown)",
+                    static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                    g_win_rig_st.raw_status);
+        }
+    } else {
+        sprintf(body, "Frequency: %lu Hz\r\nMode: %s (%lu Hz)   VFO: %s\r\nPTT: %s",
+                static_cast<unsigned long>(g_win_rig_st.freq_hz),
+                g_win_rig_st.mode[0] ? g_win_rig_st.mode : "(unknown)",
+                static_cast<unsigned long>(g_win_rig_st.passband_hz),
+                g_win_rig_st.vfo[0] ? g_win_rig_st.vfo : "(unknown)",
+                g_win_rig_st.ptt > 0 ? "TX" : (g_win_rig_st.ptt == 0 ? "RX" : "UNKNOWN"));
+    }
+    SetDlgItemText(hdlg, IDC_RIG_STATE, body);
+}
+
+OYK_DLG_RET RigControlDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    const OykConfig& cfg = g_node.config();
+    int proto = oyk_rig_parse_protocol(cfg.rig_protocol);
+    switch (msg) {
+        case WM_INITDIALOG: {
+            if (g_win_rig_st.protocol != proto) oyk_rig_status_init(&g_win_rig_st, proto);
+            if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+                SetDlgItemText(hdlg, IDC_RIG_L_A, "Zone (0..):");
+                SetDlgItemText(hdlg, IDC_RIG_L_B, "Pos (0..):");
+                SetDlgItemText(hdlg, IDC_RIG_L_C, "");
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_L_C), SW_HIDE);
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_EDIT_C), SW_HIDE);
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_A, "0");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_B, "0");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_1, "Select Z/Pos");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_2, "Channel -1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_3, "Channel +1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_4, "Zone -1");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_5, "Zone +1");
+            } else {
+                SetDlgItemText(hdlg, IDC_RIG_L_A, "Freq (Hz):");
+                SetDlgItemText(hdlg, IDC_RIG_L_B, "Mode:");
+                SetDlgItemText(hdlg, IDC_RIG_L_C, "Passband:");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_A, "145050000");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_B, "FM");
+                SetDlgItemText(hdlg, IDC_RIG_EDIT_C, "0");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_1, "Set Freq");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_2, "Set Mode");
+                SetDlgItemText(hdlg, IDC_RIG_BTN_3, "Toggle PTT");
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_BTN_4), SW_HIDE);
+                ShowWindow(GetDlgItem(hdlg, IDC_RIG_BTN_5), SW_HIDE);
+            }
+            char err[96];
+            if (win_rig_refresh(err, sizeof(err))) {
+                SetDlgItemText(hdlg, IDC_RIG_STATUS, "Queried radio status.");
+            } else {
+                SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+            }
+            win_rig_update_dlg(hdlg);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            char err[96], cmd[64], rep[128], ea[32], eb[32], ec[32];
+            if (id == IDC_RIG_BTN_REF) {
+                if (win_rig_refresh(err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Refreshed.");
+                else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                win_rig_update_dlg(hdlg);
+                return TRUE;
+            }
+            if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+                if (id == IDC_RIG_BTN_1) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_A, ea, sizeof(ea));
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_B, eb, sizeof(eb));
+                    oyk_rf_build_select(atoi(ea), atoi(eb), cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Selected zone & pos.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_2 || id == IDC_RIG_BTN_3) {
+                    oyk_rf_build_step_channel(id == IDC_RIG_BTN_3 ? 1 : -1, cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Stepped channel.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_4 || id == IDC_RIG_BTN_5) {
+                    oyk_rf_build_step_zone(id == IDC_RIG_BTN_5 ? 1 : -1, cmd, sizeof(cmd));
+                    if (win_rf_send_cmd(cmd, err, sizeof(err))) SetDlgItemText(hdlg, IDC_RIG_STATUS, "Stepped zone.");
+                    else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+            } else if (proto == OYK_RIG_PROTO_RIGCTL) {
+                if (id == IDC_RIG_BTN_1) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_A, ea, sizeof(ea));
+                    oyk_u32 hz = static_cast<oyk_u32>(strtoul(ea, NULL, 10));
+                    oyk_rigctl_build_set_freq(hz, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        g_win_rig_st.freq_hz = hz;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, "Frequency updated.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_2) {
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_B, eb, sizeof(eb));
+                    GetDlgItemText(hdlg, IDC_RIG_EDIT_C, ec, sizeof(ec));
+                    oyk_u32 pb = static_cast<oyk_u32>(strtoul(ec, NULL, 10));
+                    oyk_rigctl_build_set_mode(eb, pb, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        strncpy(g_win_rig_st.mode, eb, sizeof(g_win_rig_st.mode) - 1);
+                        g_win_rig_st.passband_hz = pb;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, "Mode updated.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+                if (id == IDC_RIG_BTN_3) {
+                    int next_ptt = (g_win_rig_st.ptt > 0) ? 0 : 1;
+                    oyk_rigctl_build_set_ptt(next_ptt, cmd, sizeof(cmd));
+                    if (win_rigctl_exchange(cmd, rep, sizeof(rep), err, sizeof(err))) {
+                        g_win_rig_st.ptt = next_ptt;
+                        SetDlgItemText(hdlg, IDC_RIG_STATUS, next_ptt ? "PTT set to TX." : "PTT set to RX.");
+                    } else SetDlgItemText(hdlg, IDC_RIG_STATUS, err);
+                    win_rig_update_dlg(hdlg);
+                    return TRUE;
+                }
+            }
+            if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
 static void populate_settings_ifaces(HWND hdlg) {
     HWND hlist = GetDlgItem(hdlg, IDC_SET_IF_LIST);
     SendMessage(hlist, LB_RESETCONTENT, 0, 0);
@@ -1670,6 +2022,11 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     static const int IF_IDS[] = {
         IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_REM
     };
+    static const int RIG_IDS[] = {
+        IDC_SET_RIG_EN, IDC_SET_L_RPROTO, IDC_SET_RIG_PROTO,
+        IDC_SET_L_RHOST, IDC_SET_RIG_HOST, IDC_SET_L_RPORT, IDC_SET_RIG_PORT,
+        IDC_SET_L_RPOLL, IDC_SET_RIG_POLL, IDC_SET_RIG_NOTIFY
+    };
 
     int i;
     for (i = 0; i < static_cast<int>(sizeof(NODE_IDS) / sizeof(NODE_IDS[0])); ++i) {
@@ -1684,16 +2041,21 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     for (i = 0; i < static_cast<int>(sizeof(IF_IDS) / sizeof(IF_IDS[0])); ++i) {
         ShowWindow(GetDlgItem(hdlg, IF_IDS[i]), (tab == 3) ? SW_SHOW : SW_HIDE);
     }
+    for (i = 0; i < static_cast<int>(sizeof(RIG_IDS) / sizeof(RIG_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 4) ? SW_SHOW : SW_HIDE);
+    }
 
     SetDlgItemText(hdlg, IDC_SET_TAB_NODE, (tab == 0) ? "[ Node ]" : "Node");
     SetDlgItemText(hdlg, IDC_SET_TAB_BBS,  (tab == 1) ? "[ BBS ]" : "BBS");
     SetDlgItemText(hdlg, IDC_SET_TAB_CHAT, (tab == 2) ? "[ CHAT ]" : "CHAT");
     SetDlgItemText(hdlg, IDC_SET_TAB_IF,   (tab == 3) ? "[ Interfaces ]" : "Interfaces");
+    SetDlgItemText(hdlg, IDC_SET_TAB_RIG,  (tab == 4) ? "[ Rig ]" : "Rig");
 
-    static const char* BOX_TITLES[4] = {
-        "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings", "Interface Mappings"
+    static const char* BOX_TITLES[5] = {
+        "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings",
+        "Interface Mappings", "Radio / Rig Control Settings"
     };
-    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 4) ? tab : 0]);
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 5) ? tab : 0]);
 }
 
 OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1737,6 +2099,19 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, g_set_draft.chat_topic);
             SetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome);
 
+            CheckDlgButton(hdlg, IDC_SET_RIG_EN, g_set_draft.rig_enabled ? 1 : 0);
+            HWND rcb = GetDlgItem(hdlg, IDC_SET_RIG_PROTO);
+            SendMessage(rcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("rigctl"));
+            SendMessage(rcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("radiofoundry"));
+            SendMessage(rcb, CB_SETCURSEL,
+                        (oyk_rig_parse_protocol(g_set_draft.rig_protocol) == OYK_RIG_PROTO_RADIOFOUNDRY) ? 1 : 0, 0);
+            SetDlgItemText(hdlg, IDC_SET_RIG_HOST, g_set_draft.rig_host[0] ? g_set_draft.rig_host : "127.0.0.1");
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.rig_port ? g_set_draft.rig_port : 4532));
+            SetDlgItemText(hdlg, IDC_SET_RIG_PORT, buf);
+            sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.rig_poll_sec));
+            SetDlgItemText(hdlg, IDC_SET_RIG_POLL, buf);
+            CheckDlgButton(hdlg, IDC_SET_RIG_NOTIFY, g_set_draft.rig_notify ? 1 : 0);
+
             populate_settings_ifaces(hdlg);
             switch_settings_tab(hdlg, 0);
             return TRUE;
@@ -1747,6 +2122,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_SET_TAB_BBS)  { switch_settings_tab(hdlg, 1); return TRUE; }
             if (id == IDC_SET_TAB_CHAT) { switch_settings_tab(hdlg, 2); return TRUE; }
             if (id == IDC_SET_TAB_IF)   { switch_settings_tab(hdlg, 3); return TRUE; }
+            if (id == IDC_SET_TAB_RIG)  { switch_settings_tab(hdlg, 4); return TRUE; }
             if (id == IDC_SET_IF_ADD) {
                 if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
                     MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
@@ -1842,6 +2218,21 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 GetDlgItemText(hdlg, IDC_SET_CHAT_TOPIC, ctop, sizeof(ctop));
                 if (ctop[0]) strncpy(g_set_draft.chat_topic, ctop, sizeof(g_set_draft.chat_topic) - 1);
                 GetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome, sizeof(g_set_draft.chat_welcome));
+
+                g_set_draft.rig_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_RIG_EN) != 0) ? 1 : 0;
+                int rpsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_RIG_PROTO, CB_GETCURSEL, 0, 0));
+                strcpy(g_set_draft.rig_protocol, (rpsel == 1) ? "radiofoundry" : "rigctl");
+                char rhost[32], rport_s[16], rpoll_s[16];
+                GetDlgItemText(hdlg, IDC_SET_RIG_HOST, rhost, sizeof(rhost));
+                if (rhost[0]) strncpy(g_set_draft.rig_host, rhost, sizeof(g_set_draft.rig_host) - 1);
+                GetDlgItemText(hdlg, IDC_SET_RIG_PORT, rport_s, sizeof(rport_s));
+                long rpv = atol(rport_s);
+                if (rpv >= 1L && rpv <= 65535L) g_set_draft.rig_port = static_cast<oyk_u16>(rpv);
+                else g_set_draft.rig_port = (rpsel == 1) ? static_cast<oyk_u16>(4191) : static_cast<oyk_u16>(4532);
+                GetDlgItemText(hdlg, IDC_SET_RIG_POLL, rpoll_s, sizeof(rpoll_s));
+                long rpl = atol(rpoll_s);
+                if (rpl >= 0L && rpl <= 3600L) g_set_draft.rig_poll_sec = static_cast<oyk_u16>(rpl);
+                g_set_draft.rig_notify = (IsDlgButtonChecked(hdlg, IDC_SET_RIG_NOTIFY) != 0) ? 1 : 0;
 
                 static OykConfigApplyResult res;
                 if (!g_node.apply_config(&g_set_draft, 1, &res)) {
@@ -2021,6 +2412,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 refresh_gui();
             } else if (id == IDM_APPROVE_FILES) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                refresh_gui();
+            } else if (id == IDM_RIG_CONTROL) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_RIG_CONTROL), hwnd, (DLGPROC)RigControlDlgProc);
                 refresh_gui();
             } else if (id == IDM_SETTINGS) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
@@ -2253,6 +2647,10 @@ static void drain_win_shutdown() {
     }
 
     g_node.finish_shutdown();
+    if (g_win_rf_sock != INVALID_SOCKET) {
+        closesocket(g_win_rf_sock);
+        g_win_rf_sock = INVALID_SOCKET;
+    }
     shutdown_win_interfaces();
 }
 

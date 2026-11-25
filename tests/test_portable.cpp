@@ -7,6 +7,8 @@
  */
 #include "oyk_portable.hpp"
 #include "oyk_yapp.hpp"
+#include "oyk_rig.hpp"
+#include "../ports/dos/dos_usb.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -810,12 +812,156 @@ static void test_portable_settings_reconfig_and_readonly() {
     printf("[PASS] test_portable_settings_reconfig_and_readonly\n");
 }
 
+struct TestMiniNetCap {
+    oyk_u8 eth_tx[128];
+    size_t eth_tx_len;
+    oyk_u8 ppp_tx[256];
+    size_t ppp_tx_len;
+    oyk_u16 rx_sport;
+    oyk_u16 rx_dport;
+    char rx_payload[64];
+    size_t rx_len;
+};
+
+static int test_mn_tx_eth(const oyk_u8* frame, size_t len, void* ctx) {
+    TestMiniNetCap* c = static_cast<TestMiniNetCap*>(ctx);
+    if (len > sizeof(c->eth_tx)) len = sizeof(c->eth_tx);
+    memcpy(c->eth_tx, frame, len);
+    c->eth_tx_len = len;
+    return 1;
+}
+
+static int test_mn_tx_byte(oyk_u8 b, void* ctx) {
+    TestMiniNetCap* c = static_cast<TestMiniNetCap*>(ctx);
+    if (c->ppp_tx_len < sizeof(c->ppp_tx)) {
+        c->ppp_tx[c->ppp_tx_len++] = b;
+    }
+    return 1;
+}
+
+static void test_mn_udp_rx(oyk_u32 /*src_ip*/, oyk_u16 sport, oyk_u16 dport,
+                           const oyk_u8* pay, size_t len, void* ctx) {
+    TestMiniNetCap* c = static_cast<TestMiniNetCap*>(ctx);
+    c->rx_sport = sport;
+    c->rx_dport = dport;
+    size_t n = (len < sizeof(c->rx_payload) - 1) ? len : (sizeof(c->rx_payload) - 1);
+    memcpy(c->rx_payload, pay, n);
+    c->rx_payload[n] = '\0';
+    c->rx_len = n;
+}
+
+static void test_portable_rig_and_dos_usb() {
+    /* 1. Hamlib rigctl command builders & parsers */
+    char buf[64];
+    assert(oyk_rigctl_build_get_freq(buf, sizeof(buf)) == 2 && strcmp(buf, "f\n") == 0);
+    assert(oyk_rigctl_build_set_freq(145050000UL, buf, sizeof(buf)) > 0 && strcmp(buf, "F 145050000\n") == 0);
+    assert(oyk_rigctl_build_set_mode("PKTFM", 12500UL, buf, sizeof(buf)) > 0 && strcmp(buf, "M PKTFM 12500\n") == 0);
+    assert(oyk_rigctl_build_set_ptt(1, buf, sizeof(buf)) == 4 && strcmp(buf, "T 1\n") == 0);
+    assert(oyk_rigctl_build_set_vfo("VFOA", buf, sizeof(buf)) > 0 && strcmp(buf, "V VFOA\n") == 0);
+
+    oyk_u32 hz = 0UL;
+    int rprt = 99;
+    assert(oyk_rigctl_parse_freq_reply("446000000\n", &hz, &rprt) == 1 && hz == 446000000UL);
+    assert(oyk_rigctl_parse_freq_reply("RPRT -1\n", &hz, &rprt) == 0 && rprt == -1);
+    char mode[16];
+    oyk_u32 pb = 0UL;
+    assert(oyk_rigctl_parse_mode_reply("FM\n12500\n", mode, sizeof(mode), &pb, &rprt) == 1);
+    assert(strcmp(mode, "FM") == 0 && pb == 12500UL);
+    int ptt = -1;
+    assert(oyk_rigctl_parse_ptt_reply("1\n", &ptt, &rprt) == 1 && ptt == 1);
+
+    /* 2. RadioFoundry / takRF UDP 4191 command builders & status parser */
+    assert(oyk_rf_build_select(-1, -1, buf, sizeof(buf)) == 6 && strcmp(buf, "select") == 0);
+    assert(oyk_rf_build_select(2, 5, buf, sizeof(buf)) > 0 && strcmp(buf, "select?zone=2&pos=5") == 0);
+    assert(oyk_rf_build_stop_notify(buf, sizeof(buf)) == 15 && strcmp(buf, "select?notify=0") == 0);
+    assert(oyk_rf_build_step_channel(-1, buf, sizeof(buf)) > 0 && strcmp(buf, "step?channel=-1") == 0);
+    assert(oyk_rf_build_step_zone(1, buf, sizeof(buf)) > 0 && strcmp(buf, "step?zone=1") == 0);
+
+    OykRigStatus st;
+    oyk_rig_status_init(&st, OYK_RIG_PROTO_RADIOFOUNDRY);
+    assert(oyk_rf_parse_status("zone=2 pos=5 name=\"Local DMR\" freq=446.500 cc=1 ts=2 tg=3100", &st) == 1);
+    assert(st.zone == 2 && st.pos == 5 && strcmp(st.channel_name, "Local DMR") == 0);
+    assert(st.freq_hz == 446500000UL && st.is_dmr == 1 && st.color_code == 1 && st.timeslot == 2 && st.talkgroup == 3100L);
+
+    /* 3. [rig] config save & reload round-trip */
+    OykConfig* c1 = new OykConfig;
+    OykConfig* c2 = new OykConfig;
+    oyk_config_init_default(c1);
+    c1->rig_enabled = 1;
+    strcpy(c1->rig_protocol, "radiofoundry");
+    strcpy(c1->rig_host, "192.168.7.1");
+    c1->rig_port = 4191;
+    c1->rig_poll_sec = 40;
+    c1->rig_notify = 0;
+    assert(oyk_config_save(c1, "trigcfg.cfg") == 1);
+    char err[64];
+    assert(oyk_config_load("trigcfg.cfg", c2, err, sizeof(err)) == 1);
+    assert(c2->rig_enabled == 1 && strcmp(c2->rig_protocol, "radiofoundry") == 0);
+    assert(strcmp(c2->rig_host, "192.168.7.1") == 0 && c2->rig_port == 4191);
+    assert(c2->rig_poll_sec == 40 && c2->rig_notify == 0);
+    remove("trigcfg.cfg");
+    delete c2;
+    delete c1;
+
+    /* 4. USB CDC-ACM setup builders & CDC-NCM 16-bit wrap/unwrap */
+    oyk_u8 setup[8], lcode[7];
+    assert(oyk_usb_cdc_build_set_line_coding(115200UL, 0, 0, 8, setup, lcode) == 7);
+    assert(setup[1] == OYK_USB_CDC_SET_LINE_CODING && lcode[6] == 8U);
+    assert(oyk_usb_cdc_build_set_ctrl_line_state(1, 1, 0, setup) == 8 && setup[2] == 0x03U);
+
+    oyk_u8 fake_eth[60];
+    memset(fake_eth, 0x5A, sizeof(fake_eth));
+    oyk_u8 ntb[128], unwrapped[128];
+    size_t ntb_len = oyk_usb_ncm16_wrap(fake_eth, sizeof(fake_eth), 7, ntb, sizeof(ntb));
+    assert(ntb_len == 28 + sizeof(fake_eth));
+    size_t unw_len = oyk_usb_ncm16_unwrap(ntb, ntb_len, unwrapped, sizeof(unwrapped));
+    assert(unw_len == sizeof(fake_eth) && memcmp(fake_eth, unwrapped, sizeof(fake_eth)) == 0);
+
+    /* 5. Standalone DOS mini-stack: Ethernet UDP & PPP UDP round-trip (no mTCP!) */
+    OykDosMiniNet* net = new OykDosMiniNet;
+    TestMiniNetCap* cap = new TestMiniNetCap;
+    memset(cap, 0, sizeof(*cap));
+    oyk_u32 ip_a = 0, ip_b = 0;
+    assert(oyk_parse_ipv4("192.168.7.2", &ip_a) == 1);
+    assert(oyk_parse_ipv4("192.168.7.1", &ip_b) == 1);
+    oyk_dos_mininet_init(net, ip_a, ip_b);
+    net->tx_eth = test_mn_tx_eth;
+    net->tx_eth_ctx = cap;
+    net->udp_cb = test_mn_udp_rx;
+    net->udp_ctx = cap;
+
+    const char* rf_q = "select?zone=1&pos=2";
+    assert(oyk_dos_mininet_send_udp(net, ip_b, 41910U, 4191U,
+                                    reinterpret_cast<const oyk_u8*>(rf_q), strlen(rf_q)) == 1);
+    assert(cap->eth_tx_len >= 60);
+    oyk_dos_mininet_feed_eth(net, cap->eth_tx, cap->eth_tx_len);
+    assert(cap->rx_dport == 4191U && strcmp(cap->rx_payload, rf_q) == 0);
+
+    /* PPP HDLC + IPv4/UDP loopback */
+    memset(cap, 0, sizeof(*cap));
+    net->tx_eth = NULL;
+    net->tx_byte = test_mn_tx_byte;
+    net->tx_byte_ctx = cap;
+    assert(oyk_dos_mininet_send_udp(net, ip_b, 41910U, 4191U,
+                                    reinterpret_cast<const oyk_u8*>("select"), 6) == 1);
+    assert(cap->ppp_tx_len > 10);
+    for (size_t i = 0; i < cap->ppp_tx_len; ++i) {
+        oyk_dos_mininet_feed_ppp_byte(net, cap->ppp_tx[i]);
+    }
+    assert(cap->rx_dport == 4191U && strcmp(cap->rx_payload, "select") == 0);
+
+    delete cap;
+    delete net;
+    printf("[PASS] test_portable_rig_and_dos_usb\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
     test_portable_yapp_and_local_terminal();
     test_portable_bbs();
     test_portable_settings_reconfig_and_readonly();
+    test_portable_rig_and_dos_usb();
     return 0;
 }
 

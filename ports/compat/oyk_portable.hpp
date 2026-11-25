@@ -186,6 +186,13 @@ struct OykConfig {
     char chat_topic[16];
     char chat_welcome[96];
 
+    int rig_enabled;
+    char rig_protocol[16]; /* "rigctl", "radiofoundry", or "none" */
+    char rig_host[32];
+    oyk_u16 rig_port;      /* 4532 for rigctl, 4191 for radiofoundry */
+    oyk_u16 rig_poll_sec;  /* Default 30s keepalive */
+    int rig_notify;        /* Receive RadioFoundry UDP 4191 notifications */
+
     int log_file_count;
     OykLogFileEntry log_files[OYK_MAX_LOG_FILES];
 

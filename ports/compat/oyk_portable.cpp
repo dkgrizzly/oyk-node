@@ -869,6 +869,13 @@ void oyk_config_init_default(OykConfig* cfg) {
     safe_copy(cfg->chat_welcome, sizeof(cfg->chat_welcome),
               "Welcome to OYK Packet Chat! Type /h for help, /q to leave.");
 
+    cfg->rig_enabled = 0;
+    safe_copy(cfg->rig_protocol, sizeof(cfg->rig_protocol), "rigctl");
+    safe_copy(cfg->rig_host, sizeof(cfg->rig_host), "127.0.0.1");
+    cfg->rig_port = 4532;
+    cfg->rig_poll_sec = 30;
+    cfg->rig_notify = 1;
+
     cfg->iface_count = 1;
     safe_copy(cfg->ifaces[0].id, sizeof(cfg->ifaces[0].id), "axudp0");
     safe_copy(cfg->ifaces[0].type, sizeof(cfg->ifaces[0].type), "axudp");
@@ -934,7 +941,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                                             &found_eol, &mixed_eol);
     cfg->has_detected_eol = found_eol;
 
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs */
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig */
     OykIfaceConfig* cur_if = NULL;
     int node_call_explicit_ssid = 0;
     int node_ssid_set = 0;
@@ -968,6 +975,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if = NULL;
             } else if (stricmp_ascii(sec, "chat") == 0) {
                 section = 3;
+                cur_if = NULL;
+            } else if (stricmp_ascii(sec, "rig") == 0 || stricmp_ascii(sec, "radio") == 0) {
+                section = 5;
                 cur_if = NULL;
             } else if (strlen(sec) > 9 &&
                        (sec[0] == 'i' || sec[0] == 'I') &&
@@ -1127,10 +1137,38 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 if (mv > static_cast<long>(OYK_MAX_BBS_BODY - 1)) mv = static_cast<long>(OYK_MAX_BBS_BODY - 1);
                 cfg->bbs_max_msg_bytes = static_cast<oyk_u16>(mv);
             }
+        } else if (section == 5) {
+            if (stricmp_ascii(k, "enabled") == 0) {
+                cfg->rig_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "protocol") == 0 || stricmp_ascii(k, "type") == 0) {
+                safe_copy(cfg->rig_protocol, sizeof(cfg->rig_protocol), v);
+            } else if (stricmp_ascii(k, "host") == 0 || stricmp_ascii(k, "address") == 0) {
+                if (v[0]) safe_copy(cfg->rig_host, sizeof(cfg->rig_host), v);
+            } else if (stricmp_ascii(k, "port") == 0) {
+                long pv = atol(v);
+                if (pv >= 0L && pv <= 65535L) cfg->rig_port = static_cast<oyk_u16>(pv);
+            } else if (stricmp_ascii(k, "poll_interval_sec") == 0 || stricmp_ascii(k, "keepalive_sec") == 0) {
+                long iv = atol(v);
+                if (iv < 0L) iv = 0L;
+                if (iv > 3600L) iv = 3600L;
+                cfg->rig_poll_sec = static_cast<oyk_u16>(iv);
+            } else if (stricmp_ascii(k, "notify") == 0) {
+                cfg->rig_notify = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            }
         }
     }
 
     free(raw);
+
+    if (cfg->rig_port == 0) {
+        if (stricmp_ascii(cfg->rig_protocol, "radiofoundry") == 0 ||
+            stricmp_ascii(cfg->rig_protocol, "takrf") == 0) {
+            cfg->rig_port = 4191;
+        } else if (stricmp_ascii(cfg->rig_protocol, "rigctl") == 0 ||
+                   stricmp_ascii(cfg->rig_protocol, "rigctld") == 0) {
+            cfg->rig_port = 4532;
+        }
+    }
 
     for (int i = 0; i < cfg->iface_count; ++i) {
         if (cfg->ifaces[i].port == 0) {
@@ -1220,6 +1258,14 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     }
     fprintf(fp, "topic = %s%s", cfg->chat_topic, nl);
     fprintf(fp, "welcome = %s%s", cfg->chat_welcome, nl);
+
+    fprintf(fp, "%s[rig]%s", nl, nl);
+    fprintf(fp, "enabled = %s%s", cfg->rig_enabled ? "true" : "false", nl);
+    fprintf(fp, "protocol = %s%s", cfg->rig_protocol[0] ? cfg->rig_protocol : "rigctl", nl);
+    fprintf(fp, "host = %s%s", cfg->rig_host[0] ? cfg->rig_host : "127.0.0.1", nl);
+    fprintf(fp, "port = %u%s", static_cast<unsigned int>(cfg->rig_port), nl);
+    fprintf(fp, "poll_interval_sec = %u%s", static_cast<unsigned int>(cfg->rig_poll_sec), nl);
+    fprintf(fp, "notify = %s%s", cfg->rig_notify ? "true" : "false", nl);
 
     for (int i = 0; i < cfg->iface_count; ++i) {
         const OykIfaceConfig* ic = &cfg->ifaces[i];

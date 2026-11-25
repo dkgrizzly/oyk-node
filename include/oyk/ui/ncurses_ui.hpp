@@ -42,6 +42,7 @@ private:
     void modal_terminate_connection();
     void modal_ban_callsign();
     void modal_approve_incoming_files();
+    void modal_rig_control();
     void modal_settings();
     bool modal_confirm_exit();
 

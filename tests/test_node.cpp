@@ -2548,6 +2548,232 @@ void test_files_dots_case_insensitivity_and_approved_removal() {
     std::cout << "[PASS] test_files_dots_case_insensitivity_and_approved_removal\n";
 }
 
+void test_rig_control_rigctl_and_radiofoundry() {
+    namespace fs = std::filesystem;
+
+    // 1. Protocol command builders & parsers
+    assert(radio::rf_build_select_cmd() == "select");
+    assert(radio::rf_build_select_cmd(2, 5) == "select?zone=2&pos=5");
+    assert(radio::rf_build_select_cmd(1, -1) == "select?zone=1");
+    assert(radio::rf_build_stop_notify_cmd() == "select?notify=0");
+    assert(radio::rf_build_step_channel_cmd(1) == "step?channel=1");
+    assert(radio::rf_build_step_channel_cmd(-1) == "step?channel=-1");
+    assert(radio::rf_build_step_zone_cmd(1) == "step?zone=1");
+
+    radio::RigStatus st;
+    assert(radio::rf_parse_status_text("zone=2 pos=5 name=\"Local Rptr\" freq=446.000 cc=1 ts=2 tg=3100", st));
+    assert(st.zone == 2 && st.pos == 5 && st.channel_name == "Local Rptr");
+    assert(st.freq_hz == 446000000ULL && st.is_dmr && st.color_code == 1 && st.timeslot == 2 && st.talkgroup == 3100);
+
+    radio::RigStatus st2;
+    assert(radio::rf_parse_status_text("zone: 0\npos: 3\nname: Simplex\nfreq: 146520000 Hz\n", st2));
+    assert(st2.zone == 0 && st2.pos == 3 && st2.channel_name == "Simplex" && st2.freq_hz == 146520000ULL);
+
+    int rcode = 99;
+    assert(radio::rigctl_parse_rprt("RPRT 0", rcode) && rcode == 0);
+    assert(radio::rigctl_parse_rprt("RPRT -1", rcode) && rcode == -1);
+    assert(!radio::rigctl_parse_rprt("145050000", rcode));
+
+    // 2. Live loopback mock Hamlib rigctld TCP server
+    int tcp_srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    assert(tcp_srv >= 0);
+    int reuse = 1;
+    setsockopt(tcp_srv, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    sockaddr_in taddr{};
+    taddr.sin_family = AF_INET;
+    taddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    taddr.sin_port = 0;
+    assert(::bind(tcp_srv, reinterpret_cast<sockaddr*>(&taddr), sizeof(taddr)) == 0);
+    assert(::listen(tcp_srv, 8) == 0);
+    socklen_t tlen = sizeof(taddr);
+    assert(::getsockname(tcp_srv, reinterpret_cast<sockaddr*>(&taddr), &tlen) == 0);
+    uint16_t rigctl_port = ntohs(taddr.sin_port);
+
+    std::atomic<bool> stop_tcp{false};
+    uint64_t mock_freq = 145050000ULL;
+    std::string mock_mode = "FM";
+    int mock_pb = 12500;
+    int mock_ptt = 0;
+    std::string mock_vfo = "VFOA";
+    std::thread tcp_thr([&]() {
+        while (!stop_tcp.load()) {
+            pollfd pfd{};
+            pfd.fd = tcp_srv;
+            pfd.events = POLLIN;
+            if (::poll(&pfd, 1, 50) <= 0) continue;
+            int cli = ::accept(tcp_srv, nullptr, nullptr);
+            if (cli < 0) continue;
+            char buf[256];
+            ssize_t n = ::recv(cli, buf, sizeof(buf) - 1, 0);
+            if (n > 0) {
+                buf[n] = '\0';
+                std::string cmd(buf);
+                while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r')) cmd.pop_back();
+                std::string rep;
+                if (cmd == "f") rep = std::to_string(mock_freq) + "\n";
+                else if (cmd.rfind("F ", 0) == 0) { mock_freq = std::stoull(cmd.substr(2)); rep = "RPRT 0\n"; }
+                else if (cmd == "m") rep = mock_mode + "\n" + std::to_string(mock_pb) + "\n";
+                else if (cmd.rfind("M ", 0) == 0) {
+                    std::istringstream iss(cmd.substr(2));
+                    iss >> mock_mode >> mock_pb;
+                    rep = "RPRT 0\n";
+                } else if (cmd == "t") rep = std::to_string(mock_ptt) + "\n";
+                else if (cmd.rfind("T ", 0) == 0) { mock_ptt = std::stoi(cmd.substr(2)); rep = "RPRT 0\n"; }
+                else if (cmd == "v") rep = mock_vfo + "\n";
+                else if (cmd.rfind("V ", 0) == 0) { mock_vfo = cmd.substr(2); rep = "RPRT 0\n"; }
+                else rep = "RPRT -1\n";
+                (void)::send(cli, rep.data(), rep.size(), 0);
+            }
+            ::close(cli);
+        }
+    });
+
+    radio::RigController rig;
+    radio::RigConfig rcfg;
+    rcfg.enabled = true;
+    rcfg.protocol = radio::RigProtocol::Rigctl;
+    rcfg.host = "127.0.0.1";
+    rcfg.port = rigctl_port;
+    rig.configure(rcfg);
+
+    std::string err;
+    assert(rig.refresh(err));
+    auto rs = rig.status();
+    assert(rs.reachable && rs.freq_hz == 145050000ULL && rs.mode == "FM" && rs.passband_hz == 12500 && rs.ptt == 0 && rs.vfo == "VFOA");
+    assert(rig.set_frequency(432100000ULL, err));
+    assert(rig.set_mode("PKTFM", 15000, err));
+    assert(rig.set_ptt(true, err));
+    assert(rig.set_vfo("VFOB", err));
+    assert(rig.refresh(err));
+    rs = rig.status();
+    assert(rs.freq_hz == 432100000ULL && rs.mode == "PKTFM" && rs.passband_hz == 15000 && rs.ptt == 1 && rs.vfo == "VFOB");
+
+    stop_tcp.store(true);
+    tcp_thr.join();
+    ::close(tcp_srv);
+
+    // 3. Live loopback mock RadioFoundry UDP 4191 server (including unsolicited notification)
+    int udp_srv = ::socket(AF_INET, SOCK_DGRAM, 0);
+    assert(udp_srv >= 0);
+    sockaddr_in uaddr{};
+    uaddr.sin_family = AF_INET;
+    uaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    uaddr.sin_port = 0;
+    assert(::bind(udp_srv, reinterpret_cast<sockaddr*>(&uaddr), sizeof(uaddr)) == 0);
+    socklen_t ulen = sizeof(uaddr);
+    assert(::getsockname(udp_srv, reinterpret_cast<sockaddr*>(&uaddr), &ulen) == 0);
+    uint16_t rf_port = ntohs(uaddr.sin_port);
+
+    std::atomic<bool> stop_udp{false};
+    int cur_zone = 0;
+    int cur_pos = 0;
+    bool notify_on = true;
+    sockaddr_in last_client{};
+    bool have_client = false;
+    std::mutex rf_mtx;
+    std::thread udp_thr([&]() {
+        while (!stop_udp.load()) {
+            pollfd pfd{};
+            pfd.fd = udp_srv;
+            pfd.events = POLLIN;
+            if (::poll(&pfd, 1, 50) <= 0) continue;
+            char buf[256];
+            sockaddr_in cli{};
+            socklen_t clen = sizeof(cli);
+            ssize_t n = ::recvfrom(udp_srv, buf, sizeof(buf) - 1, 0,
+                                   reinterpret_cast<sockaddr*>(&cli), &clen);
+            if (n <= 0) continue;
+            buf[n] = '\0';
+            std::string req(buf);
+            std::lock_guard<std::mutex> lk(rf_mtx);
+            last_client = cli;
+            have_client = true;
+            if (req == "select?notify=0") {
+                notify_on = false;
+            } else if (req.rfind("select?zone=", 0) == 0) {
+                std::size_t amp = req.find("&pos=");
+                cur_zone = std::stoi(req.substr(12, amp - 12));
+                cur_pos = (amp != std::string::npos) ? std::stoi(req.substr(amp + 5)) : 0;
+            } else if (req.rfind("step?channel=", 0) == 0) {
+                cur_pos += std::stoi(req.substr(13));
+            } else if (req.rfind("step?zone=", 0) == 0) {
+                cur_zone += std::stoi(req.substr(10));
+                cur_pos = 0;
+            }
+            std::string rep = "zone=" + std::to_string(cur_zone) + " pos=" + std::to_string(cur_pos) +
+                              " name=RFCh freq=446.500 cc=1 ts=1 tg=99";
+            (void)::sendto(udp_srv, rep.data(), rep.size(), 0,
+                           reinterpret_cast<const sockaddr*>(&cli), clen);
+        }
+    });
+
+    radio::RigConfig rfcfg;
+    rfcfg.enabled = true;
+    rfcfg.protocol = radio::RigProtocol::RadioFoundry;
+    rfcfg.host = "127.0.0.1";
+    rfcfg.port = rf_port;
+    rfcfg.notify = true;
+    rig.configure(rfcfg);
+
+    assert(rig.refresh(err));
+    assert(rig.status().reachable && rig.status().zone == 0 && rig.status().pos == 0);
+    assert(rig.select_zone_channel(2, 5, err));
+    assert(rig.status().zone == 2 && rig.status().pos == 5 && rig.status().talkgroup == 99);
+    assert(rig.step_channel(1, err));
+    assert(rig.status().zone == 2 && rig.status().pos == 6);
+    assert(rig.step_zone(-1, err));
+    assert(rig.status().zone == 1 && rig.status().pos == 0);
+
+    // Radio sends an unsolicited front-panel channel change notification -> poll() receives it!
+    {
+        std::lock_guard<std::mutex> lk(rf_mtx);
+        assert(have_client);
+        const std::string async_note = "zone=4 pos=2 name=TAC310 freq=444.200 cc=3 ts=2 tg=310";
+        (void)::sendto(udp_srv, async_note.data(), async_note.size(), 0,
+                       reinterpret_cast<const sockaddr*>(&last_client), sizeof(last_client));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    rig.poll();
+    assert(rig.status().zone == 4 && rig.status().pos == 2 &&
+           rig.status().channel_name == "TAC310" && rig.status().talkgroup == 310);
+
+    assert(rig.stop_notifications(err));
+    assert(!rig.status().notifications_active);
+    {
+        std::lock_guard<std::mutex> lk(rf_mtx);
+        assert(!notify_on);
+    }
+
+    stop_udp.store(true);
+    udp_thr.join();
+    ::close(udp_srv);
+    rig.stop();
+
+    // 4. [rig] config save & reload round-trip
+    const std::string cfg_path = "/tmp/oyk_test_rig_node.cfg";
+    fs::remove(cfg_path);
+    node::NodeConfig cfg = node::NodeConfig::make_default();
+    cfg.rig.enabled = true;
+    cfg.rig.protocol = radio::RigProtocol::RadioFoundry;
+    cfg.rig.host = "192.168.7.1";
+    cfg.rig.port = 4191;
+    cfg.rig.poll_interval_sec = 45;
+    cfg.rig.notify = false;
+    assert(cfg.save_to_file(cfg_path));
+
+    node::NodeConfig loaded;
+    assert(node::NodeConfig::load_from_file(cfg_path, loaded, err));
+    assert(loaded.rig.enabled);
+    assert(loaded.rig.protocol == radio::RigProtocol::RadioFoundry);
+    assert(loaded.rig.host == "192.168.7.1");
+    assert(loaded.rig.port == 4191);
+    assert(loaded.rig.poll_interval_sec == 45);
+    assert(!loaded.rig.notify);
+    fs::remove(cfg_path);
+
+    std::cout << "[PASS] test_rig_control_rigctl_and_radiofoundry\n";
+}
+
 } // namespace
 
 int main() {
@@ -2571,6 +2797,7 @@ int main() {
     test_bbs_files_area_traversal_and_approval();
     test_live_settings_reconfig_and_readonly_fs();
     test_files_dots_case_insensitivity_and_approved_removal();
+    test_rig_control_rigctl_and_radiofoundry();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

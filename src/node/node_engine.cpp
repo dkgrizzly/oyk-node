@@ -187,6 +187,12 @@ bool NodeEngine::start(std::string& error_out) {
             log_msg(LOG_INFO, "CHAT conference active on " + chat_call +
                               (config_.chat.alias.valid() ? " (" + config_.chat.alias.str() + ")" : ""));
         }
+        rig_controller_.configure(config_.rig);
+        if (config_.rig.enabled && config_.rig.protocol != radio::RigProtocol::None) {
+            uint16_t rport = config_.rig.port ? config_.rig.port : radio::rig_default_port(config_.rig.protocol);
+            log_msg(LOG_INFO, "Rig control active (" + radio::rig_protocol_to_string(config_.rig.protocol) +
+                              " -> " + config_.rig.host + ":" + std::to_string(rport) + ")");
+        }
     }
 
     running_.store(true);
@@ -251,6 +257,7 @@ void NodeEngine::stop() {
     if (timer_thread_.joinable()) {
         timer_thread_.join();
     }
+    rig_controller_.stop();
 
     std::vector<radio::RadioInterface*> to_stop;
     {
@@ -1490,6 +1497,7 @@ void NodeEngine::timer_loop() {
         }
         dispatch_tx(pending);
         dispatch_local_events(pending_local);
+        rig_controller_.poll();
     }
 }
 
@@ -1994,6 +2002,9 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
                                  config_.chat.default_topic,
                                  config_.chat.welcome);
         }
+
+        // Reconfigure Rig Control
+        rig_controller_.configure(config_.rig);
 
         // Re-enable incoming connections ONLY if allowed by config AND not manually disabled by operator
         if (manual_deny_incoming_) {
