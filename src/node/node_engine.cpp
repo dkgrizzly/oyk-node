@@ -170,6 +170,7 @@ bool NodeEngine::start(std::string& error_out) {
             const std::string files_dir = config_.resolved_bbs_files_path();
             std::string bbs_err;
             bbs_server_.set_files_enabled(config_.bbs.files_enabled);
+            bbs_server_.set_files_case_insensitive(config_.bbs.files_case_insensitive);
             if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir, files_dir, "incoming",
                                        config_.bbs.welcome, config_.bbs.max_msg_bytes, bbs_err)) {
                 log_msg(LOG_WARNING, "BBS startup warning: " + bbs_err);
@@ -1628,6 +1629,29 @@ bool NodeEngine::delete_incoming_file(const std::string& uploader,
     return ok;
 }
 
+std::vector<ApprovedFileEntry> NodeEngine::list_approved_files() const {
+    std::string files_dir;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        files_dir = bbs_server_.files_path();
+    }
+    return BbsServer::list_approved_files(files_dir);
+}
+
+bool NodeEngine::delete_approved_file(const std::string& rel_path,
+                                      std::string& error_out) {
+    std::string files_dir;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        files_dir = bbs_server_.files_path();
+    }
+    bool ok = BbsServer::delete_approved_file(files_dir, rel_path, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, "Sysop removed approved file /" + rel_path);
+    }
+    return ok;
+}
+
 radio::RadioInterface* NodeEngine::find_interface(const std::string& id) const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     auto it = iface_by_id_.find(id);
@@ -1951,6 +1975,7 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
 
         // Reconfigure BBS
         bbs_server_.set_files_enabled(config_.bbs.files_enabled);
+        bbs_server_.set_files_case_insensitive(config_.bbs.files_case_insensitive);
         if (config_.bbs.enabled) {
             const std::string bbs_call = config_.resolved_bbs_callsign().str();
             const std::string bbs_alias = config_.bbs.alias.valid() ? config_.bbs.alias.str() : "";

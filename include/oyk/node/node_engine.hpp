@@ -160,6 +160,9 @@ public:
     bool delete_incoming_file(const std::string& uploader,
                               const std::string& filename,
                               std::string& error_out);
+    std::vector<ApprovedFileEntry> list_approved_files() const;
+    bool delete_approved_file(const std::string& rel_path,
+                              std::string& error_out);
 
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }

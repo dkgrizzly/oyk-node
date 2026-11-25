@@ -1280,6 +1280,7 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
 static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* count_out) {
     HWND lb = GetDlgItem(hdlg, IDC_APP_LIST);
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
     SendMessage(lb, LB_RESETCONTENT, 0, 0);
     int n = oyk_bbs_list_incoming("incoming", items, 32);
     *count_out = n;
@@ -1291,37 +1292,110 @@ static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* cou
         SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
     }
     if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+static void populate_approved_files_list(HWND hdlg, OykApprovedFile* items, int* count_out) {
+    HWND lb = GetDlgItem(hdlg, IDC_APP_APPROVED_LIST);
+    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    int n = oyk_bbs_list_approved(g_node.config().bbs_files_path, items, 48);
+    *count_out = n;
+    for (int i = 0; i < n; ++i) {
+        char row[112];
+        sprintf(row, "%-46.46s %lu B",
+                items[i].rel_path,
+                static_cast<unsigned long>(items[i].size));
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+    }
+    if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+static void switch_files_tab(HWND hdlg, int tab) {
+    static const int INC_IDS[] = {
+        IDC_APP_L_INC, IDC_APP_LIST, IDC_APP_L_SUB, IDC_APP_SUBDIR,
+        IDC_APP_APPROVE, IDC_APP_DELETE
+    };
+    static const int APP_IDS[] = {
+        IDC_APP_L_APP, IDC_APP_APPROVED_LIST, IDC_APP_REMOVE
+    };
+    int i;
+    for (i = 0; i < static_cast<int>(sizeof(INC_IDS) / sizeof(INC_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, INC_IDS[i]), (tab == 0) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(APP_IDS) / sizeof(APP_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, APP_IDS[i]), (tab == 1) ? SW_SHOW : SW_HIDE);
+    }
+    SetDlgItemText(hdlg, IDC_APP_TAB_INC, (tab == 0) ? "[ Pending Incoming ]" : "Pending Incoming");
+    SetDlgItemText(hdlg, IDC_APP_TAB_APPROVED, (tab == 1) ? "[ Approved Files ]" : "Approved Files");
+    SetDlgItemText(hdlg, IDC_APP_TAB_BOX,
+                   (tab == 0) ? "Pending Incoming Uploads" : "Approved BBS Files Area");
 }
 
 OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static OykPendingIncoming* s_items = NULL;
     static int s_count = 0;
+    static OykApprovedFile* s_approved = NULL;
+    static int s_app_count = 0;
 
     switch (msg) {
         case WM_INITDIALOG: {
             if (!s_items) s_items = new OykPendingIncoming[32];
+            if (!s_approved) s_approved = new OykApprovedFile[48];
             SendDlgItemMessage(hdlg, IDC_APP_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
             populate_approve_list(hdlg, s_items, &s_count);
+            populate_approved_files_list(hdlg, s_approved, &s_app_count);
+            switch_files_tab(hdlg, 0);
             char st[128];
-            sprintf(st, "Files Area: %.72s (%d pending)", g_node.config().bbs_files_path, s_count);
+            sprintf(st, "Files Area: %.60s (%d pending, %d approved)",
+                    g_node.config().bbs_files_path, s_count, s_app_count);
             SetDlgItemText(hdlg, IDC_APP_STATUS, st);
             return TRUE;
         }
         case WM_DESTROY:
-            if (s_items) {
-                delete[] s_items;
-                s_items = NULL;
-            }
+            if (s_items) { delete[] s_items; s_items = NULL; }
+            if (s_approved) { delete[] s_approved; s_approved = NULL; }
             s_count = 0;
+            s_app_count = 0;
             return TRUE;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_APP_TAB_INC) { switch_files_tab(hdlg, 0); return TRUE; }
+            if (id == IDC_APP_TAB_APPROVED) { switch_files_tab(hdlg, 1); return TRUE; }
             if (id == IDC_APP_REFRESH) {
                 populate_approve_list(hdlg, s_items, &s_count);
+                populate_approved_files_list(hdlg, s_approved, &s_app_count);
                 char st[96];
-                sprintf(st, "Refreshed (%d pending file(s)).", s_count);
+                sprintf(st, "Refreshed (%d pending, %d approved).", s_count, s_app_count);
                 SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+                return TRUE;
+            }
+            if (id == IDC_APP_REMOVE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, LB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= s_app_count) {
+                    SetDlgItemText(hdlg, IDC_APP_STATUS, "Select an approved file first.");
+                    return TRUE;
+                }
+                char prompt[160], err[96];
+                sprintf(prompt, "Remove approved file /%s from the BBS files area?", s_approved[sel].rel_path);
+                if (MessageBox(hdlg, prompt, "Confirm Remove", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    if (oyk_bbs_delete_approved_file(g_node.config().bbs_files_path,
+                                                     s_approved[sel].rel_path, err, sizeof(err))) {
+                        char msg_s[128];
+                        sprintf(msg_s, "Removed approved file /%s", s_approved[sel].rel_path);
+                        g_node.log_message(OYK_LOG_INFO, msg_s);
+                        set_status(msg_s);
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
+                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
+                    } else {
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, err);
+                    }
+                }
                 return TRUE;
             }
             if (id == IDC_APP_APPROVE || id == IDC_APP_DELETE) {
@@ -1358,6 +1432,7 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         set_status(msg_s);
                         SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
                         populate_approve_list(hdlg, s_items, &s_count);
+                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
                     } else {
                         SetDlgItemText(hdlg, IDC_APP_STATUS, err);
                     }

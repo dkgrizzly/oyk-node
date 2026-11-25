@@ -247,6 +247,18 @@ void yapp_handle_packet(OykYappSession* y) {
                     ++field;
                 }
 
+                /* Strip trailing periods from legacy DOS/Win16 clients (e.g. "LICENSE." -> "LICENSE")
+                   only when no leading period or path traversal is present. */
+                if (fname[0] != '\0' && fname[0] != '.' &&
+                    strstr(fname, "..") == NULL &&
+                    strchr(fname, '/') == NULL &&
+                    strchr(fname, '\\') == NULL) {
+                    size_t fl = strlen(fname);
+                    while (fl > 0 && fname[fl - 1] == '.') {
+                        fname[--fl] = '\0';
+                    }
+                }
+
                 if (!oyk_yapp_is_safe_filename(fname)) {
                     yapp_send_cancel(y, "Invalid filename (path traversal rejected)");
                     y->state = OYK_YAPP_ERROR;
@@ -392,7 +404,10 @@ int oyk_yapp_is_safe_filename(const char* name) {
     if (!name || !name[0]) return 0;
     size_t len = strlen(name);
     if (len > 128) return 0;
-    if (name[0] == '.' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+    if (name[0] == '.' || name[len - 1] == '.' ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        return 0;
+    }
     if (strstr(name, "..") != NULL) return 0;
     for (size_t i = 0; i < len; ++i) {
         unsigned char c = static_cast<unsigned char>(name[i]);
@@ -509,8 +524,15 @@ int oyk_yapp_start_send(OykYappSession* y, const char* local_path,
     }
     oyk_yapp_reset(y);
 
-    const char* base = path_basename(local_path);
-    if (!oyk_yapp_is_safe_filename(base)) {
+    char clean_base[128];
+    ycopy(clean_base, sizeof(clean_base), path_basename(local_path));
+    {
+        size_t bl = strlen(clean_base);
+        while (bl > 0 && clean_base[bl - 1] == '.') {
+            clean_base[--bl] = '\0';
+        }
+    }
+    if (!oyk_yapp_is_safe_filename(clean_base)) {
         ycopy(err_out, err_sz, "Invalid filename for YAPP");
         return 0;
     }
@@ -526,7 +548,7 @@ int oyk_yapp_start_send(OykYappSession* y, const char* local_path,
 
     y->fp = f;
     y->total_bytes = static_cast<oyk_u32>(sz);
-    ycopy(y->filename, sizeof(y->filename), base);
+    ycopy(y->filename, sizeof(y->filename), clean_base);
     ycopy(y->target_path, sizeof(y->target_path), local_path);
     y->sending = 1;
     y->state = OYK_YAPP_SEND_WAIT_INIT;

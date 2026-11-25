@@ -530,7 +530,7 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
-        " [F] Approve Incoming Files...  ",
+        " [F] Manage Files Area...       ",
         " [S] Settings...                ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
@@ -1502,7 +1502,7 @@ void NcursesUI::modal_ban_callsign() {
 void NcursesUI::modal_approve_incoming_files() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(76, std::max(54, cols - 4));
+    int w = std::min(78, std::max(56, cols - 2));
     int h = std::min(22, std::max(14, rows - 2));
     if (rows < 12 || cols < 46) return;
 
@@ -1511,10 +1511,12 @@ void NcursesUI::modal_approve_incoming_files() {
     keypad(win, TRUE);
     wtimeout(win, 200);
 
-    auto items = engine_.list_pending_incoming_files();
-    int sel = 0;
-    int top = 0;
-    std::string feedback = "Target BBS Files Area: " + engine_.bbs_files_path();
+    auto pending_items = engine_.list_pending_incoming_files();
+    auto approved_items = engine_.list_approved_files();
+    int tab = 0; // 0 = Pending Incoming, 1 = Approved Files
+    int sel[2] = { 0, 0 };
+    int top[2] = { 0, 0 };
+    std::string feedback = "Files Area: " + engine_.bbs_files_path();
 
     auto prompt_text = [&](const std::string& label, std::string& out) -> bool {
         out.clear();
@@ -1559,76 +1561,129 @@ void NcursesUI::modal_approve_incoming_files() {
         }
     };
 
+    static const char* TAB_LABELS[2] = { " 1:Pending Incoming ", " 2:Approved Files " };
+
     while (true) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
-        int list_h = std::max(1, h - 7);
-        int count = static_cast<int>(items.size());
-        if (sel >= count) sel = std::max(0, count - 1);
-        if (sel < top) top = sel;
-        if (sel >= top + list_h) top = sel - list_h + 1;
+        int list_h = std::max(1, h - 8);
+        int count = (tab == 0) ? static_cast<int>(pending_items.size())
+                               : static_cast<int>(approved_items.size());
+        if (sel[tab] >= count) sel[tab] = std::max(0, count - 1);
+        if (sel[tab] < top[tab]) top[tab] = sel[tab];
+        if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
 
         werase(win);
         box(win, 0, 0);
         if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
-        mvwaddnstr(win, 0, 2, " Approve Incoming Files (incoming/ -> BBS files/) ", w - 4);
+        mvwaddnstr(win, 0, 2, " Manage BBS Files Area ", w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
 
-        mvwaddnstr(win, 1, 2,
-                   clip("Incoming: " + engine_.bbs_incoming_path() + "  ->  Files Area: " +
-                        engine_.bbs_files_path(), w - 4).c_str(),
-                   w - 4);
+        // Row 1: Tab bar matching GTK & Windows (Pending Incoming | Approved Files)
+        int tx = 2;
+        for (int t = 0; t < 2; ++t) {
+            if (t == tab) {
+                if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattron(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattron(win, COLOR_PAIR(CP_MENU));
+            }
+            mvwaddnstr(win, 1, tx, TAB_LABELS[t], w - tx - 2);
+            if (t == tab) {
+                if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattroff(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattroff(win, COLOR_PAIR(CP_MENU));
+            }
+            tx += static_cast<int>(std::string_view(TAB_LABELS[t]).size()) + 1;
+        }
         mvwhline(win, 2, 1, ACS_HLINE, w - 2);
 
-        std::ostringstream hdr;
-        hdr << std::left << std::setw(14) << "Uploader"
-            << std::setw(std::max(16, w - 30)) << "Filename"
-            << std::right << std::setw(10) << "Size";
-        wattron(win, A_BOLD);
-        mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
-        wattroff(win, A_BOLD);
+        if (tab == 0) {
+            std::ostringstream hdr;
+            hdr << std::left << std::setw(14) << "Uploader"
+                << std::setw(std::max(16, w - 30)) << "Filename"
+                << std::right << std::setw(10) << "Size";
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+            wattroff(win, A_BOLD);
 
-        if (items.empty()) {
-            mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
+            if (pending_items.empty()) {
+                mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
+            } else {
+                for (int r = 0; r < list_h; ++r) {
+                    int idx = top[0] + r;
+                    if (idx >= count) break;
+                    const auto& pf = pending_items[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(14) << clip(pf.uploader, 13)
+                        << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
+                        << std::right << std::setw(10) << pf.size_bytes;
+                    if (idx == sel[0]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[0]) wattroff(win, A_REVERSE | A_BOLD);
+                }
+            }
         } else {
-            for (int r = 0; r < list_h; ++r) {
-                int idx = top + r;
-                if (idx >= count) break;
-                const auto& pf = items[static_cast<std::size_t>(idx)];
-                std::ostringstream row;
-                row << std::left << std::setw(14) << clip(pf.uploader, 13)
-                    << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
-                    << std::right << std::setw(10) << pf.size_bytes;
-                if (idx == sel) wattron(win, A_REVERSE | A_BOLD);
-                mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-                if (idx == sel) wattroff(win, A_REVERSE | A_BOLD);
+            std::ostringstream hdr;
+            hdr << std::left << std::setw(std::max(24, w - 16)) << "Approved File Path"
+                << std::right << std::setw(10) << "Size";
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+            wattroff(win, A_BOLD);
+
+            if (approved_items.empty()) {
+                mvwaddnstr(win, 5, 2, "(No approved files in BBS files area)", w - 4);
+            } else {
+                for (int r = 0; r < list_h; ++r) {
+                    int idx = top[1] + r;
+                    if (idx >= count) break;
+                    const auto& af = approved_items[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(std::max(24, w - 16))
+                        << clip(af.rel_path, std::max(23, w - 17))
+                        << std::right << std::setw(10) << af.size_bytes;
+                    if (idx == sel[1]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[1]) wattroff(win, A_REVERSE | A_BOLD);
+                }
             }
         }
 
         mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
         mvwaddnstr(win, h - 2, 2, clip(feedback, w - 4).c_str(), w - 4);
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
-        mvwaddnstr(win, h - 1, 2,
-                   clip("Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close", w - 4).c_str(),
-                   w - 4);
+        mvwhline(win, h - 1, 1, ' ', w - 2);
+        const char* footer = (tab == 0)
+            ? "Tab/1-2:Tabs  Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close"
+            : "Tab/1-2:Tabs  D/Del:Remove Approved File  R:Refresh  Esc:Close";
+        mvwaddnstr(win, h - 1, 2, clip(footer, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
         if (ch == 27 || ch == 'q' || ch == 'Q') break;
-        if (ch == KEY_UP && sel > 0) {
-            --sel;
-        } else if (ch == KEY_DOWN && sel + 1 < count) {
-            ++sel;
+        if (ch == '\t' || ch == KEY_RIGHT || ch == KEY_LEFT || ch == KEY_BTAB) {
+            tab = 1 - tab;
+        } else if (ch == '1') {
+            tab = 0;
+        } else if (ch == '2') {
+            tab = 1;
+        } else if (ch == KEY_UP && sel[tab] > 0) {
+            --sel[tab];
+        } else if (ch == KEY_DOWN && sel[tab] + 1 < count) {
+            ++sel[tab];
         } else if (ch == KEY_PPAGE) {
-            sel = std::max(0, sel - list_h);
+            sel[tab] = std::max(0, sel[tab] - list_h);
         } else if (ch == KEY_NPAGE && count > 0) {
-            sel = std::min(count - 1, sel + list_h);
+            sel[tab] = std::min(count - 1, sel[tab] + list_h);
         } else if (ch == 'r' || ch == 'R') {
-            items = engine_.list_pending_incoming_files();
-            feedback = "Refreshed (" + std::to_string(items.size()) + " pending).";
-        } else if ((ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
-            const auto pf = items[static_cast<std::size_t>(sel)];
+            pending_items = engine_.list_pending_incoming_files();
+            approved_items = engine_.list_approved_files();
+            feedback = "Refreshed (" + std::to_string(pending_items.size()) + " pending, " +
+                       std::to_string(approved_items.size()) + " approved).";
+        } else if (tab == 0 && (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
+            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
             std::string subdir;
             if (!prompt_text("Subfolder in files area (blank=root): ", subdir)) {
                 feedback = "Approval cancelled.";
@@ -1650,23 +1705,38 @@ void NcursesUI::modal_approve_incoming_files() {
             if (ok) {
                 feedback = "Approved -> " + dest_path;
                 set_status("Approved incoming file: " + pf.uploader + "/" + pf.filename);
-                items = engine_.list_pending_incoming_files();
+                pending_items = engine_.list_pending_incoming_files();
+                approved_items = engine_.list_approved_files();
             } else {
                 feedback = "Error: " + err;
             }
-        } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
-            const auto pf = items[static_cast<std::size_t>(sel)];
+        } else if (tab == 0 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
+            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
             if (prompt_yes_no("Delete incoming/" + pf.uploader + "/" + pf.filename + "?")) {
                 std::string err;
                 if (engine_.delete_incoming_file(pf.uploader, pf.filename, err)) {
                     feedback = "Deleted " + pf.uploader + "/" + pf.filename;
                     set_status(feedback);
-                    items = engine_.list_pending_incoming_files();
+                    pending_items = engine_.list_pending_incoming_files();
                 } else {
                     feedback = "Error: " + err;
                 }
             } else {
                 feedback = "Delete cancelled.";
+            }
+        } else if (tab == 1 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
+            const auto af = approved_items[static_cast<std::size_t>(sel[1])];
+            if (prompt_yes_no("Remove approved file /" + af.rel_path + "?")) {
+                std::string err;
+                if (engine_.delete_approved_file(af.rel_path, err)) {
+                    feedback = "Removed approved file /" + af.rel_path;
+                    set_status(feedback);
+                    approved_items = engine_.list_approved_files();
+                } else {
+                    feedback = "Error: " + err;
+                }
+            } else {
+                feedback = "Remove cancelled.";
             }
         }
     }
@@ -1775,12 +1845,13 @@ void NcursesUI::modal_settings() {
         "Info Message",
         "Allow Incoming (Default)"
     };
-    static const char* BBS_LABELS[8] = {
+    static const char* BBS_LABELS[9] = {
         "Enable Packet BBS",
         "BBS SSID (0-15)",
         "Callsign Override",
         "BBS Alias",
         "Enable BBS Files Area",
+        "Case-Insensitive Files",
         "Files Area Root Path",
         "Mail Storage Path",
         "BBS Welcome Message"
@@ -1796,7 +1867,7 @@ void NcursesUI::modal_settings() {
 
     auto tab_item_count = [&](int t) -> int {
         if (t == 0) return 5;
-        if (t == 1) return 8;
+        if (t == 1) return 9;
         if (t == 2) return 6;
         return static_cast<int>(draft.interfaces.size());
     };
@@ -1827,9 +1898,10 @@ void NcursesUI::modal_settings() {
                 case 2: return draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "(auto from base+SSID)";
                 case 3: return draft.bbs.alias.valid() ? draft.bbs.alias.str() : "(none)";
                 case 4: return draft.bbs.files_enabled ? "[ON]" : "[OFF]";
-                case 5: return draft.bbs.files_path;
-                case 6: return draft.bbs.mail_path;
-                case 7: return draft.bbs.welcome;
+                case 5: return draft.bbs.files_case_insensitive ? "[ON]" : "[OFF]";
+                case 6: return draft.bbs.files_path;
+                case 7: return draft.bbs.mail_path;
+                case 8: return draft.bbs.welcome;
                 default: return "";
             }
         }
@@ -2097,6 +2169,7 @@ void NcursesUI::modal_settings() {
             if (tab == 0 && f == 4) { draft.accept_incoming_default = !draft.accept_incoming_default; continue; }
             if (tab == 1 && f == 0) { draft.bbs.enabled = !draft.bbs.enabled; continue; }
             if (tab == 1 && f == 4) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
+            if (tab == 1 && f == 5) { draft.bbs.files_case_insensitive = !draft.bbs.files_case_insensitive; continue; }
             if (tab == 2 && f == 0) { draft.chat.enabled = !draft.chat.enabled; continue; }
 
             std::string val;
@@ -2109,9 +2182,9 @@ void NcursesUI::modal_settings() {
                 if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
                 else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
                 else if (f == 3) val = draft.bbs.alias.valid() ? draft.bbs.alias.str() : "";
-                else if (f == 5) val = draft.bbs.files_path;
-                else if (f == 6) val = draft.bbs.mail_path;
-                else if (f == 7) val = draft.bbs.welcome;
+                else if (f == 6) val = draft.bbs.files_path;
+                else if (f == 7) val = draft.bbs.mail_path;
+                else if (f == 8) val = draft.bbs.welcome;
             } else if (tab == 2) {
                 if (f == 1) val = std::to_string(static_cast<int>(draft.chat.ssid));
                 else if (f == 2) val = draft.chat.callsign.valid() ? draft.chat.callsign.str() : "";
@@ -2151,11 +2224,11 @@ void NcursesUI::modal_settings() {
                     if (val.empty()) draft.bbs.alias = ax25::Callsign{};
                     else if (auto p = ax25::Callsign::parse(val)) draft.bbs.alias = *p;
                     else feedback = "Invalid BBS alias '" + val + "'.";
-                } else if (f == 5) {
-                    if (!val.empty()) draft.bbs.files_path = val;
                 } else if (f == 6) {
-                    if (!val.empty()) draft.bbs.mail_path = val;
+                    if (!val.empty()) draft.bbs.files_path = val;
                 } else if (f == 7) {
+                    if (!val.empty()) draft.bbs.mail_path = val;
+                } else if (f == 8) {
                     draft.bbs.welcome = val;
                 }
             } else if (tab == 2) {

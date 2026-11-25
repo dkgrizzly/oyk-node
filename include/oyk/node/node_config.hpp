@@ -22,6 +22,7 @@ struct BbsConfig {
     ax25::Callsign alias{"OYKBBS", 0};   // Optional BBS alias
     std::string mail_path = "mail/";     // Directory for persisted M<id>.MSG files
     bool files_enabled = true;           // Enable/disable BBS files area commands
+    bool files_case_insensitive = true;  // Case-insensitive lookup (exact -> UPPER -> lower -> glob)
     std::string files_path = "files/";   // Root directory for BBS downloadable files area
     std::string welcome = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
     std::size_t max_msg_bytes = 8192;
