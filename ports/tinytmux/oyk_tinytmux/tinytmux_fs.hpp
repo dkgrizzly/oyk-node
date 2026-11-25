@@ -47,6 +47,19 @@ int tinytmux_fs_tier_info(int tier, TinyTmuxStorageTierInfo* out);
 
 /* Host/unit-test simulation hook (no-op on Teensy hardware). */
 void tinytmux_fs_set_sim_tiers(int sd_present, int qspi_present, int internal_present);
+int tinytmux_fs_sim_format_count(int tier);
+
+/*
+ * Destructively formats (partitions + creates a fresh filesystem on) the selected storage tier,
+ * then remounts using the standard 3-tier priority. Caller MUST obtain operator confirmation first.
+ *   microSD: FAT32 (<=32 GB) or exFAT (>32 GB); works on blank/unformatted cards.
+ *   QSPI Flash / Internal Flash: LittleFS quick format.
+ * Returns 1 on success, 0 on failure (msg_out receives a human-readable status).
+ */
+int tinytmux_fs_format_tier(int tier, char* msg_out, size_t msg_sz);
+
+/* Unmounts and re-runs the 3-tier mount (e.g., after inserting a new microSD card). */
+int tinytmux_fs_rescan();
 
 /* Platform directory & file hooks consumed by ports/compat/oyk_portable.cpp */
 int oyk_imxrt_mkdir(const char* path);

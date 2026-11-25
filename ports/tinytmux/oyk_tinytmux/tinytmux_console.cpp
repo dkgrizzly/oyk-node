@@ -61,7 +61,7 @@ TinyTmuxConsole::TinyTmuxConsole()
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
       last_marchc_redraw_ms_(0),
-      bootloader_pending_(0), bootloader_start_ms_(0) {
+      bootloader_pending_(0), bootloader_start_ms_(0), storage_sel_(0) {
     esc_buf_[0] = '\0';
     strcpy(status_line_, "TinyTMUX Ready. M:Menu  Tab:Term  S:Settings  F:Files  R:Radio");
     dialog_fb_[0] = '\0';
@@ -180,6 +180,9 @@ void TinyTmuxConsole::render() {
         case TMUX_VIEW_BOOTLOADER:
             render_bootloader();
             break;
+        case TMUX_VIEW_STORAGE:
+            render_storage();
+            break;
         case TMUX_VIEW_MENU:
             render_console();
             render_menu();
@@ -285,7 +288,7 @@ void TinyTmuxConsole::render_console() {
 }
 
 void TinyTmuxConsole::render_menu() {
-    static const char* ITEMS[11] = {
+    static const char* ITEMS[12] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
@@ -295,16 +298,17 @@ void TinyTmuxConsole::render_menu() {
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [P] PSRAM Diagnostics...       ",
+        " [G] Storage Manager...         ",
         " [U] Enter HalfKay Bootloader   ",
         " [X] Close Menu                 "
     };
-    static const int ITEM_ROWS[11] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
+    static const int ITEM_ROWS[12] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16 };
 
     write_str("\033[2;3H+--------------------------------+");
     write_str("\033[5;3H+--------------------------------+");
-    write_str("\033[14;3H+--------------------------------+");
-    write_str("\033[16;3H+--------------------------------+");
-    for (int i = 0; i < 11; ++i) {
+    write_str("\033[15;3H+--------------------------------+");
+    write_str("\033[17;3H+--------------------------------+");
+    for (int i = 0; i < 12; ++i) {
         char row[80];
         sprintf(row, "\033[%d;3H|%s%.32s\033[0m|",
                 ITEM_ROWS[i], (i == menu_sel_) ? "\033[7m" : "", ITEMS[i]);
@@ -624,6 +628,67 @@ OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::render_storage() {
+    char buf[200];
+    write_str("\033[H\033[2J");
+    write_str("\033[7m STORAGE MANAGER (Config, Files, Mail & Logs)   Up/Dn:Select  F:Format  R:Rescan  Esc:Back \033[0m\r\n\r\n");
+    write_str(" Search order: 1) microSD  2) QSPI Flash  3) Internal 4 MB Flash\r\n\r\n");
+    int active = tinytmux_fs_active_tier();
+    for (int t = TMUX_STORAGE_SD; t <= TMUX_STORAGE_INTERNAL; ++t) {
+        TinyTmuxStorageTierInfo ti;
+        tinytmux_fs_tier_info(t, &ti);
+        const char* st = ti.mounted ? "ACTIVE" : (ti.detected ? "DETECTED" : "ABSENT");
+        char cap[40];
+        if (ti.total_kb >= 1024UL) {
+            sprintf(cap, "%lu/%lu MB", static_cast<unsigned long>(ti.used_kb / 1024UL),
+                    static_cast<unsigned long>(ti.total_kb / 1024UL));
+        } else {
+            sprintf(cap, "%lu/%lu KB", static_cast<unsigned long>(ti.used_kb),
+                    static_cast<unsigned long>(ti.total_kb));
+        }
+        const char* logs = (t == TMUX_STORAGE_SD)
+                               ? "Logs: ALLOWED"
+                               : (node_ && node_->config().allow_flash_logging ? "Logs: ALLOWED (flash enabled)"
+                                                                               : "Logs: BLOCKED (SD only)");
+        sprintf(buf, "%s %d. %-28.28s %-9s %-16s %s \033[0m\r\n",
+                (t - 1 == storage_sel_) ? "\033[7m" : " ", t, ti.label, st, cap, logs);
+        write_str(buf);
+    }
+    sprintf(buf, "\r\n Active tier: %d (%s)\r\n", active, tinytmux_fs_status_label());
+    write_str(buf);
+    sprintf(buf, " %.78s\r\n", dialog_fb_[0] ? dialog_fb_ : "Select a tier and press F to partition/format (ERASES ALL DATA).");
+    write_str(buf);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_storage_key(int key) {
+    if (key == 27) {
+        view_ = TMUX_VIEW_CONSOLE;
+        render();
+    } else if (key == TMUX_KEY_UP) {
+        storage_sel_ = (storage_sel_ + 2) % 3;
+        render();
+    } else if (key == TMUX_KEY_DOWN) {
+        storage_sel_ = (storage_sel_ + 1) % 3;
+        render();
+    } else if (key == TMUX_KEY_HOME) {
+        storage_sel_ = 0;
+        render();
+    } else if (key == TMUX_KEY_END) {
+        storage_sel_ = 2;
+        render();
+    } else if (key == 'r' || key == 'R') {
+        int ok = tinytmux_fs_rescan();
+        node_->set_storage_is_flash(tinytmux_fs_is_flash_storage());
+        sprintf(dialog_fb_, "Rescan complete: %s.", ok ? tinytmux_fs_status_label() : "NO STORAGE");
+        render();
+    } else if (key == 'f' || key == 'F') {
+        static const char* NAMES[3] = { "microSD card", "QSPI Flash", "Internal 4 MB Flash" };
+        char label[96];
+        sprintf(label, "ERASES ALL configs/mail/files/logs on %s! Type FORMAT:", NAMES[storage_sel_]);
+        begin_prompt(PROMPT_CONFIRM_FORMAT, label, "");
+    }
+}
+
 OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     char buf[160];
     int active = node_ ? node_->total_active_connections() : 0;
@@ -829,6 +894,19 @@ void TinyTmuxConsole::commit_prompt() {
         return;
     }
 
+    if (pk == PROMPT_CONFIRM_FORMAT) {
+        if (strcmp(val, "FORMAT") == 0) {
+            char msg[96];
+            int ok = tinytmux_fs_format_tier(storage_sel_ + 1, msg, sizeof(msg));
+            node_->set_storage_is_flash(tinytmux_fs_is_flash_storage());
+            sprintf(dialog_fb_, "%s%.70s", ok ? "OK: " : "ERROR: ", msg);
+        } else {
+            strcpy(dialog_fb_, "Format cancelled (confirmation text did not match FORMAT).");
+        }
+        render();
+        return;
+    }
+
     if (pk == PROMPT_SETTINGS_VALUE) {
         int idx = settings_sel_[settings_tab_];
         if (settings_tab_ == 0) {
@@ -1000,6 +1078,11 @@ void TinyTmuxConsole::handle_console_key(int key) {
         bootloader_pending_ = 0;
         view_ = TMUX_VIEW_BOOTLOADER;
         render();
+    } else if (key == 'g' || key == 'G') {
+        storage_sel_ = 0;
+        dialog_fb_[0] = '\0';
+        view_ = TMUX_VIEW_STORAGE;
+        render();
     } else if (key == 0x0C) {
         render();
     }
@@ -1010,19 +1093,19 @@ void TinyTmuxConsole::handle_menu_key(int key) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
     } else if (key == TMUX_KEY_UP) {
-        menu_sel_ = (menu_sel_ + 10) % 11;
+        menu_sel_ = (menu_sel_ + 11) % 12;
         render();
     } else if (key == TMUX_KEY_DOWN) {
-        menu_sel_ = (menu_sel_ + 1) % 11;
+        menu_sel_ = (menu_sel_ + 1) % 12;
         render();
     } else if (key == TMUX_KEY_HOME) {
         menu_sel_ = 0;
         render();
     } else if (key == TMUX_KEY_END) {
-        menu_sel_ = 10;
+        menu_sel_ = 11;
         render();
     } else if (key == '\r' || key == '\n') {
-        static const int KEYS[11] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'u', 'x' };
+        static const int KEYS[12] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'g', 'u', 'x' };
         int k = KEYS[menu_sel_];
         view_ = TMUX_VIEW_CONSOLE;
         if (k == 'x') render();
@@ -1031,7 +1114,8 @@ void TinyTmuxConsole::handle_menu_key(int key) {
                key == 'l' || key == 'L' || key == 'f' || key == 'F' ||
                key == 'r' || key == 'R' || key == 's' || key == 'S' ||
                key == 't' || key == 'T' || key == 'b' || key == 'B' ||
-               key == 'p' || key == 'P' || key == 'u' || key == 'U') {
+               key == 'p' || key == 'P' || key == 'u' || key == 'U' ||
+               key == 'g' || key == 'G') {
         view_ = TMUX_VIEW_CONSOLE;
         handle_console_key(key);
     }
@@ -1339,6 +1423,7 @@ void TinyTmuxConsole::dispatch_key(int key) {
         case TMUX_VIEW_SETTINGS:   handle_settings_key(key); break;
         case TMUX_VIEW_PSRAM:      handle_psram_key(key); break;
         case TMUX_VIEW_BOOTLOADER: handle_bootloader_key(key); break;
+        case TMUX_VIEW_STORAGE:    handle_storage_key(key); break;
     }
 }
 
