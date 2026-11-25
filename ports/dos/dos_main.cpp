@@ -857,143 +857,40 @@ static void rebind_dos_axudp() {
     }
 }
 
-static void run_dos_settings_interfaces(OykConfig* draft) {
-    int sel = 0;
-    char fb[78];
-    strcpy(fb, "A:Add Interface  D:Remove Selected  Esc/Enter:Done");
-
-    while (!g_break_flag) {
-        PACKET_PROCESS_SINGLE;
-        Arp::driveArp();
-        Tcp::drivePackets();
-        g_node.tick();
-
-        if (draft->iface_count == 0) sel = 0;
-        else if (sel >= draft->iface_count) sel = draft->iface_count - 1;
-
-        vid_clear(0x17);
-        char hdr[80];
-        sprintf(hdr, " INTERFACE MAPPINGS (%d/%d) | Esc:Back",
-                draft->iface_count, OYK_MAX_INTERFACES);
-        vid_puts(0, 0, 0x30, hdr, 80);
-        vid_puts(1, 0, 0x1E, " #  ID          Type         Endpoint / Device             Peers", 80);
-        if (draft->iface_count == 0) {
-            vid_puts(2, 0, 0x17, " (no interfaces configured - press A to add)", 80);
-        } else {
-            for (int i = 0; i < draft->iface_count; ++i) {
-                const OykIfaceConfig& ic = draft->ifaces[i];
-                char row[82], ep[32];
-                if (strcmp(ic.type, "kiss-serial") == 0) {
-                    sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
-                            static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
-                } else {
-                    sprintf(ep, "%.20s:%u", ic.host[0] ? ic.host : "0.0.0.0",
-                            static_cast<unsigned int>(ic.port));
-                }
-                sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
-                        i + 1, ic.id, ic.type, ep, ic.peer_count);
-                vid_puts(2 + i, 0, (i == sel) ? 0x30 : 0x17, row, 80);
-            }
-        }
-        vid_puts(23, 0, 0x1E, fb, 80);
-        vid_puts(24, 0, 0x70, " A:Add Interface  D:Remove Selected  Esc/Enter:Return to Settings ", 80);
-
-        if (!kbhit()) continue;
-        int ch = getch();
-        if (ch == 0 || ch == 0xE0) {
-            int ext = getch();
-            if (ext == 72 && sel > 0) --sel;
-            else if (ext == 80 && sel + 1 < draft->iface_count) ++sel;
-            continue;
-        }
-        if (ch == 27 || ch == '\r' || ch == '\n') break;
-        if (ch == 'a' || ch == 'A') {
-            if (draft->iface_count >= OYK_MAX_INTERFACES) {
-                strcpy(fb, "Maximum interface count reached.");
-                continue;
-            }
-            OykIfaceConfig ic;
-            memset(&ic, 0, sizeof(ic));
-            int ok = 0;
-            strcpy(ic.id, "axudp1");
-            prompt_line_prefill("Interface ID: ", ic.id, sizeof(ic.id), &ok);
-            if (!ok || !ic.id[0]) { strcpy(fb, "Add cancelled."); continue; }
-            int dup = 0;
-            for (int i = 0; i < draft->iface_count; ++i) {
-                if (strcmp(draft->ifaces[i].id, ic.id) == 0) { dup = 1; break; }
-            }
-            if (dup) { strcpy(fb, "Duplicate interface ID."); continue; }
-
-            strcpy(ic.type, "axudp");
-            prompt_line_prefill("Type [axudp|axip|kiss-serial|kiss-tcp|telnet]: ", ic.type, sizeof(ic.type), &ok);
-            if (!ok || !ic.type[0]) { strcpy(fb, "Add cancelled."); continue; }
-
-            if (strcmp(ic.type, "kiss-serial") == 0) {
-                strcpy(ic.device, "COM1");
-                prompt_line_prefill("Serial Device (e.g. COM1): ", ic.device, sizeof(ic.device), &ok);
-                if (!ok) continue;
-                char bb[12]; strcpy(bb, "9600");
-                prompt_line_prefill("Baud rate: ", bb, sizeof(bb), &ok);
-                ic.baud = atol(bb) > 0L ? static_cast<oyk_u32>(atol(bb)) : 9600UL;
-            } else {
-                strcpy(ic.host, "0.0.0.0");
-                prompt_line_prefill("Host / Bind IP: ", ic.host, sizeof(ic.host), &ok);
-                if (!ok) continue;
-                char pb[10];
-                if (strcmp(ic.type, "telnet") == 0) strcpy(pb, "8010");
-                else if (strcmp(ic.type, "kiss-tcp") == 0) strcpy(pb, "8001");
-                else strcpy(pb, "10093");
-                prompt_line_prefill("Port: ", pb, sizeof(pb), &ok);
-                if (!ok) continue;
-                ic.port = static_cast<oyk_u16>(atoi(pb));
-            }
-            draft->ifaces[draft->iface_count++] = ic;
-            sel = draft->iface_count - 1;
-            sprintf(fb, "Added interface %s.", ic.id);
-        } else if ((ch == 'd' || ch == 'D') && draft->iface_count > 0) {
-            char yn[4], pr[48];
-            sprintf(pr, "Remove interface %s? [Y/N]: ", draft->ifaces[sel].id);
-            prompt_line(pr, yn, sizeof(yn));
-            if (yn[0] == 'y' || yn[0] == 'Y') {
-                for (int i = sel + 1; i < draft->iface_count; ++i) {
-                    draft->ifaces[i - 1] = draft->ifaces[i];
-                }
-                draft->iface_count--;
-                strcpy(fb, "Interface removed.");
-            }
-        }
-    }
-}
-
 static void run_dos_settings() {
     static OykConfig draft;
     draft = g_node.config();
 
-    static const char* LABELS[19] = {
+    /* Four logical tabs matching GTK: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces */
+    static const char* TAB_NAMES[4] = { " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Interfaces " };
+    static const char* NODE_LABELS[5] = {
         "Node Callsign",
         "Node Alias",
-        "Node Welcome Msg",
-        "Node Info Msg",
-        "Accept Incoming (Cfg)",
-        "BBS Enabled",
+        "Welcome Message",
+        "Info Message",
+        "Allow Incoming (Default)"
+    };
+    static const char* BBS_LABELS[8] = {
+        "Enable Packet BBS",
         "BBS SSID (0-15)",
-        "BBS Callsign Override",
+        "Callsign Override",
         "BBS Alias",
-        "BBS Files Area",
-        "BBS Files Path",
-        "BBS Welcome Msg",
-        "CHAT Enabled",
+        "Enable BBS Files Area",
+        "Files Area Root Path",
+        "Mail Storage Path",
+        "BBS Welcome Message"
+    };
+    static const char* CHAT_LABELS[6] = {
+        "Enable Multi-User CHAT",
         "CHAT SSID (0-15)",
-        "CHAT Callsign Override",
+        "Callsign Override",
         "CHAT Alias",
-        "CHAT Default Topic",
-        "CHAT Welcome Msg",
-        "Interface Mappings"
+        "Default Topic",
+        "CHAT Welcome Message"
     };
 
-    int sel = 0;
-    int scroll = 0;
-    const int list_h = 19;
+    int tab = 0;
+    int sel[4] = { 0, 0, 0, 0 };
     char fb[78];
     sprintf(fb, "Config: %.68s", draft.source_path[0] ? draft.source_path : "node.cfg");
 
@@ -1003,59 +900,99 @@ static void run_dos_settings() {
         Tcp::drivePackets();
         g_node.tick();
 
-        if (sel < scroll) scroll = sel;
-        if (sel >= scroll + list_h) scroll = sel - list_h + 1;
+        int cnt = (tab == 0) ? 5 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : draft.iface_count));
+        if (cnt <= 0) sel[tab] = 0;
+        else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
 
         vid_clear(0x17);
         vid_puts(0, 0, 0x30, " OYK NODE SETTINGS (MS-DOS)                      F2/S:Save & Apply  Esc:Cancel", 80);
 
-        for (int r = 0; r < list_h && scroll + r < 19; ++r) {
-            int idx = scroll + r;
-            char val[56], cs[16], row[82];
-            val[0] = '\0';
-            switch (idx) {
-                case 0: oyk_format_callsign(&draft.callsign, val, sizeof(val)); break;
-                case 1: if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); break;
-                case 2: strncpy(val, draft.welcome_text, 52); val[52] = '\0'; break;
-                case 3: strncpy(val, draft.info_text, 52); val[52] = '\0'; break;
-                case 4: strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]"); break;
-                case 5: strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]"); break;
-                case 6: { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.bbs_ssid), cs); break; }
-                case 7: if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); break;
-                case 8: if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); break;
-                case 9: strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]"); break;
-                case 10: strncpy(val, draft.bbs_files_path, 52); val[52] = '\0'; break;
-                case 11: strncpy(val, draft.bbs_welcome, 52); val[52] = '\0'; break;
-                case 12: strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]"); break;
-                case 13: { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); break; }
-                case 14: if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); break;
-                case 15: if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); break;
-                case 16: strncpy(val, draft.chat_topic, 52); val[52] = '\0'; break;
-                case 17: strncpy(val, draft.chat_welcome, 52); val[52] = '\0'; break;
-                case 18: sprintf(val, "%d configured [Enter to Add/Remove]", draft.iface_count); break;
-                default: break;
+        /* Row 1: Tab bar */
+        vid_puts(1, 0, 0x70, "", 80);
+        int tx = 1;
+        for (int t = 0; t < 4; ++t) {
+            int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
+            vid_puts(1, tx, (t == tab) ? 0x1F : 0x70, TAB_NAMES[t], tlen);
+            tx += tlen + 1;
+        }
+        vid_puts(2, 0, 0x1B, "--------------------------------------------------------------------------------", 80);
+
+        if (tab < 3) {
+            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : CHAT_LABELS);
+            for (int i = 0; i < cnt; ++i) {
+                char val[56], cs[16], row[82];
+                val[0] = '\0';
+                if (tab == 0) {
+                    if (i == 0) oyk_format_callsign(&draft.callsign, val, sizeof(val));
+                    else if (i == 1) { if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                    else if (i == 2) { strncpy(val, draft.welcome_text, 50); val[50] = '\0'; }
+                    else if (i == 3) { strncpy(val, draft.info_text, 50); val[50] = '\0'; }
+                    else if (i == 4) strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]");
+                } else if (tab == 1) {
+                    if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
+                    else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.bbs_ssid), cs); }
+                    else if (i == 2) { if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
+                    else if (i == 3) { if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                    else if (i == 4) strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]");
+                    else if (i == 5) { strncpy(val, draft.bbs_files_path, 50); val[50] = '\0'; }
+                    else if (i == 6) { strncpy(val, draft.bbs_mail_path, 50); val[50] = '\0'; }
+                    else if (i == 7) { strncpy(val, draft.bbs_welcome, 50); val[50] = '\0'; }
+                } else {
+                    if (i == 0) strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]");
+                    else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); }
+                    else if (i == 2) { if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
+                    else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                    else if (i == 4) { strncpy(val, draft.chat_topic, 50); val[50] = '\0'; }
+                    else if (i == 5) { strncpy(val, draft.chat_welcome, 50); val[50] = '\0'; }
+                }
+                sprintf(row, " %-25.25s: %-50.50s", labels[i], val);
+                vid_puts(3 + i, 0, (i == sel[tab]) ? 0x30 : 0x17, row, 80);
             }
-            sprintf(row, " %-23.23s: %-52.52s", LABELS[idx], val);
-            vid_puts(1 + r, 0, (idx == sel) ? 0x30 : 0x17, row, 80);
+        } else {
+            vid_puts(3, 0, 0x1E, " #  ID          Type         Endpoint / Device             Peers", 80);
+            if (draft.iface_count == 0) {
+                vid_puts(4, 0, 0x17, " (no interfaces configured - press A to add)", 80);
+            } else {
+                for (int i = 0; i < draft.iface_count; ++i) {
+                    const OykIfaceConfig& ic = draft.ifaces[i];
+                    char row[82], ep[32];
+                    if (strcmp(ic.type, "kiss-serial") == 0) {
+                        sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
+                                static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+                    } else {
+                        sprintf(ep, "%.20s:%u", ic.host[0] ? ic.host : "0.0.0.0",
+                                static_cast<unsigned int>(ic.port));
+                    }
+                    sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
+                            i + 1, ic.id, ic.type, ep, ic.peer_count);
+                    vid_puts(4 + i, 0, (i == sel[3]) ? 0x30 : 0x17, row, 80);
+                }
+            }
         }
 
         vid_puts(23, 0, 0x1E, fb, 80);
-        vid_puts(24, 0, 0x70, " Up/Dn:Select  Enter/Space:Edit  I:Interfaces  S/F2:Save & Apply  Esc:Cancel ", 80);
+        if (tab == 3) {
+            vid_puts(24, 0, 0x70, " Tab/1-4:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
+        } else {
+            vid_puts(24, 0, 0x70, " Tab/Lt/Rt/1-4:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
+        }
 
         if (!kbhit()) continue;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72 && sel > 0) --sel;
-            else if (ext == 80 && sel + 1 < 19) ++sel;
-            else if (ext == 60) ch = 'S'; /* F2 */
+            if (ext == 72 && sel[tab] > 0) --sel[tab];             /* Up */
+            else if (ext == 80 && sel[tab] + 1 < cnt) ++sel[tab];  /* Down */
+            else if (ext == 75) tab = (tab + 3) % 4;               /* Left */
+            else if (ext == 77) tab = (tab + 1) % 4;               /* Right */
+            else if (ext == 60) ch = 'S';                          /* F2 */
             else continue;
+            if (ch != 'S') continue;
         }
         if (ch == 27) break;
-        if (ch == 'i' || ch == 'I') {
-            run_dos_settings_interfaces(&draft);
-            continue;
-        }
+        if (ch == '\t') { tab = (tab + 1) % 4; continue; }
+        if (ch >= '1' && ch <= '4') { tab = ch - '1'; continue; }
+
         if (ch == 's' || ch == 'S') {
             static OykConfigApplyResult res;
             if (!g_node.apply_config(&draft, 1, &res)) {
@@ -1078,75 +1015,120 @@ static void run_dos_settings() {
             }
             break;
         }
-        if (ch == '\r' || ch == '\n' || ch == ' ') {
-            if (sel == 4) { draft.accept_incoming = !draft.accept_incoming; continue; }
-            if (sel == 5) { draft.bbs_enabled = !draft.bbs_enabled; continue; }
-            if (sel == 9) { draft.bbs_files_enabled = !draft.bbs_files_enabled; continue; }
-            if (sel == 12) { draft.chat_enabled = !draft.chat_enabled; continue; }
-            if (sel == 18) { run_dos_settings_interfaces(&draft); continue; }
 
+        if (tab == 3) {
+            if (ch == 'a' || ch == 'A') {
+                if (draft.iface_count >= OYK_MAX_INTERFACES) {
+                    strcpy(fb, "Maximum interface count reached.");
+                    continue;
+                }
+                OykIfaceConfig ic;
+                memset(&ic, 0, sizeof(ic));
+                int ok = 0;
+                strcpy(ic.id, "axudp1");
+                prompt_line_prefill("Interface ID: ", ic.id, sizeof(ic.id), &ok);
+                if (!ok || !ic.id[0]) { strcpy(fb, "Add cancelled."); continue; }
+                int dup = 0;
+                for (int i = 0; i < draft.iface_count; ++i) {
+                    if (strcmp(draft.ifaces[i].id, ic.id) == 0) { dup = 1; break; }
+                }
+                if (dup) { strcpy(fb, "Duplicate interface ID."); continue; }
+
+                strcpy(ic.type, "axudp");
+                prompt_line_prefill("Type [axudp|axip|kiss-serial|kiss-tcp|telnet]: ", ic.type, sizeof(ic.type), &ok);
+                if (!ok || !ic.type[0]) { strcpy(fb, "Add cancelled."); continue; }
+
+                if (strcmp(ic.type, "kiss-serial") == 0) {
+                    strcpy(ic.device, "COM1");
+                    prompt_line_prefill("Serial Device (e.g. COM1): ", ic.device, sizeof(ic.device), &ok);
+                    if (!ok) continue;
+                    char bb[12]; strcpy(bb, "9600");
+                    prompt_line_prefill("Baud rate: ", bb, sizeof(bb), &ok);
+                    ic.baud = atol(bb) > 0L ? static_cast<oyk_u32>(atol(bb)) : 9600UL;
+                } else {
+                    strcpy(ic.host, "0.0.0.0");
+                    prompt_line_prefill("Host / Bind IP: ", ic.host, sizeof(ic.host), &ok);
+                    if (!ok) continue;
+                    char pb[10];
+                    if (strcmp(ic.type, "telnet") == 0) strcpy(pb, "8010");
+                    else if (strcmp(ic.type, "kiss-tcp") == 0) strcpy(pb, "8001");
+                    else strcpy(pb, "10093");
+                    prompt_line_prefill("Port: ", pb, sizeof(pb), &ok);
+                    if (!ok) continue;
+                    ic.port = static_cast<oyk_u16>(atoi(pb));
+                }
+                draft.ifaces[draft.iface_count++] = ic;
+                sel[3] = draft.iface_count - 1;
+                sprintf(fb, "Added interface %s (press S/F2 to Save & Apply).", ic.id);
+            } else if ((ch == 'd' || ch == 'D') && draft.iface_count > 0) {
+                char yn[4], pr[48];
+                sprintf(pr, "Remove interface %s? [Y/N]: ", draft.ifaces[sel[3]].id);
+                prompt_line(pr, yn, sizeof(yn));
+                if (yn[0] == 'y' || yn[0] == 'Y') {
+                    for (int i = sel[3] + 1; i < draft.iface_count; ++i) {
+                        draft.ifaces[i - 1] = draft.ifaces[i];
+                    }
+                    draft.iface_count--;
+                    strcpy(fb, "Interface removed.");
+                }
+            }
+            continue;
+        }
+
+        if (ch == '\r' || ch == '\n' || ch == ' ') {
+            int f = sel[tab];
+            if (tab == 0 && f == 4) { draft.accept_incoming = !draft.accept_incoming; continue; }
+            if (tab == 1 && f == 0) { draft.bbs_enabled = !draft.bbs_enabled; continue; }
+            if (tab == 1 && f == 4) { draft.bbs_files_enabled = !draft.bbs_files_enabled; continue; }
+            if (tab == 2 && f == 0) { draft.chat_enabled = !draft.chat_enabled; continue; }
+
+            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : CHAT_LABELS);
             char ed[96];
             ed[0] = '\0';
-            switch (sel) {
-                case 0: oyk_format_callsign(&draft.callsign, ed, sizeof(ed)); break;
-                case 1: if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, ed, sizeof(ed)); break;
-                case 2: strncpy(ed, draft.welcome_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                case 3: strncpy(ed, draft.info_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                case 6: sprintf(ed, "%u", static_cast<unsigned int>(draft.bbs_ssid)); break;
-                case 7: if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, ed, sizeof(ed)); break;
-                case 8: if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, ed, sizeof(ed)); break;
-                case 10: strncpy(ed, draft.bbs_files_path, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                case 11: strncpy(ed, draft.bbs_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                case 13: sprintf(ed, "%u", static_cast<unsigned int>(draft.chat_ssid)); break;
-                case 14: if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, ed, sizeof(ed)); break;
-                case 15: if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, ed, sizeof(ed)); break;
-                case 16: strncpy(ed, draft.chat_topic, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                case 17: strncpy(ed, draft.chat_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; break;
-                default: break;
+            if (tab == 0) {
+                if (f == 0) oyk_format_callsign(&draft.callsign, ed, sizeof(ed));
+                else if (f == 1 && draft.alias.base[0]) oyk_format_callsign(&draft.alias, ed, sizeof(ed));
+                else if (f == 2) { strncpy(ed, draft.welcome_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 3) { strncpy(ed, draft.info_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+            } else if (tab == 1) {
+                if (f == 1) sprintf(ed, "%u", static_cast<unsigned int>(draft.bbs_ssid));
+                else if (f == 2 && draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, ed, sizeof(ed));
+                else if (f == 3 && draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, ed, sizeof(ed));
+                else if (f == 5) { strncpy(ed, draft.bbs_files_path, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 6) { strncpy(ed, draft.bbs_mail_path, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 7) { strncpy(ed, draft.bbs_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+            } else {
+                if (f == 1) sprintf(ed, "%u", static_cast<unsigned int>(draft.chat_ssid));
+                else if (f == 2 && draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, ed, sizeof(ed));
+                else if (f == 3 && draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, ed, sizeof(ed));
+                else if (f == 4) { strncpy(ed, draft.chat_topic, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 5) { strncpy(ed, draft.chat_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
             }
+
             char pr[36];
-            sprintf(pr, "%s: ", LABELS[sel]);
+            sprintf(pr, "%.28s: ", labels[f]);
             int ok = 0;
             prompt_line_prefill(pr, ed, sizeof(ed), &ok);
             if (!ok) continue;
 
-            if (sel == 0) {
-                if (!oyk_parse_callsign_with_default_ssid(ed, OYK_DEFAULT_NODE_SSID, &draft.callsign)) strcpy(fb, "Invalid node callsign.");
-            } else if (sel == 1) {
-                if (!ed[0]) memset(&draft.alias, 0, sizeof(draft.alias));
-                else if (!oyk_parse_callsign(ed, &draft.alias)) strcpy(fb, "Invalid alias.");
-            } else if (sel == 2) {
-                strncpy(draft.welcome_text, ed, sizeof(draft.welcome_text) - 1); draft.welcome_text[sizeof(draft.welcome_text) - 1] = '\0';
-            } else if (sel == 3) {
-                strncpy(draft.info_text, ed, sizeof(draft.info_text) - 1); draft.info_text[sizeof(draft.info_text) - 1] = '\0';
-            } else if (sel == 6) {
-                int sv = atoi(ed);
-                if (sv >= 0 && sv <= 15) draft.bbs_ssid = static_cast<oyk_u8>(sv);
-                else strcpy(fb, "SSID must be 0..15.");
-            } else if (sel == 7) {
-                if (!ed[0]) memset(&draft.bbs_callsign, 0, sizeof(draft.bbs_callsign));
-                else if (!oyk_parse_callsign_with_default_ssid(ed, draft.bbs_ssid, &draft.bbs_callsign)) strcpy(fb, "Invalid BBS callsign.");
-            } else if (sel == 8) {
-                if (!ed[0]) memset(&draft.bbs_alias, 0, sizeof(draft.bbs_alias));
-                else if (!oyk_parse_callsign(ed, &draft.bbs_alias)) strcpy(fb, "Invalid BBS alias.");
-            } else if (sel == 10) {
-                if (ed[0]) { strncpy(draft.bbs_files_path, ed, sizeof(draft.bbs_files_path) - 1); draft.bbs_files_path[sizeof(draft.bbs_files_path) - 1] = '\0'; }
-            } else if (sel == 11) {
-                strncpy(draft.bbs_welcome, ed, sizeof(draft.bbs_welcome) - 1); draft.bbs_welcome[sizeof(draft.bbs_welcome) - 1] = '\0';
-            } else if (sel == 13) {
-                int sv = atoi(ed);
-                if (sv >= 0 && sv <= 15) draft.chat_ssid = static_cast<oyk_u8>(sv);
-                else strcpy(fb, "SSID must be 0..15.");
-            } else if (sel == 14) {
-                if (!ed[0]) memset(&draft.chat_callsign, 0, sizeof(draft.chat_callsign));
-                else if (!oyk_parse_callsign_with_default_ssid(ed, draft.chat_ssid, &draft.chat_callsign)) strcpy(fb, "Invalid CHAT callsign.");
-            } else if (sel == 15) {
-                if (!ed[0]) memset(&draft.chat_alias, 0, sizeof(draft.chat_alias));
-                else if (!oyk_parse_callsign(ed, &draft.chat_alias)) strcpy(fb, "Invalid CHAT alias.");
-            } else if (sel == 16) {
-                if (ed[0]) { strncpy(draft.chat_topic, ed, sizeof(draft.chat_topic) - 1); draft.chat_topic[sizeof(draft.chat_topic) - 1] = '\0'; }
-            } else if (sel == 17) {
-                strncpy(draft.chat_welcome, ed, sizeof(draft.chat_welcome) - 1); draft.chat_welcome[sizeof(draft.chat_welcome) - 1] = '\0';
+            if (tab == 0) {
+                if (f == 0) { if (!oyk_parse_callsign_with_default_ssid(ed, OYK_DEFAULT_NODE_SSID, &draft.callsign)) strcpy(fb, "Invalid node callsign."); }
+                else if (f == 1) { if (!ed[0]) memset(&draft.alias, 0, sizeof(draft.alias)); else if (!oyk_parse_callsign(ed, &draft.alias)) strcpy(fb, "Invalid alias."); }
+                else if (f == 2) { strncpy(draft.welcome_text, ed, sizeof(draft.welcome_text) - 1); draft.welcome_text[sizeof(draft.welcome_text) - 1] = '\0'; }
+                else if (f == 3) { strncpy(draft.info_text, ed, sizeof(draft.info_text) - 1); draft.info_text[sizeof(draft.info_text) - 1] = '\0'; }
+            } else if (tab == 1) {
+                if (f == 1) { int sv = atoi(ed); if (sv >= 0 && sv <= 15) draft.bbs_ssid = static_cast<oyk_u8>(sv); else strcpy(fb, "SSID must be 0..15."); }
+                else if (f == 2) { if (!ed[0]) memset(&draft.bbs_callsign, 0, sizeof(draft.bbs_callsign)); else if (!oyk_parse_callsign_with_default_ssid(ed, draft.bbs_ssid, &draft.bbs_callsign)) strcpy(fb, "Invalid BBS callsign."); }
+                else if (f == 3) { if (!ed[0]) memset(&draft.bbs_alias, 0, sizeof(draft.bbs_alias)); else if (!oyk_parse_callsign(ed, &draft.bbs_alias)) strcpy(fb, "Invalid BBS alias."); }
+                else if (f == 5) { if (ed[0]) { strncpy(draft.bbs_files_path, ed, sizeof(draft.bbs_files_path) - 1); draft.bbs_files_path[sizeof(draft.bbs_files_path) - 1] = '\0'; } }
+                else if (f == 6) { if (ed[0]) { strncpy(draft.bbs_mail_path, ed, sizeof(draft.bbs_mail_path) - 1); draft.bbs_mail_path[sizeof(draft.bbs_mail_path) - 1] = '\0'; } }
+                else if (f == 7) { strncpy(draft.bbs_welcome, ed, sizeof(draft.bbs_welcome) - 1); draft.bbs_welcome[sizeof(draft.bbs_welcome) - 1] = '\0'; }
+            } else {
+                if (f == 1) { int sv = atoi(ed); if (sv >= 0 && sv <= 15) draft.chat_ssid = static_cast<oyk_u8>(sv); else strcpy(fb, "SSID must be 0..15."); }
+                else if (f == 2) { if (!ed[0]) memset(&draft.chat_callsign, 0, sizeof(draft.chat_callsign)); else if (!oyk_parse_callsign_with_default_ssid(ed, draft.chat_ssid, &draft.chat_callsign)) strcpy(fb, "Invalid CHAT callsign."); }
+                else if (f == 3) { if (!ed[0]) memset(&draft.chat_alias, 0, sizeof(draft.chat_alias)); else if (!oyk_parse_callsign(ed, &draft.chat_alias)) strcpy(fb, "Invalid CHAT alias."); }
+                else if (f == 4) { if (ed[0]) { strncpy(draft.chat_topic, ed, sizeof(draft.chat_topic) - 1); draft.chat_topic[sizeof(draft.chat_topic) - 1] = '\0'; } }
+                else if (f == 5) { strncpy(draft.chat_welcome, ed, sizeof(draft.chat_welcome) - 1); draft.chat_welcome[sizeof(draft.chat_welcome) - 1] = '\0'; }
             }
         }
     }

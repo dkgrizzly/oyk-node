@@ -43,7 +43,6 @@ private:
     void modal_ban_callsign();
     void modal_approve_incoming_files();
     void modal_settings();
-    void modal_settings_interfaces(node::NodeConfig& draft);
     bool modal_confirm_exit();
 
     void draw_box(int y, int x, int h, int w, const std::string& title);

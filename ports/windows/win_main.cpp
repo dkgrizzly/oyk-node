@@ -1433,6 +1433,50 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static void switch_settings_tab(HWND hdlg, int tab) {
+    static const int NODE_IDS[] = {
+        IDC_SET_L_CALL, IDC_SET_CALL, IDC_SET_L_ALIAS, IDC_SET_ALIAS,
+        IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO, IDC_SET_ACCEPT
+    };
+    static const int BBS_IDS[] = {
+        IDC_SET_BBS_EN, IDC_SET_L_BSSID, IDC_SET_BBS_SSID, IDC_SET_L_BCALL, IDC_SET_BBS_CALL,
+        IDC_SET_L_BALIAS, IDC_SET_BBS_ALIAS, IDC_SET_FILES_EN, IDC_SET_L_FPATH, IDC_SET_FILES_PATH,
+        IDC_SET_L_MPATH, IDC_SET_MAIL_PATH, IDC_SET_L_BWELC, IDC_SET_BBS_WELC
+    };
+    static const int CHAT_IDS[] = {
+        IDC_SET_CHAT_EN, IDC_SET_L_CSSID, IDC_SET_CHAT_SSID, IDC_SET_L_CCALL, IDC_SET_CHAT_CALL,
+        IDC_SET_L_CALIAS, IDC_SET_CHAT_ALIAS, IDC_SET_L_CTOP, IDC_SET_CHAT_TOPIC,
+        IDC_SET_L_CWELC, IDC_SET_CHAT_WELC
+    };
+    static const int IF_IDS[] = {
+        IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_REM
+    };
+
+    int i;
+    for (i = 0; i < static_cast<int>(sizeof(NODE_IDS) / sizeof(NODE_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, NODE_IDS[i]), (tab == 0) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(BBS_IDS) / sizeof(BBS_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, BBS_IDS[i]), (tab == 1) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(CHAT_IDS) / sizeof(CHAT_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, CHAT_IDS[i]), (tab == 2) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(IF_IDS) / sizeof(IF_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, IF_IDS[i]), (tab == 3) ? SW_SHOW : SW_HIDE);
+    }
+
+    SetDlgItemText(hdlg, IDC_SET_TAB_NODE, (tab == 0) ? "[ Node ]" : "Node");
+    SetDlgItemText(hdlg, IDC_SET_TAB_BBS,  (tab == 1) ? "[ BBS ]" : "BBS");
+    SetDlgItemText(hdlg, IDC_SET_TAB_CHAT, (tab == 2) ? "[ CHAT ]" : "CHAT");
+    SetDlgItemText(hdlg, IDC_SET_TAB_IF,   (tab == 3) ? "[ Interfaces ]" : "Interfaces");
+
+    static const char* BOX_TITLES[4] = {
+        "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings", "Interface Mappings"
+    };
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 4) ? tab : 0]);
+}
+
 OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
@@ -1459,6 +1503,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_SET_BBS_ALIAS, buf);
             CheckDlgButton(hdlg, IDC_SET_FILES_EN, g_set_draft.bbs_files_enabled ? 1 : 0);
             SetDlgItemText(hdlg, IDC_SET_FILES_PATH, g_set_draft.bbs_files_path);
+            SetDlgItemText(hdlg, IDC_SET_MAIL_PATH, g_set_draft.bbs_mail_path);
             SetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome);
 
             CheckDlgButton(hdlg, IDC_SET_CHAT_EN, g_set_draft.chat_enabled ? 1 : 0);
@@ -1474,10 +1519,15 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_SET_CHAT_WELC, g_set_draft.chat_welcome);
 
             populate_settings_ifaces(hdlg);
+            switch_settings_tab(hdlg, 0);
             return TRUE;
         }
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_SET_TAB_NODE) { switch_settings_tab(hdlg, 0); return TRUE; }
+            if (id == IDC_SET_TAB_BBS)  { switch_settings_tab(hdlg, 1); return TRUE; }
+            if (id == IDC_SET_TAB_CHAT) { switch_settings_tab(hdlg, 2); return TRUE; }
+            if (id == IDC_SET_TAB_IF)   { switch_settings_tab(hdlg, 3); return TRUE; }
             if (id == IDC_SET_IF_ADD) {
                 if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
                     MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
@@ -1542,9 +1592,11 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     return TRUE;
                 }
                 g_set_draft.bbs_files_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_FILES_EN) != 0) ? 1 : 0;
-                char fpath[96];
+                char fpath[96], mpath[96];
                 GetDlgItemText(hdlg, IDC_SET_FILES_PATH, fpath, sizeof(fpath));
                 if (fpath[0]) strncpy(g_set_draft.bbs_files_path, fpath, sizeof(g_set_draft.bbs_files_path) - 1);
+                GetDlgItemText(hdlg, IDC_SET_MAIL_PATH, mpath, sizeof(mpath));
+                if (mpath[0]) strncpy(g_set_draft.bbs_mail_path, mpath, sizeof(g_set_draft.bbs_mail_path) - 1);
                 GetDlgItemText(hdlg, IDC_SET_BBS_WELC, g_set_draft.bbs_welcome, sizeof(g_set_draft.bbs_welcome));
 
                 g_set_draft.chat_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_CHAT_EN) != 0) ? 1 : 0;
