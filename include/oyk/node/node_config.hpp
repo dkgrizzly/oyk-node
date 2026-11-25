@@ -15,6 +15,16 @@
 
 namespace oyk::node {
 
+struct BbsConfig {
+    bool enabled = true;
+    uint8_t ssid = 11;                   // Default SSID 11 -> <node base callsign>-11
+    ax25::Callsign callsign;             // Optional explicit callsign override
+    ax25::Callsign alias{"OYKBBS", 0};   // Optional BBS alias
+    std::string mail_path = "mail/";     // Directory for persisted M<id>.MSG files
+    std::string welcome = "Welcome to OYK Packet BBS! Type H for help, B to exit.";
+    std::size_t max_msg_bytes = 8192;
+};
+
 struct ChatConfig {
     bool enabled = true;
     uint8_t ssid = 12;                  // Default SSID 12 -> <node base callsign>-12
@@ -33,6 +43,7 @@ struct NodeConfig {
     bool has_detected_line_ending = false;
 
     LogConfig logging;
+    BbsConfig bbs;
     ChatConfig chat;
     std::string banlist_path; // Optional override from banlist= in [node]
 
@@ -50,6 +61,12 @@ struct NodeConfig {
     // Resolves banlist.cfg path: explicit `banlist=` override if set,
     // otherwise `banlist.cfg` in the same directory as `source_path` (or `./banlist.cfg`).
     std::string resolved_banlist_path() const;
+
+    // Resolves BBS callsign: explicit bbs.callsign if valid, else <callsign.base()>-<bbs.ssid>.
+    ax25::Callsign resolved_bbs_callsign() const;
+
+    // Resolves BBS mail storage directory relative to config file directory if relative.
+    std::string resolved_bbs_mail_path() const;
 
     // Resolves CHAT callsign: explicit chat.callsign if valid, else <callsign.base()>-<chat.ssid>.
     ax25::Callsign resolved_chat_callsign() const;

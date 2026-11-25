@@ -161,6 +161,21 @@ bool NodeEngine::start(std::string& error_out) {
         log_msg(LOG_INFO, "Node " + config_.callsign.str() +
                           (config_.alias.valid() ? " (" + config_.alias.str() + ")" : "") +
                           " online");
+        if (config_.bbs.enabled) {
+            const std::string bbs_call = config_.resolved_bbs_callsign().str();
+            const std::string bbs_alias = config_.bbs.alias.valid() ? config_.bbs.alias.str() : "";
+            const std::string mail_dir = config_.resolved_bbs_mail_path();
+            std::string bbs_err;
+            if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir,
+                                       config_.bbs.welcome, config_.bbs.max_msg_bytes, bbs_err)) {
+                log_msg(LOG_WARNING, "BBS startup warning: " + bbs_err);
+            } else {
+                log_msg(LOG_INFO, "BBS active on " + bbs_call +
+                                  (!bbs_alias.empty() ? " (" + bbs_alias + ")" : "") +
+                                  " (" + std::to_string(bbs_server_.active_message_count()) + " msgs in " +
+                                  mail_dir + ")");
+            }
+        }
         if (config_.chat.enabled) {
             const std::string chat_call = config_.resolved_chat_callsign().str();
             chat_room_.configure(chat_call, config_.chat.default_topic, config_.chat.welcome);
@@ -417,6 +432,13 @@ bool NodeEngine::is_for_node(const ax25::Callsign& dst) const {
     return false;
 }
 
+bool NodeEngine::is_for_bbs(const ax25::Callsign& dst) const {
+    if (!config_.bbs.enabled) return false;
+    if (dst == config_.resolved_bbs_callsign()) return true;
+    if (config_.bbs.alias.valid() && dst == config_.bbs.alias) return true;
+    return false;
+}
+
 bool NodeEngine::is_for_chat(const ax25::Callsign& dst) const {
     if (!config_.chat.enabled) return false;
     if (dst == config_.resolved_chat_callsign()) return true;
@@ -425,7 +447,7 @@ bool NodeEngine::is_for_chat(const ax25::Callsign& dst) const {
 }
 
 bool NodeEngine::is_own_callsign(const ax25::Callsign& call) const {
-    return is_for_node(call) || is_for_chat(call);
+    return is_for_node(call) || is_for_bbs(call) || is_for_chat(call);
 }
 
 void NodeEngine::record_heard_locked(const ax25::Callsign& src,
@@ -558,6 +580,44 @@ void NodeEngine::apply_chat_result_locked(const ChatActionResult& res,
     }
 }
 
+void NodeEngine::apply_bbs_result_locked(const BbsActionResult& res,
+                                         uint64_t actor_sid,
+                                         std::vector<PendingTx>& pending,
+                                         std::vector<PendingLocalEvent>& pending_local) {
+    auto it = sessions_.find(actor_sid);
+    if (it == sessions_.end() || !it->second) return;
+    Session& actor = *it->second;
+    if (!res.response_text.empty() && actor.state() == SessionState::Connected) {
+        deliver_text_locked(actor, res.response_text, pending, pending_local);
+    }
+    if (res.left_bbs) {
+        if (res.disconnect_session) {
+            if (actor.is_local_loopback()) {
+                auto cbit = local_callbacks_.find(actor_sid);
+                if (cbit != local_callbacks_.end()) {
+                    PendingLocalEvent ple;
+                    ple.session_id = actor_sid;
+                    ple.closed = true;
+                    ple.close_reason = "Left BBS";
+                    ple.callbacks = cbit->second;
+                    pending_local.push_back(std::move(ple));
+                    local_callbacks_.erase(cbit);
+                }
+                sessions_.erase(it);
+            } else {
+                auto disc_ev = actor.initiate_disconnect("Left BBS");
+                queue_session_frames(actor, disc_ev.tx_frames, pending);
+                if (actor.state() == SessionState::Closed) {
+                    sessions_.erase(it);
+                }
+            }
+        } else {
+            actor.set_mode(SessionMode::Normal);
+            deliver_text_locked(actor, prompt_string(), pending, pending_local);
+        }
+    }
+}
+
 void NodeEngine::dispatch_tx(const std::vector<PendingTx>& pending) {
     for (const auto& tx : pending) {
         if (tx.iface) {
@@ -605,16 +665,27 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
 
         bool target_is_local_keyword = call_upper.empty() || call_upper == "LOCAL" || call_upper == "NODE";
         bool target_is_chat_keyword = (call_upper == "CHAT");
+        bool target_is_bbs_keyword = (call_upper == "BBS");
         std::optional<ax25::Callsign> parsed_target;
-        if (!target_is_local_keyword && !target_is_chat_keyword) {
+        if (!target_is_local_keyword && !target_is_chat_keyword && !target_is_bbs_keyword) {
             parsed_target = ax25::Callsign::parse(call_part);
         }
 
         bool direct_chat = false;
+        bool direct_bbs = false;
         if (port_upper == "LOCAL" || target_is_local_keyword || target_is_chat_keyword ||
-            (parsed_target && (is_for_node(*parsed_target) || is_for_chat(*parsed_target)))) {
+            target_is_bbs_keyword ||
+            (parsed_target && (is_for_node(*parsed_target) || is_for_bbs(*parsed_target) ||
+                               is_for_chat(*parsed_target)))) {
             is_local = true;
-            if (target_is_chat_keyword || (parsed_target && is_for_chat(*parsed_target))) {
+            if (target_is_bbs_keyword || (parsed_target && is_for_bbs(*parsed_target))) {
+                if (!config_.bbs.enabled) {
+                    error_out = "Local BBS is disabled in configuration";
+                    return false;
+                }
+                direct_bbs = true;
+                parsed_target = config_.resolved_bbs_callsign();
+            } else if (target_is_chat_keyword || (parsed_target && is_for_chat(*parsed_target))) {
                 if (!config_.chat.enabled) {
                     error_out = "Local CHAT is disabled in configuration";
                     return false;
@@ -640,7 +711,10 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
                 SessionDirection::Inbound, sp);
             sess->set_local_loopback(true);
             (void)sess->accept_inbound_sabm();
-            if (direct_chat) {
+            if (direct_bbs) {
+                sess->set_mode(SessionMode::Bbs);
+                sess->set_bbs_direct(true);
+            } else if (direct_chat) {
                 sess->set_mode(SessionMode::Chat);
                 sess->set_chat_direct(true);
             } else {
@@ -656,7 +730,11 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
             conn_ev.callbacks = callbacks;
             pending_local.push_back(std::move(conn_ev));
 
-            if (direct_chat) {
+            if (direct_bbs) {
+                auto bbs_res = bbs_server_.enter(sid, config_.callsign.str(), "local",
+                                                 true, true, current_time());
+                apply_bbs_result_locked(bbs_res, sid, pending, pending_local);
+            } else if (direct_chat) {
                 auto chat_res = chat_room_.join(sid, config_.callsign.str(), "local", true);
                 apply_chat_result_locked(chat_res, sid, pending, pending_local);
             } else {
@@ -729,6 +807,10 @@ bool NodeEngine::send_local_terminal_bytes(uint64_t session_id, const std::vecto
                     auto cres = chat_room_.handle_line(session_id, line);
                     apply_chat_result_locked(cres, session_id, pending, pending_local);
                     if (sessions_.find(session_id) == sessions_.end()) break;
+                } else if (sess.mode() == SessionMode::Bbs) {
+                    auto bres = bbs_server_.handle_line(session_id, line, current_time());
+                    apply_bbs_result_locked(bres, session_id, pending, pending_local);
+                    if (sessions_.find(session_id) == sessions_.end()) break;
                 } else {
                     pending_cmds.push_back(PendingCommand{session_id, line});
                 }
@@ -759,6 +841,9 @@ bool NodeEngine::close_local_terminal(uint64_t session_id) {
             return false;
         }
         Session& sess = *it->second;
+        if (bbs_server_.has_session(session_id)) {
+            bbs_server_.leave(session_id);
+        }
         if (chat_room_.has_participant(session_id)) {
             auto cres = chat_room_.leave(session_id, "Disconnected");
             for (const auto& d : cres.deliveries) {
@@ -820,7 +905,8 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
             return;
         }
 
-        if (!is_for_node(frame.destination) && !is_for_chat(frame.destination)) {
+        if (!is_for_node(frame.destination) && !is_for_bbs(frame.destination) &&
+            !is_for_chat(frame.destination)) {
             return;
         }
 
@@ -947,7 +1033,16 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                     auto ev = raw->accept_inbound_sabm();
                     queue_session_frames(*raw, ev.tx_frames, pending);
 
-                    if (is_for_chat(frame.destination)) {
+                    if (is_for_bbs(frame.destination)) {
+                        raw->set_mode(SessionMode::Bbs);
+                        raw->set_bbs_direct(true);
+                        log_msg(LOG_INFO, "BBS session #" + std::to_string(sid) + " connected: " +
+                                          frame.source.str() + " on " + meta.interface_id);
+                        bool is_sysop = (frame.source.base() == config_.callsign.base());
+                        auto bres = bbs_server_.enter(sid, frame.source.str(), meta.interface_id,
+                                                      true, is_sysop, now_tp);
+                        apply_bbs_result_locked(bres, sid, pending, pending_local);
+                    } else if (is_for_chat(frame.destination)) {
                         raw->set_mode(SessionMode::Chat);
                         raw->set_chat_direct(true);
                         log_msg(LOG_INFO, "CHAT session #" + std::to_string(sid) + " connected: " +
@@ -1071,6 +1166,13 @@ void NodeEngine::process_session_events(Session& sess,
             apply_chat_result_locked(cres, sid, pending, pending_local);
             if (sessions_.find(sid) == sessions_.end()) return;
         }
+    } else if (sess.mode() == SessionMode::Bbs) {
+        const auto now_tp = current_time();
+        for (const auto& line : ev.rx_lines) {
+            auto bres = bbs_server_.handle_line(sid, line, now_tp);
+            apply_bbs_result_locked(bres, sid, pending, pending_local);
+            if (sessions_.find(sid) == sessions_.end()) return;
+        }
     } else if (sess.mode() == SessionMode::RestrictedBan) {
         for (const auto& line : ev.rx_lines) {
             handle_restricted_ban_line_locked(sess, line, pending);
@@ -1094,6 +1196,9 @@ void NodeEngine::process_session_events(Session& sess,
         std::string reason = ev.close_reason.empty() ? "Closed" : ev.close_reason;
         log_msg(LOG_INFO, "Session #" + std::to_string(sid) + " (" +
                           sess.remote_call().str() + ") closed: " + reason);
+        if (bbs_server_.has_session(sid)) {
+            bbs_server_.leave(sid);
+        }
         if (chat_room_.has_participant(sid)) {
             auto cres = chat_room_.leave(sid, reason);
             for (const auto& d : cres.deliveries) {
@@ -1126,7 +1231,20 @@ void NodeEngine::execute_pending_commands(const std::vector<PendingCommand>& pen
             }
             Session& sess = *it->second;
 
-            if (result.enter_chat) {
+            if (result.enter_bbs) {
+                if (!config_.bbs.enabled) {
+                    deliver_text_locked(sess, "BBS is disabled on this node.\r" + prompt_string(),
+                                        pending, pending_local);
+                } else {
+                    sess.set_mode(SessionMode::Bbs);
+                    sess.set_bbs_direct(false);
+                    bool is_sysop = sess.is_local_loopback() ||
+                                    (sess.remote_call().base() == config_.callsign.base());
+                    auto bres = bbs_server_.enter(sess.id(), sess.remote_call().str(),
+                                                  sess.interface_id(), false, is_sysop, current_time());
+                    apply_bbs_result_locked(bres, sess.id(), pending, pending_local);
+                }
+            } else if (result.enter_chat) {
                 if (!config_.chat.enabled) {
                     deliver_text_locked(sess, "CHAT is disabled on this node.\r" + prompt_string(),
                                         pending, pending_local);

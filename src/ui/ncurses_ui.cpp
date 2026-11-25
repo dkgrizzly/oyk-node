@@ -487,8 +487,10 @@ void NcursesUI::draw_sessions_pane(const node::NodeSnapshot& snap, int y, int x,
                                      ? "LOCAL TERM"
                                      : (s.mode == node::SessionMode::Chat)
                                            ? "CHAT"
-                                           : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
-                                                                   : "NODE SHELL");
+                                           : (s.mode == node::SessionMode::Bbs)
+                                                 ? "BBS"
+                                                 : (s.bridged_session_id ? ("<-> #" + std::to_string(s.bridged_session_id))
+                                                                         : "NODE SHELL");
         line << std::left
              << std::setw(6) << ("#" + std::to_string(s.id))
              << std::setw(12) << clip(s.remote_call, 11)

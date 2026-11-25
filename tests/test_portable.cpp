@@ -24,6 +24,10 @@
   #define OYK_T_LOG_APPEALS "tlogs\\appeals.log"
   #define OYK_T_YAPP_ROOT   "tinc"
   #define OYK_T_YAPP_SRC    "tysrc.txt"
+  #define OYK_T_BBS_MAIL    "tmail"
+  #define OYK_T_BBS_IDX     "tmail\\BBS.IDX"
+  #define OYK_T_BBS_M1      "tmail\\M1.MSG"
+  #define OYK_T_BBS_M2      "tmail\\M2.MSG"
 #else
   #define OYK_T_CFG_MIXED   "/tmp/oyk_port_mixed.cfg"
   #define OYK_T_CFG_SAVED   "/tmp/oyk_port_saved.cfg"
@@ -35,6 +39,10 @@
   #define OYK_T_LOG_APPEALS "/tmp/oyk_pnode_logs/appeals.log"
   #define OYK_T_YAPP_ROOT   "/tmp/oyk_port_incoming"
   #define OYK_T_YAPP_SRC    "/tmp/oyk_port_yapp_src.txt"
+  #define OYK_T_BBS_MAIL    "/tmp/oyk_port_mail"
+  #define OYK_T_BBS_IDX     "/tmp/oyk_port_mail/BBS.IDX"
+  #define OYK_T_BBS_M1      "/tmp/oyk_port_mail/M1.MSG"
+  #define OYK_T_BBS_M2      "/tmp/oyk_port_mail/M2.MSG"
 #endif
 
 static char* load_raw_file(const char* path, size_t* len_out) {
@@ -478,10 +486,103 @@ static void test_portable_yapp_and_local_terminal() {
     printf("[PASS] test_portable_yapp_and_local_terminal\n");
 }
 
+struct PortableBbsCap {
+    char buf[1024];
+    size_t len;
+};
+
+static void test_bbs_local_cb(oyk_u32 /*sid*/, int ev, const oyk_u8* data, size_t len,
+                              const char* /*reason*/, void* ctx) {
+    PortableBbsCap* cap = static_cast<PortableBbsCap*>(ctx);
+    if (ev == 2 && data && len > 0) {
+        size_t avail = sizeof(cap->buf) - 1 - cap->len;
+        if (len > avail) len = avail;
+        memcpy(cap->buf + cap->len, data, len);
+        cap->len += len;
+        cap->buf[cap->len] = '\0';
+    }
+}
+
+static void test_portable_bbs() {
+    remove(OYK_T_BBS_IDX);
+    remove(OYK_T_BBS_M1);
+    remove(OYK_T_BBS_M2);
+
+    OykConfig* pcfg = new OykConfig();
+    oyk_config_init_default(pcfg);
+    assert(pcfg->bbs_enabled == 1);
+    assert(pcfg->bbs_ssid == 11);
+    oyk_parse_callsign("K7OYK-7", &pcfg->callsign);
+    strcpy(pcfg->log_path, OYK_T_PNODE_LOGS);
+    strcpy(pcfg->banlist_path, OYK_T_PNODE_BAN);
+    strcpy(pcfg->bbs_mail_path, OYK_T_BBS_MAIL);
+
+    OykCallsign bbs_call;
+    oyk_config_resolved_bbs_callsign(pcfg, &bbs_call);
+    char bbs_s[16];
+    oyk_format_callsign(&bbs_call, bbs_s, sizeof(bbs_s));
+    assert(strcmp(bbs_s, "K7OYK-11") == 0);
+
+    OykPortableNode* node = new OykPortableNode();
+    char err[64];
+    assert(node->init(pcfg, NULL, NULL, err, sizeof(err)) == 1);
+
+    PortableBbsCap* cap = new PortableBbsCap();
+    cap->len = 0;
+    cap->buf[0] = '\0';
+    node->set_local_event_callback(test_bbs_local_cb, cap);
+
+    oyk_u32 sid = 0;
+    int is_loc = 0;
+    assert(node->open_local_terminal(-1, "K7OYK-11", &sid, NULL, &is_loc, err, sizeof(err)) == 1);
+    assert(is_loc == 1);
+    assert(strstr(cap->buf, "[OYK-0.1-HMR$]") != NULL);
+    assert(strstr(cap->buf, "de K7OYK-11>") != NULL);
+
+    /* Send bulletin #1 via SB ALL */
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* s1 = "SB ALL\rTest Subj\rHello DOS BBS!\r/EX\r";
+    assert(node->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(s1), strlen(s1)) == 1);
+    assert(strstr(cap->buf, "Message #1 saved") != NULL);
+
+    /* Read #1 */
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* r1 = "R 1\r";
+    assert(node->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(r1), strlen(r1)) == 1);
+    assert(strstr(cap->buf, "Hello DOS BBS!") != NULL);
+
+    node->close_local_terminal(sid);
+    delete node;
+
+    /* Reload fresh OykPortableNode and confirm BBS.IDX + M1.MSG persisted */
+    OykPortableNode* node2 = new OykPortableNode();
+    assert(node2->init(pcfg, NULL, NULL, err, sizeof(err)) == 1);
+    cap->len = 0; cap->buf[0] = '\0';
+    node2->set_local_event_callback(test_bbs_local_cb, cap);
+    assert(node2->open_local_terminal(-1, "BBS", &sid, NULL, &is_loc, err, sizeof(err)) == 1);
+    assert(strstr(cap->buf, "Active msgs: 1") != NULL);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* lb = "LB\r";
+    assert(node2->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(lb), strlen(lb)) == 1);
+    assert(strstr(cap->buf, "Test Subj") != NULL);
+
+    node2->close_local_terminal(sid);
+    delete node2;
+    delete cap;
+    delete pcfg;
+
+    remove(OYK_T_BBS_IDX);
+    remove(OYK_T_BBS_M1);
+    remove(OYK_T_BBS_M2);
+    printf("[PASS] test_portable_bbs\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
     test_portable_yapp_and_local_terminal();
+    test_portable_bbs();
     return 0;
 }
 

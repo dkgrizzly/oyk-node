@@ -30,7 +30,8 @@ enum class SessionMode {
     Normal,
     RestrictedBan,
     LocalTerminal,
-    Chat
+    Chat,
+    Bbs
 };
 
 struct SessionParams {
@@ -84,6 +85,8 @@ public:
     bool is_local_loopback() const noexcept { return local_loopback_; }
     void set_chat_direct(bool v) noexcept { chat_direct_ = v; }
     bool is_chat_direct() const noexcept { return chat_direct_; }
+    void set_bbs_direct(bool v) noexcept { bbs_direct_ = v; }
+    bool is_bbs_direct() const noexcept { return bbs_direct_; }
     void set_restricted_ban(std::string ban_key, bool appeal_eligible) {
         mode_ = SessionMode::RestrictedBan;
         ban_key_ = std::move(ban_key);
@@ -136,6 +139,7 @@ private:
     SessionMode mode_ = SessionMode::Normal;
     bool local_loopback_ = false;
     bool chat_direct_ = false;
+    bool bbs_direct_ = false;
     std::string ban_key_;
     bool appeal_eligible_ = false;
     uint64_t bridged_session_id_ = 0;

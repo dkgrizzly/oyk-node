@@ -84,6 +84,24 @@ If omitted from `[logfiles]`, `node.log` defaults to `0x37` (`ERROR|WARNING|INFO
 
 When `log_rotate_daily = true`, active log files rotate automatically at calendar day rollover (and stale previous-day files rotate at startup) to `<file>.YYYYMMDD` on POSIX/Windows (or 8.3-safe `MMDD<3ch>.LOG` on MS-DOS).
 
+### `[bbs]`
+
+Configures the built-in Amateur Radio Packet Bulletin Board System (PBBS, enabled on **SSID 11** by default, e.g., `N0CALL-11`):
+
+```ini
+[bbs]
+enabled = true
+ssid = 11
+# Optional explicit callsign override (defaults to <node base callsign>-<ssid>):
+# callsign = N0CALL-11
+alias = OYKBBS
+mailpath = mail/
+welcome = Welcome to OYK Packet BBS! Type H for help, B to exit.
+max_msg_bytes = 8192
+```
+
+Messages are persisted under `mailpath` as human-readable `M<id>.MSG` files. Users can connect directly to the BBS callsign/SSID (or alias `OYKBBS`) over any radio interface or Local Terminal, or type `BBS` from the node command shell. Inside the BBS, `H` lists commands (`L`/`LL`/`LM`/`LN`/`LB`/`LP`/`L>`/`L<`/`L@`/`LC`/`LS` list/search, `R`/`RM` read, `SP`/`SB`/`ST`/`SR` send/reply ending with `/EX` or `Ctrl-Z`, `K`/`KM` kill, `I` info, `B` exit).
+
 ### `[chat]`
 
 Configures the built-in multi-user amateur radio packet CHAT conference room (enabled on **SSID 12** by default, e.g., `N0CALL-12`):

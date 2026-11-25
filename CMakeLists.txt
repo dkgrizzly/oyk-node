@@ -39,6 +39,7 @@ if(NOT WIN32)
         src/node/ban_list.cpp
         src/node/node_config.cpp
         src/node/session.cpp
+        src/node/bbs_server.cpp
         src/node/chat_room.cpp
         src/node/command_handler.cpp
         src/node/node_engine.cpp
