@@ -13,6 +13,7 @@
 #include "oyk/node/node_config.hpp"
 #include "oyk/node/session.hpp"
 #include "oyk/radio/radio_interface.hpp"
+#include "oyk/radio/rig_control.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -167,6 +168,10 @@ public:
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }
 
+    // Radio / Rig Control (Hamlib rigctld TCP + RadioFoundry UDP 4191)
+    radio::RigController& rig_controller() noexcept { return rig_controller_; }
+    const radio::RigController& rig_controller() const noexcept { return rig_controller_; }
+
     // Local operator packet terminal (outbound AX.25 binary-safe stream, supports YAPP)
     struct LocalTerminalCallbacks {
         std::function<void(uint64_t session_id)> on_connected;
@@ -283,10 +288,11 @@ private:
     std::deque<NewCallsignRecord> last_new_callsigns_; // Most recent 5 new callsigns (newest first)
     std::map<std::string, MHeardRecord> mheard_;
 
-    // Persistent banlist (banlist.cfg), packet BBS, and multi-user CHAT conference room
+    // Persistent banlist (banlist.cfg), packet BBS, multi-user CHAT, and rig control
     BanList ban_list_;
     BbsServer bbs_server_;
     ChatRoom chat_room_;
+    radio::RigController rig_controller_;
 
     std::thread timer_thread_;
 };

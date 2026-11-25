@@ -232,6 +232,10 @@ void NcursesUI::run() {
             case 'F':
                 modal_approve_incoming_files();
                 break;
+            case 'r':
+            case 'R':
+                modal_rig_control();
+                break;
             case 's':
             case 'S':
                 modal_settings();
@@ -526,23 +530,24 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
 }
 
 void NcursesUI::open_node_menu(bool& should_exit) {
-    static const char* ITEMS[8] = {
+    static const char* ITEMS[9] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
         " [F] Manage Files Area...       ",
+        " [R] Radio Control...           ",
         " [S] Settings...                ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
     // Row offsets inside menu window (with separators after Deny and Ban)
-    static const int ITEM_ROWS[8] = { 1, 2, 4, 5, 6, 7, 8, 10 };
+    static const int ITEM_ROWS[9] = { 1, 2, 4, 5, 6, 7, 8, 9, 11 };
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(36, cols - 2);
-    const int h = 12;
+    const int h = 13;
     if (rows < h + 2 || w < 24) return;
 
     WINDOW* win = newwin(h, w, 1, 1);
@@ -558,9 +563,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         werase(win);
         box(win, 0, 0);
         mvwhline(win, 3, 1, ACS_HLINE, w - 2);
-        mvwhline(win, 9, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 10, 1, ACS_HLINE, w - 2);
 
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
             if (i == sel) wattron(win, A_REVERSE | A_BOLD);
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
@@ -571,9 +576,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         if (ch == ERR) continue;
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
-            sel = (sel + 7) % 8;
+            sel = (sel + 8) % 9;
         } else if (ch == KEY_DOWN) {
-            sel = (sel + 1) % 8;
+            sel = (sel + 1) % 9;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             chosen = sel;
         } else if (ch == 'a' || ch == 'A') {
@@ -584,14 +589,16 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             chosen = 2;
         } else if (ch == 'f' || ch == 'F') {
             chosen = 3;
-        } else if (ch == 's' || ch == 'S') {
+        } else if (ch == 'r' || ch == 'R') {
             chosen = 4;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 's' || ch == 'S') {
             chosen = 5;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 6;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 7;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 8;
         }
     }
 
@@ -613,15 +620,18 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             modal_approve_incoming_files();
             break;
         case 4:
-            modal_settings();
+            modal_rig_control();
             break;
         case 5:
-            modal_terminate_connection();
+            modal_settings();
             break;
         case 6:
-            modal_ban_callsign();
+            modal_terminate_connection();
             break;
         case 7:
+            modal_ban_callsign();
+            break;
+        case 8:
             if (modal_confirm_exit()) {
                 should_exit = true;
             }
@@ -1744,6 +1754,191 @@ void NcursesUI::modal_approve_incoming_files() {
     delwin(win);
 }
 
+void NcursesUI::modal_rig_control() {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(76, cols - 2);
+    int h = std::min(19, rows - 2);
+    if (w < 54 || h < 14) {
+        set_status("Terminal too small for Radio Control (min 56x16).");
+        return;
+    }
+    int y = std::max(0, (rows - h) / 2);
+    int x = std::max(0, (cols - w) / 2);
+
+    WINDOW* win = newwin(h, w, y, x);
+    if (!win) return;
+    keypad(win, TRUE);
+    wtimeout(win, 250);
+
+    auto prompt_val = [&](const std::string& label, std::string& val) -> bool {
+        curs_set(1);
+        while (true) {
+            mvwhline(win, h - 2, 1, ' ', w - 2);
+            std::string shown = label + val;
+            if (static_cast<int>(shown.size()) > w - 4) {
+                shown = shown.substr(shown.size() - static_cast<std::size_t>(w - 4));
+            }
+            mvwaddnstr(win, h - 2, 2, shown.c_str(), w - 4);
+            wrefresh(win);
+            int c = wgetch(win);
+            if (c == ERR) continue;
+            if (c == 27) { curs_set(0); return false; }
+            if (c == '\n' || c == '\r' || c == KEY_ENTER) { curs_set(0); return true; }
+            if (c == KEY_BACKSPACE || c == 127 || c == 8) {
+                if (!val.empty()) val.pop_back();
+            } else if (c >= 32 && c < 127 && val.size() < 48) {
+                val.push_back(static_cast<char>(c));
+            }
+        }
+    };
+
+    auto& rig = engine_.rig_controller();
+    std::string feedback;
+    {
+        auto rc = rig.config();
+        if (!rc.enabled || rc.protocol == radio::RigProtocol::None) {
+            feedback = "Rig control disabled. Enable it in Node -> Settings -> 5:Rig.";
+        } else {
+            std::string err;
+            if (rig.refresh(err)) feedback = "Queried radio status.";
+            else feedback = err;
+        }
+    }
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+        auto rc = rig.config();
+        auto st = rig.status();
+
+        werase(win);
+        box(win, 0, 0);
+        mvwprintw(win, 0, 2, " Radio / Rig Control ");
+
+        std::ostringstream hdr;
+        hdr << "Protocol: " << radio::rig_protocol_to_string(rc.protocol)
+            << "  |  Endpoint: " << rc.host << ":" << rc.port
+            << "  [" << (rc.enabled ? (st.reachable ? "ONLINE" : "NO REPLY") : "DISABLED") << "]";
+        wattron(win, A_BOLD);
+        mvwaddnstr(win, 2, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
+        wattroff(win, A_BOLD);
+        mvwhline(win, 3, 1, ACS_HLINE, w - 2);
+
+        if (rc.protocol == radio::RigProtocol::RadioFoundry) {
+            mvwaddnstr(win, 4, 2, clip("Zone / Pos   : Zone " + std::to_string(st.zone) +
+                                       ", Channel Pos " + std::to_string(st.pos) + " (0-based)", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 5, 2, clip("Channel Name : " + (st.channel_name.empty() ? "(unknown)" : st.channel_name), w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 6, 2, clip("Frequency    : " + std::to_string(st.freq_hz) + " Hz", w - 4).c_str(), w - 4);
+            if (st.is_dmr) {
+                mvwaddnstr(win, 7, 2, clip("DMR Params   : CC " + std::to_string(st.color_code) +
+                                           "  TS " + std::to_string(st.timeslot) +
+                                           "  TG " + std::to_string(st.talkgroup), w - 4).c_str(), w - 4);
+            } else {
+                mvwaddnstr(win, 7, 2, "DMR Params   : (analog / not reported)", w - 4);
+            }
+            mvwaddnstr(win, 8, 2, clip("Notifications: " + std::string(st.notifications_active ? "ACTIVE" : "OFF"), w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 9, 2, clip("Raw Status   : " + (st.raw_status.empty() ? "(none)" : st.raw_status), w - 4).c_str(), w - 4);
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 11, 2, "Commands (RadioFoundry / takRF UDP 4191):", w - 4);
+            wattroff(win, A_BOLD);
+            mvwaddnstr(win, 12, 2, clip(" [Q/R] Query (select)   [Z] Select Zone & Pos   [N] Stop Notify", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 13, 2, clip(" [+/-] Step Channel     [[/]] Step Zone         [Esc] Close", w - 4).c_str(), w - 4);
+        } else {
+            mvwaddnstr(win, 4, 2, clip("Frequency    : " + std::to_string(st.freq_hz) + " Hz", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 5, 2, clip("Mode / PB    : " + (st.mode.empty() ? "(unknown)" : st.mode) +
+                                       " (" + std::to_string(st.passband_hz) + " Hz)", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 6, 2, clip("PTT / VFO    : " + std::string(st.ptt > 0 ? "TX" : (st.ptt == 0 ? "RX" : "UNKNOWN")) +
+                                       "  |  VFO: " + (st.vfo.empty() ? "(unknown)" : st.vfo), w - 4).c_str(), w - 4);
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 11, 2, "Commands (Hamlib rigctld TCP 4532):", w - 4);
+            wattroff(win, A_BOLD);
+            mvwaddnstr(win, 12, 2, clip(" [Q/R] Query Rig        [F] Set Frequency (Hz)  [M] Set Mode", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, 13, 2, clip(" [P]   Toggle PTT       [V] Set VFO             [Esc] Close", w - 4).c_str(), w - 4);
+        }
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_WARN));
+        mvwaddnstr(win, h - 3, 2, clip(feedback, w - 4).c_str(), w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_WARN));
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
+        mvwhline(win, h - 1, 1, ' ', w - 2);
+        mvwaddnstr(win, h - 1, 2, "Q/R:Refresh  Esc:Close", w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == 27) break;
+
+        std::string err;
+        if (ch == 'q' || ch == 'Q' || ch == 'r' || ch == 'R') {
+            if (rig.refresh(err)) feedback = "Radio status refreshed.";
+            else feedback = err;
+        } else if (rc.protocol == radio::RigProtocol::RadioFoundry) {
+            if (ch == '+' || ch == '=') {
+                if (rig.step_channel(1, err)) feedback = "Stepped channel +1.";
+                else feedback = err;
+            } else if (ch == '-') {
+                if (rig.step_channel(-1, err)) feedback = "Stepped channel -1.";
+                else feedback = err;
+            } else if (ch == ']') {
+                if (rig.step_zone(1, err)) feedback = "Stepped zone +1.";
+                else feedback = err;
+            } else if (ch == '[') {
+                if (rig.step_zone(-1, err)) feedback = "Stepped zone -1.";
+                else feedback = err;
+            } else if (ch == 'n' || ch == 'N') {
+                if (rig.stop_notifications(err)) feedback = "Notifications stopped (select?notify=0).";
+                else feedback = err;
+            } else if (ch == 'z' || ch == 'Z') {
+                std::string zs = std::to_string(std::max(0, st.zone));
+                std::string ps = std::to_string(std::max(0, st.pos));
+                if (prompt_val("Zone (0-based): ", zs) && prompt_val("Channel Pos (0-based): ", ps)) {
+                    try {
+                        int z = std::stoi(zs);
+                        int p = std::stoi(ps);
+                        if (rig.select_zone_channel(z, p, err)) feedback = "Selected zone " + zs + " pos " + ps + ".";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid zone/pos number."; }
+                }
+            }
+        } else if (rc.protocol == radio::RigProtocol::Rigctl) {
+            if (ch == 'f' || ch == 'F') {
+                std::string fs = std::to_string(st.freq_hz ? st.freq_hz : 145050000ULL);
+                if (prompt_val("Frequency (Hz): ", fs)) {
+                    try {
+                        uint64_t hz = std::stoull(fs);
+                        if (rig.set_frequency(hz, err)) feedback = "Frequency set to " + fs + " Hz.";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid frequency."; }
+                }
+            } else if (ch == 'm' || ch == 'M') {
+                std::string ms = st.mode.empty() ? "FM" : st.mode;
+                std::string pbs = std::to_string(st.passband_hz);
+                if (prompt_val("Mode (FM/USB/LSB/CW/PKTFM): ", ms) && prompt_val("Passband Hz (0=default): ", pbs)) {
+                    try {
+                        int pb = std::stoi(pbs);
+                        if (rig.set_mode(ms, pb, err)) feedback = "Mode set to " + ms + ".";
+                        else feedback = err;
+                    } catch (...) { feedback = "Invalid passband."; }
+                }
+            } else if (ch == 'p' || ch == 'P') {
+                bool next_tx = !(st.ptt > 0);
+                if (rig.set_ptt(next_tx, err)) feedback = next_tx ? "PTT set to TX." : "PTT set to RX.";
+                else feedback = err;
+            } else if (ch == 'v' || ch == 'V') {
+                std::string vs = st.vfo.empty() ? "VFOA" : st.vfo;
+                if (prompt_val("VFO (VFOA/VFOB): ", vs)) {
+                    if (rig.set_vfo(vs, err)) feedback = "VFO set to " + vs + ".";
+                    else feedback = err;
+                }
+            }
+        }
+    }
+
+    delwin(win);
+}
+
 void NcursesUI::modal_settings() {
     node::NodeConfig draft = engine_.config();
 
@@ -1836,8 +2031,8 @@ void NcursesUI::modal_settings() {
         return ic.description;
     };
 
-    // Four logical tabs matching GTK: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces
-    static const char* TAB_NAMES[4] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces" };
+    // Five logical tabs matching GTK/Windows/DOS: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig
+    static const char* TAB_NAMES[5] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig" };
     static const char* NODE_LABELS[5] = {
         "Node Callsign",
         "Node Alias",
@@ -1864,18 +2059,28 @@ void NcursesUI::modal_settings() {
         "Default Topic",
         "CHAT Welcome Message"
     };
+    static const char* RIG_LABELS[6] = {
+        "Enable Rig Control",
+        "Protocol (rigctl/rf)",
+        "Radio Host / IP",
+        "Port (4532 / 4191)",
+        "Poll Interval (sec)",
+        "RadioFoundry Notify"
+    };
 
     auto tab_item_count = [&](int t) -> int {
         if (t == 0) return 5;
         if (t == 1) return 9;
         if (t == 2) return 6;
-        return static_cast<int>(draft.interfaces.size());
+        if (t == 3) return static_cast<int>(draft.interfaces.size());
+        return 6;
     };
 
     auto tab_field_label = [&](int t, int idx) -> const char* {
         if (t == 0) return NODE_LABELS[idx];
         if (t == 1) return BBS_LABELS[idx];
         if (t == 2) return CHAT_LABELS[idx];
+        if (t == 4) return RIG_LABELS[idx];
         return "";
     };
 
@@ -1917,11 +2122,22 @@ void NcursesUI::modal_settings() {
                 default: return "";
             }
         }
+        if (t == 4) {
+            switch (idx) {
+                case 0: return draft.rig.enabled ? "[ON]" : "[OFF]";
+                case 1: return radio::rig_protocol_to_string(draft.rig.protocol);
+                case 2: return draft.rig.host;
+                case 3: return std::to_string(draft.rig.port);
+                case 4: return std::to_string(draft.rig.poll_interval_sec) + " s";
+                case 5: return draft.rig.notify ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        }
         return "";
     };
 
     int tab = 0;
-    int sel[4] = { 0, 0, 0, 0 };
+    int sel[5] = { 0, 0, 0, 0, 0 };
     int if_scroll = 0;
     const int content_h = std::max(1, h - 8);
     std::string feedback = "Config: " + (draft.source_path.empty() ? std::string("./node.cfg") : draft.source_path);
@@ -1942,9 +2158,9 @@ void NcursesUI::modal_settings() {
         box(win, 0, 0);
         mvwprintw(win, 0, 2, " Node Settings ");
 
-        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces)
+        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces | Rig)
         int tx = 2;
-        for (int t = 0; t < 4; ++t) {
+        for (int t = 0; t < 5; ++t) {
             std::string lbl = std::string(" ") + TAB_NAMES[t] + " ";
             if (t == tab) {
                 if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
@@ -1963,7 +2179,7 @@ void NcursesUI::modal_settings() {
         }
         mvwhline(win, 2, 1, ACS_HLINE, w - 2);
 
-        if (tab < 3) {
+        if (tab != 3) {
             for (int i = 0; i < cnt && i < content_h; ++i) {
                 std::ostringstream row;
                 row << std::left << std::setw(25) << tab_field_label(tab, i)
@@ -2004,8 +2220,8 @@ void NcursesUI::modal_settings() {
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
         mvwhline(win, h - 1, 1, ' ', w - 2);
         const char* help_bar = (tab == 3)
-            ? "Tab/1-4:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
-            : "Tab/Left/Right/1-4:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
+            ? "Tab/1-5:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
+            : "Tab/Left/Right/1-5:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
         mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
@@ -2015,14 +2231,14 @@ void NcursesUI::modal_settings() {
         if (ch == 27) break;
 
         if (ch == '\t' || ch == KEY_RIGHT) {
-            tab = (tab + 1) % 4;
+            tab = (tab + 1) % 5;
             continue;
         }
         if (ch == KEY_BTAB || ch == KEY_LEFT) {
-            tab = (tab + 3) % 4;
+            tab = (tab + 4) % 5;
             continue;
         }
-        if (ch >= '1' && ch <= '4') {
+        if (ch >= '1' && ch <= '5') {
             tab = ch - '1';
             continue;
         }
@@ -2171,6 +2387,18 @@ void NcursesUI::modal_settings() {
             if (tab == 1 && f == 4) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
             if (tab == 1 && f == 5) { draft.bbs.files_case_insensitive = !draft.bbs.files_case_insensitive; continue; }
             if (tab == 2 && f == 0) { draft.chat.enabled = !draft.chat.enabled; continue; }
+            if (tab == 4 && f == 0) { draft.rig.enabled = !draft.rig.enabled; continue; }
+            if (tab == 4 && f == 1) {
+                if (draft.rig.protocol == radio::RigProtocol::Rigctl) {
+                    draft.rig.protocol = radio::RigProtocol::RadioFoundry;
+                    if (draft.rig.port == 4532 || draft.rig.port == 0) draft.rig.port = 4191;
+                } else {
+                    draft.rig.protocol = radio::RigProtocol::Rigctl;
+                    if (draft.rig.port == 4191 || draft.rig.port == 0) draft.rig.port = 4532;
+                }
+                continue;
+            }
+            if (tab == 4 && f == 5) { draft.rig.notify = !draft.rig.notify; continue; }
 
             std::string val;
             if (tab == 0) {
@@ -2191,6 +2419,10 @@ void NcursesUI::modal_settings() {
                 else if (f == 3) val = draft.chat.alias.valid() ? draft.chat.alias.str() : "";
                 else if (f == 4) val = draft.chat.default_topic;
                 else if (f == 5) val = draft.chat.welcome;
+            } else if (tab == 4) {
+                if (f == 2) val = draft.rig.host;
+                else if (f == 3) val = std::to_string(draft.rig.port);
+                else if (f == 4) val = std::to_string(draft.rig.poll_interval_sec);
             }
 
             if (!prompt_edit(std::string(tab_field_label(tab, f)) + ": ", val)) continue;
@@ -2250,6 +2482,22 @@ void NcursesUI::modal_settings() {
                     if (!val.empty()) draft.chat.default_topic = val;
                 } else if (f == 5) {
                     draft.chat.welcome = val;
+                }
+            } else if (tab == 4) {
+                if (f == 2) {
+                    if (!val.empty()) draft.rig.host = val;
+                } else if (f == 3) {
+                    try {
+                        int pv = std::stoi(val);
+                        if (pv < 1 || pv > 65535) feedback = "Port must be 1..65535.";
+                        else draft.rig.port = static_cast<uint16_t>(pv);
+                    } catch (...) { feedback = "Invalid port number."; }
+                } else if (f == 4) {
+                    try {
+                        int iv = std::stoi(val);
+                        if (iv < 0 || iv > 3600) feedback = "Interval must be 0..3600.";
+                        else draft.rig.poll_interval_sec = static_cast<uint32_t>(iv);
+                    } catch (...) { feedback = "Invalid interval."; }
                 }
             }
         }

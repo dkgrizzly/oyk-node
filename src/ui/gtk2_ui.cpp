@@ -1060,6 +1060,299 @@ void on_approve_files_clicked(GtkWidget*, gpointer user_data) {
     gtk_widget_destroy(dlg);
 }
 
+void on_rig_control_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    auto& rig = st->engine->rig_controller();
+    auto rc = rig.config();
+
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        "Radio / Rig Control",
+        GTK_WINDOW(st->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 500, 340);
+
+    GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
+    gtk_container_set_border_width(GTK_CONTAINER(vbox), 8);
+
+    std::string ep_str = "Protocol: " + radio::rig_protocol_to_string(rc.protocol) +
+                         "   |   Endpoint: " + rc.host + ":" + std::to_string(rc.port);
+    GtkWidget* lbl_hdr = gtk_label_new(ep_str.c_str());
+    gtk_misc_set_alignment(GTK_MISC(lbl_hdr), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(vbox), lbl_hdr, FALSE, FALSE, 4);
+
+    GtkWidget* lbl_state = gtk_label_new("Querying radio...");
+    gtk_misc_set_alignment(GTK_MISC(lbl_state), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(vbox), lbl_state, FALSE, FALSE, 4);
+
+    GtkWidget* lbl_fb = gtk_label_new("");
+    gtk_misc_set_alignment(GTK_MISC(lbl_fb), 0.0f, 0.5f);
+
+    struct RigDlgCtx {
+        GtkAppState* app = nullptr;
+        GtkWidget* lbl_state = nullptr;
+        GtkWidget* lbl_fb = nullptr;
+        GtkWidget* e_freq = nullptr;
+        GtkWidget* e_mode = nullptr;
+        GtkWidget* e_pb = nullptr;
+        GtkWidget* e_vfo = nullptr;
+        GtkWidget* sp_zone = nullptr;
+        GtkWidget* sp_pos = nullptr;
+    } rctx;
+    rctx.app = st;
+    rctx.lbl_state = lbl_state;
+    rctx.lbl_fb = lbl_fb;
+
+    auto update_view = +[](RigDlgCtx* c) {
+        auto& rg = c->app->engine->rig_controller();
+        auto rcfg = rg.config();
+        auto rs = rg.status();
+        std::ostringstream oss;
+        if (!rcfg.enabled || rcfg.protocol == radio::RigProtocol::None) {
+            oss << "Rig control is disabled. Configure it in Node -> Settings -> Rig.";
+        } else if (rcfg.protocol == radio::RigProtocol::RadioFoundry) {
+            oss << "Status: " << (rs.reachable ? "ONLINE" : "NO REPLY")
+                << "\nZone: " << rs.zone << "   Pos: " << rs.pos
+                << "   Name: " << (rs.channel_name.empty() ? "(unknown)" : rs.channel_name)
+                << "\nFreq: " << rs.freq_hz << " Hz";
+            if (rs.is_dmr) {
+                oss << "   |   DMR CC:" << rs.color_code
+                    << " TS:" << rs.timeslot << " TG:" << rs.talkgroup;
+            }
+            oss << "\nNotifications: " << (rs.notifications_active ? "ACTIVE" : "OFF");
+            if (!rs.raw_status.empty()) oss << "\nRaw: " << rs.raw_status;
+            if (c->sp_zone && rs.zone >= 0) gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->sp_zone), rs.zone);
+            if (c->sp_pos && rs.pos >= 0) gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->sp_pos), rs.pos);
+        } else {
+            oss << "Status: " << (rs.reachable ? "ONLINE" : "NO REPLY")
+                << "\nFrequency: " << rs.freq_hz << " Hz"
+                << "\nMode: " << (rs.mode.empty() ? "(unknown)" : rs.mode)
+                << " (" << rs.passband_hz << " Hz)"
+                << "   |   PTT: " << (rs.ptt > 0 ? "TX" : (rs.ptt == 0 ? "RX" : "UNKNOWN"))
+                << "   |   VFO: " << (rs.vfo.empty() ? "(unknown)" : rs.vfo);
+            if (c->e_freq && rs.freq_hz > 0) gtk_entry_set_text(GTK_ENTRY(c->e_freq), std::to_string(rs.freq_hz).c_str());
+            if (c->e_mode && !rs.mode.empty()) gtk_entry_set_text(GTK_ENTRY(c->e_mode), rs.mode.c_str());
+            if (c->e_pb) gtk_entry_set_text(GTK_ENTRY(c->e_pb), std::to_string(rs.passband_hz).c_str());
+            if (c->e_vfo && !rs.vfo.empty()) gtk_entry_set_text(GTK_ENTRY(c->e_vfo), rs.vfo.c_str());
+        }
+        gtk_label_set_text(GTK_LABEL(c->lbl_state), oss.str().c_str());
+    };
+
+    if (rc.protocol == radio::RigProtocol::RadioFoundry) {
+        GtkWidget* tbl = gtk_table_new(3, 4, FALSE);
+        gtk_table_set_row_spacings(GTK_TABLE(tbl), 6);
+        gtk_table_set_col_spacings(GTK_TABLE(tbl), 6);
+
+        rctx.sp_zone = gtk_spin_button_new_with_range(0.0, 999.0, 1.0);
+        rctx.sp_pos = gtk_spin_button_new_with_range(0.0, 999.0, 1.0);
+        GtkWidget* btn_sel = gtk_button_new_with_label("Select Zone & Pos");
+        GtkWidget* btn_ch_dn = gtk_button_new_with_label("Channel -1");
+        GtkWidget* btn_ch_up = gtk_button_new_with_label("Channel +1");
+        GtkWidget* btn_z_dn = gtk_button_new_with_label("Zone -1");
+        GtkWidget* btn_z_up = gtk_button_new_with_label("Zone +1");
+        GtkWidget* btn_ref = gtk_button_new_with_label("Query (select)");
+        GtkWidget* btn_stopn = gtk_button_new_with_label("Stop Notify");
+
+        gtk_table_attach_defaults(GTK_TABLE(tbl), gtk_label_new("Zone (0-based):"), 0, 1, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), rctx.sp_zone, 1, 2, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), gtk_label_new("Pos (0-based):"), 2, 3, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), rctx.sp_pos, 3, 4, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_sel, 0, 2, 1, 2);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_ref, 2, 3, 1, 2);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_stopn, 3, 4, 1, 2);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_ch_dn, 0, 1, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_ch_up, 1, 2, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_z_dn, 2, 3, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_z_up, 3, 4, 2, 3);
+        gtk_box_pack_start(GTK_BOX(vbox), tbl, FALSE, FALSE, 8);
+
+        g_signal_connect(btn_sel, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            int z = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->sp_zone));
+            int p = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->sp_pos));
+            std::string err;
+            if (c->app->engine->rig_controller().select_zone_channel(z, p, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Selected zone & channel.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+            auto st2 = c->app->engine->rig_controller().status();
+            (void)st2;
+        }), &rctx);
+        g_signal_connect(btn_ref, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().refresh(err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Refreshed.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_stopn, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().stop_notifications(err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Notifications stopped.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_ch_dn, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().step_channel(-1, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Stepped channel -1.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_ch_up, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().step_channel(1, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Stepped channel +1.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_z_dn, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().step_zone(-1, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Stepped zone -1.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_z_up, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().step_zone(1, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Stepped zone +1.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+
+        for (GtkWidget* b : { btn_sel, btn_ref, btn_stopn, btn_ch_dn, btn_ch_up, btn_z_dn, btn_z_up }) {
+            g_signal_connect_after(b, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+                auto* c = static_cast<RigDlgCtx*>(d);
+                auto& rg = c->app->engine->rig_controller();
+                auto rs = rg.status();
+                std::ostringstream oss;
+                oss << "Status: " << (rs.reachable ? "ONLINE" : "NO REPLY")
+                    << "\nZone: " << rs.zone << "   Pos: " << rs.pos
+                    << "   Name: " << (rs.channel_name.empty() ? "(unknown)" : rs.channel_name)
+                    << "\nFreq: " << rs.freq_hz << " Hz";
+                if (rs.is_dmr) {
+                    oss << "   |   DMR CC:" << rs.color_code
+                        << " TS:" << rs.timeslot << " TG:" << rs.talkgroup;
+                }
+                oss << "\nNotifications: " << (rs.notifications_active ? "ACTIVE" : "OFF");
+                if (!rs.raw_status.empty()) oss << "\nRaw: " << rs.raw_status;
+                gtk_label_set_text(GTK_LABEL(c->lbl_state), oss.str().c_str());
+                if (rs.zone >= 0) gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->sp_zone), rs.zone);
+                if (rs.pos >= 0) gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->sp_pos), rs.pos);
+            }), &rctx);
+        }
+    } else {
+        GtkWidget* tbl = gtk_table_new(4, 3, FALSE);
+        gtk_table_set_row_spacings(GTK_TABLE(tbl), 6);
+        gtk_table_set_col_spacings(GTK_TABLE(tbl), 6);
+
+        rctx.e_freq = gtk_entry_new();
+        gtk_entry_set_text(GTK_ENTRY(rctx.e_freq), "145050000");
+        rctx.e_mode = gtk_entry_new();
+        gtk_entry_set_text(GTK_ENTRY(rctx.e_mode), "FM");
+        rctx.e_pb = gtk_entry_new();
+        gtk_entry_set_text(GTK_ENTRY(rctx.e_pb), "0");
+        rctx.e_vfo = gtk_entry_new();
+        gtk_entry_set_text(GTK_ENTRY(rctx.e_vfo), "VFOA");
+
+        GtkWidget* btn_f = gtk_button_new_with_label("Set Freq");
+        GtkWidget* btn_m = gtk_button_new_with_label("Set Mode");
+        GtkWidget* btn_v = gtk_button_new_with_label("Set VFO");
+        GtkWidget* btn_ptt = gtk_button_new_with_label("Toggle PTT");
+        GtkWidget* btn_ref = gtk_button_new_with_label("Refresh");
+
+        gtk_table_attach_defaults(GTK_TABLE(tbl), gtk_label_new("Freq (Hz):"), 0, 1, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), rctx.e_freq, 1, 2, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_f, 2, 3, 0, 1);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), gtk_label_new("Mode / PB:"), 0, 1, 1, 2);
+        GtkWidget* mbox = gtk_hbox_new(FALSE, 4);
+        gtk_box_pack_start(GTK_BOX(mbox), rctx.e_mode, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(mbox), rctx.e_pb, TRUE, TRUE, 0);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), mbox, 1, 2, 1, 2);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_m, 2, 3, 1, 2);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), gtk_label_new("VFO:"), 0, 1, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), rctx.e_vfo, 1, 2, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_v, 2, 3, 2, 3);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_ptt, 0, 2, 3, 4);
+        gtk_table_attach_defaults(GTK_TABLE(tbl), btn_ref, 2, 3, 3, 4);
+        gtk_box_pack_start(GTK_BOX(vbox), tbl, FALSE, FALSE, 8);
+
+        g_signal_connect(btn_f, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            try {
+                uint64_t hz = std::stoull(gtk_entry_get_text(GTK_ENTRY(c->e_freq)));
+                if (c->app->engine->rig_controller().set_frequency(hz, err))
+                    gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Frequency updated.");
+                else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+            } catch (...) { gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Invalid frequency."); }
+        }), &rctx);
+        g_signal_connect(btn_m, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            try {
+                std::string m = gtk_entry_get_text(GTK_ENTRY(c->e_mode));
+                int pb = std::stoi(gtk_entry_get_text(GTK_ENTRY(c->e_pb)));
+                if (c->app->engine->rig_controller().set_mode(m, pb, err))
+                    gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Mode updated.");
+                else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+            } catch (...) { gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Invalid passband."); }
+        }), &rctx);
+        g_signal_connect(btn_v, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            std::string v = gtk_entry_get_text(GTK_ENTRY(c->e_vfo));
+            if (c->app->engine->rig_controller().set_vfo(v, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "VFO updated.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_ptt, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            auto rs = c->app->engine->rig_controller().status();
+            std::string err;
+            bool next_tx = !(rs.ptt > 0);
+            if (c->app->engine->rig_controller().set_ptt(next_tx, err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), next_tx ? "PTT set to TX." : "PTT set to RX.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+        g_signal_connect(btn_ref, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+            auto* c = static_cast<RigDlgCtx*>(d);
+            std::string err;
+            if (c->app->engine->rig_controller().refresh(err))
+                gtk_label_set_text(GTK_LABEL(c->lbl_fb), "Refreshed.");
+            else gtk_label_set_text(GTK_LABEL(c->lbl_fb), err.c_str());
+        }), &rctx);
+
+        for (GtkWidget* b : { btn_f, btn_m, btn_v, btn_ptt, btn_ref }) {
+            g_signal_connect_after(b, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer d) {
+                auto* c = static_cast<RigDlgCtx*>(d);
+                auto rs = c->app->engine->rig_controller().status();
+                std::ostringstream oss;
+                oss << "Status: " << (rs.reachable ? "ONLINE" : "NO REPLY")
+                    << "\nFrequency: " << rs.freq_hz << " Hz"
+                    << "\nMode: " << (rs.mode.empty() ? "(unknown)" : rs.mode)
+                    << " (" << rs.passband_hz << " Hz)"
+                    << "   |   PTT: " << (rs.ptt > 0 ? "TX" : (rs.ptt == 0 ? "RX" : "UNKNOWN"))
+                    << "   |   VFO: " << (rs.vfo.empty() ? "(unknown)" : rs.vfo);
+                gtk_label_set_text(GTK_LABEL(c->lbl_state), oss.str().c_str());
+            }), &rctx);
+        }
+    }
+
+    gtk_box_pack_start(GTK_BOX(vbox), lbl_fb, FALSE, FALSE, 4);
+
+    if (rc.enabled && rc.protocol != radio::RigProtocol::None) {
+        std::string err;
+        if (!rig.refresh(err)) gtk_label_set_text(GTK_LABEL(lbl_fb), err.c_str());
+    }
+    update_view(&rctx);
+
+    gtk_widget_show_all(dlg);
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+}
+
 std::string gtk_iface_summary(const radio::RadioInterfaceConfig& ic) {
     auto gp = [&](const char* k) -> std::string {
         auto it = ic.params.find(k);
@@ -1388,6 +1681,36 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(if_vbox), if_btns, FALSE, FALSE, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), if_vbox, gtk_label_new("Interfaces"));
 
+    // Tab 5: Rig Control
+    GtkWidget* t_rig = make_table(6);
+    GtkWidget* chk_rig = gtk_check_button_new_with_label("Enable Radio / Rig Control");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_rig), draft.rig.enabled ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_rig), chk_rig, 0, 2, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* cb_rig_proto = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_rig_proto), "rigctl");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_rig_proto), "radiofoundry");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_rig_proto),
+                             draft.rig.protocol == radio::RigProtocol::RadioFoundry ? 1 : 0);
+    attach_row(t_rig, 1, "Protocol:", cb_rig_proto);
+
+    GtkWidget* e_rig_host = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_rig_host), draft.rig.host.c_str());
+    attach_row(t_rig, 2, "Host / Radio IP:", e_rig_host);
+
+    GtkWidget* e_rig_port = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_rig_port), std::to_string(draft.rig.port).c_str());
+    attach_row(t_rig, 3, "Port (4532 / 4191):", e_rig_port);
+
+    GtkWidget* sp_rig_poll = gtk_spin_button_new_with_range(0.0, 3600.0, 5.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp_rig_poll), static_cast<gdouble>(draft.rig.poll_interval_sec));
+    attach_row(t_rig, 4, "Poll / Keepalive (sec):", sp_rig_poll);
+
+    GtkWidget* chk_rig_notify = gtk_check_button_new_with_label("Receive RadioFoundry UDP 4191 change notifications");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_rig_notify), draft.rig.notify ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_rig), chk_rig_notify, 0, 2, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_rig, gtk_label_new("Rig"));
+
     GtkSettingsCtx sctx;
     sctx.dlg = dlg;
     sctx.if_store = if_store;
@@ -1483,6 +1806,26 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
         std::string ct_s = gtk_entry_get_text(GTK_ENTRY(e_chat_topic));
         if (!ct_s.empty()) next.chat.default_topic = ct_s;
         next.chat.welcome = gtk_entry_get_text(GTK_ENTRY(e_chat_welcome));
+
+        next.rig.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_rig)) != FALSE;
+        next.rig.protocol = (gtk_combo_box_get_active(GTK_COMBO_BOX(cb_rig_proto)) == 1)
+                                ? radio::RigProtocol::RadioFoundry
+                                : radio::RigProtocol::Rigctl;
+        std::string rh_s = gtk_entry_get_text(GTK_ENTRY(e_rig_host));
+        if (!rh_s.empty()) next.rig.host = rh_s;
+        try {
+            int rp = std::stoi(gtk_entry_get_text(GTK_ENTRY(e_rig_port)));
+            if (rp < 1 || rp > 65535) {
+                show_err("Rig port must be 1..65535.");
+                continue;
+            }
+            next.rig.port = static_cast<uint16_t>(rp);
+        } catch (...) {
+            next.rig.port = radio::rig_default_port(next.rig.protocol);
+        }
+        next.rig.poll_interval_sec = static_cast<uint32_t>(
+            gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(sp_rig_poll)));
+        next.rig.notify = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_rig_notify)) != FALSE;
 
         auto res = st->engine->apply_config(next, true);
         if (!res.applied) {
@@ -1592,6 +1935,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
     GtkWidget* mi_lterm = gtk_menu_item_new_with_mnemonic("_Local Terminal...");
     GtkWidget* mi_files = gtk_menu_item_new_with_mnemonic("Manage _Files Area...");
+    GtkWidget* mi_rig   = gtk_menu_item_new_with_mnemonic("_Radio Control...");
     GtkWidget* mi_sett  = gtk_menu_item_new_with_mnemonic("_Settings...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
@@ -1602,6 +1946,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
     g_signal_connect(mi_lterm, "activate", G_CALLBACK(on_local_terminal_clicked), &st);
     g_signal_connect(mi_files, "activate", G_CALLBACK(on_approve_files_clicked), &st);
+    g_signal_connect(mi_rig,   "activate", G_CALLBACK(on_rig_control_clicked), &st);
     g_signal_connect(mi_sett,  "activate", G_CALLBACK(on_settings_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
@@ -1612,6 +1957,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_lterm);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_files);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_rig);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sett);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);

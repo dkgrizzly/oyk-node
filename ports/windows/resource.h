@@ -10,6 +10,7 @@
 #define IDM_DENY_INCOMING   202
 #define IDM_TERMINAL        203
 #define IDM_APPROVE_FILES   207
+#define IDM_RIG_CONTROL     209
 #define IDM_SETTINGS        208
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
@@ -73,6 +74,7 @@
 #define IDC_SET_TAB_BBS     452
 #define IDC_SET_TAB_CHAT    453
 #define IDC_SET_TAB_IF      454
+#define IDC_SET_TAB_RIG     494
 #define IDC_SET_TAB_BOX     455
 
 #define IDC_SET_L_CALL      456
@@ -124,5 +126,35 @@
 #define IDC_AIF_HOST        504
 #define IDC_AIF_PORT        505
 #define IDC_AIF_PEER        506
+
+/* Settings Tab 5: Rig Control */
+#define IDC_SET_RIG_EN      520
+#define IDC_SET_L_RPROTO    521
+#define IDC_SET_RIG_PROTO   522
+#define IDC_SET_L_RHOST     523
+#define IDC_SET_RIG_HOST    524
+#define IDC_SET_L_RPORT     525
+#define IDC_SET_RIG_PORT    526
+#define IDC_SET_L_RPOLL     527
+#define IDC_SET_RIG_POLL    528
+#define IDC_SET_RIG_NOTIFY  529
+
+/* Radio / Rig Control Dialog */
+#define IDD_RIG_CONTROL     540
+#define IDC_RIG_HEADER      541
+#define IDC_RIG_STATE       542
+#define IDC_RIG_L_A         543
+#define IDC_RIG_EDIT_A      544
+#define IDC_RIG_L_B         545
+#define IDC_RIG_EDIT_B      546
+#define IDC_RIG_L_C         547
+#define IDC_RIG_EDIT_C      548
+#define IDC_RIG_BTN_1       549
+#define IDC_RIG_BTN_2       550
+#define IDC_RIG_BTN_3       551
+#define IDC_RIG_BTN_4       552
+#define IDC_RIG_BTN_5       553
+#define IDC_RIG_BTN_REF     554
+#define IDC_RIG_STATUS      555
 
 #endif /* OYK_WIN_RESOURCE_H */

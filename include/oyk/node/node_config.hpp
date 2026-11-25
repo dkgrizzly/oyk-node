@@ -7,6 +7,7 @@
 #include "oyk/core/line_ending.hpp"
 #include "oyk/node/logger.hpp"
 #include "oyk/radio/radio_interface.hpp"
+#include "oyk/radio/rig_control.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -51,6 +52,7 @@ struct NodeConfig {
     LogConfig logging;
     BbsConfig bbs;
     ChatConfig chat;
+    radio::RigConfig rig;
     std::string banlist_path; // Optional override from banlist= in [node]
 
     bool accept_incoming_default = true;

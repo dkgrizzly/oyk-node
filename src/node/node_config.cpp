@@ -243,6 +243,9 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (lower_sec == "chat") {
                 current_section = "chat";
                 current_iface = nullptr;
+            } else if (lower_sec == "rig" || lower_sec == "radio") {
+                current_section = "rig";
+                current_iface = nullptr;
             } else if (lower_sec.rfind("interface", 0) == 0) {
                 std::string rest = trim(sec.substr(9));
                 // Allow "[interface axudp0]" or "[interface:axudp0]"
@@ -436,6 +439,21 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "welcome") {
                 cfg.chat.welcome = val;
             }
+        } else if (current_section == "rig") {
+            if (key == "enabled") {
+                cfg.rig.enabled = parse_bool(val, false);
+            } else if (key == "protocol" || key == "type") {
+                cfg.rig.protocol = radio::rig_protocol_from_string(val);
+            } else if (key == "host" || key == "address") {
+                if (!val.empty()) cfg.rig.host = val;
+            } else if (key == "port") {
+                int pv = std::clamp(std::stoi(val), 0, 65535);
+                cfg.rig.port = static_cast<uint16_t>(pv);
+            } else if (key == "poll_interval_sec" || key == "keepalive_sec") {
+                cfg.rig.poll_interval_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+            } else if (key == "notify") {
+                cfg.rig.notify = parse_bool(val, true);
+            }
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
@@ -449,6 +467,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 current_iface->params[key] = val;
             }
         }
+    }
+
+    if (cfg.rig.port == 0 && cfg.rig.protocol != radio::RigProtocol::None) {
+        cfg.rig.port = radio::rig_default_port(cfg.rig.protocol);
     }
 
     if (cfg.interfaces.empty()) {
@@ -528,6 +550,15 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     }
     lines.push_back("topic = " + chat.default_topic);
     lines.push_back("welcome = " + chat.welcome);
+
+    lines.push_back("");
+    lines.push_back("[rig]");
+    lines.push_back("enabled = " + std::string(rig.enabled ? "true" : "false"));
+    lines.push_back("protocol = " + radio::rig_protocol_to_string(rig.protocol));
+    lines.push_back("host = " + (rig.host.empty() ? std::string("127.0.0.1") : rig.host));
+    lines.push_back("port = " + std::to_string(rig.port ? rig.port : radio::rig_default_port(rig.protocol)));
+    lines.push_back("poll_interval_sec = " + std::to_string(rig.poll_interval_sec));
+    lines.push_back("notify = " + std::string(rig.notify ? "true" : "false"));
 
     for (const auto& iface : interfaces) {
         lines.push_back("");
