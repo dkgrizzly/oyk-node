@@ -44,6 +44,8 @@ private:
     void modal_approve_incoming_files();
     void modal_rig_control();
     void modal_settings();
+    bool modal_add_interface_wizard(const std::vector<radio::RadioInterfaceConfig>& existing,
+                                    radio::RadioInterfaceConfig& out_iface);
     bool modal_confirm_exit();
 
     void draw_box(int y, int x, int h, int w, const std::string& title);

@@ -170,4 +170,18 @@
 #define IDC_SET_PRN_LVL     568
 #define IDC_SET_PRN_COND    569
 
+/* Add Interface Wizard Controls */
+#define IDC_AIF_PROMPT      570
+#define IDC_AIF_PROG        571
+#define IDC_AIF_DRV_LIST    572
+#define IDC_AIF_L_ID        573
+#define IDC_AIF_L_DESC      574
+#define IDC_AIF_L_HOST      575
+#define IDC_AIF_L_PORT      576
+#define IDC_AIF_L_PEER      577
+#define IDC_AIF_SUMMARY     578
+#define IDC_AIF_ERR         579
+#define IDC_AIF_BACK        580
+#define IDC_AIF_NEXT        581
+
 #endif /* OYK_WIN_RESOURCE_H */

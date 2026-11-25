@@ -2868,6 +2868,20 @@ void test_direct_printer_logging_pty_and_config() {
     std::cout << "[PASS] test_direct_printer_logging_pty_and_config\n";
 }
 
+void test_derive_default_iface_id_node() {
+    std::vector<radio::RadioInterfaceConfig> existing;
+    assert(node::derive_default_iface_id(existing, "axudp") == "axudp0");
+    radio::RadioInterfaceConfig ic;
+    ic.id = "AXUDP0";
+    existing.push_back(ic);
+    assert(node::derive_default_iface_id(existing, "axudp") == "axudp1");
+    assert(node::derive_default_iface_id(existing, "axip") == "axip0");
+    assert(node::derive_default_iface_id(existing, "kiss-serial") == "kiss0");
+    assert(node::derive_default_iface_id(existing, "kiss-tcp") == "kisstcp0");
+    assert(node::derive_default_iface_id(existing, "telnet") == "telnet0");
+    std::cout << "[PASS] test_derive_default_iface_id_node\n";
+}
+
 } // namespace
 
 int main() {
@@ -2893,6 +2907,7 @@ int main() {
     test_files_dots_case_insensitivity_and_approved_removal();
     test_rig_control_rigctl_and_radiofoundry();
     test_direct_printer_logging_pty_and_config();
+    test_derive_default_iface_id_node();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

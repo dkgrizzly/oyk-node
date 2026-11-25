@@ -241,7 +241,7 @@ void loop() {
     bool cdc0_now = static_cast<bool>(Serial);
     if (cdc0_now && !g_cdc0_connected) {
         g_cdc0_connected = true;
-        g_console->render();
+        g_console->on_usb_connect();
     } else if (!cdc0_now) {
         g_cdc0_connected = false;
     }

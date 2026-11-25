@@ -10,6 +10,7 @@
 #include "oyk_rig.hpp"
 #include "oyk_printer.hpp"
 #include "../ports/dos/dos_usb.hpp"
+#include "../ports/dos/dos_video.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -969,8 +970,8 @@ static void test_portable_rig_and_dos_usb() {
     fnode->set_storage_is_flash(1);
     assert(fnode->file_logging_allowed() == 1);
     fcfg2->allow_flash_logging = 0;
-    OykConfigApplyResult far;
-    fnode->apply_config(fcfg2, 0, &far);
+    OykConfigApplyResult f_res;
+    fnode->apply_config(fcfg2, 0, &f_res);
     assert(fnode->file_logging_allowed() == 0);
     fnode->set_storage_is_flash(0);
     assert(fnode->file_logging_allowed() == 1);
@@ -1065,6 +1066,83 @@ static void test_portable_printer() {
     printf("[PASS] test_portable_printer\n");
 }
 
+static void test_dos_video_dirty_diff_and_attrs() {
+    oyk_u16* sim = new oyk_u16[OYK_DOS_VID_CELLS];
+    memset(sim, 0, sizeof(oyk_u16) * OYK_DOS_VID_CELLS);
+    OykDosVideo* v = new OykDosVideo;
+
+    /* Monochrome MDA mode uses reverse 0x70 without bit-7 blink */
+    dos_vid_init_sim(v, 0, sim);
+    assert(v->vseg == 0xB000U && v->is_color == 0);
+    assert(dos_vid_list_hdr_attr(v) == 0x70U);
+
+    /* Color CGA/VGA mode uses dark-grey background (0x80) + bright white (0x0F) = 0x8F */
+    dos_vid_init_sim(v, 1, sim);
+    assert(v->vseg == 0xB800U && v->is_color == 1);
+    assert(dos_vid_list_hdr_attr(v) == 0x8FU);
+
+    /* First flush paints all 2000 cells; repeating without edits writes 0 cells */
+    oyk_u32 w1 = dos_vid_flush(v);
+    assert(w1 == static_cast<oyk_u32>(OYK_DOS_VID_CELLS));
+    assert(dos_vid_flush(v) == 0UL);
+
+    /* Single-line box drawing & divider glyphs + minimal dirty diff */
+    dos_vid_box(v, 2, 10, 4, 10, 0x03U, 0x07U, 0);
+    dos_vid_hdiv(v, 4, 10, 10, 0x03U);
+    dos_vid_flush(v);
+    assert((sim[2 * 80 + 10] & 0xFFU) == OYK_BOX_TL);
+    assert((sim[2 * 80 + 19] & 0xFFU) == OYK_BOX_TR);
+    assert((sim[3 * 80 + 10] & 0xFFU) == OYK_BOX_V);
+    assert((sim[4 * 80 + 10] & 0xFFU) == OYK_BOX_LT);
+    assert((sim[4 * 80 + 15] & 0xFFU) == OYK_BOX_H);
+    assert((sim[4 * 80 + 19] & 0xFFU) == OYK_BOX_RT);
+    assert((sim[5 * 80 + 10] & 0xFFU) == OYK_BOX_BL);
+    assert((sim[5 * 80 + 19] & 0xFFU) == OYK_BOX_BR);
+
+    /* Changing 3 cells in one row flushes strictly 3 cells */
+    dos_vid_puts(v, 10, 5, 0x0FU, "ABC", 3);
+    assert(dos_vid_flush_row(v, 10) == 3UL);
+    assert(dos_vid_flush(v) == 0UL);
+
+    delete v;
+    delete[] sim;
+    printf("[PASS] test_dos_video_dirty_diff_and_attrs\n");
+}
+
+static void test_derive_default_iface_id() {
+    OykConfig* cfg = new OykConfig;
+    oyk_config_init_default(cfg);
+    cfg->iface_count = 0;
+
+    char id[24];
+    oyk_derive_default_iface_id(cfg, "axudp", id, sizeof(id));
+    assert(strcmp(id, "axudp0") == 0);
+    strcpy(cfg->ifaces[cfg->iface_count++].id, "AXUDP0");
+    oyk_derive_default_iface_id(cfg, "axudp", id, sizeof(id));
+    assert(strcmp(id, "axudp1") == 0);
+
+    oyk_derive_default_iface_id(cfg, "axip", id, sizeof(id));
+    assert(strcmp(id, "axip0") == 0);
+    oyk_derive_default_iface_id(cfg, "kiss-serial", id, sizeof(id));
+    assert(strcmp(id, "kiss0") == 0);
+    oyk_derive_default_iface_id(cfg, "kiss-tcp", id, sizeof(id));
+    assert(strcmp(id, "kisstcp0") == 0);
+    oyk_derive_default_iface_id(cfg, "telnet", id, sizeof(id));
+    assert(strcmp(id, "telnet0") == 0);
+    oyk_derive_default_iface_id(cfg, "ppp", id, sizeof(id));
+    assert(strcmp(id, "ppp0") == 0);
+    oyk_derive_default_iface_id(cfg, "usb-cdc-net", id, sizeof(id));
+    assert(strcmp(id, "usbnet0") == 0);
+    strcpy(cfg->ifaces[cfg->iface_count++].id, "usbnet0");
+    oyk_derive_default_iface_id(cfg, "usb-cdc-net", id, sizeof(id));
+    assert(strcmp(id, "usbnet1") == 0);
+    oyk_derive_default_iface_id(cfg, "usb-cdc-serial", id, sizeof(id));
+    assert(strcmp(id, "usbser0") == 0);
+
+    delete cfg;
+    printf("[PASS] test_derive_default_iface_id\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1073,6 +1151,8 @@ int oyk_run_portable_tests() {
     test_portable_settings_reconfig_and_readonly();
     test_portable_rig_and_dos_usb();
     test_portable_printer();
+    test_dos_video_dirty_diff_and_attrs();
+    test_derive_default_iface_id();
     return 0;
 }
 

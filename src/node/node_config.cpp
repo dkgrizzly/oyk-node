@@ -627,4 +627,34 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     return core::write_lines_binary(target, lines, line_ending);
 }
 
+std::string derive_default_iface_id(const std::vector<radio::RadioInterfaceConfig>& existing,
+                                    const std::string& iface_type) {
+    const std::string lt = to_lower(trim(iface_type));
+    std::string prefix = "iface";
+    if (lt == "axudp") prefix = "axudp";
+    else if (lt == "axip") prefix = "axip";
+    else if (lt == "kiss-serial") prefix = "kiss";
+    else if (lt == "kiss-tcp") prefix = "kisstcp";
+    else if (lt == "telnet") prefix = "telnet";
+    else if (lt == "ppp") prefix = "ppp";
+    else if (lt == "usb-cdc-net") prefix = "usbnet";
+    else if (lt == "usb-cdc-serial") prefix = "usbser";
+
+    for (int n = 0; n < 1000; ++n) {
+        const std::string cand = prefix + std::to_string(n);
+        const std::string cand_l = to_lower(cand);
+        bool used = false;
+        for (const auto& ic : existing) {
+            if (to_lower(ic.id) == cand_l) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return cand;
+        }
+    }
+    return prefix;
+}
+
 } // namespace oyk::node

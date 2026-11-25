@@ -104,4 +104,8 @@ struct NodeConfig {
     bool save_to_file(const std::string& path = "") const;
 };
 
+// Derives the next unused interface ID (e.g. "axudp1", "kiss0") from a driver type.
+std::string derive_default_iface_id(const std::vector<radio::RadioInterfaceConfig>& existing,
+                                    const std::string& iface_type);
+
 } // namespace oyk::node
