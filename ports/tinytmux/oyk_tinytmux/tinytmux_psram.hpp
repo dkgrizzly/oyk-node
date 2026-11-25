@@ -14,7 +14,8 @@
  * SRAM if 0 chips are populated or if any chip fails the startup self-test.
  */
 
-#include "../compat/oyk_portable.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
 
 #define TINYTMUX_PSRAM_BASE       0x70000000UL
 #define TINYTMUX_PSRAM_CHIP_BYTES (8UL * 1024UL * 1024UL) /* 8 MB per chip */

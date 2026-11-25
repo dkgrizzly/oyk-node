@@ -12,12 +12,13 @@
 
 #include "../ports/compat/oyk_portable.hpp"
 #include "../ports/compat/oyk_rig.hpp"
-#include "../ports/tinytmux/board_tinytmux.hpp"
-#include "../ports/tinytmux/lwip_net_bridge.hpp"
-#include "../ports/tinytmux/oyk_ppp.hpp"
-#include "../ports/tinytmux/tinytmux_console.hpp"
-#include "../ports/tinytmux/tinytmux_psram.hpp"
-#include "../ports/tinytmux/tinytmux_usb_host.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/board_tinytmux.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/lwip_net_bridge.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/oyk_ppp.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/tinytmux_console.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/tinytmux_psram.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/tinytmux_fs.hpp"
+#include "../ports/tinytmux/oyk_tinytmux/tinytmux_usb_host.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -704,8 +705,10 @@ static void test_vt100_console_full_parity() {
     ConsoleCap* cap = new ConsoleCap();
     cap->len = 0;
     cap->buf[0] = '\0';
+    oyk_u32 t = 1000UL;
     con->init(node, console_tx_cap, cap);
     con->set_net_bridge(bridge);
+    con->set_now_ms(t);
     con->render();
     assert(strstr(cap->buf, "KR4OYK-7") != NULL);
     assert(strstr(cap->buf, "IN:ALLOW") != NULL);
@@ -720,6 +723,7 @@ static void test_vt100_console_full_parity() {
     assert(strstr(cap->buf, "PSRAM DIAGNOSTICS") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* Open Radio Control (R), poll Hamlib (r), close (Esc) */
@@ -729,6 +733,7 @@ static void test_vt100_console_full_parity() {
     assert(strstr(cap->buf, "RADIO CONTROL") != NULL);
     assert(bridge->rig_status()->freq_hz == 145050000UL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* Open Files Area (F), toggle between 1:Pending and 2:Approved tabs, close (Esc) */
@@ -738,6 +743,59 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->files_tab() == 1);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(t += 50UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* Verify split-packet CSI, minicom SS3, modified CSI, Home/End, Shift-Tab, unknown CSI, and double-Esc in Settings */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->settings_tab() == 0);
+    assert(con->current_settings_sel() == 0);
+
+    /* Split-byte CSI Down (ESC, '[', 'B' across 3 USB-CDC reads) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("["), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("B"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->current_settings_sel() == 1);
+
+    /* Split-byte CSI Up (ESC, '[', 'A') */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("["), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("A"), 1);
+    assert(con->current_settings_sel() == 0);
+
+    /* Split-byte and single-buffer minicom SS3 Down/Up (ESC O B / ESC O A) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("O"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("B"), 1);
+    assert(con->current_settings_sel() == 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOB"), 3);
+    assert(con->current_settings_sel() == 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOA"), 3);
+    assert(con->current_settings_sel() == 1);
+
+    /* Modified arrow, End, Home, SS3 Right/Left, Shift-Tab, and unknown CSI swallow */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[1;2B"), 6);
+    assert(con->current_settings_sel() == 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
+    assert(con->current_settings_sel() == 4);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H"), 3);
+    assert(con->current_settings_sel() == 0);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOC"), 3);
+    assert(con->settings_tab() == 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOD"), 3);
+    assert(con->settings_tab() == 0);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[Z"), 3);
+    assert(con->settings_tab() == 4);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
+    assert(con->settings_tab() == 0);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[99~"), 5);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+
+    /* Double-Esc cancels immediately without waiting for timeout */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b\x1b"), 2);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* Open 5-tab Settings (S), edit callsign -> K7TMP-7, switch to 4:Interfaces, add usb-cdc-net, save via F2 */
@@ -766,6 +824,7 @@ static void test_vt100_console_full_parity() {
     cap->len = 0; cap->buf[0] = '\0';
     const char* seq = "\t/bbs\r\x1b";
     con->feed_input(reinterpret_cast<const oyk_u8*>(seq), strlen(seq));
+    con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
     assert(con->has_active_terminal() == 1);
     assert(strstr(cap->buf, "Tab:Term(ACTIVE)") != NULL);
@@ -782,9 +841,26 @@ static void test_vt100_console_full_parity() {
     printf("[PASS] test_vt100_console_full_parity\n");
 }
 
+static void test_fs_hooks() {
+    assert(tinytmux_fs_is_mounted() == 0);
+    assert(strcmp(tinytmux_fs_status_label(), "UNMOUNTED") == 0);
+    assert(tinytmux_fs_mount() == 1);
+    assert(tinytmux_fs_is_mounted() == 1);
+    assert(strcmp(tinytmux_fs_status_label(), "HOST") == 0);
+    assert(oyk_imxrt_mkdir("/test") == -1);
+    assert(oyk_imxrt_is_regular_file("/test/a.txt") == 0);
+    assert(oyk_imxrt_is_directory("/test") == 0);
+    assert(oyk_imxrt_opendir("/") == NULL);
+    tinytmux_fs_unmount();
+    assert(tinytmux_fs_is_mounted() == 0);
+    assert(strcmp(tinytmux_fs_status_label(), "UNMOUNTED") == 0);
+    printf("[PASS] test_fs_hooks\n");
+}
+
 int main() {
     test_board_pinout_and_mac();
     test_psram_detection_and_self_test();
+    test_fs_hooks();
     test_ppp_and_dual_ethernet_axudp_axip();
     test_usb_host_radiofoundry_cdc_net_and_acm();
     test_vt100_console_full_parity();

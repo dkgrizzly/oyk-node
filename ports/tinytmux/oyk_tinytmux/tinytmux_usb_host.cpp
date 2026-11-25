@@ -7,8 +7,221 @@
 #include <stdio.h>
 #include <cstring>
 
-#if defined(OYK_HAS_TINYUSB) && OYK_HAS_TINYUSB
-#include "tusb.h"
+#if defined(TEENSYDUINO)
+#include <Arduino.h>
+#include <USBHost_t36.h>
+
+class OykUsbCdcNetDriver : public USBDriver {
+public:
+    OykUsbCdcNetDriver(USBHost& /*host*/)
+        : slot_(-1),
+          rxpipe_(NULL),
+          txpipe_(NULL),
+          is_ncm_(false),
+          data_iface_(0),
+          data_alt_(0),
+          ctrl_sent_(false),
+          alt_ready_(false),
+          rx_len_ready_(0),
+          rx_queued_(false),
+          tx_busy_(false),
+          ncm_seq_(1) {
+        init();
+    }
+
+    int bound_slot() const { return slot_; }
+    void set_bound_slot(int s) { slot_ = s; }
+    bool is_ncm() const { return is_ncm_; }
+
+    void poll_driver(TinyTmuxUsbHost* host) {
+        Device_t* dev = *(Device_t* volatile*)&device;
+        if (!dev) return;
+
+        if (!ctrl_sent_ && !alt_ready_) {
+            setup_t setup;
+            mk_setup(setup, 0x01, 0x0B, data_alt_, data_iface_, 0);
+            if (queue_Control_Transfer(dev, &setup, NULL, this)) {
+                ctrl_sent_ = true;
+            }
+        }
+        if (alt_ready_ && rx_len_ready_ > 0 && host && slot_ >= 0) {
+            uint16_t n = rx_len_ready_;
+            if (is_ncm_) {
+                host->on_ncm_rx(slot_, rx_buf_, static_cast<size_t>(n));
+            } else {
+                host->on_eth_rx(slot_, rx_buf_, static_cast<size_t>(n));
+            }
+            rx_len_ready_ = 0;
+        }
+        if (alt_ready_ && !rx_queued_ && rx_len_ready_ == 0 && rxpipe_) {
+            rx_queued_ = queue_Data_Transfer(rxpipe_, rx_buf_, sizeof(rx_buf_), this);
+        }
+    }
+
+    bool send_frame(const oyk_u8* eth_frame, size_t eth_len) {
+        if (!*this || !alt_ready_ || !txpipe_ || tx_busy_ || !eth_frame || eth_len < 14) {
+            return false;
+        }
+        size_t send_len = 0;
+        if (is_ncm_) {
+            send_len = tinytmux_usb_ncm16_wrap(eth_frame, eth_len, ncm_seq_++,
+                                               tx_buf_, sizeof(tx_buf_));
+            if (send_len == 0) return false;
+        } else {
+            if (eth_len > sizeof(tx_buf_)) return false;
+            memcpy(tx_buf_, eth_frame, eth_len);
+            send_len = eth_len;
+        }
+        tx_busy_ = queue_Data_Transfer(txpipe_, tx_buf_, static_cast<uint32_t>(send_len), this);
+        return tx_busy_;
+    }
+
+protected:
+    virtual bool claim(Device_t* dev, int type, const uint8_t* descriptors, uint32_t len) {
+        if (type != 0 && type != 2) return false;
+        if (type == 0 && dev->bDeviceClass == 0xEF) return false;
+
+        const uint8_t* p = descriptors;
+        const uint8_t* end = descriptors + len;
+        bool found_comm = false;
+        bool found_ncm = false;
+        bool in_data_iface = false;
+        uint8_t cur_iface = 0;
+        uint8_t cur_alt = 0;
+        uint8_t chosen_iface = 0;
+        uint8_t chosen_alt = 0;
+        uint8_t rx_ep = 0;
+        uint8_t tx_ep = 0;
+        uint16_t rx_mps = 0;
+        uint16_t tx_mps = 0;
+
+        while (p < end) {
+            uint8_t dlen = p[0];
+            if (dlen < 2 || p + dlen > end) break;
+            uint8_t dtype = p[1];
+            if (dtype == 4 && dlen >= 9) {
+                cur_iface = p[2];
+                cur_alt = p[3];
+                uint8_t cls = p[5];
+                uint8_t sub = p[6];
+                if (cls == 0x02 && (sub == 0x06 || sub == 0x0D)) {
+                    found_comm = true;
+                    found_ncm = (sub == 0x0D);
+                    in_data_iface = false;
+                } else if (found_comm && cls == 0x0A) {
+                    in_data_iface = true;
+                    if (rx_ep == 0 || tx_ep == 0) {
+                        chosen_iface = cur_iface;
+                        chosen_alt = cur_alt;
+                        rx_ep = 0;
+                        tx_ep = 0;
+                    }
+                } else {
+                    in_data_iface = false;
+                }
+            } else if (dtype == 5 && dlen >= 7 && in_data_iface && (p[3] & 0x03U) == 2U) {
+                uint8_t ep = p[2];
+                uint16_t mps = static_cast<uint16_t>(p[4] | (p[5] << 8));
+                if ((ep & 0x80U) != 0U && rx_ep == 0) {
+                    rx_ep = static_cast<uint8_t>(ep & 0x0FU);
+                    rx_mps = mps;
+                } else if ((ep & 0x80U) == 0U && tx_ep == 0) {
+                    tx_ep = static_cast<uint8_t>(ep & 0x0FU);
+                    tx_mps = mps;
+                }
+            }
+            p += dlen;
+        }
+
+        if (!found_comm || rx_ep == 0 || tx_ep == 0) return false;
+        rxpipe_ = new_Pipe(dev, 2, rx_ep, 1, rx_mps ? rx_mps : 512U);
+        txpipe_ = new_Pipe(dev, 2, tx_ep, 0, tx_mps ? tx_mps : 512U);
+        if (!rxpipe_ || !txpipe_) return false;
+
+        is_ncm_ = found_ncm;
+        data_iface_ = chosen_iface;
+        data_alt_ = chosen_alt;
+        alt_ready_ = (data_alt_ == 0);
+        ctrl_sent_ = alt_ready_;
+        rx_len_ready_ = 0;
+        rx_queued_ = false;
+        tx_busy_ = false;
+        rxpipe_->callback_function = rx_cb;
+        txpipe_->callback_function = tx_cb;
+        if (alt_ready_) {
+            rx_queued_ = queue_Data_Transfer(rxpipe_, rx_buf_, sizeof(rx_buf_), this);
+        }
+        return true;
+    }
+
+    virtual void control(const Transfer_t* /*transfer*/) {
+        alt_ready_ = true;
+    }
+
+    virtual void disconnect() {
+        rxpipe_ = NULL;
+        txpipe_ = NULL;
+        ctrl_sent_ = false;
+        alt_ready_ = false;
+        rx_len_ready_ = 0;
+        rx_queued_ = false;
+        tx_busy_ = false;
+    }
+
+private:
+    void init() {
+        contribute_Pipes(mypipes_, 2);
+        contribute_Transfers(mytransfers_, 4);
+        driver_ready_for_device(this);
+    }
+
+    static void rx_cb(const Transfer_t* transfer) {
+        if (!transfer || !transfer->driver) return;
+        OykUsbCdcNetDriver* self = static_cast<OykUsbCdcNetDriver*>(transfer->driver);
+        if (transfer->length > 0 && self->rx_len_ready_ == 0) {
+            uint16_t n = static_cast<uint16_t>(transfer->length);
+            if (n <= sizeof(self->rx_buf_)) {
+                self->rx_len_ready_ = n;
+            }
+        }
+        self->rx_queued_ = false;
+    }
+
+    static void tx_cb(const Transfer_t* transfer) {
+        if (!transfer || !transfer->driver) return;
+        OykUsbCdcNetDriver* self = static_cast<OykUsbCdcNetDriver*>(transfer->driver);
+        self->tx_busy_ = false;
+    }
+
+    Pipe_t mypipes_[2] __attribute__((aligned(32)));
+    Transfer_t mytransfers_[4] __attribute__((aligned(32)));
+    oyk_u8 rx_buf_[2048] __attribute__((aligned(32)));
+    oyk_u8 tx_buf_[2048] __attribute__((aligned(32)));
+    int slot_;
+    Pipe_t* rxpipe_;
+    Pipe_t* txpipe_;
+    bool is_ncm_;
+    uint8_t data_iface_;
+    uint8_t data_alt_;
+    bool ctrl_sent_;
+    volatile bool alt_ready_;
+    volatile uint16_t rx_len_ready_;
+    volatile bool rx_queued_;
+    volatile bool tx_busy_;
+    oyk_u16 ncm_seq_;
+};
+
+static USBHost s_usb_host;
+static USBHub s_usb_hub1(s_usb_host);
+static USBHub s_usb_hub2(s_usb_host);
+static USBSerial_BigBuffer s_usb_ser1(s_usb_host, 1);
+static USBSerial_BigBuffer s_usb_ser2(s_usb_host, 1);
+static OykUsbCdcNetDriver s_usb_net1(s_usb_host);
+
+static USBSerial_BigBuffer* s_ser_devs[2] = { &s_usb_ser1, &s_usb_ser2 };
+static int s_ser_slots[2] = { -1, -1 };
+static int s_net_slot = -1;
+static bool s_usb_host_begun = false;
 #endif
 
 static void uh_str_copy(char* dst, size_t dst_sz, const char* src) {
@@ -181,11 +394,57 @@ void TinyTmuxUsbHost::init() {
     std::memset(scratch_tx_, 0, sizeof(scratch_tx_));
     std::memset(scratch_rx_, 0, sizeof(scratch_rx_));
     tinytmux_usb_host_set_active(this);
+#if defined(TEENSYDUINO)
+    s_ser_slots[0] = -1;
+    s_ser_slots[1] = -1;
+    s_net_slot = -1;
+    s_usb_net1.set_bound_slot(-1);
+    if (!s_usb_host_begun) {
+        s_usb_host.begin();
+        s_usb_host_begun = true;
+    }
+#endif
 }
 
 void TinyTmuxUsbHost::poll() {
-#if defined(OYK_HAS_TINYUSB) && OYK_HAS_TINYUSB && defined(CFG_TUH_ENABLED) && CFG_TUH_ENABLED
-    tuh_task();
+#if defined(TEENSYDUINO)
+    s_usb_host.Task();
+
+    for (int k = 0; k < 2; ++k) {
+        USBSerial_BigBuffer* ser = s_ser_devs[k];
+        bool connected = static_cast<bool>(*ser);
+        if (connected && s_ser_slots[k] < 0) {
+            ser->begin(115200);
+            s_ser_slots[k] = attach_slot(-1, TMUX_USBH_CDC_ACM,
+                                         static_cast<oyk_u8>(k + 1),
+                                         static_cast<oyk_u8>(k),
+                                         ser->idVendor(), ser->idProduct(), 0, 0);
+        } else if (!connected && s_ser_slots[k] >= 0) {
+            detach_slot(s_ser_slots[k]);
+            s_ser_slots[k] = -1;
+        }
+        if (connected && s_ser_slots[k] >= 0) {
+            oyk_u8 buf[128];
+            while (ser->available() > 0) {
+                int n = ser->readBytes(reinterpret_cast<char*>(buf), sizeof(buf));
+                if (n <= 0) break;
+                on_acm_rx(s_ser_slots[k], buf, static_cast<size_t>(n));
+            }
+        }
+    }
+
+    bool net_connected = static_cast<bool>(s_usb_net1);
+    if (net_connected && s_net_slot < 0) {
+        int kind = s_usb_net1.is_ncm() ? TMUX_USBH_CDC_NCM : TMUX_USBH_CDC_ECM;
+        s_net_slot = attach_slot(-1, kind, 0x10U, 0,
+                                 s_usb_net1.idVendor(), s_usb_net1.idProduct(), 0, 0);
+        s_usb_net1.set_bound_slot(s_net_slot);
+    } else if (!net_connected && s_net_slot >= 0) {
+        detach_slot(s_net_slot);
+        s_net_slot = -1;
+        s_usb_net1.set_bound_slot(-1);
+    }
+    s_usb_net1.poll_driver(this);
 #endif
 }
 
@@ -359,9 +618,11 @@ int TinyTmuxUsbHost::send_eth_frame(int slot, const oyk_u8* eth_frame, size_t et
         return 1;
     }
 
-#if defined(OYK_HAS_TINYUSB) && OYK_HAS_TINYUSB && defined(CFG_TUH_ENABLED) && CFG_TUH_ENABLED && defined(CFG_TUH_NCM) && CFG_TUH_NCM
-    /* When TinyUSB host NCM/ECM driver is active, send NCM16 or raw frame */
-    return 1;
+#if defined(TEENSYDUINO)
+    if (slot == s_net_slot && static_cast<bool>(s_usb_net1)) {
+        return s_usb_net1.send_frame(eth_frame, eth_len) ? 1 : 0;
+    }
+    return 0;
 #else
     return 0;
 #endif
@@ -478,10 +739,13 @@ size_t TinyTmuxUsbHost::send_acm_bytes(int slot, const oyk_u8* data, size_t len)
         return acm_tx_hook_(slot, data, len, acm_tx_ctx_);
     }
 
-#if defined(OYK_HAS_TINYUSB) && OYK_HAS_TINYUSB && defined(CFG_TUH_ENABLED) && CFG_TUH_ENABLED && defined(CFG_TUH_CDC) && CFG_TUH_CDC
-    uint32_t written = tuh_cdc_write(s.idx, data, (uint32_t)len);
-    tuh_cdc_write_flush(s.idx);
-    return (size_t)written;
+#if defined(TEENSYDUINO)
+    for (int k = 0; k < 2; ++k) {
+        if (s_ser_slots[k] == slot && static_cast<bool>(*s_ser_devs[k])) {
+            return s_ser_devs[k]->write(data, len);
+        }
+    }
+    return 0;
 #else
     return 0;
 #endif
@@ -623,52 +887,3 @@ void TinyTmuxUsbHost::on_acm_rx(int slot, const oyk_u8* data, size_t len) {
         acm_rx_cb_(slot, data, len, acm_rx_ctx_);
     }
 }
-
-#if defined(OYK_HAS_TINYUSB) && OYK_HAS_TINYUSB && defined(CFG_TUH_ENABLED) && CFG_TUH_ENABLED
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void tuh_cdc_mount_cb(uint8_t idx) {
-    TinyTmuxUsbHost* h = tinytmux_usb_host_active();
-    if (!h) return;
-    tuh_itf_info_t itf_info;
-    std::memset(&itf_info, 0, sizeof(itf_info));
-    if (!tuh_cdc_itf_get_info(idx, &itf_info)) return;
-    uint16_t vid = 0, pid = 0;
-    tuh_vid_pid_get(itf_info.daddr, &vid, &pid);
-    int kind = TMUX_USBH_CDC_ACM;
-    if (itf_info.desc.bInterfaceSubClass == 0x0DU) kind = TMUX_USBH_CDC_NCM;
-    else if (itf_info.desc.bInterfaceSubClass == 0x06U) kind = TMUX_USBH_CDC_ECM;
-    h->attach_slot(-1, kind, itf_info.daddr, idx, vid, pid, 0, 0);
-}
-
-void tuh_cdc_umount_cb(uint8_t idx) {
-    TinyTmuxUsbHost* h = tinytmux_usb_host_active();
-    if (!h) return;
-    tuh_itf_info_t itf_info;
-    std::memset(&itf_info, 0, sizeof(itf_info));
-    if (tuh_cdc_itf_get_info(idx, &itf_info)) {
-        h->detach_by_dev(itf_info.daddr, -1, idx);
-    }
-}
-
-void tuh_cdc_rx_cb(uint8_t idx) {
-    TinyTmuxUsbHost* h = tinytmux_usb_host_active();
-    if (!h) return;
-    oyk_u8 buf[256];
-    uint32_t count = tuh_cdc_read(idx, buf, sizeof(buf));
-    if (count == 0) return;
-    for (int i = 0; i < TINYTMUX_MAX_USB_RADIOS; ++i) {
-        const TinyTmuxUsbRadioSlot* s = h->slot_info(i);
-        if (s && s->in_use && s->kind == TMUX_USBH_CDC_ACM && s->idx == idx) {
-            h->on_acm_rx(i, buf, (size_t)count);
-            break;
-        }
-    }
-}
-
-#ifdef __cplusplus
-}
-#endif
-#endif

@@ -17,8 +17,9 @@
  * Bridges all transports concurrently into a single OykPortableNode instance.
  */
 
-#include "../compat/oyk_portable.hpp"
-#include "../compat/oyk_rig.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
+#include "oyk_rig.hpp"
 #include "board_tinytmux.hpp"
 #include "oyk_ppp.hpp"
 #include "tinytmux_usb_host.hpp"

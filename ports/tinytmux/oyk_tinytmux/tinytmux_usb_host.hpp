@@ -22,7 +22,8 @@
  * via fault-free simulation hooks.
  */
 
-#include "../compat/oyk_portable.hpp"
+#include "oyk_tinytmux_config.h"
+#include "oyk_portable.hpp"
 
 #ifdef __cplusplus
 extern "C" {

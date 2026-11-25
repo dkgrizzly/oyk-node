@@ -133,111 +133,30 @@ int tinytmux_psram_test_region_words(volatile oyk_u32* base,
     return run_word_test_internal(-1, base, word_count, logical_base_addr, fail_addr_out);
 }
 
-#if defined(OYK_TARGET_IMXRT1060)
+#if defined(TEENSYDUINO)
 
-/* FlexSPI2 Register Offsets (NXP IMXRT1060 Reference Manual Chapter 27) */
-#define FLEXSPI2_MCR0_OFF    0x000UL
-#define FLEXSPI2_FLSHCR0_A1  0x060UL
-#define FLEXSPI2_FLSHCR0_A2  0x064UL
-#define FLEXSPI2_FLSHCR1_A1  0x070UL
-#define FLEXSPI2_FLSHCR1_A2  0x074UL
-#define FLEXSPI2_FLSHCR2_A1  0x080UL
-#define FLEXSPI2_FLSHCR2_A2  0x084UL
-#define FLEXSPI2_IPCR0_OFF   0x0A0UL
-#define FLEXSPI2_IPCR1_OFF   0x0A4UL
-#define FLEXSPI2_IPCMD_OFF   0x0B0UL
-#define FLEXSPI2_INTR_OFF    0x014UL
-#define FLEXSPI2_IPRXFCR_OFF 0x0B8UL
-#define FLEXSPI2_RFDR_OFF    0x100UL
-#define FLEXSPI2_LUTKEY_OFF  0x018UL
-#define FLEXSPI2_LUTCR_OFF   0x01CUL
-#define FLEXSPI2_LUT_BASE    0x200UL
-
-static volatile oyk_u32* fspi2(oyk_u32 off) {
-    return reinterpret_cast<volatile oyk_u32*>(IMXRT_FLEXSPI2_BASE + off);
-}
-
-static void flexspi2_ip_cmd(oyk_u32 addr, oyk_u32 seq_id, oyk_u32 data_sz) {
-    *fspi2(FLEXSPI2_INTR_OFF) = 0xFFFFFFFFUL;
-    *fspi2(FLEXSPI2_IPCR0_OFF) = addr;
-    *fspi2(FLEXSPI2_IPCR1_OFF) = (seq_id << 16) | (data_sz & 0xFFFFUL);
-    *fspi2(FLEXSPI2_IPCMD_OFF) = 1UL;
-    oyk_u32 guard = 100000UL;
-    while (((*fspi2(FLEXSPI2_INTR_OFF)) & 1UL) == 0UL && --guard > 0UL) {
-    }
-}
-
-static void flexspi2_program_lut() {
-    *fspi2(FLEXSPI2_LUTKEY_OFF) = 0x5AF05AF0UL;
-    *fspi2(FLEXSPI2_LUTCR_OFF)  = 0x02UL; /* Unlock */
-
-    /* LUT 0: Fast Read Quad (0xEB, 24-bit addr, 6 dummy, read data) */
-    *fspi2(FLEXSPI2_LUT_BASE + 0x00) = (0x01UL << 10) | (0x00UL << 8) | 0xEBUL |
-                                       (((0x02UL << 10) | (0x02UL << 8) | 0x18UL) << 16);
-    *fspi2(FLEXSPI2_LUT_BASE + 0x04) = (0x0CUL << 10) | (0x02UL << 8) | 0x06UL |
-                                       (((0x09UL << 10) | (0x02UL << 8) | 0x04UL) << 16);
-    *fspi2(FLEXSPI2_LUT_BASE + 0x08) = 0;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x0C) = 0;
-
-    /* LUT 1: Quad Write (0x38, 24-bit addr, write data) */
-    *fspi2(FLEXSPI2_LUT_BASE + 0x10) = (0x01UL << 10) | (0x00UL << 8) | 0x38UL |
-                                       (((0x02UL << 10) | (0x02UL << 8) | 0x18UL) << 16);
-    *fspi2(FLEXSPI2_LUT_BASE + 0x14) = (0x08UL << 10) | (0x02UL << 8) | 0x04UL;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x18) = 0;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x1C) = 0;
-
-    /* LUT 2: Read JEDEC ID (0x9F, 24-bit dummy/addr, read 8 bytes) */
-    *fspi2(FLEXSPI2_LUT_BASE + 0x20) = (0x01UL << 10) | (0x00UL << 8) | 0x9FUL |
-                                       (((0x0CUL << 10) | (0x00UL << 8) | 0x18UL) << 16);
-    *fspi2(FLEXSPI2_LUT_BASE + 0x24) = (0x09UL << 10) | (0x00UL << 8) | 0x08UL;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x28) = 0;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x2C) = 0;
-
-    /* LUT 3: Enter Quad Mode (0x35) */
-    *fspi2(FLEXSPI2_LUT_BASE + 0x30) = (0x01UL << 10) | (0x00UL << 8) | 0x35UL;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x34) = 0;
-
-    /* LUT 4: Reset Enable (0x66) & Reset (0x99) */
-    *fspi2(FLEXSPI2_LUT_BASE + 0x40) = (0x01UL << 10) | (0x00UL << 8) | 0x66UL;
-    *fspi2(FLEXSPI2_LUT_BASE + 0x50) = (0x01UL << 10) | (0x00UL << 8) | 0x99UL;
-
-    *fspi2(FLEXSPI2_LUTKEY_OFF) = 0x5AF05AF0UL;
-    *fspi2(FLEXSPI2_LUTCR_OFF)  = 0x01UL; /* Lock */
-}
+extern "C" uint8_t external_psram_size;
 
 static void hardware_probe_and_test(TinyTmuxPsramInfo* info) {
-    /* Enable FlexSPI2 aperture (CS0 = 8 MB, CS1 = 8 MB) */
-    *fspi2(FLEXSPI2_FLSHCR0_A1) = TINYTMUX_PSRAM_CHIP_BYTES / 1024UL;
-    *fspi2(FLEXSPI2_FLSHCR0_A2) = TINYTMUX_PSRAM_CHIP_BYTES / 1024UL;
-    *fspi2(FLEXSPI2_FLSHCR2_A1) = (0UL << 0) | (1UL << 8); /* Read LUT 0, Write LUT 1 */
-    *fspi2(FLEXSPI2_FLSHCR2_A2) = (0UL << 0) | (1UL << 8);
-    flexspi2_program_lut();
+    /*
+     * Teensyduino startup.c configures FlexSPI2 at 0x70000000 and sets
+     * external_psram_size to 0, 8, or 16 MB.
+     */
+    oyk_u8 mb = static_cast<oyk_u8>(external_psram_size);
+    int chips = (mb >= 16U) ? 2 : ((mb >= 8U) ? 1 : 0);
+    for (int i = 0; i < chips && i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
+        oyk_u32 base_addr = TINYTMUX_PSRAM_BASE + static_cast<oyk_u32>(i) * TINYTMUX_PSRAM_CHIP_BYTES;
+        info->chips[i].detected = 1;
+        info->chips[i].mfg_id = 0x0DU;
+        info->chips[i].kgd = 0x5DU;
+        info->chips[i].base_addr = base_addr;
+        info->chips[i].size_bytes = TINYTMUX_PSRAM_CHIP_BYTES;
 
-    for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
-        oyk_u32 chip_offset = static_cast<oyk_u32>(i) * TINYTMUX_PSRAM_CHIP_BYTES;
-        oyk_u32 base_addr = TINYTMUX_PSRAM_BASE + chip_offset;
-        flexspi2_ip_cmd(chip_offset, 4, 0); /* Reset enable */
-        flexspi2_ip_cmd(chip_offset, 5, 0); /* Reset */
-        *fspi2(FLEXSPI2_IPRXFCR_OFF) = 1UL; /* Clear RX FIFO */
-        flexspi2_ip_cmd(chip_offset, 2, 8); /* Read ID (0x9F) */
-
-        oyk_u32 id0 = *fspi2(FLEXSPI2_RFDR_OFF);
-        oyk_u8 mfg = static_cast<oyk_u8>(id0 & 0xFFU);
-        oyk_u8 kgd = static_cast<oyk_u8>((id0 >> 8) & 0xFFU);
-        if (kgd == 0x5DU && (mfg == 0x0DU || mfg == 0x9DU)) {
-            info->chips[i].detected = 1;
-            info->chips[i].mfg_id = mfg;
-            info->chips[i].kgd = kgd;
-            info->chips[i].base_addr = base_addr;
-            info->chips[i].size_bytes = TINYTMUX_PSRAM_CHIP_BYTES;
-            flexspi2_ip_cmd(chip_offset, 3, 0); /* Enter Quad Mode (0x35) */
-
-            volatile oyk_u32* ptr = reinterpret_cast<volatile oyk_u32*>(base_addr);
-            size_t words = TINYTMUX_PSRAM_CHIP_BYTES / 4UL;
-            oyk_u32 fail_addr = 0;
-            info->chips[i].passed = run_word_test_internal(i, ptr, words, base_addr, &fail_addr);
-            info->chips[i].fail_addr = fail_addr;
-        }
+        volatile oyk_u32* ptr = reinterpret_cast<volatile oyk_u32*>(base_addr);
+        size_t words = TINYTMUX_PSRAM_CHIP_BYTES / 4UL;
+        oyk_u32 fail_addr = 0;
+        info->chips[i].passed = run_word_test_internal(i, ptr, words, base_addr, &fail_addr);
+        info->chips[i].fail_addr = fail_addr;
     }
 }
 

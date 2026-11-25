@@ -52,72 +52,49 @@ void tinytmux_decode_ocotp_mac(oyk_u32 ocotp_mac0, oyk_u32 ocotp_mac1, oyk_u8 ma
     mac_out[5] = static_cast<oyk_u8>(ocotp_mac0 & 0xFFU);
 }
 
-#if defined(OYK_TARGET_IMXRT1060)
+#if defined(TEENSYDUINO)
 
-/* Minimal bare-metal IMXRT1062 LPUART register offsets */
-#define LPUART_BAUD_OFF  0x10UL
-#define LPUART_STAT_OFF  0x14UL
-#define LPUART_CTRL_OFF  0x18UL
-#define LPUART_DATA_OFF  0x1CUL
-#define LPUART_MODIR_OFF 0x28UL
-#define LPUART_FIFO_OFF  0x2CUL
+#include <Arduino.h>
 
-#define LPUART_STAT_TDRE (1UL << 23)
-#define LPUART_STAT_RDRF (1UL << 21)
-#define LPUART_CTRL_TE   (1UL << 19)
-#define LPUART_CTRL_RE   (1UL << 18)
-#define LPUART_MODIR_TXCTSE (1UL << 0)
-#define LPUART_MODIR_RXRTSE (1UL << 3)
-#define LPUART_FIFO_RXFE (1UL << 3)
-#define LPUART_FIFO_TXFE (1UL << 7)
-
-static volatile oyk_u32 s_systick_ms = 0;
-
-extern "C" void SysTick_Handler(void) {
-    s_systick_ms++;
-}
-
-static volatile oyk_u32* reg32(oyk_u32 addr) {
-    return reinterpret_cast<volatile oyk_u32*>(addr);
+static HardwareSerialIMXRT* teensy_serial_by_num(oyk_u8 teensy_serial) {
+    switch (teensy_serial) {
+        case 1: return &Serial1;
+        case 2: return &Serial2;
+        case 3: return &Serial3;
+        case 4: return &Serial4;
+        case 5: return &Serial5;
+        case 6: return &Serial6;
+        case 7: return &Serial7;
+        case 8: return &Serial8;
+        default: return NULL;
+    }
 }
 
 void tinytmux_board_init() {
-    /*
-     * Clock & IOMUXC initialization is handled by board startup / Teensy core
-     * or MCUXpresso SDK clocks; enable LPUART RX/TX FIFOs on configure.
-     */
-    s_systick_ms = 0;
+    pinMode(13, OUTPUT);
+    digitalWrite(13, HIGH);
+    pinMode(TINYTMUX_LINK_LED_PIN, OUTPUT);
+    digitalWrite(TINYTMUX_LINK_LED_PIN, LOW);
     tinytmux_psram_init_and_test();
 }
 
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]) {
-    oyk_u32 mac0 = *reg32(IMXRT_OCOTP_MAC0);
-    oyk_u32 mac1 = *reg32(IMXRT_OCOTP_MAC1);
-    tinytmux_decode_ocotp_mac(mac0, mac1, mac_out);
+    tinytmux_decode_ocotp_mac(static_cast<oyk_u32>(HW_OCOTP_MAC0),
+                              static_cast<oyk_u32>(HW_OCOTP_MAC1),
+                              mac_out);
+}
+
+void tinytmux_board_set_status_led(int on) {
+    digitalWrite(13, on ? HIGH : LOW);
 }
 
 void tinytmux_board_set_link_led(int speed_100mbps) {
-    /* Teensy 4.1 Pin 18 -> GPIO_AD_B1_01 -> GPIO1_IO17 (DR_SET / DR_CLEAR) */
-    const oyk_u32 GPIO1_DR_SET   = 0x401B8084UL;
-    const oyk_u32 GPIO1_DR_CLEAR = 0x401B8088UL;
-    const oyk_u32 mask = (1UL << 17);
-    if (speed_100mbps) {
-        *reg32(GPIO1_DR_SET) = mask;
-    } else {
-        *reg32(GPIO1_DR_CLEAR) = mask;
-    }
+    digitalWrite(TINYTMUX_LINK_LED_PIN, speed_100mbps ? HIGH : LOW);
 }
 
 void tinytmux_board_set_usbh_vbus(int on) {
-    /* Teensy 4.1 USB Host 5V VBUS Power Switch -> GPIO_EMC_40 -> GPIO3_IO26 */
-    const oyk_u32 GPIO3_DR_SET   = 0x401C0084UL;
-    const oyk_u32 GPIO3_DR_CLEAR = 0x401C0088UL;
-    const oyk_u32 mask = (1UL << 26);
-    if (on) {
-        *reg32(GPIO3_DR_SET) = mask;
-    } else {
-        *reg32(GPIO3_DR_CLEAR) = mask;
-    }
+    /* Managed safely by Teensyduino USBHost_t36::begin(). */
+    (void)on;
 }
 
 const TinyTmuxPsramInfo* tinytmux_board_psram_info() {
@@ -125,69 +102,59 @@ const TinyTmuxPsramInfo* tinytmux_board_psram_info() {
 }
 
 oyk_u32 tinytmux_board_millis() {
-    return s_systick_ms;
+    return static_cast<oyk_u32>(millis());
 }
 
 int tinytmux_uart_init(int logical_port, const TinyTmuxUartConfig* cfg) {
     const TinyTmuxUartMap* m = tinytmux_uart_info(logical_port);
     if (!m || !cfg || cfg->baudrate == 0) return 0;
+    HardwareSerialIMXRT* sp = teensy_serial_by_num(m->teensy_serial);
+    if (!sp) return 0;
 
-    oyk_u32 base = m->reg_base;
-    /* Disable TX/RX while configuring */
-    *reg32(base + LPUART_CTRL_OFF) &= ~(LPUART_CTRL_TE | LPUART_CTRL_RE);
-
-    /* Default IMXRT1060 UART_CLK_ROOT = 24 MHz (OSC) with OSR = 16 (OSR field = 15) */
-    oyk_u32 sbr = 24000000UL / (16UL * cfg->baudrate);
-    if (sbr == 0) sbr = 1;
-    if (sbr > 0x1FFFUL) sbr = 0x1FFFUL;
-    *reg32(base + LPUART_BAUD_OFF) = (15UL << 24) | (sbr & 0x1FFFUL);
-
-    /* Enable RX/TX hardware FIFOs */
-    *reg32(base + LPUART_FIFO_OFF) |= (LPUART_FIFO_RXFE | LPUART_FIFO_TXFE);
-
-    /* Hardware CTS/RTS flow control */
+    sp->begin(static_cast<uint32_t>(cfg->baudrate));
     if (cfg->cts_rts) {
-        *reg32(base + LPUART_MODIR_OFF) |= (LPUART_MODIR_TXCTSE | LPUART_MODIR_RXRTSE);
-    } else {
-        *reg32(base + LPUART_MODIR_OFF) &= ~(LPUART_MODIR_TXCTSE | LPUART_MODIR_RXRTSE);
+        sp->attachRts(m->pin_rts);
+        sp->attachCts(m->pin_cts);
     }
-
-    /* Enable transmitter and receiver */
-    *reg32(base + LPUART_CTRL_OFF) |= (LPUART_CTRL_TE | LPUART_CTRL_RE);
     return 1;
 }
 
 size_t tinytmux_uart_write(int logical_port, const oyk_u8* data, size_t len) {
     const TinyTmuxUartMap* m = tinytmux_uart_info(logical_port);
-    if (!m || !data) return 0;
-    oyk_u32 base = m->reg_base;
-    for (size_t i = 0; i < len; ++i) {
-        while (((*reg32(base + LPUART_STAT_OFF)) & LPUART_STAT_TDRE) == 0) {
-        }
-        *reg32(base + LPUART_DATA_OFF) = static_cast<oyk_u32>(data[i]);
-    }
-    return len;
+    if (!m || !data || len == 0) return 0;
+    HardwareSerialIMXRT* sp = teensy_serial_by_num(m->teensy_serial);
+    if (!sp) return 0;
+    return sp->write(data, len);
 }
 
 size_t tinytmux_uart_read(int logical_port, oyk_u8* out, size_t max_len) {
     const TinyTmuxUartMap* m = tinytmux_uart_info(logical_port);
-    if (!m || !out) return 0;
-    oyk_u32 base = m->reg_base;
+    if (!m || !out || max_len == 0) return 0;
+    HardwareSerialIMXRT* sp = teensy_serial_by_num(m->teensy_serial);
+    if (!sp) return 0;
+
     size_t got = 0;
-    while (got < max_len && (((*reg32(base + LPUART_STAT_OFF)) & LPUART_STAT_RDRF) != 0)) {
-        out[got++] = static_cast<oyk_u8>((*reg32(base + LPUART_DATA_OFF)) & 0xFFU);
+    while (got < max_len && sp->available() > 0) {
+        int ch = sp->read();
+        if (ch < 0) break;
+        out[got++] = static_cast<oyk_u8>(ch & 0xFF);
     }
     return got;
 }
 
+extern "C" void tinytmux_early_puts(const char* /*s*/) {}
+extern "C" void tinytmux_early_puthex(oyk_u32 /*v*/) {}
+
 #else
 
 /* Host stub implementation for Linux unit tests & simulation */
+static int s_host_status_led = 0;
 static int s_host_led = 0;
 static int s_host_usbh_vbus = 0;
 static oyk_u32 s_host_ms = 0;
 
 void tinytmux_board_init() {
+    s_host_status_led = 0;
     s_host_led = 0;
     s_host_usbh_vbus = 0;
     s_host_ms = 0;
@@ -196,6 +163,11 @@ void tinytmux_board_init() {
 
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]) {
     tinytmux_decode_ocotp_mac(0x004F594BUL, 0x000004E9UL, mac_out);
+}
+
+void tinytmux_board_set_status_led(int on) {
+    s_host_status_led = on ? 1 : 0;
+    (void)s_host_status_led;
 }
 
 void tinytmux_board_set_link_led(int speed_100mbps) {
@@ -226,5 +198,8 @@ size_t tinytmux_uart_write(int /*logical_port*/, const oyk_u8* /*data*/, size_t 
 size_t tinytmux_uart_read(int /*logical_port*/, oyk_u8* /*out*/, size_t /*max_len*/) {
     return 0;
 }
+
+extern "C" void tinytmux_early_puts(const char* /*s*/) {}
+extern "C" void tinytmux_early_puthex(oyk_u32 /*v*/) {}
 
 #endif
