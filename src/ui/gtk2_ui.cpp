@@ -1136,7 +1136,7 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-        "Save && Apply", GTK_RESPONSE_ACCEPT,
+        "Save & Apply", GTK_RESPONSE_ACCEPT,
         static_cast<const char*>(nullptr));
     gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 400);
 

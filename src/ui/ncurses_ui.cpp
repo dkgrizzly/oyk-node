@@ -1674,231 +1674,15 @@ void NcursesUI::modal_approve_incoming_files() {
     delwin(win);
 }
 
-void NcursesUI::modal_settings_interfaces(node::NodeConfig& draft) {
-    int rows = 0, cols = 0;
-    getmaxyx(stdscr, rows, cols);
-    int w = std::min(78, cols - 2);
-    int h = std::min(20, rows - 2);
-    if (w < 54 || h < 12) return;
-    int y = std::max(0, (rows - h) / 2);
-    int x = std::max(0, (cols - w) / 2);
-
-    WINDOW* win = newwin(h, w, y, x);
-    if (!win) return;
-    keypad(win, TRUE);
-    wtimeout(win, 200);
-
-    auto prompt_str = [&](const std::string& label, std::string& val, std::size_t max_len = 96) -> bool {
-        curs_set(1);
-        while (true) {
-            mvwhline(win, h - 2, 1, ' ', w - 2);
-            std::string shown = label + val;
-            if (static_cast<int>(shown.size()) > w - 4) {
-                shown = shown.substr(shown.size() - static_cast<std::size_t>(w - 4));
-            }
-            mvwaddnstr(win, h - 2, 2, shown.c_str(), w - 4);
-            wrefresh(win);
-            int c = wgetch(win);
-            if (c == ERR) continue;
-            if (c == 27) { curs_set(0); return false; }
-            if (c == '\n' || c == '\r' || c == KEY_ENTER) { curs_set(0); return true; }
-            if (c == KEY_BACKSPACE || c == 127 || c == 8) {
-                if (!val.empty()) val.pop_back();
-            } else if (c >= 32 && c < 127 && val.size() < max_len) {
-                val.push_back(static_cast<char>(c));
-            }
-        }
-    };
-
-    auto iface_summary = [](const radio::RadioInterfaceConfig& ic) -> std::string {
-        auto get_p = [&](const char* k) -> std::string {
-            auto it = ic.params.find(k);
-            return (it != ic.params.end()) ? it->second : "";
-        };
-        if (ic.type == "axudp" || ic.type == "telnet") {
-            std::string bh = get_p("bind_host");
-            std::string bp = get_p("bind_port");
-            return (bh.empty() ? "0.0.0.0" : bh) + ":" + bp;
-        }
-        if (ic.type == "axip") {
-            std::string bh = get_p("bind_host");
-            return (bh.empty() ? "0.0.0.0" : bh) + " (proto 93)";
-        }
-        if (ic.type == "kiss-serial") {
-            return get_p("device") + " @" + get_p("baud");
-        }
-        if (ic.type == "kiss-tcp") {
-            return get_p("mode") + " " + get_p("host") + ":" + get_p("port");
-        }
-        return ic.description;
-    };
-
-    int sel = 0;
-    int scroll = 0;
-    std::string feedback = "Add or remove radio/network interface mappings (applied on Save).";
-    const int list_h = std::max(1, h - 7);
-
-    while (true) {
-        if (external_stop_flag_ && external_stop_flag_->load()) break;
-
-        int count = static_cast<int>(draft.interfaces.size());
-        if (count == 0) sel = 0;
-        else if (sel >= count) sel = count - 1;
-        if (sel < scroll) scroll = sel;
-        if (sel >= scroll + list_h) scroll = sel - list_h + 1;
-
-        werase(win);
-        box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Interface Mappings (%d) ", count);
-        wattron(win, A_BOLD | A_UNDERLINE);
-        mvwaddnstr(win, 2, 2, clip("ID           Type         Endpoint / Device             Peers", w - 4).c_str(), w - 4);
-        wattroff(win, A_BOLD | A_UNDERLINE);
-
-        if (count == 0) {
-            mvwaddnstr(win, 3, 2, "(no interfaces configured - press A to add)", w - 4);
-        } else {
-            for (int r = 0; r < list_h && scroll + r < count; ++r) {
-                int idx = scroll + r;
-                const auto& ic = draft.interfaces[static_cast<std::size_t>(idx)];
-                std::ostringstream row;
-                row << std::left << std::setw(13) << clip(ic.id, 12)
-                    << std::setw(13) << clip(ic.type, 12)
-                    << std::setw(30) << clip(iface_summary(ic), 29)
-                    << ic.peers.size();
-                if (idx == sel) wattron(win, A_REVERSE | A_BOLD);
-                mvwaddnstr(win, 3 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-                if (idx == sel) wattroff(win, A_REVERSE | A_BOLD);
-            }
-        }
-
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_WARN));
-        mvwaddnstr(win, h - 3, 2, clip(feedback, w - 4).c_str(), w - 4);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_WARN));
-
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
-        mvwhline(win, h - 1, 1, ' ', w - 2);
-        mvwaddnstr(win, h - 1, 2, clip("A:Add Interface  D/Del:Remove Selected  Esc/Enter:Done", w - 4).c_str(), w - 4);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
-        wrefresh(win);
-
-        int ch = wgetch(win);
-        if (ch == ERR) continue;
-        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == '\n' || ch == '\r' || ch == KEY_ENTER) break;
-        if (ch == KEY_UP && sel > 0) --sel;
-        else if (ch == KEY_DOWN && sel + 1 < count) ++sel;
-        else if (ch == 'a' || ch == 'A') {
-            std::string id, type_s = "axudp", desc;
-            if (!prompt_str("Interface ID (e.g. axudp1, telnet0): ", id, 24) || id.empty()) {
-                feedback = "Add interface cancelled.";
-                continue;
-            }
-            bool dup = false;
-            for (const auto& existing : draft.interfaces) {
-                if (existing.id == id) { dup = true; break; }
-            }
-            if (dup) {
-                feedback = "Duplicate interface ID: " + id;
-                continue;
-            }
-            if (!prompt_str("Type [axudp|axip|kiss-serial|kiss-tcp|telnet]: ", type_s, 16)) {
-                feedback = "Add interface cancelled.";
-                continue;
-            }
-            std::transform(type_s.begin(), type_s.end(), type_s.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (type_s != "axudp" && type_s != "axip" && type_s != "kiss-serial" &&
-                type_s != "kiss-tcp" && type_s != "telnet") {
-                feedback = "Invalid type '" + type_s + "'.";
-                continue;
-            }
-            if (!prompt_str("Description (optional): ", desc, 48)) {
-                feedback = "Add interface cancelled.";
-                continue;
-            }
-            radio::RadioInterfaceConfig ic;
-            ic.id = id;
-            ic.type = type_s;
-            ic.description = desc;
-
-            if (type_s == "axudp") {
-                std::string host = "0.0.0.0", port = "10093", peer;
-                if (!prompt_str("Bind host: ", host, 48)) continue;
-                if (!prompt_str("Bind UDP port: ", port, 8)) continue;
-                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-                ic.params["bind_port"] = port.empty() ? "10093" : port;
-                ic.params["auto_learn"] = "true";
-                if (prompt_str("Static peer (optional, CALL@ip:port): ", peer, 64) && !peer.empty()) {
-                    ic.peers.push_back(peer);
-                }
-            } else if (type_s == "axip") {
-                std::string host = "0.0.0.0", peer;
-                if (!prompt_str("Bind host: ", host, 48)) continue;
-                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-                ic.params["auto_learn"] = "true";
-                if (prompt_str("Static peer (optional, CALL@ip): ", peer, 64) && !peer.empty()) {
-                    ic.peers.push_back(peer);
-                }
-            } else if (type_s == "kiss-serial") {
-                std::string dev = "/dev/ttyUSB0", baud = "9600", kport = "0";
-                if (!prompt_str("Serial device: ", dev, 64) || dev.empty()) continue;
-                if (!prompt_str("Baud rate: ", baud, 12)) continue;
-                if (!prompt_str("KISS port (0-15): ", kport, 4)) continue;
-                ic.params["device"] = dev;
-                ic.params["baud"] = baud.empty() ? "9600" : baud;
-                ic.params["kiss_port"] = kport.empty() ? "0" : kport;
-            } else if (type_s == "kiss-tcp") {
-                std::string mode = "client", host = "127.0.0.1", port = "8001", kport = "0";
-                if (!prompt_str("Mode [client|server]: ", mode, 12)) continue;
-                if (!prompt_str("Host: ", host, 48)) continue;
-                if (!prompt_str("TCP port: ", port, 8)) continue;
-                if (!prompt_str("KISS port (0-15): ", kport, 4)) continue;
-                ic.params["mode"] = (mode == "server") ? "server" : "client";
-                ic.params["host"] = host.empty() ? "127.0.0.1" : host;
-                ic.params["port"] = port.empty() ? "8001" : port;
-                ic.params["kiss_port"] = kport.empty() ? "0" : kport;
-            } else if (type_s == "telnet") {
-                std::string host = "0.0.0.0", port = "8010";
-                if (!prompt_str("Bind host: ", host, 48)) continue;
-                if (!prompt_str("Bind TCP port: ", port, 8)) continue;
-                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-                ic.params["bind_port"] = port.empty() ? "8010" : port;
-            }
-            draft.interfaces.push_back(std::move(ic));
-            sel = static_cast<int>(draft.interfaces.size()) - 1;
-            feedback = "Added interface '" + id + "'. Press Esc to return and Save.";
-        } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
-            std::string rem_id = draft.interfaces[static_cast<std::size_t>(sel)].id;
-            mvwhline(win, h - 2, 1, ' ', w - 2);
-            mvwaddnstr(win, h - 2, 2, ("Remove interface '" + rem_id + "'? [Y/N]: ").c_str(), w - 4);
-            wrefresh(win);
-            int yn = 0;
-            while (true) {
-                int c = wgetch(win);
-                if (c == ERR) continue;
-                if (c == 'y' || c == 'Y') { yn = 1; break; }
-                if (c == 'n' || c == 'N' || c == 27) { yn = 0; break; }
-            }
-            if (yn) {
-                draft.interfaces.erase(draft.interfaces.begin() + sel);
-                feedback = "Removed interface '" + rem_id + "'.";
-            } else {
-                feedback = "Remove cancelled.";
-            }
-        }
-    }
-
-    delwin(win);
-}
-
 void NcursesUI::modal_settings() {
     node::NodeConfig draft = engine_.config();
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     int w = std::min(78, cols - 2);
-    int h = std::min(22, rows - 2);
-    if (w < 54 || h < 14) {
-        set_status("Terminal too small for Settings UI (min 56x16).");
+    int h = std::min(20, rows - 2);
+    if (w < 56 || h < 14) {
+        set_status("Terminal too small for Settings UI (min 58x16).");
         return;
     }
     int y = std::max(0, (rows - h) / 2);
@@ -1959,80 +1743,186 @@ void NcursesUI::modal_settings() {
         delwin(nwin);
     };
 
-    constexpr int NUM_FIELDS = 19;
-    auto field_label = [](int idx) -> const char* {
-        switch (idx) {
-            case 0:  return "Node Callsign";
-            case 1:  return "Node Alias";
-            case 2:  return "Node Welcome Msg";
-            case 3:  return "Node Info Msg";
-            case 4:  return "Accept Incoming (Cfg)";
-            case 5:  return "BBS Enabled";
-            case 6:  return "BBS SSID (0-15)";
-            case 7:  return "BBS Callsign Override";
-            case 8:  return "BBS Alias";
-            case 9:  return "BBS Files Area";
-            case 10: return "BBS Files Path";
-            case 11: return "BBS Welcome Msg";
-            case 12: return "CHAT Enabled";
-            case 13: return "CHAT SSID (0-15)";
-            case 14: return "CHAT Callsign Override";
-            case 15: return "CHAT Alias";
-            case 16: return "CHAT Default Topic";
-            case 17: return "CHAT Welcome Msg";
-            case 18: return "Interface Mappings";
-            default: return "";
+    auto iface_summary = [](const radio::RadioInterfaceConfig& ic) -> std::string {
+        auto get_p = [&](const char* k) -> std::string {
+            auto it = ic.params.find(k);
+            return (it != ic.params.end()) ? it->second : "";
+        };
+        if (ic.type == "axudp" || ic.type == "telnet") {
+            std::string bh = get_p("bind_host");
+            std::string bp = get_p("bind_port");
+            return (bh.empty() ? "0.0.0.0" : bh) + ":" + bp;
         }
+        if (ic.type == "axip") {
+            std::string bh = get_p("bind_host");
+            return (bh.empty() ? "0.0.0.0" : bh) + " (IP proto 93)";
+        }
+        if (ic.type == "kiss-serial") {
+            return get_p("device") + " @" + get_p("baud");
+        }
+        if (ic.type == "kiss-tcp") {
+            return get_p("mode") + " " + get_p("host") + ":" + get_p("port");
+        }
+        return ic.description;
     };
 
-    auto field_value = [&](int idx) -> std::string {
-        switch (idx) {
-            case 0:  return draft.callsign.str();
-            case 1:  return draft.alias.valid() ? draft.alias.str() : "(none)";
-            case 2:  return draft.welcome_text;
-            case 3:  return draft.info_text;
-            case 4:  return draft.accept_incoming_default ? "[ON]" : "[OFF]";
-            case 5:  return draft.bbs.enabled ? "[ON]" : "[OFF]";
-            case 6:  return std::to_string(static_cast<int>(draft.bbs.ssid)) +
-                            " (resolves: " + draft.resolved_bbs_callsign().str() + ")";
-            case 7:  return draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "(auto from base+SSID)";
-            case 8:  return draft.bbs.alias.valid() ? draft.bbs.alias.str() : "(none)";
-            case 9:  return draft.bbs.files_enabled ? "[ON]" : "[OFF]";
-            case 10: return draft.bbs.files_path;
-            case 11: return draft.bbs.welcome;
-            case 12: return draft.chat.enabled ? "[ON]" : "[OFF]";
-            case 13: return std::to_string(static_cast<int>(draft.chat.ssid)) +
-                            " (resolves: " + draft.resolved_chat_callsign().str() + ")";
-            case 14: return draft.chat.callsign.valid() ? draft.chat.callsign.str() : "(auto from base+SSID)";
-            case 15: return draft.chat.alias.valid() ? draft.chat.alias.str() : "(none)";
-            case 16: return draft.chat.default_topic;
-            case 17: return draft.chat.welcome;
-            case 18: return std::to_string(draft.interfaces.size()) + " configured [Enter to Add/Remove]";
-            default: return "";
-        }
+    // Four logical tabs matching GTK: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces
+    static const char* TAB_NAMES[4] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces" };
+    static const char* NODE_LABELS[5] = {
+        "Node Callsign",
+        "Node Alias",
+        "Welcome Message",
+        "Info Message",
+        "Allow Incoming (Default)"
+    };
+    static const char* BBS_LABELS[8] = {
+        "Enable Packet BBS",
+        "BBS SSID (0-15)",
+        "Callsign Override",
+        "BBS Alias",
+        "Enable BBS Files Area",
+        "Files Area Root Path",
+        "Mail Storage Path",
+        "BBS Welcome Message"
+    };
+    static const char* CHAT_LABELS[6] = {
+        "Enable Multi-User CHAT",
+        "CHAT SSID (0-15)",
+        "Callsign Override",
+        "CHAT Alias",
+        "Default Topic",
+        "CHAT Welcome Message"
     };
 
-    int sel = 0;
-    int scroll = 0;
-    const int list_h = std::max(1, h - 6);
+    auto tab_item_count = [&](int t) -> int {
+        if (t == 0) return 5;
+        if (t == 1) return 8;
+        if (t == 2) return 6;
+        return static_cast<int>(draft.interfaces.size());
+    };
+
+    auto tab_field_label = [&](int t, int idx) -> const char* {
+        if (t == 0) return NODE_LABELS[idx];
+        if (t == 1) return BBS_LABELS[idx];
+        if (t == 2) return CHAT_LABELS[idx];
+        return "";
+    };
+
+    auto tab_field_value = [&](int t, int idx) -> std::string {
+        if (t == 0) {
+            switch (idx) {
+                case 0: return draft.callsign.str();
+                case 1: return draft.alias.valid() ? draft.alias.str() : "(none)";
+                case 2: return draft.welcome_text;
+                case 3: return draft.info_text;
+                case 4: return draft.accept_incoming_default ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        }
+        if (t == 1) {
+            switch (idx) {
+                case 0: return draft.bbs.enabled ? "[ON]" : "[OFF]";
+                case 1: return std::to_string(static_cast<int>(draft.bbs.ssid)) +
+                               " (resolves: " + draft.resolved_bbs_callsign().str() + ")";
+                case 2: return draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "(auto from base+SSID)";
+                case 3: return draft.bbs.alias.valid() ? draft.bbs.alias.str() : "(none)";
+                case 4: return draft.bbs.files_enabled ? "[ON]" : "[OFF]";
+                case 5: return draft.bbs.files_path;
+                case 6: return draft.bbs.mail_path;
+                case 7: return draft.bbs.welcome;
+                default: return "";
+            }
+        }
+        if (t == 2) {
+            switch (idx) {
+                case 0: return draft.chat.enabled ? "[ON]" : "[OFF]";
+                case 1: return std::to_string(static_cast<int>(draft.chat.ssid)) +
+                               " (resolves: " + draft.resolved_chat_callsign().str() + ")";
+                case 2: return draft.chat.callsign.valid() ? draft.chat.callsign.str() : "(auto from base+SSID)";
+                case 3: return draft.chat.alias.valid() ? draft.chat.alias.str() : "(none)";
+                case 4: return draft.chat.default_topic;
+                case 5: return draft.chat.welcome;
+                default: return "";
+            }
+        }
+        return "";
+    };
+
+    int tab = 0;
+    int sel[4] = { 0, 0, 0, 0 };
+    int if_scroll = 0;
+    const int content_h = std::max(1, h - 8);
     std::string feedback = "Config: " + (draft.source_path.empty() ? std::string("./node.cfg") : draft.source_path);
 
     while (true) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
-        if (sel < scroll) scroll = sel;
-        if (sel >= scroll + list_h) scroll = sel - list_h + 1;
+
+        int cnt = tab_item_count(tab);
+        if (cnt <= 0) sel[tab] = 0;
+        else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
+        if (tab == 3) {
+            int list_h = std::max(1, content_h - 1);
+            if (sel[3] < if_scroll) if_scroll = sel[3];
+            if (sel[3] >= if_scroll + list_h) if_scroll = sel[3] - list_h + 1;
+        }
 
         werase(win);
         box(win, 0, 0);
         mvwprintw(win, 0, 2, " Node Settings ");
 
-        for (int r = 0; r < list_h && scroll + r < NUM_FIELDS; ++r) {
-            int idx = scroll + r;
-            std::ostringstream row;
-            row << std::left << std::setw(24) << field_label(idx) << ": " << field_value(idx);
-            if (idx == sel) wattron(win, A_REVERSE | A_BOLD);
-            mvwaddnstr(win, 2 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-            if (idx == sel) wattroff(win, A_REVERSE | A_BOLD);
+        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces)
+        int tx = 2;
+        for (int t = 0; t < 4; ++t) {
+            std::string lbl = std::string(" ") + TAB_NAMES[t] + " ";
+            if (t == tab) {
+                if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattron(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattron(win, COLOR_PAIR(CP_MENU));
+            }
+            mvwaddnstr(win, 1, tx, lbl.c_str(), w - tx - 2);
+            if (t == tab) {
+                if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
+                else wattroff(win, A_REVERSE | A_BOLD);
+            } else if (has_colors_) {
+                wattroff(win, COLOR_PAIR(CP_MENU));
+            }
+            tx += static_cast<int>(lbl.size()) + 1;
+        }
+        mvwhline(win, 2, 1, ACS_HLINE, w - 2);
+
+        if (tab < 3) {
+            for (int i = 0; i < cnt && i < content_h; ++i) {
+                std::ostringstream row;
+                row << std::left << std::setw(25) << tab_field_label(tab, i)
+                    << ": " << tab_field_value(tab, i);
+                if (i == sel[tab]) wattron(win, A_REVERSE | A_BOLD);
+                mvwaddnstr(win, 3 + i, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                if (i == sel[tab]) wattroff(win, A_REVERSE | A_BOLD);
+            }
+        } else {
+            wattron(win, A_BOLD | A_UNDERLINE);
+            mvwaddnstr(win, 3, 2,
+                       clip("ID           Type         Endpoint / Device             Peers", w - 4).c_str(),
+                       w - 4);
+            wattroff(win, A_BOLD | A_UNDERLINE);
+            int list_h = std::max(1, content_h - 1);
+            if (cnt == 0) {
+                mvwaddnstr(win, 4, 2, "(no interfaces configured - press A to add)", w - 4);
+            } else {
+                for (int r = 0; r < list_h && if_scroll + r < cnt; ++r) {
+                    int idx = if_scroll + r;
+                    const auto& ic = draft.interfaces[static_cast<std::size_t>(idx)];
+                    std::ostringstream row;
+                    row << std::left << std::setw(13) << clip(ic.id, 12)
+                        << std::setw(13) << clip(ic.type, 12)
+                        << std::setw(30) << clip(iface_summary(ic), 29)
+                        << ic.peers.size();
+                    if (idx == sel[3]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[3]) wattroff(win, A_REVERSE | A_BOLD);
+                }
+            }
         }
 
         if (has_colors_) wattron(win, COLOR_PAIR(CP_WARN));
@@ -2041,27 +1931,39 @@ void NcursesUI::modal_settings() {
 
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
         mvwhline(win, h - 1, 1, ' ', w - 2);
-        mvwaddnstr(win, h - 1, 2,
-                   clip("Enter/Space:Edit/Toggle  I:Interfaces  S/F2:Save & Apply  Esc:Cancel", w - 4).c_str(),
-                   w - 4);
+        const char* help_bar = (tab == 3)
+            ? "Tab/1-4:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
+            : "Tab/Left/Right/1-4:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
+        mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
         if (ch == 27) break;
-        if (ch == KEY_UP && sel > 0) {
-            --sel;
-        } else if (ch == KEY_DOWN && sel + 1 < NUM_FIELDS) {
-            ++sel;
-        } else if (ch == KEY_PPAGE) {
-            sel = std::max(0, sel - list_h);
-        } else if (ch == KEY_NPAGE) {
-            sel = std::min(NUM_FIELDS - 1, sel + list_h);
-        } else if (ch == 'i' || ch == 'I') {
-            modal_settings_interfaces(draft);
-            touchwin(win);
-        } else if (ch == 's' || ch == 'S' || ch == KEY_F(2)) {
+
+        if (ch == '\t' || ch == KEY_RIGHT) {
+            tab = (tab + 1) % 4;
+            continue;
+        }
+        if (ch == KEY_BTAB || ch == KEY_LEFT) {
+            tab = (tab + 3) % 4;
+            continue;
+        }
+        if (ch >= '1' && ch <= '4') {
+            tab = ch - '1';
+            continue;
+        }
+        if (ch == KEY_UP && sel[tab] > 0) {
+            --sel[tab];
+            continue;
+        }
+        if (ch == KEY_DOWN && sel[tab] + 1 < cnt) {
+            ++sel[tab];
+            continue;
+        }
+
+        if (ch == 's' || ch == 'S' || ch == KEY_F(2)) {
             auto res = engine_.apply_config(draft, true);
             if (!res.applied) {
                 feedback = "Error: " + res.error;
@@ -2085,84 +1987,197 @@ void NcursesUI::modal_settings() {
                 set_status(st);
             }
             break;
-        } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
-            if (sel == 4) { draft.accept_incoming_default = !draft.accept_incoming_default; continue; }
-            if (sel == 5) { draft.bbs.enabled = !draft.bbs.enabled; continue; }
-            if (sel == 9) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
-            if (sel == 12) { draft.chat.enabled = !draft.chat.enabled; continue; }
-            if (sel == 18) {
-                modal_settings_interfaces(draft);
-                touchwin(win);
-                continue;
-            }
-            std::string val;
-            switch (sel) {
-                case 0:  val = draft.callsign.str(); break;
-                case 1:  val = draft.alias.valid() ? draft.alias.str() : ""; break;
-                case 2:  val = draft.welcome_text; break;
-                case 3:  val = draft.info_text; break;
-                case 6:  val = std::to_string(static_cast<int>(draft.bbs.ssid)); break;
-                case 7:  val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : ""; break;
-                case 8:  val = draft.bbs.alias.valid() ? draft.bbs.alias.str() : ""; break;
-                case 10: val = draft.bbs.files_path; break;
-                case 11: val = draft.bbs.welcome; break;
-                case 13: val = std::to_string(static_cast<int>(draft.chat.ssid)); break;
-                case 14: val = draft.chat.callsign.valid() ? draft.chat.callsign.str() : ""; break;
-                case 15: val = draft.chat.alias.valid() ? draft.chat.alias.str() : ""; break;
-                case 16: val = draft.chat.default_topic; break;
-                case 17: val = draft.chat.welcome; break;
-                default: break;
-            }
-            if (!prompt_edit(std::string(field_label(sel)) + ": ", val)) continue;
+        }
 
-            if (sel == 0) {
-                auto parsed = node::NodeConfig::parse_callsign_with_default_ssid(val);
-                if (!parsed) { feedback = "Invalid node callsign '" + val + "'."; }
-                else { draft.callsign = *parsed; feedback = "Node callsign updated (press S to Save & Apply)."; }
-            } else if (sel == 1) {
-                if (val.empty()) { draft.alias = ax25::Callsign{}; }
-                else if (auto p = ax25::Callsign::parse(val)) { draft.alias = *p; }
-                else { feedback = "Invalid alias '" + val + "'."; }
-            } else if (sel == 2) {
-                draft.welcome_text = val;
-            } else if (sel == 3) {
-                draft.info_text = val;
-            } else if (sel == 6) {
-                try {
-                    int sv = std::stoi(val);
-                    if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
-                    else draft.bbs.ssid = static_cast<uint8_t>(sv);
-                } catch (...) { feedback = "Invalid SSID number."; }
-            } else if (sel == 7) {
-                if (val.empty()) { draft.bbs.callsign = ax25::Callsign{}; }
-                else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.bbs.ssid)) { draft.bbs.callsign = *p; }
-                else { feedback = "Invalid BBS callsign '" + val + "'."; }
-            } else if (sel == 8) {
-                if (val.empty()) { draft.bbs.alias = ax25::Callsign{}; }
-                else if (auto p = ax25::Callsign::parse(val)) { draft.bbs.alias = *p; }
-                else { feedback = "Invalid BBS alias '" + val + "'."; }
-            } else if (sel == 10) {
-                if (!val.empty()) draft.bbs.files_path = val;
-            } else if (sel == 11) {
-                draft.bbs.welcome = val;
-            } else if (sel == 13) {
-                try {
-                    int sv = std::stoi(val);
-                    if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
-                    else draft.chat.ssid = static_cast<uint8_t>(sv);
-                } catch (...) { feedback = "Invalid SSID number."; }
-            } else if (sel == 14) {
-                if (val.empty()) { draft.chat.callsign = ax25::Callsign{}; }
-                else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.chat.ssid)) { draft.chat.callsign = *p; }
-                else { feedback = "Invalid CHAT callsign '" + val + "'."; }
-            } else if (sel == 15) {
-                if (val.empty()) { draft.chat.alias = ax25::Callsign{}; }
-                else if (auto p = ax25::Callsign::parse(val)) { draft.chat.alias = *p; }
-                else { feedback = "Invalid CHAT alias '" + val + "'."; }
-            } else if (sel == 16) {
-                if (!val.empty()) draft.chat.default_topic = val;
-            } else if (sel == 17) {
-                draft.chat.welcome = val;
+        if (tab == 3) {
+            if (ch == 'a' || ch == 'A') {
+                std::string id, type_s = "axudp", desc;
+                if (!prompt_edit("Interface ID (e.g. axudp1, telnet0): ", id, 24) || id.empty()) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                bool dup = false;
+                for (const auto& existing : draft.interfaces) {
+                    if (existing.id == id) { dup = true; break; }
+                }
+                if (dup) {
+                    feedback = "Duplicate interface ID: " + id;
+                    continue;
+                }
+                if (!prompt_edit("Type [axudp|axip|kiss-serial|kiss-tcp|telnet]: ", type_s, 16)) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                std::transform(type_s.begin(), type_s.end(), type_s.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (type_s != "axudp" && type_s != "axip" && type_s != "kiss-serial" &&
+                    type_s != "kiss-tcp" && type_s != "telnet") {
+                    feedback = "Invalid type '" + type_s + "'.";
+                    continue;
+                }
+                if (!prompt_edit("Description (optional): ", desc, 48)) {
+                    feedback = "Add interface cancelled.";
+                    continue;
+                }
+                radio::RadioInterfaceConfig ic;
+                ic.id = id;
+                ic.type = type_s;
+                ic.description = desc;
+
+                if (type_s == "axudp") {
+                    std::string host = "0.0.0.0", port = "10093", peer;
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    if (!prompt_edit("Bind UDP port: ", port, 8)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["bind_port"] = port.empty() ? "10093" : port;
+                    ic.params["auto_learn"] = "true";
+                    if (prompt_edit("Static peer (optional, CALL@ip:port): ", peer, 64) && !peer.empty()) {
+                        ic.peers.push_back(peer);
+                    }
+                } else if (type_s == "axip") {
+                    std::string host = "0.0.0.0", peer;
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["auto_learn"] = "true";
+                    if (prompt_edit("Static peer (optional, CALL@ip): ", peer, 64) && !peer.empty()) {
+                        ic.peers.push_back(peer);
+                    }
+                } else if (type_s == "kiss-serial") {
+                    std::string dev = "/dev/ttyUSB0", baud = "9600", kport = "0";
+                    if (!prompt_edit("Serial device: ", dev, 64) || dev.empty()) continue;
+                    if (!prompt_edit("Baud rate: ", baud, 12)) continue;
+                    if (!prompt_edit("KISS port (0-15): ", kport, 4)) continue;
+                    ic.params["device"] = dev;
+                    ic.params["baud"] = baud.empty() ? "9600" : baud;
+                    ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+                } else if (type_s == "kiss-tcp") {
+                    std::string mode = "client", host = "127.0.0.1", port = "8001", kport = "0";
+                    if (!prompt_edit("Mode [client|server]: ", mode, 12)) continue;
+                    if (!prompt_edit("Host: ", host, 48)) continue;
+                    if (!prompt_edit("TCP port: ", port, 8)) continue;
+                    if (!prompt_edit("KISS port (0-15): ", kport, 4)) continue;
+                    ic.params["mode"] = (mode == "server") ? "server" : "client";
+                    ic.params["host"] = host.empty() ? "127.0.0.1" : host;
+                    ic.params["port"] = port.empty() ? "8001" : port;
+                    ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+                } else if (type_s == "telnet") {
+                    std::string host = "0.0.0.0", port = "8010";
+                    if (!prompt_edit("Bind host: ", host, 48)) continue;
+                    if (!prompt_edit("Bind TCP port: ", port, 8)) continue;
+                    ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                    ic.params["bind_port"] = port.empty() ? "8010" : port;
+                }
+                draft.interfaces.push_back(std::move(ic));
+                sel[3] = static_cast<int>(draft.interfaces.size()) - 1;
+                feedback = "Added interface '" + id + "' (press S/F2 to Save & Apply).";
+            } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && cnt > 0) {
+                std::string rem_id = draft.interfaces[static_cast<std::size_t>(sel[3])].id;
+                mvwhline(win, h - 2, 1, ' ', w - 2);
+                mvwaddnstr(win, h - 2, 2, ("Remove interface '" + rem_id + "'? [Y/N]: ").c_str(), w - 4);
+                wrefresh(win);
+                int yn = 0;
+                while (true) {
+                    int c = wgetch(win);
+                    if (c == ERR) continue;
+                    if (c == 'y' || c == 'Y') { yn = 1; break; }
+                    if (c == 'n' || c == 'N' || c == 27) { yn = 0; break; }
+                }
+                if (yn) {
+                    draft.interfaces.erase(draft.interfaces.begin() + sel[3]);
+                    feedback = "Removed interface '" + rem_id + "'.";
+                } else {
+                    feedback = "Remove cancelled.";
+                }
+            }
+            continue;
+        }
+
+        if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
+            int f = sel[tab];
+            if (tab == 0 && f == 4) { draft.accept_incoming_default = !draft.accept_incoming_default; continue; }
+            if (tab == 1 && f == 0) { draft.bbs.enabled = !draft.bbs.enabled; continue; }
+            if (tab == 1 && f == 4) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
+            if (tab == 2 && f == 0) { draft.chat.enabled = !draft.chat.enabled; continue; }
+
+            std::string val;
+            if (tab == 0) {
+                if (f == 0) val = draft.callsign.str();
+                else if (f == 1) val = draft.alias.valid() ? draft.alias.str() : "";
+                else if (f == 2) val = draft.welcome_text;
+                else if (f == 3) val = draft.info_text;
+            } else if (tab == 1) {
+                if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
+                else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
+                else if (f == 3) val = draft.bbs.alias.valid() ? draft.bbs.alias.str() : "";
+                else if (f == 5) val = draft.bbs.files_path;
+                else if (f == 6) val = draft.bbs.mail_path;
+                else if (f == 7) val = draft.bbs.welcome;
+            } else if (tab == 2) {
+                if (f == 1) val = std::to_string(static_cast<int>(draft.chat.ssid));
+                else if (f == 2) val = draft.chat.callsign.valid() ? draft.chat.callsign.str() : "";
+                else if (f == 3) val = draft.chat.alias.valid() ? draft.chat.alias.str() : "";
+                else if (f == 4) val = draft.chat.default_topic;
+                else if (f == 5) val = draft.chat.welcome;
+            }
+
+            if (!prompt_edit(std::string(tab_field_label(tab, f)) + ": ", val)) continue;
+
+            if (tab == 0) {
+                if (f == 0) {
+                    auto parsed = node::NodeConfig::parse_callsign_with_default_ssid(val);
+                    if (!parsed) feedback = "Invalid node callsign '" + val + "'.";
+                    else { draft.callsign = *parsed; feedback = "Node callsign updated (press S/F2 to Save & Apply)."; }
+                } else if (f == 1) {
+                    if (val.empty()) draft.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.alias = *p;
+                    else feedback = "Invalid alias '" + val + "'.";
+                } else if (f == 2) {
+                    draft.welcome_text = val;
+                } else if (f == 3) {
+                    draft.info_text = val;
+                }
+            } else if (tab == 1) {
+                if (f == 1) {
+                    try {
+                        int sv = std::stoi(val);
+                        if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
+                        else draft.bbs.ssid = static_cast<uint8_t>(sv);
+                    } catch (...) { feedback = "Invalid SSID number."; }
+                } else if (f == 2) {
+                    if (val.empty()) draft.bbs.callsign = ax25::Callsign{};
+                    else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.bbs.ssid)) draft.bbs.callsign = *p;
+                    else feedback = "Invalid BBS callsign '" + val + "'.";
+                } else if (f == 3) {
+                    if (val.empty()) draft.bbs.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.bbs.alias = *p;
+                    else feedback = "Invalid BBS alias '" + val + "'.";
+                } else if (f == 5) {
+                    if (!val.empty()) draft.bbs.files_path = val;
+                } else if (f == 6) {
+                    if (!val.empty()) draft.bbs.mail_path = val;
+                } else if (f == 7) {
+                    draft.bbs.welcome = val;
+                }
+            } else if (tab == 2) {
+                if (f == 1) {
+                    try {
+                        int sv = std::stoi(val);
+                        if (sv < 0 || sv > 15) feedback = "SSID must be 0..15.";
+                        else draft.chat.ssid = static_cast<uint8_t>(sv);
+                    } catch (...) { feedback = "Invalid SSID number."; }
+                } else if (f == 2) {
+                    if (val.empty()) draft.chat.callsign = ax25::Callsign{};
+                    else if (auto p = node::NodeConfig::parse_callsign_with_default_ssid(val, draft.chat.ssid)) draft.chat.callsign = *p;
+                    else feedback = "Invalid CHAT callsign '" + val + "'.";
+                } else if (f == 3) {
+                    if (val.empty()) draft.chat.alias = ax25::Callsign{};
+                    else if (auto p = ax25::Callsign::parse(val)) draft.chat.alias = *p;
+                    else feedback = "Invalid CHAT alias '" + val + "'.";
+                } else if (f == 4) {
+                    if (!val.empty()) draft.chat.default_topic = val;
+                } else if (f == 5) {
+                    draft.chat.welcome = val;
+                }
             }
         }
     }
