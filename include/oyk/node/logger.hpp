@@ -34,12 +34,22 @@ constexpr uint32_t DEFAULT_NODE_LOG_MASK =
     LOG_ERROR | LOG_WARNING | LOG_INFO | LOG_KICK | LOG_BAN; // 0x37
 constexpr uint32_t DEFAULT_APPEALS_LOG_MASK = LOG_APPEAL; // 0x40
 
+struct PrinterConfig {
+    bool enabled = false;
+    std::string device;               // e.g. "/dev/parport0", "/dev/lp0", "/dev/usb/lp0", "/dev/ttyS0"
+    std::string protocol = "generic"; // "generic", "mx80", "escp2"
+    uint32_t baud = 9600;
+    uint32_t level = DEFAULT_CONSOLE_LOG_MASK;
+    bool condensed = false;
+};
+
 struct LogConfig {
     std::string log_path = "logs/";
     uint32_t console_level = DEFAULT_CONSOLE_LOG_MASK;
     bool rotate_daily = true;
     // Map of filename (relative to log_path, e.g. "node.log") -> severity bitmask
     std::map<std::string, uint32_t> log_files;
+    PrinterConfig printer;
 };
 
 // Parses a log level bitmask from decimal, hex (0x...), binary (0b...),
@@ -62,6 +72,9 @@ public:
     // Configures log directory, console mask, and file targets.
     // Creates `log_path` directory if needed and rotates stale previous-day files.
     bool configure(const LogConfig& config, std::string& error_out);
+
+    // Reconfigures only the direct line-by-line printer output (leaves log files open).
+    bool reconfigure_printer(const PrinterConfig& printer, std::string& error_out);
 
     // Logs a standard message at `level`.
     void log(LogLevel level, const std::string& message);
@@ -101,12 +114,18 @@ private:
     void rotate_target_locked(FileTarget& target, const std::string& new_date);
     void open_target_locked(FileTarget& target, const std::string& today);
     void push_console_locked(const std::string& line);
+    void open_printer_locked(std::string& error_out);
+    void close_printer_locked();
+    void write_printer_locked(LogLevel level, const std::string& line);
 
     mutable std::mutex mutex_;
     LogConfig config_;
     std::vector<FileTarget> targets_;
     std::deque<std::string> console_lines_;
     bool configured_ = false;
+    int printer_fd_ = -1;
+    bool printer_ppdev_claimed_ = false;
+    int printer_proto_ = 0;
 };
 
 } // namespace oyk::node

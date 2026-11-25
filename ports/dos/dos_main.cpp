@@ -18,6 +18,7 @@
 #include "../compat/oyk_portable.hpp"
 #include "../compat/oyk_yapp.hpp"
 #include "../compat/oyk_rig.hpp"
+#include "../compat/oyk_printer.hpp"
 #include "dos_usb.hpp"
 #include "ems.hpp"
 
@@ -64,6 +65,95 @@ static int g_rf_udp_bound = 0;
 #endif
 static oyk_u16 g_rf_local_port = 41910U;
 static int g_rf_reply_flag = 0;
+
+/* Direct MS-DOS line-by-line printer output (BIOS INT 17h LPT1..3 or COM1..4) */
+static int g_prn_mode = 0; /* 0=none, 1=BIOS INT 17h LPT, 2=COM serial */
+static int g_prn_lpt = 0;
+static int g_prn_proto = OYK_PRN_NONE;
+static OykDosSerial g_prn_serial;
+
+static void dos_printer_close() {
+    oyk_dos_serial_close(&g_prn_serial);
+    g_prn_mode = 0;
+    g_prn_proto = OYK_PRN_NONE;
+}
+
+static int dos_printer_write_bytes(const oyk_u8* data, size_t len) {
+    if (!data || len == 0) return 1;
+    if (g_prn_mode == 1) {
+        for (size_t i = 0; i < len; ++i) {
+            union REGS regs;
+            memset(&regs, 0, sizeof(regs));
+            regs.h.ah = 0x00;
+            regs.h.al = data[i];
+            regs.x.dx = static_cast<unsigned int>(g_prn_lpt);
+            int86(0x17, &regs, &regs);
+            if ((regs.h.ah & 0x29U) != 0U) return 0;
+        }
+        return 1;
+    }
+    if (g_prn_mode == 2 && g_prn_serial.active) {
+        for (size_t i = 0; i < len; ++i) {
+            if (!oyk_dos_serial_write_byte(&g_prn_serial, data[i])) return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void dos_printer_init() {
+    dos_printer_close();
+    const OykConfig& cfg = g_node.config();
+    if (!cfg.printer_enabled || !cfg.printer_device[0]) return;
+    int proto = oyk_printer_parse_protocol(cfg.printer_protocol);
+    if (proto == OYK_PRN_NONE) return;
+
+    char dev[24];
+    size_t dn = strlen(cfg.printer_device);
+    if (dn >= sizeof(dev)) dn = sizeof(dev) - 1;
+    for (size_t i = 0; i < dn; ++i) {
+        char c = cfg.printer_device[i];
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+        dev[i] = c;
+    }
+    dev[dn] = '\0';
+    while (dn > 0 && dev[dn - 1] == ':') dev[--dn] = '\0';
+
+    if (strncmp(dev, "LPT", 3) == 0 && dev[3] >= '1' && dev[3] <= '3') {
+        g_prn_lpt = dev[3] - '1';
+        g_prn_mode = 1;
+        g_prn_proto = proto;
+    } else if (strcmp(dev, "PRN") == 0) {
+        g_prn_lpt = 0;
+        g_prn_mode = 1;
+        g_prn_proto = proto;
+    } else if (strncmp(dev, "COM", 3) == 0 && dev[3] >= '1' && dev[3] <= '4') {
+        oyk_u32 baud = cfg.printer_baud ? cfg.printer_baud : 9600UL;
+        if (oyk_dos_serial_open(&g_prn_serial, dev, baud)) {
+            g_prn_mode = 2;
+            g_prn_proto = proto;
+        }
+    }
+
+    if (g_prn_mode != 0) {
+        unsigned char init_buf[32];
+        size_t ilen = oyk_printer_build_init(g_prn_proto, cfg.printer_condensed,
+                                             init_buf, sizeof(init_buf));
+        if (ilen > 0) {
+            (void)dos_printer_write_bytes(init_buf, ilen);
+        }
+    }
+}
+
+static void dos_printer_callback(oyk_u32 level, const char* formatted_line, void* /*ctx*/) {
+    if (g_prn_mode == 0 || g_prn_proto == OYK_PRN_NONE || !formatted_line) return;
+    unsigned char out[384];
+    size_t len = oyk_printer_format_line(g_prn_proto, static_cast<unsigned long>(level),
+                                         formatted_line, out, sizeof(out));
+    if (len > 0) {
+        (void)dos_printer_write_bytes(out, len);
+    }
+}
 
 static void __interrupt __far ctrl_break_handler() {
     g_break_flag = 1;
@@ -1437,8 +1527,8 @@ static void run_dos_settings() {
     static OykConfig draft;
     draft = g_node.config();
 
-    /* Five logical tabs matching GTK/ncurses/Windows: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig */
-    static const char* TAB_NAMES[5] = { " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Interfaces ", " 5:Rig " };
+    /* Six logical tabs matching GTK/ncurses/Windows/TinyTMUX: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig, 5=Printer */
+    static const char* TAB_NAMES[6] = { " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Interfaces ", " 5:Rig ", " 6:Printer " };
     static const char* NODE_LABELS[5] = {
         "Node Callsign",
         "Node Alias",
@@ -1472,9 +1562,17 @@ static void run_dos_settings() {
         "Poll Interval (sec)",
         "RadioFoundry Notify"
     };
+    static const char* PRN_LABELS[6] = {
+        "Enable Line Printer",
+        "Device (LPT1:/COM1:)",
+        "Protocol (generic/mx80/escp2)",
+        "Serial Baud Rate",
+        "Printer Log Mask (0x..)",
+        "Condensed 132-Col Mode"
+    };
 
     int tab = 0;
-    int sel[5] = { 0, 0, 0, 0, 0 };
+    int sel[6] = { 0, 0, 0, 0, 0, 0 };
     char fb[78];
     sprintf(fb, "Config: %.68s", draft.source_path[0] ? draft.source_path : "node.cfg");
 
@@ -1492,7 +1590,7 @@ static void run_dos_settings() {
         /* Row 1: Tab bar */
         vid_puts(1, 0, 0x70, "", 80);
         int tx = 1;
-        for (int t = 0; t < 5; ++t) {
+        for (int t = 0; t < 6; ++t) {
             int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
             vid_puts(1, tx, (t == tab) ? 0x1F : 0x70, TAB_NAMES[t], tlen);
             tx += tlen + 1;
@@ -1500,7 +1598,7 @@ static void run_dos_settings() {
         vid_puts(2, 0, 0x1B, "--------------------------------------------------------------------------------", 80);
 
         if (tab != 3) {
-            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : RIG_LABELS));
+            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
             for (int i = 0; i < cnt; ++i) {
                 char val[56], cs[16], row[82];
                 val[0] = '\0';
@@ -1526,13 +1624,20 @@ static void run_dos_settings() {
                     else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                     else if (i == 4) { strncpy(val, draft.chat_topic, 50); val[50] = '\0'; }
                     else if (i == 5) { strncpy(val, draft.chat_welcome, 50); val[50] = '\0'; }
-                } else {
+                } else if (tab == 4) {
                     if (i == 0) strcpy(val, draft.rig_enabled ? "[ON]" : "[OFF]");
                     else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 50); val[50] = '\0'; }
                     else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 50); val[50] = '\0'; }
                     else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft.rig_port));
                     else if (i == 4) sprintf(val, "%u s", static_cast<unsigned int>(draft.rig_poll_sec));
                     else if (i == 5) strcpy(val, draft.rig_notify ? "[ON]" : "[OFF]");
+                } else {
+                    if (i == 0) strcpy(val, draft.printer_enabled ? "[ON]" : "[OFF]");
+                    else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 50); val[50] = '\0'; }
+                    else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 50); val[50] = '\0'; }
+                    else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
+                    else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft.printer_level));
+                    else if (i == 5) strcpy(val, draft.printer_condensed ? "[ON]" : "[OFF]");
                 }
                 sprintf(row, " %-30.30s: %-45.45s", labels[i], val);
                 vid_puts(3 + i, 0, (i == sel[tab]) ? 0x30 : 0x17, row, 80);
@@ -1561,9 +1666,9 @@ static void run_dos_settings() {
 
         vid_puts(23, 0, 0x1E, fb, 80);
         if (tab == 3) {
-            vid_puts(24, 0, 0x70, " Tab/1-5:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
+            vid_puts(24, 0, 0x70, " Tab/1-6:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
         } else {
-            vid_puts(24, 0, 0x70, " Tab/Lt/Rt/1-5:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
+            vid_puts(24, 0, 0x70, " Tab/Lt/Rt/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
         }
 
         if (!kbhit()) continue;
@@ -1572,15 +1677,15 @@ static void run_dos_settings() {
             int ext = getch();
             if (ext == 72 && sel[tab] > 0) --sel[tab];             /* Up */
             else if (ext == 80 && sel[tab] + 1 < cnt) ++sel[tab];  /* Down */
-            else if (ext == 75) tab = (tab + 4) % 5;               /* Left */
-            else if (ext == 77) tab = (tab + 1) % 5;               /* Right */
+            else if (ext == 75) tab = (tab + 5) % 6;               /* Left */
+            else if (ext == 77) tab = (tab + 1) % 6;               /* Right */
             else if (ext == 60) ch = 'S';                          /* F2 */
             else continue;
             if (ch != 'S') continue;
         }
         if (ch == 27) break;
-        if (ch == '\t') { tab = (tab + 1) % 5; continue; }
-        if (ch >= '1' && ch <= '5') { tab = ch - '1'; continue; }
+        if (ch == '\t') { tab = (tab + 1) % 6; continue; }
+        if (ch >= '1' && ch <= '6') { tab = ch - '1'; continue; }
 
         if (ch == 's' || ch == 'S') {
             static OykConfigApplyResult res;
@@ -1591,6 +1696,7 @@ static void run_dos_settings() {
             if (res.interfaces_changed) {
                 rebind_dos_transports();
             }
+            dos_printer_init();
             oyk_rig_status_init(&g_rig_status, oyk_rig_parse_protocol(g_node.config().rig_protocol));
             if (!res.saved_to_disk) {
                 vid_clear(0x4F);
@@ -1684,8 +1790,17 @@ static void run_dos_settings() {
                 continue;
             }
             if (tab == 4 && f == 5) { draft.rig_notify = !draft.rig_notify; continue; }
+            if (tab == 5 && f == 0) { draft.printer_enabled = !draft.printer_enabled; continue; }
+            if (tab == 5 && f == 2) {
+                int pp = oyk_printer_parse_protocol(draft.printer_protocol);
+                if (pp == OYK_PRN_GENERIC) strcpy(draft.printer_protocol, "mx80");
+                else if (pp == OYK_PRN_MX80) strcpy(draft.printer_protocol, "escp2");
+                else strcpy(draft.printer_protocol, "generic");
+                continue;
+            }
+            if (tab == 5 && f == 5) { draft.printer_condensed = !draft.printer_condensed; continue; }
 
-            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : RIG_LABELS));
+            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
             char ed[96];
             ed[0] = '\0';
             if (tab == 0) {
@@ -1706,10 +1821,14 @@ static void run_dos_settings() {
                 else if (f == 3 && draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, ed, sizeof(ed));
                 else if (f == 4) { strncpy(ed, draft.chat_topic, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 5) { strncpy(ed, draft.chat_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
-            } else {
+            } else if (tab == 4) {
                 if (f == 2) { strncpy(ed, draft.rig_host, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 3) sprintf(ed, "%u", static_cast<unsigned int>(draft.rig_port));
                 else if (f == 4) sprintf(ed, "%u", static_cast<unsigned int>(draft.rig_poll_sec));
+            } else {
+                if (f == 1) { strncpy(ed, draft.printer_device, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 3) sprintf(ed, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
+                else if (f == 4) sprintf(ed, "0x%lX", static_cast<unsigned long>(draft.printer_level));
             }
 
             char pr[36];
@@ -1736,10 +1855,14 @@ static void run_dos_settings() {
                 else if (f == 3) { if (!ed[0]) memset(&draft.chat_alias, 0, sizeof(draft.chat_alias)); else if (!oyk_parse_callsign(ed, &draft.chat_alias)) strcpy(fb, "Invalid CHAT alias."); }
                 else if (f == 4) { if (ed[0]) { strncpy(draft.chat_topic, ed, sizeof(draft.chat_topic) - 1); draft.chat_topic[sizeof(draft.chat_topic) - 1] = '\0'; } }
                 else if (f == 5) { strncpy(draft.chat_welcome, ed, sizeof(draft.chat_welcome) - 1); draft.chat_welcome[sizeof(draft.chat_welcome) - 1] = '\0'; }
-            } else {
+            } else if (tab == 4) {
                 if (f == 2) { if (ed[0]) { strncpy(draft.rig_host, ed, sizeof(draft.rig_host) - 1); draft.rig_host[sizeof(draft.rig_host) - 1] = '\0'; } }
                 else if (f == 3) { long pv = atol(ed); if (pv > 0L && pv <= 65535L) draft.rig_port = static_cast<oyk_u16>(pv); else strcpy(fb, "Port must be 1..65535."); }
                 else if (f == 4) { long iv = atol(ed); if (iv >= 0L && iv <= 3600L) draft.rig_poll_sec = static_cast<oyk_u16>(iv); }
+            } else {
+                if (f == 1) { strncpy(draft.printer_device, ed, sizeof(draft.printer_device) - 1); draft.printer_device[sizeof(draft.printer_device) - 1] = '\0'; }
+                else if (f == 3) { long bv = atol(ed); if (bv >= 300L) draft.printer_baud = static_cast<oyk_u32>(bv); else strcpy(fb, "Baud must be >= 300."); }
+                else if (f == 4) { if (!oyk_parse_log_mask(ed, &draft.printer_level)) strcpy(fb, "Invalid log mask."); }
             }
         }
     }
@@ -2039,6 +2162,8 @@ int main(int argc, char* argv[]) {
 
     oyk_rig_status_init(&g_rig_status, oyk_rig_parse_protocol(cfg.rig_protocol));
     rebind_dos_transports();
+    g_node.set_printer_callback(dos_printer_callback, NULL);
+    dos_printer_init();
 
     if (headless) {
         char call_s[16];
@@ -2133,6 +2258,7 @@ int main(int argc, char* argv[]) {
     }
 #endif
     oyk_dos_serial_close(&g_serial);
+    dos_printer_close();
     oyk_dos_pktdrv_shutdown(&g_pktdrv);
     g_ems.shutdown();
     vid_clear(0x07);

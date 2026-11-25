@@ -2774,6 +2774,100 @@ void test_rig_control_rigctl_and_radiofoundry() {
     std::cout << "[PASS] test_rig_control_rigctl_and_radiofoundry\n";
 }
 
+void test_direct_printer_logging_pty_and_config() {
+    namespace fs = std::filesystem;
+
+    int master_fd = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
+    assert(master_fd >= 0);
+    assert(grantpt(master_fd) == 0);
+    assert(unlockpt(master_fd) == 0);
+    const char* slave_name = ptsname(master_fd);
+    assert(slave_name != nullptr);
+
+    auto drain_pty = [&](std::string& acc) {
+        struct pollfd pfd{};
+        pfd.fd = master_fd;
+        pfd.events = POLLIN;
+        for (int tries = 0; tries < 20; ++tries) {
+            if (poll(&pfd, 1, 15) <= 0) break;
+            char buf[256];
+            ssize_t n = ::read(master_fd, buf, sizeof(buf));
+            if (n <= 0) break;
+            acc.append(buf, static_cast<std::size_t>(n));
+        }
+    };
+
+    const std::string log_dir = "/tmp/oyk_test_printer_logs";
+    fs::remove_all(log_dir);
+
+    node::LogConfig lcfg;
+    lcfg.log_path = log_dir;
+    lcfg.console_level = node::LOG_ERROR | node::LOG_INFO | node::LOG_BAN | node::LOG_APPEAL;
+    lcfg.printer.enabled = true;
+    lcfg.printer.device = slave_name;
+    lcfg.printer.protocol = "mx80";
+    lcfg.printer.baud = 9600;
+    lcfg.printer.level = node::LOG_ERROR | node::LOG_INFO | node::LOG_BAN | node::LOG_APPEAL;
+    lcfg.printer.condensed = true;
+
+    node::Logger logger;
+    std::string err;
+    assert(logger.configure(lcfg, err));
+
+    logger.log(node::LOG_DEBUG, "Suppressed debug printer message");
+    logger.log(node::LOG_INFO, "Info printer line");
+    logger.log(node::LOG_ERROR, "Critical error line");
+    logger.log_appeal("W1AW-3", "Appeal line test");
+
+    std::string cap;
+    drain_pty(cap);
+    assert(cap.find("\x1B@\x0F") != std::string::npos);
+    assert(cap.find("Suppressed debug") == std::string::npos);
+    assert(cap.find("Info printer line\r\n") != std::string::npos);
+    assert(cap.find("\x1B" "E") != std::string::npos);
+    assert(cap.find("Critical error line\x1B" "F\r\n") != std::string::npos);
+    assert(cap.find("W1AW-3 ") != std::string::npos);
+    assert(cap.find("Appeal line test\x1B" "F\r\n") != std::string::npos);
+
+    // Reconfigure live to ESC/P2 non-condensed
+    cap.clear();
+    lcfg.printer.protocol = "escp2";
+    lcfg.printer.condensed = false;
+    assert(logger.reconfigure_printer(lcfg.printer, err));
+    logger.log(node::LOG_BAN, "Banned station");
+    drain_pty(cap);
+    assert(cap.find("\x1B@\x1B" "t\x00\x1B" "M") != std::string::npos);
+    assert(cap.find("\x1B" "E\x1B-\x01") != std::string::npos);
+    assert(cap.find("Banned station\x1B-\x00\x1B" "F\r\n") != std::string::npos);
+
+    ::close(master_fd);
+    fs::remove_all(log_dir);
+
+    // Verify [printer] config save & reload round-trip
+    const std::string cfg_path = "/tmp/oyk_test_printer_node.cfg";
+    fs::remove(cfg_path);
+    node::NodeConfig cfg = node::NodeConfig::make_default();
+    cfg.logging.printer.enabled = true;
+    cfg.logging.printer.device = "/dev/parport0";
+    cfg.logging.printer.protocol = "escp2";
+    cfg.logging.printer.baud = 19200;
+    cfg.logging.printer.level = node::LOG_ERROR | node::LOG_BAN | node::LOG_APPEAL;
+    cfg.logging.printer.condensed = true;
+    assert(cfg.save_to_file(cfg_path));
+
+    node::NodeConfig loaded;
+    assert(node::NodeConfig::load_from_file(cfg_path, loaded, err));
+    assert(loaded.logging.printer.enabled);
+    assert(loaded.logging.printer.device == "/dev/parport0");
+    assert(loaded.logging.printer.protocol == "escp2");
+    assert(loaded.logging.printer.baud == 19200U);
+    assert(loaded.logging.printer.level == (node::LOG_ERROR | node::LOG_BAN | node::LOG_APPEAL));
+    assert(loaded.logging.printer.condensed);
+    fs::remove(cfg_path);
+
+    std::cout << "[PASS] test_direct_printer_logging_pty_and_config\n";
+}
+
 } // namespace
 
 int main() {
@@ -2798,6 +2892,7 @@ int main() {
     test_live_settings_reconfig_and_readonly_fs();
     test_files_dots_case_insensitivity_and_approved_removal();
     test_rig_control_rigctl_and_radiofoundry();
+    test_direct_printer_logging_pty_and_config();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

@@ -132,6 +132,9 @@ OYK_FLASHMEM static void build_default_tinytmux_config(OykConfig* cfg) {
 
 static bool ser0_claimed_by_config(const OykConfig* cfg) {
     if (!cfg) return false;
+    if (cfg->printer_enabled && strcasecmp(cfg->printer_device, "ser0") == 0) {
+        return true;
+    }
     for (int i = 0; i < cfg->iface_count; ++i) {
         if (strcasecmp(cfg->ifaces[i].device, "ser0") == 0) {
             return true;

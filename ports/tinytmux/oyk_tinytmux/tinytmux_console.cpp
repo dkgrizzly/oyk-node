@@ -429,12 +429,13 @@ int TinyTmuxConsole::settings_tab_item_count(int tab) const {
     if (tab == 1) return 8;
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
+    if (tab == 4) return 6;
     return 6;
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
-    static const char* TAB_NAMES[5] = {
-        "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig"
+    static const char* TAB_NAMES[6] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig", "6:Printer"
     };
     static const char* NODE_LABELS[6] = {
         "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
@@ -452,11 +453,15 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
         "Enable Rig Control", "Protocol (rigctl/radiofoundry)", "Radio Host / IP",
         "Port (4532 / 4191)", "Poll Interval (sec)", "RadioFoundry Notify"
     };
+    static const char* PRN_LABELS[6] = {
+        "Enable Line Printer", "Device (usb-printer/serN)", "Protocol (generic/mx80/escp2)",
+        "Serial Baud Rate", "Printer Log Mask (0x..)", "Condensed 132-Col Mode"
+    };
 
     char buf[160];
     write_str("\033[H\033[2J");
     write_str("\033[7m OYK NODE SETTINGS (TinyTMUX)            F2/S:Save & Apply  Esc:Cancel \033[0m\r\n ");
-    for (int t = 0; t < 5; ++t) {
+    for (int t = 0; t < 6; ++t) {
         sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? "\033[7m" : "", TAB_NAMES[t]);
         write_str(buf);
     }
@@ -466,7 +471,8 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     if (settings_tab_ != 3) {
         const char** labels = (settings_tab_ == 0) ? NODE_LABELS
                             : ((settings_tab_ == 1) ? BBS_LABELS
-                                                    : ((settings_tab_ == 2) ? CHAT_LABELS : RIG_LABELS));
+                                                    : ((settings_tab_ == 2) ? CHAT_LABELS
+                                                                            : ((settings_tab_ == 4) ? RIG_LABELS : PRN_LABELS)));
         for (int i = 0; i < cnt; ++i) {
             char val[56], cs[16];
             val[0] = '\0';
@@ -493,19 +499,26 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 3) { if (draft_.chat_alias.base[0]) oyk_format_callsign(&draft_.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                 else if (i == 4) { strncpy(val, draft_.chat_topic, 48); val[48] = '\0'; }
                 else { strncpy(val, draft_.chat_welcome, 48); val[48] = '\0'; }
-            } else {
+            } else if (settings_tab_ == 4) {
                 if (i == 0) strcpy(val, draft_.rig_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { strncpy(val, draft_.rig_protocol[0] ? draft_.rig_protocol : "none", 48); val[48] = '\0'; }
                 else if (i == 2) { strncpy(val, draft_.rig_host, 48); val[48] = '\0'; }
                 else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft_.rig_port));
                 else if (i == 4) sprintf(val, "%u", static_cast<unsigned int>(draft_.rig_poll_sec));
                 else strcpy(val, draft_.rig_notify ? "[ON]" : "[OFF]");
+            } else {
+                if (i == 0) strcpy(val, draft_.printer_enabled ? "[ON]" : "[OFF]");
+                else if (i == 1) { strncpy(val, draft_.printer_device[0] ? draft_.printer_device : "(none)", 48); val[48] = '\0'; }
+                else if (i == 2) { strncpy(val, draft_.printer_protocol[0] ? draft_.printer_protocol : "generic", 48); val[48] = '\0'; }
+                else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft_.printer_baud ? draft_.printer_baud : 9600UL));
+                else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
+                else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
             sprintf(buf, "%s %-29.29s : %-44.44s \033[0m\r\n",
                     (i == settings_sel_[settings_tab_]) ? "\033[7m" : "", labels[i], val);
             write_str(buf);
         }
-        write_str("\r\n\033[7m Tab/1-5:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m\r\n");
+        write_str("\r\n\033[7m Tab/1-6:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m\r\n");
     } else {
         write_str(" ID       Type            Dev/Host             Port/Baud\r\n");
         if (draft_.iface_count == 0) {
@@ -807,7 +820,7 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
                          cycle_iface_type(draft_.ifaces[idx].type));
             render();
         }
-    } else {
+    } else if (settings_tab_ == 4) {
         if (idx == 0) { draft_.rig_enabled = draft_.rig_enabled ? 0 : 1; render(); }
         else if (idx == 1) {
             if (strieq_ci(draft_.rig_protocol, "radiofoundry")) {
@@ -832,6 +845,25 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Rig Poll Interval (seconds):", p);
         } else {
             draft_.rig_notify = draft_.rig_notify ? 0 : 1;
+            render();
+        }
+    } else {
+        if (idx == 0) { draft_.printer_enabled = draft_.printer_enabled ? 0 : 1; render(); }
+        else if (idx == 1) {
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Printer Device (usb-printer / ser0..7):", draft_.printer_device);
+        } else if (idx == 2) {
+            if (strieq_ci(draft_.printer_protocol, "generic")) strcpy(draft_.printer_protocol, "mx80");
+            else if (strieq_ci(draft_.printer_protocol, "mx80")) strcpy(draft_.printer_protocol, "escp2");
+            else strcpy(draft_.printer_protocol, "generic");
+            render();
+        } else if (idx == 3) {
+            char p[16]; sprintf(p, "%lu", static_cast<unsigned long>(draft_.printer_baud ? draft_.printer_baud : 9600UL));
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Printer Serial Baud Rate:", p);
+        } else if (idx == 4) {
+            char p[16]; sprintf(p, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Printer Log Mask (e.g. 0x77 or ALL):", p);
+        } else {
+            draft_.printer_condensed = draft_.printer_condensed ? 0 : 1;
             render();
         }
     }
@@ -941,6 +973,10 @@ void TinyTmuxConsole::commit_prompt() {
             if (idx == 2) con_str_copy(draft_.rig_host, sizeof(draft_.rig_host), val);
             else if (idx == 3) { long p = strtol(val, NULL, 10); if (p > 0 && p <= 65535L) draft_.rig_port = static_cast<oyk_u16>(p); }
             else if (idx == 4) { long p = strtol(val, NULL, 10); if (p >= 0 && p <= 3600L) draft_.rig_poll_sec = static_cast<oyk_u16>(p); }
+        } else if (settings_tab_ == 5) {
+            if (idx == 1) con_str_copy(draft_.printer_device, sizeof(draft_.printer_device), val);
+            else if (idx == 3) { long b = strtol(val, NULL, 10); if (b >= 300L) draft_.printer_baud = static_cast<oyk_u32>(b); }
+            else if (idx == 4) { oyk_parse_log_mask(val, &draft_.printer_level); }
         }
         render();
         return;
@@ -1249,12 +1285,12 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
         strcpy(status_line_, "Settings cancelled (no changes applied).");
         render();
     } else if (key == '\t' || key == TMUX_KEY_RIGHT) {
-        settings_tab_ = (settings_tab_ + 1) % 5;
+        settings_tab_ = (settings_tab_ + 1) % 6;
         render();
     } else if (key == TMUX_KEY_LEFT) {
-        settings_tab_ = (settings_tab_ + 4) % 5;
+        settings_tab_ = (settings_tab_ + 5) % 6;
         render();
-    } else if (key >= '1' && key <= '5') {
+    } else if (key >= '1' && key <= '6') {
         settings_tab_ = key - '1';
         render();
     } else if (key == TMUX_KEY_UP && cnt > 0) {

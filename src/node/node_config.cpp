@@ -246,6 +246,9 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (lower_sec == "rig" || lower_sec == "radio") {
                 current_section = "rig";
                 current_iface = nullptr;
+            } else if (lower_sec == "printer") {
+                current_section = "printer";
+                current_iface = nullptr;
             } else if (lower_sec.rfind("interface", 0) == 0) {
                 std::string rest = trim(sec.substr(9));
                 // Allow "[interface axudp0]" or "[interface:axudp0]"
@@ -456,6 +459,26 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "notify") {
                 cfg.rig.notify = parse_bool(val, true);
             }
+        } else if (current_section == "printer") {
+            if (key == "enabled") {
+                cfg.logging.printer.enabled = parse_bool(val, false);
+            } else if (key == "device" || key == "port") {
+                cfg.logging.printer.device = expand_tilde(val);
+            } else if (key == "protocol" || key == "type") {
+                cfg.logging.printer.protocol = val.empty() ? "generic" : to_lower(val);
+            } else if (key == "baud") {
+                cfg.logging.printer.baud = static_cast<uint32_t>(std::max(300, std::stoi(val)));
+            } else if (key == "level" || key == "mask") {
+                uint32_t mask = 0;
+                if (!parse_log_mask(val, mask)) {
+                    error_out = "Config line " + std::to_string(line_num) +
+                                ": invalid printer level '" + val + "'";
+                    return false;
+                }
+                cfg.logging.printer.level = mask;
+            } else if (key == "condensed") {
+                cfg.logging.printer.condensed = parse_bool(val, false);
+            }
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
@@ -562,6 +585,19 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     lines.push_back("port = " + std::to_string(rig.port ? rig.port : radio::rig_default_port(rig.protocol)));
     lines.push_back("poll_interval_sec = " + std::to_string(rig.poll_interval_sec));
     lines.push_back("notify = " + std::string(rig.notify ? "true" : "false"));
+
+    lines.push_back("");
+    lines.push_back("[printer]");
+    lines.push_back("enabled = " + std::string(logging.printer.enabled ? "true" : "false"));
+    lines.push_back("device = " + logging.printer.device);
+    lines.push_back("protocol = " + (logging.printer.protocol.empty() ? std::string("generic") : logging.printer.protocol));
+    lines.push_back("baud = " + std::to_string(logging.printer.baud));
+    {
+        std::ostringstream oss;
+        oss << "level = 0x" << std::hex << logging.printer.level;
+        lines.push_back(oss.str());
+    }
+    lines.push_back("condensed = " + std::string(logging.printer.condensed ? "true" : "false"));
 
     for (const auto& iface : interfaces) {
         lines.push_back("");

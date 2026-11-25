@@ -2006,6 +2006,14 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
         // Reconfigure Rig Control
         rig_controller_.configure(config_.rig);
 
+        // Reconfigure Console Log Mask & Direct Printer Output
+        logger_.set_console_level(config_.logging.console_level);
+        std::string prn_warn;
+        if (!logger_.reconfigure_printer(config_.logging.printer, prn_warn) && !prn_warn.empty()) {
+            if (!result.warning.empty()) result.warning += " ";
+            result.warning += prn_warn;
+        }
+
         // Re-enable incoming connections ONLY if allowed by config AND not manually disabled by operator
         if (manual_deny_incoming_) {
             accept_incoming_ = false;

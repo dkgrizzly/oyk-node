@@ -218,9 +218,104 @@ static USBSerial_BigBuffer s_usb_ser1(s_usb_host, 1);
 static USBSerial_BigBuffer s_usb_ser2(s_usb_host, 1);
 static OykUsbCdcNetDriver s_usb_net1(s_usb_host);
 
+class OykUsbPrinterDriver : public USBDriver {
+public:
+    OykUsbPrinterDriver(USBHost& /*host*/)
+        : txpipe_(NULL),
+          tx_busy_(false) {
+        init();
+    }
+
+    size_t write_bytes(const oyk_u8* data, size_t len) {
+        if (!*this || !txpipe_ || !data || len == 0) return 0;
+        size_t sent = 0;
+        while (sent < len) {
+            unsigned long wait_start = millis();
+            while (tx_busy_ && (millis() - wait_start) < 250UL) {
+                yield();
+            }
+            if (tx_busy_) break;
+            size_t chunk = len - sent;
+            if (chunk > sizeof(tx_buf_)) chunk = sizeof(tx_buf_);
+            memcpy(tx_buf_, data + sent, chunk);
+            tx_busy_ = queue_Data_Transfer(txpipe_, tx_buf_, static_cast<uint32_t>(chunk), this);
+            if (!tx_busy_) break;
+            wait_start = millis();
+            while (tx_busy_ && (millis() - wait_start) < 250UL) {
+                yield();
+            }
+            if (tx_busy_) break;
+            sent += chunk;
+        }
+        return sent;
+    }
+
+protected:
+    virtual bool claim(Device_t* dev, int type, const uint8_t* descriptors, uint32_t len) {
+        if (type != 0 && type != 2) return false;
+        const uint8_t* p = descriptors;
+        const uint8_t* end = descriptors + len;
+        bool in_prn_iface = false;
+        uint8_t tx_ep = 0;
+        uint16_t tx_mps = 0;
+
+        while (p < end) {
+            uint8_t dlen = p[0];
+            if (dlen < 2 || p + dlen > end) break;
+            uint8_t dtype = p[1];
+            if (dtype == 4 && dlen >= 9) {
+                if (tx_ep != 0) break;
+                /* USB Printer Class (0x07), SubClass Printers (0x01) */
+                in_prn_iface = (p[5] == 0x07 && p[6] == 0x01);
+            } else if (dtype == 5 && dlen >= 7 && in_prn_iface && (p[3] & 0x03U) == 2U) {
+                uint8_t ep = p[2];
+                if ((ep & 0x80U) == 0U && tx_ep == 0) {
+                    tx_ep = static_cast<uint8_t>(ep & 0x0FU);
+                    tx_mps = static_cast<uint16_t>(p[4] | (p[5] << 8));
+                }
+            }
+            p += dlen;
+        }
+
+        if (tx_ep == 0) return false;
+        txpipe_ = new_Pipe(dev, 2, tx_ep, 0, tx_mps ? tx_mps : 64U);
+        if (!txpipe_) return false;
+        tx_busy_ = false;
+        txpipe_->callback_function = tx_cb;
+        return true;
+    }
+
+    virtual void disconnect() {
+        txpipe_ = NULL;
+        tx_busy_ = false;
+    }
+
+private:
+    void init() {
+        contribute_Pipes(mypipes_, 1);
+        contribute_Transfers(mytransfers_, 2);
+        driver_ready_for_device(this);
+    }
+
+    static void tx_cb(const Transfer_t* transfer) {
+        if (!transfer || !transfer->driver) return;
+        OykUsbPrinterDriver* self = static_cast<OykUsbPrinterDriver*>(transfer->driver);
+        self->tx_busy_ = false;
+    }
+
+    Pipe_t mypipes_[1] __attribute__((aligned(32)));
+    Transfer_t mytransfers_[2] __attribute__((aligned(32)));
+    oyk_u8 tx_buf_[512] __attribute__((aligned(32)));
+    Pipe_t* txpipe_;
+    volatile bool tx_busy_;
+};
+
+static OykUsbPrinterDriver s_usb_printer1(s_usb_host);
+
 static USBSerial_BigBuffer* s_ser_devs[2] = { &s_usb_ser1, &s_usb_ser2 };
 static int s_ser_slots[2] = { -1, -1 };
 static int s_net_slot = -1;
+static int s_printer_slot = -1;
 static bool s_usb_host_begun = false;
 #endif
 
@@ -383,6 +478,7 @@ extern "C" size_t tinytmux_usb_ncm16_unwrap(const oyk_u8* ntb, size_t ntb_len,
 TinyTmuxUsbHost::TinyTmuxUsbHost()
     : eth_tx_hook_(0), eth_tx_ctx_(0),
       acm_tx_hook_(0), acm_tx_ctx_(0),
+      printer_tx_hook_(0), printer_tx_ctx_(0),
       acm_rx_cb_(0), acm_rx_ctx_(0),
       ax25_rx_cb_(0), ax25_rx_ctx_(0),
       udp_rx_cb_(0), udp_rx_ctx_(0) {
@@ -398,6 +494,7 @@ void TinyTmuxUsbHost::init() {
     s_ser_slots[0] = -1;
     s_ser_slots[1] = -1;
     s_net_slot = -1;
+    s_printer_slot = -1;
     s_usb_net1.set_bound_slot(-1);
     if (!s_usb_host_begun) {
         s_usb_host.begin();
@@ -445,6 +542,16 @@ void TinyTmuxUsbHost::poll() {
         s_usb_net1.set_bound_slot(-1);
     }
     s_usb_net1.poll_driver(this);
+
+    bool prn_connected = static_cast<bool>(s_usb_printer1);
+    if (prn_connected && s_printer_slot < 0) {
+        s_printer_slot = attach_slot(-1, TMUX_USBH_PRINTER, 0x20U, 0,
+                                     s_usb_printer1.idVendor(), s_usb_printer1.idProduct(),
+                                     0, "usbprn0");
+    } else if (!prn_connected && s_printer_slot >= 0) {
+        detach_slot(s_printer_slot);
+        s_printer_slot = -1;
+    }
 #endif
 }
 
@@ -550,6 +657,13 @@ int TinyTmuxUsbHost::find_first_acm_slot() const {
     return -1;
 }
 
+int TinyTmuxUsbHost::find_first_printer_slot() const {
+    for (int i = 0; i < TINYTMUX_MAX_USB_RADIOS; ++i) {
+        if (slots_[i].in_use && slots_[i].kind == TMUX_USBH_PRINTER) return i;
+    }
+    return -1;
+}
+
 int TinyTmuxUsbHost::count_active() const {
     int count = 0;
     for (int i = 0; i < TINYTMUX_MAX_USB_RADIOS; ++i) {
@@ -566,16 +680,29 @@ int TinyTmuxUsbHost::has_acm_device() const {
     return (find_first_acm_slot() >= 0) ? 1 : 0;
 }
 
+int TinyTmuxUsbHost::has_printer_device() const {
+    return (find_first_printer_slot() >= 0) ? 1 : 0;
+}
+
 void TinyTmuxUsbHost::format_short_status(char* out, size_t out_sz) const {
     if (!out || out_sz == 0) return;
     int has_net = has_net_device();
     int has_acm = has_acm_device();
-    if (has_net && has_acm) {
+    int has_prn = has_printer_device();
+    if (has_net && has_acm && has_prn) {
+        uh_str_copy(out, out_sz, "NSP");
+    } else if (has_net && has_acm) {
         uh_str_copy(out, out_sz, "N+S");
+    } else if (has_net && has_prn) {
+        uh_str_copy(out, out_sz, "N+P");
+    } else if (has_acm && has_prn) {
+        uh_str_copy(out, out_sz, "S+P");
     } else if (has_net) {
         uh_str_copy(out, out_sz, "NET");
     } else if (has_acm) {
         uh_str_copy(out, out_sz, "SER");
+    } else if (has_prn) {
+        uh_str_copy(out, out_sz, "PRN");
     } else {
         uh_str_copy(out, out_sz, "-");
     }
@@ -589,6 +716,11 @@ void TinyTmuxUsbHost::set_eth_tx_hook(TinyTmuxUsbEthTxFn cb, void* ctx) {
 void TinyTmuxUsbHost::set_acm_tx_hook(TinyTmuxUsbAcmTxFn cb, void* ctx) {
     acm_tx_hook_ = cb;
     acm_tx_ctx_ = ctx;
+}
+
+void TinyTmuxUsbHost::set_printer_tx_hook(TinyTmuxUsbPrinterTxFn cb, void* ctx) {
+    printer_tx_hook_ = cb;
+    printer_tx_ctx_ = ctx;
 }
 
 void TinyTmuxUsbHost::set_acm_rx_callback(TinyTmuxUsbAcmRxFn cb, void* ctx) {
@@ -744,6 +876,27 @@ size_t TinyTmuxUsbHost::send_acm_bytes(int slot, const oyk_u8* data, size_t len)
         if (s_ser_slots[k] == slot && static_cast<bool>(*s_ser_devs[k])) {
             return s_ser_devs[k]->write(data, len);
         }
+    }
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+size_t TinyTmuxUsbHost::send_printer_bytes(int slot, const oyk_u8* data, size_t len) {
+    if (slot < 0) slot = find_first_printer_slot();
+    if (slot < 0 || slot >= TINYTMUX_MAX_USB_RADIOS) return 0;
+    TinyTmuxUsbRadioSlot& s = slots_[slot];
+    if (!s.in_use || s.kind != TMUX_USBH_PRINTER || !data || len == 0) return 0;
+
+    s.tx_packets++;
+    if (printer_tx_hook_) {
+        return printer_tx_hook_(slot, data, len, printer_tx_ctx_);
+    }
+
+#if defined(TEENSYDUINO)
+    if (slot == s_printer_slot && static_cast<bool>(s_usb_printer1)) {
+        return s_usb_printer1.write_bytes(data, len);
     }
     return 0;
 #else

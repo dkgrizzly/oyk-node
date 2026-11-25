@@ -35,7 +35,8 @@ enum TinyTmuxUsbDevKind {
     TMUX_USBH_EMPTY   = 0,
     TMUX_USBH_CDC_ECM = 1,
     TMUX_USBH_CDC_NCM = 2,
-    TMUX_USBH_CDC_ACM = 3
+    TMUX_USBH_CDC_ACM = 3,
+    TMUX_USBH_PRINTER = 4
 };
 
 struct TinyTmuxUsbRadioSlot {
@@ -72,6 +73,7 @@ size_t tinytmux_usb_ncm16_unwrap(const oyk_u8* ntb, size_t ntb_len,
 
 typedef void (*TinyTmuxUsbEthTxFn)(int slot, const oyk_u8* eth_frame, size_t eth_len, void* ctx);
 typedef size_t (*TinyTmuxUsbAcmTxFn)(int slot, const oyk_u8* data, size_t len, void* ctx);
+typedef size_t (*TinyTmuxUsbPrinterTxFn)(int slot, const oyk_u8* data, size_t len, void* ctx);
 typedef void (*TinyTmuxUsbAcmRxFn)(int slot, const oyk_u8* data, size_t len, void* ctx);
 typedef void (*TinyTmuxUsbAx25RxFn)(int slot, int is_axip,
                                     const OykFrame* frame,
@@ -109,15 +111,18 @@ public:
     int find_slot_by_kind(int kind, int start_slot) const;
     int find_first_net_slot() const;
     int find_first_acm_slot() const;
+    int find_first_printer_slot() const;
     int count_active() const;
     int has_net_device() const;
     int has_acm_device() const;
+    int has_printer_device() const;
 
-    /* Formats short status token for header bar: "NET", "SER", "N+S", or "-" */
+    /* Formats short status token for header bar: "NET", "SER", "PRN", "N+S", etc. */
     void format_short_status(char* out, size_t out_sz) const;
 
     void set_eth_tx_hook(TinyTmuxUsbEthTxFn cb, void* ctx);
     void set_acm_tx_hook(TinyTmuxUsbAcmTxFn cb, void* ctx);
+    void set_printer_tx_hook(TinyTmuxUsbPrinterTxFn cb, void* ctx);
     void set_acm_rx_callback(TinyTmuxUsbAcmRxFn cb, void* ctx);
     void set_ax25_rx_callback(TinyTmuxUsbAx25RxFn cb, void* ctx);
     void set_udp_rx_callback(TinyTmuxUsbUdpRxFn cb, void* ctx);
@@ -136,6 +141,7 @@ public:
                    oyk_u16 src_port_host, oyk_u16 dst_port_host);
     int send_axip(int slot, const OykFrame* frame, oyk_u32 dst_ip_net);
     size_t send_acm_bytes(int slot, const oyk_u8* data, size_t len);
+    size_t send_printer_bytes(int slot, const oyk_u8* data, size_t len);
 
 private:
     TinyTmuxUsbRadioSlot slots_[TINYTMUX_MAX_USB_RADIOS];
@@ -146,6 +152,8 @@ private:
     void* eth_tx_ctx_;
     TinyTmuxUsbAcmTxFn acm_tx_hook_;
     void* acm_tx_ctx_;
+    TinyTmuxUsbPrinterTxFn printer_tx_hook_;
+    void* printer_tx_ctx_;
     TinyTmuxUsbAcmRxFn acm_rx_cb_;
     void* acm_rx_ctx_;
     TinyTmuxUsbAx25RxFn ax25_rx_cb_;

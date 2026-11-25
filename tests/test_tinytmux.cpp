@@ -841,9 +841,11 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOD"), 3);
     assert(con->settings_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[Z"), 3);
-    assert(con->settings_tab() == 4);
+    assert(con->settings_tab() == 5);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->settings_tab() == 0);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
+    assert(con->settings_tab() == 5);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[99~"), 5);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
 
@@ -1020,12 +1022,103 @@ static void test_fs_hooks() {
     printf("[PASS] test_fs_hooks\n");
 }
 
+struct PrinterSimCap {
+    oyk_u8 buf[512];
+    size_t len;
+    int last_port;
+};
+
+static size_t sim_usb_printer_tx(int /*slot*/, const oyk_u8* data, size_t len, void* ctx) {
+    PrinterSimCap* c = static_cast<PrinterSimCap*>(ctx);
+    if (!c || !data || c->len + len >= sizeof(c->buf)) return 0;
+    memcpy(c->buf + c->len, data, len);
+    c->len += len;
+    c->buf[c->len] = '\0';
+    return len;
+}
+
+static void sim_uart_printer_tx(int logical_port, const oyk_u8* data, size_t len, void* ctx) {
+    PrinterSimCap* c = static_cast<PrinterSimCap*>(ctx);
+    if (!c || !data || c->len + len >= sizeof(c->buf)) return;
+    c->last_port = logical_port;
+    memcpy(c->buf + c->len, data, len);
+    c->len += len;
+    c->buf[c->len] = '\0';
+}
+
+static void test_printer_usb_and_serial() {
+    OykConfig* cfg = new OykConfig;
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
+    cfg->printer_enabled = 1;
+    strcpy(cfg->printer_device, "usb-printer");
+    strcpy(cfg->printer_protocol, "mx80");
+    cfg->printer_baud = 9600UL;
+    cfg->printer_level = OYK_LOG_ERROR | OYK_LOG_BAN | OYK_LOG_INFO;
+    cfg->printer_condensed = 1;
+
+    OykPortableNode* node = new OykPortableNode;
+    TinyTmuxNetBridge* bridge = new TinyTmuxNetBridge;
+    char err[128];
+    assert(node->init(cfg, TinyTmuxNetBridge::node_tx_callback, bridge, err, sizeof(err)) == 1);
+    assert(bridge->init(node, 1000UL) == 1);
+
+    PrinterSimCap usb_cap;
+    memset(&usb_cap, 0, sizeof(usb_cap));
+    bridge->usb_host()->set_printer_tx_hook(sim_usb_printer_tx, &usb_cap);
+    int pslot = bridge->usb_host()->attach_slot(-1, TMUX_USBH_PRINTER, 0x20U, 0,
+                                                0x04B8U, 0x0005U, NULL, "usbprn0");
+    assert(pslot >= 0 && bridge->usb_host()->has_printer_device() == 1);
+    char hst[16];
+    bridge->usb_host()->format_short_status(hst, sizeof(hst));
+    assert(strcmp(hst, "PRN") == 0);
+
+    bridge->sync_printer_config();
+    assert(usb_cap.len == 3);
+    assert(usb_cap.buf[0] == 0x1BU && usb_cap.buf[1] == '@' && usb_cap.buf[2] == 0x0FU);
+
+    node->log_message(OYK_LOG_ERROR, "USB printer failure test");
+    const char* s = reinterpret_cast<const char*>(usb_cap.buf);
+    assert(strstr(s, "\x1B" "E") != NULL);
+    assert(strstr(s, "USB printer failure test\x1B" "F\r\n") != NULL);
+
+    /* Switch live to serial printer on ser3 with ESC/P2 */
+    PrinterSimCap ser_cap;
+    memset(&ser_cap, 0, sizeof(ser_cap));
+    ser_cap.last_port = -1;
+    tinytmux_uart_set_sim_tx_hook(sim_uart_printer_tx, &ser_cap);
+
+    strcpy(cfg->printer_device, "ser3");
+    strcpy(cfg->printer_protocol, "escp2");
+    cfg->printer_baud = 19200UL;
+    cfg->printer_condensed = 0;
+    OykConfigApplyResult ar;
+    assert(node->apply_config(cfg, 0, &ar) == 1);
+    bridge->rebind_interfaces(2000UL);
+
+    assert(ser_cap.last_port == 3);
+    assert(ser_cap.len >= 7 && ser_cap.buf[0] == 0x1BU && ser_cap.buf[1] == '@' &&
+           ser_cap.buf[5] == 0x1BU && ser_cap.buf[6] == 'M');
+
+    node->log_message(OYK_LOG_BAN, "Serial printer ban");
+    const char* ss = reinterpret_cast<const char*>(ser_cap.buf + 7);
+    assert(strstr(ss, "\x1B" "E\x1B-\x01") != NULL);
+    assert(strstr(ss, "Serial printer ban\x1B-\x00\x1B" "F\r\n") != NULL);
+
+    tinytmux_uart_set_sim_tx_hook(NULL, NULL);
+    delete bridge;
+    delete node;
+    delete cfg;
+    printf("[PASS] test_printer_usb_and_serial\n");
+}
+
 int main() {
     test_board_pinout_and_mac();
     test_psram_detection_and_self_test();
     test_fs_hooks();
     test_ppp_and_dual_ethernet_axudp_axip();
     test_usb_host_radiofoundry_cdc_net_and_acm();
+    test_printer_usb_and_serial();
     test_vt100_console_full_parity();
     printf("All TinyTMUX (IMXRT1060 / Teensy 4.1) host tests passed!\n");
     return 0;

@@ -1711,6 +1711,43 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     gtk_table_attach(GTK_TABLE(t_rig), chk_rig_notify, 0, 2, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_rig, gtk_label_new("Rig"));
 
+    // Tab 6: Line Printer
+    GtkWidget* t_prn = make_table(6);
+    GtkWidget* chk_prn = gtk_check_button_new_with_label("Enable Line-by-Line Printer Logging");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_prn), draft.logging.printer.enabled ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_prn), chk_prn, 0, 2, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* e_prn_dev = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_prn_dev), draft.logging.printer.device.c_str());
+    attach_row(t_prn, 1, "Device (/dev/parport0, /dev/ttyS0):", e_prn_dev);
+
+    GtkWidget* cb_prn_proto = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_prn_proto), "generic");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_prn_proto), "mx80");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_prn_proto), "escp2");
+    int prn_pidx = 0;
+    if (draft.logging.printer.protocol == "mx80") prn_pidx = 1;
+    else if (draft.logging.printer.protocol == "escp2") prn_pidx = 2;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_prn_proto), prn_pidx);
+    attach_row(t_prn, 2, "Protocol:", cb_prn_proto);
+
+    GtkWidget* e_prn_baud = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_prn_baud), std::to_string(draft.logging.printer.baud).c_str());
+    attach_row(t_prn, 3, "Serial Baud Rate:", e_prn_baud);
+
+    GtkWidget* e_prn_lvl = gtk_entry_new();
+    {
+        std::ostringstream loss;
+        loss << "0x" << std::hex << draft.logging.printer.level;
+        gtk_entry_set_text(GTK_ENTRY(e_prn_lvl), loss.str().c_str());
+    }
+    attach_row(t_prn, 4, "Log Mask (hex / symbols):", e_prn_lvl);
+
+    GtkWidget* chk_prn_cond = gtk_check_button_new_with_label("Use 132-column condensed mode (MX-80 / ESC/P2)");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_prn_cond), draft.logging.printer.condensed ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(t_prn), chk_prn_cond, 0, 2, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_prn, gtk_label_new("Printer"));
+
     GtkSettingsCtx sctx;
     sctx.dlg = dlg;
     sctx.if_store = if_store;
@@ -1826,6 +1863,33 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
         next.rig.poll_interval_sec = static_cast<uint32_t>(
             gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(sp_rig_poll)));
         next.rig.notify = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_rig_notify)) != FALSE;
+
+        next.logging.printer.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_prn)) != FALSE;
+        next.logging.printer.device = gtk_entry_get_text(GTK_ENTRY(e_prn_dev));
+        {
+            int ppi = gtk_combo_box_get_active(GTK_COMBO_BOX(cb_prn_proto));
+            next.logging.printer.protocol = (ppi == 1) ? "mx80" : ((ppi == 2) ? "escp2" : "generic");
+        }
+        try {
+            int pb = std::stoi(gtk_entry_get_text(GTK_ENTRY(e_prn_baud)));
+            if (pb < 300) {
+                show_err("Printer baud rate must be >= 300.");
+                continue;
+            }
+            next.logging.printer.baud = static_cast<uint32_t>(pb);
+        } catch (...) {
+            show_err("Invalid printer baud rate.");
+            continue;
+        }
+        {
+            uint32_t pmask = 0;
+            if (!node::parse_log_mask(gtk_entry_get_text(GTK_ENTRY(e_prn_lvl)), pmask)) {
+                show_err("Invalid printer log mask (use e.g. 0x77 or ALL).");
+                continue;
+            }
+            next.logging.printer.level = pmask;
+        }
+        next.logging.printer.condensed = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_prn_cond)) != FALSE;
 
         auto res = st->engine->apply_config(next, true);
         if (!res.applied) {
