@@ -119,6 +119,19 @@ ax25::Callsign NodeConfig::resolved_chat_callsign() const {
     return ax25::Callsign(callsign.base(), static_cast<uint8_t>(chat.ssid & 0x0Fu));
 }
 
+std::optional<ax25::Callsign> NodeConfig::parse_callsign_with_default_ssid(
+    std::string_view text, uint8_t default_ssid) {
+    std::string trimmed = trim(text);
+    auto parsed = ax25::Callsign::parse(trimmed);
+    if (!parsed) {
+        return std::nullopt;
+    }
+    if (trimmed.find('-') == std::string::npos) {
+        return ax25::Callsign(parsed->base(), static_cast<uint8_t>(default_ssid & 0x0Fu));
+    }
+    return parsed;
+}
+
 NodeConfig NodeConfig::make_default() {
     NodeConfig cfg;
     radio::RadioInterfaceConfig axudp;
@@ -178,6 +191,11 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
 
     std::string current_section;
     radio::RadioInterfaceConfig* current_iface = nullptr;
+    bool node_call_explicit_ssid = false;
+    bool node_ssid_set = false;
+    uint8_t node_ssid_val = DEFAULT_NODE_SSID;
+    bool bbs_call_explicit_ssid = false;
+    bool chat_call_explicit_ssid = false;
 
     auto lines = core::split_lines_any_eol(raw_bytes);
     int line_num = 0;
@@ -246,13 +264,21 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
 
         if (current_section == "node" || current_section.empty()) {
             if (key == "callsign") {
-                auto parsed = ax25::Callsign::parse(val);
+                const uint8_t fallback_ssid = node_ssid_set ? node_ssid_val : DEFAULT_NODE_SSID;
+                auto parsed = parse_callsign_with_default_ssid(val, fallback_ssid);
                 if (!parsed) {
                     error_out = "Config line " + std::to_string(line_num) +
                                 ": invalid callsign '" + val + "'";
                     return false;
                 }
                 cfg.callsign = *parsed;
+                node_call_explicit_ssid = (val.find('-') != std::string::npos);
+            } else if (key == "ssid") {
+                node_ssid_val = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                node_ssid_set = true;
+                if (!node_call_explicit_ssid) {
+                    cfg.callsign = ax25::Callsign(cfg.callsign.base(), node_ssid_val);
+                }
             } else if (key == "alias") {
                 if (val.empty()) {
                     cfg.alias = ax25::Callsign{};
@@ -313,17 +339,22 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.bbs.enabled = parse_bool(val, true);
             } else if (key == "ssid") {
                 cfg.bbs.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                if (cfg.bbs.callsign.valid() && !bbs_call_explicit_ssid) {
+                    cfg.bbs.callsign = ax25::Callsign(cfg.bbs.callsign.base(), cfg.bbs.ssid);
+                }
             } else if (key == "callsign") {
                 if (val.empty()) {
                     cfg.bbs.callsign = ax25::Callsign{};
+                    bbs_call_explicit_ssid = false;
                 } else {
-                    auto parsed = ax25::Callsign::parse(val);
+                    auto parsed = parse_callsign_with_default_ssid(val, cfg.bbs.ssid);
                     if (!parsed) {
                         error_out = "Config line " + std::to_string(line_num) +
                                     ": invalid bbs callsign '" + val + "'";
                         return false;
                     }
                     cfg.bbs.callsign = *parsed;
+                    bbs_call_explicit_ssid = (val.find('-') != std::string::npos);
                 }
             } else if (key == "alias") {
                 if (val.empty()) {
@@ -349,17 +380,22 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.chat.enabled = parse_bool(val, true);
             } else if (key == "ssid") {
                 cfg.chat.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                if (cfg.chat.callsign.valid() && !chat_call_explicit_ssid) {
+                    cfg.chat.callsign = ax25::Callsign(cfg.chat.callsign.base(), cfg.chat.ssid);
+                }
             } else if (key == "callsign") {
                 if (val.empty()) {
                     cfg.chat.callsign = ax25::Callsign{};
+                    chat_call_explicit_ssid = false;
                 } else {
-                    auto parsed = ax25::Callsign::parse(val);
+                    auto parsed = parse_callsign_with_default_ssid(val, cfg.chat.ssid);
                     if (!parsed) {
                         error_out = "Config line " + std::to_string(line_num) +
                                     ": invalid chat callsign '" + val + "'";
                         return false;
                     }
                     cfg.chat.callsign = *parsed;
+                    chat_call_explicit_ssid = (val.find('-') != std::string::npos);
                 }
             } else if (key == "alias") {
                 if (val.empty()) {

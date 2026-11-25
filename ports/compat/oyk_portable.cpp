@@ -275,6 +275,17 @@ int oyk_parse_callsign(const char* text, OykCallsign* out) {
     return 1;
 }
 
+int oyk_parse_callsign_with_default_ssid(const char* text, oyk_u8 default_ssid, OykCallsign* out) {
+    if (!text || !out) return 0;
+    OykCallsign parsed;
+    if (!oyk_parse_callsign(text, &parsed)) return 0;
+    if (strchr(text, '-') == NULL) {
+        parsed.ssid = static_cast<oyk_u8>(default_ssid & 0x0FU);
+    }
+    *out = parsed;
+    return 1;
+}
+
 void oyk_format_callsign(const OykCallsign* call, char* out, size_t out_sz) {
     if (!call || !out || out_sz == 0) return;
     if (call->ssid == 0) {
@@ -914,6 +925,11 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
 
     int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs */
     OykIfaceConfig* cur_if = NULL;
+    int node_call_explicit_ssid = 0;
+    int node_ssid_set = 0;
+    oyk_u8 node_ssid_val = OYK_DEFAULT_NODE_SSID;
+    int chat_call_explicit_ssid = 0;
+    int bbs_call_explicit_ssid = 0;
 
     size_t pos = 0;
     char line[256];
@@ -971,7 +987,19 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
 
         if (section == 0) {
             if (stricmp_ascii(k, "callsign") == 0) {
-                oyk_parse_callsign(v, &cfg->callsign);
+                oyk_u8 def_s = node_ssid_set ? node_ssid_val : static_cast<oyk_u8>(OYK_DEFAULT_NODE_SSID);
+                if (oyk_parse_callsign_with_default_ssid(v, def_s, &cfg->callsign)) {
+                    node_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                }
+            } else if (stricmp_ascii(k, "ssid") == 0) {
+                int sv = atoi(v);
+                if (sv >= 0 && sv <= 15) {
+                    node_ssid_val = static_cast<oyk_u8>(sv);
+                    node_ssid_set = 1;
+                    if (!node_call_explicit_ssid) {
+                        cfg->callsign.ssid = node_ssid_val;
+                    }
+                }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 oyk_parse_callsign(v, &cfg->alias);
             } else if (stricmp_ascii(k, "info") == 0 || stricmp_ascii(k, "info_text") == 0) {
@@ -1028,10 +1056,19 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cfg->chat_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "ssid") == 0) {
                 int sv = atoi(v);
-                if (sv >= 0 && sv <= 15) cfg->chat_ssid = static_cast<oyk_u8>(sv);
+                if (sv >= 0 && sv <= 15) {
+                    cfg->chat_ssid = static_cast<oyk_u8>(sv);
+                    if (cfg->chat_callsign.base[0] && !chat_call_explicit_ssid) {
+                        cfg->chat_callsign.ssid = cfg->chat_ssid;
+                    }
+                }
             } else if (stricmp_ascii(k, "callsign") == 0) {
-                if (!v[0]) memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
-                else oyk_parse_callsign(v, &cfg->chat_callsign);
+                if (!v[0]) {
+                    memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
+                    chat_call_explicit_ssid = 0;
+                } else if (oyk_parse_callsign_with_default_ssid(v, cfg->chat_ssid, &cfg->chat_callsign)) {
+                    chat_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 if (!v[0]) memset(&cfg->chat_alias, 0, sizeof(cfg->chat_alias));
                 else oyk_parse_callsign(v, &cfg->chat_alias);
@@ -1045,10 +1082,19 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cfg->bbs_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "ssid") == 0) {
                 int sv = atoi(v);
-                if (sv >= 0 && sv <= 15) cfg->bbs_ssid = static_cast<oyk_u8>(sv);
+                if (sv >= 0 && sv <= 15) {
+                    cfg->bbs_ssid = static_cast<oyk_u8>(sv);
+                    if (cfg->bbs_callsign.base[0] && !bbs_call_explicit_ssid) {
+                        cfg->bbs_callsign.ssid = cfg->bbs_ssid;
+                    }
+                }
             } else if (stricmp_ascii(k, "callsign") == 0) {
-                if (!v[0]) memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
-                else oyk_parse_callsign(v, &cfg->bbs_callsign);
+                if (!v[0]) {
+                    memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
+                    bbs_call_explicit_ssid = 0;
+                } else if (oyk_parse_callsign_with_default_ssid(v, cfg->bbs_ssid, &cfg->bbs_callsign)) {
+                    bbs_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 if (!v[0]) memset(&cfg->bbs_alias, 0, sizeof(cfg->bbs_alias));
                 else oyk_parse_callsign(v, &cfg->bbs_alias);

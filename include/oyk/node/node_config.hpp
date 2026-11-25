@@ -35,7 +35,9 @@ struct ChatConfig {
 };
 
 struct NodeConfig {
-    ax25::Callsign callsign{"N0CALL", 7};
+    static constexpr uint8_t DEFAULT_NODE_SSID = 7;
+
+    ax25::Callsign callsign{"N0CALL", DEFAULT_NODE_SSID};
     ax25::Callsign alias{"OYKNOD", 0};
     std::string info_text = "OYK C++ Modular Amateur Radio Packet Node";
     std::string source_path; // Path of loaded config file (empty if built-in defaults)
@@ -70,6 +72,11 @@ struct NodeConfig {
 
     // Resolves CHAT callsign: explicit chat.callsign if valid, else <callsign.base()>-<chat.ssid>.
     ax25::Callsign resolved_chat_callsign() const;
+
+    // Parses a callsign from config or CLI. If no explicit '-SSID' is present,
+    // takes the value as the base callsign and applies `default_ssid` (default 7).
+    static std::optional<ax25::Callsign> parse_callsign_with_default_ssid(
+        std::string_view text, uint8_t default_ssid = DEFAULT_NODE_SSID);
 
     static NodeConfig make_default();
 

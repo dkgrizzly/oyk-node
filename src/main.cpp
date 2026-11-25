@@ -30,7 +30,7 @@ void print_usage(const char* prog) {
         << "Usage: " << prog << " [options]\n\n"
         << "Options:\n"
         << "  -c, --config <path>      Load configuration file\n"
-        << "      --callsign <CALL>    Override node callsign (e.g. N0CALL-7)\n"
+        << "      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n"
         << "      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n"
         << "      --port <UDP_PORT>    Override first AXUDP bind port (default 10093)\n"
         << "      --headless           Run without ncurses UI (log to stdout)\n"
@@ -50,19 +50,45 @@ int main(int argc, char* argv[]) {
     std::string override_port;
     bool headless = false;
 
+    auto take_val = [&](int& idx, const std::string& a, const std::string& name, std::string& dst) -> bool {
+        if (a == name) {
+            if (idx + 1 >= argc) return false;
+            dst = argv[++idx];
+            return true;
+        }
+        std::string pfx = name + "=";
+        if (a.rfind(pfx, 0) == 0) {
+            dst = a.substr(pfx.size());
+            return true;
+        }
+        return false;
+    };
+
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
             print_usage(argv[0]);
             return 0;
-        } else if ((arg == "-c" || arg == "--config") && i + 1 < argc) {
-            config_path = argv[++i];
-        } else if (arg == "--callsign" && i + 1 < argc) {
-            override_call = argv[++i];
-        } else if (arg == "--alias" && i + 1 < argc) {
-            override_alias = argv[++i];
-        } else if (arg == "--port" && i + 1 < argc) {
-            override_port = argv[++i];
+        } else if (arg == "-c" || arg == "--config" || arg.rfind("--config=", 0) == 0) {
+            if (!take_val(i, arg, (arg == "-c") ? "-c" : "--config", config_path)) {
+                std::cerr << "Missing value for " << arg << "\n";
+                return 1;
+            }
+        } else if (arg == "--callsign" || arg.rfind("--callsign=", 0) == 0) {
+            if (!take_val(i, arg, "--callsign", override_call)) {
+                std::cerr << "Missing value for --callsign\n";
+                return 1;
+            }
+        } else if (arg == "--alias" || arg.rfind("--alias=", 0) == 0) {
+            if (!take_val(i, arg, "--alias", override_alias)) {
+                std::cerr << "Missing value for --alias\n";
+                return 1;
+            }
+        } else if (arg == "--port" || arg.rfind("--port=", 0) == 0) {
+            if (!take_val(i, arg, "--port", override_port)) {
+                std::cerr << "Missing value for --port\n";
+                return 1;
+            }
         } else if (arg == "--headless") {
             headless = true;
         } else {
@@ -90,7 +116,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (!override_call.empty()) {
-        auto parsed = oyk::ax25::Callsign::parse(override_call);
+        auto parsed = oyk::node::NodeConfig::parse_callsign_with_default_ssid(
+            override_call, cfg.callsign.ssid());
         if (!parsed) {
             std::cerr << "Invalid callsign: " << override_call << "\n";
             return 1;

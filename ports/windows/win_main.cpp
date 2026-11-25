@@ -1510,7 +1510,7 @@ static void show_win_usage() {
                "OYK Amateur Radio Packet Node (Windows)\n\n"
                "Options:\n"
                "  -c, --config <path>      Load configuration file\n"
-               "      --callsign <CALL>    Override node callsign (e.g. N0CALL-7)\n"
+               "      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n"
                "      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n"
                "      --port <UDP_PORT>    Override first AXUDP bind port\n"
                "      --headless           Run without showing GUI window\n"
@@ -1560,7 +1560,7 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 
     if (cli.override_call[0]) {
-        if (!oyk_parse_callsign(cli.override_call, &cfg.callsign)) {
+        if (!oyk_parse_callsign_with_default_ssid(cli.override_call, cfg.callsign.ssid, &cfg.callsign)) {
             MessageBox(NULL, "Invalid --callsign value.", "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
             WSACleanup();
             return 1;
