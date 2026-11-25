@@ -902,6 +902,39 @@ static void test_vt100_console_full_parity() {
     assert(tinytmux_psram_info()->has_valid_qspi_flash_cs1 == 1);
     tinytmux_psram_set_sim_flash(1, TMUX_FLEXSPI_NONE, 0, 0, 0, 0);
 
+    /* HalfKay Bootloader workflow: cancel first, then confirm with active connection & verify notice + drain */
+    assert(tinytmux_board_sim_bootloader_count() == 0);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("mu"), 2);
+    assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
+    assert(strstr(cap->buf, "OFFLINE in HalfKay bootloader") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n"), 1);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+    assert(tinytmux_board_sim_bootloader_count() == 0);
+
+    /* Simulate a connected remote AX.25 user and confirm bootloader entry */
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    oyk_parse_callsign("K7RMT-1", &sabm.src);
+    sabm.dst = node->config().callsign;
+    sabm.is_command = 1;
+    sabm.control = 0x3FU;
+    node->on_rx_frame(0, &sabm, 0x0A000002UL, 10093U, 0);
+    assert(node->total_active_connections() >= 1);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
+    assert(strstr(cap->buf, "firmware upgrade") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("y"), 1);
+    assert(tinytmux_board_sim_bootloader_count() == 0); /* Still draining */
+    con->tick(t + 1000UL);
+    assert(tinytmux_board_sim_bootloader_count() == 0); /* Not 3s yet */
+    con->tick(t + 3050UL);
+    assert(tinytmux_board_sim_bootloader_count() == 1);
+    assert(node->disconnecting_count() == 0);
+    assert(tinytmux_fs_is_mounted() == 0);
+
     g_test_con = NULL;
     tinytmux_psram_set_sim_chips(NULL, 0, 0, 0, NULL, 0, 0, 0);
     delete[] sim_cs1;

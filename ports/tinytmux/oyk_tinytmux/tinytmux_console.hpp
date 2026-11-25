@@ -37,7 +37,8 @@ enum TinyTmuxViewMode {
     TMUX_VIEW_FILES,
     TMUX_VIEW_RIG,
     TMUX_VIEW_SETTINGS,
-    TMUX_VIEW_PSRAM
+    TMUX_VIEW_PSRAM,
+    TMUX_VIEW_BOOTLOADER
 };
 
 class TinyTmuxConsole {
@@ -103,6 +104,7 @@ private:
     void render_rig();
     void render_settings();
     void render_psram();
+    void render_bootloader();
     void render_prompt_overlay();
 
     void handle_console_key(int key);
@@ -112,6 +114,7 @@ private:
     void handle_rig_key(int key);
     void handle_settings_key(int key);
     void handle_psram_key(int key);
+    void handle_bootloader_key(int key);
     void handle_prompt_key(int key);
 
     void begin_prompt(PromptKind kind, const char* label, const char* prefill);
@@ -172,6 +175,8 @@ private:
     int esc_len_;
     oyk_u32 esc_start_ms_;
     oyk_u32 last_marchc_redraw_ms_;
+    int bootloader_pending_;
+    oyk_u32 bootloader_start_ms_;
 };
 
 #endif /* OYK_TINYTMUX_CONSOLE_HPP */

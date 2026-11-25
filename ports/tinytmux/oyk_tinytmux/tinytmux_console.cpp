@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "tinytmux_console.hpp"
+#include "board_tinytmux.hpp"
 #include "tinytmux_fs.hpp"
 
 #include <stdio.h>
@@ -59,7 +60,8 @@ TinyTmuxConsole::TinyTmuxConsole()
       lterm_sid_(0), lterm_is_local_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
-      last_marchc_redraw_ms_(0) {
+      last_marchc_redraw_ms_(0),
+      bootloader_pending_(0), bootloader_start_ms_(0) {
     esc_buf_[0] = '\0';
     strcpy(status_line_, "TinyTMUX Ready. M:Menu  Tab:Term  S:Settings  F:Files  R:Radio");
     dialog_fb_[0] = '\0';
@@ -95,6 +97,8 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     lterm_line_count_ = 0;
     lterm_curline_len_ = 0;
     lterm_input_len_ = 0;
+    bootloader_pending_ = 0;
+    bootloader_start_ms_ = 0;
     reset_escape();
     if (node_) draft_ = node_->config();
     push_lterm_line("*** OYK TinyTMUX Local Terminal (Esc:Console, /local, /bbs, /chat, /disc)");
@@ -172,6 +176,9 @@ void TinyTmuxConsole::render() {
             break;
         case TMUX_VIEW_PSRAM:
             render_psram();
+            break;
+        case TMUX_VIEW_BOOTLOADER:
+            render_bootloader();
             break;
         case TMUX_VIEW_MENU:
             render_console();
@@ -278,7 +285,7 @@ void TinyTmuxConsole::render_console() {
 }
 
 void TinyTmuxConsole::render_menu() {
-    static const char* ITEMS[10] = {
+    static const char* ITEMS[11] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
@@ -288,15 +295,16 @@ void TinyTmuxConsole::render_menu() {
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [P] PSRAM Diagnostics...       ",
+        " [U] Enter HalfKay Bootloader   ",
         " [X] Close Menu                 "
     };
-    static const int ITEM_ROWS[10] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 14 };
+    static const int ITEM_ROWS[11] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
 
     write_str("\033[2;3H+--------------------------------+");
     write_str("\033[5;3H+--------------------------------+");
-    write_str("\033[13;3H+--------------------------------+");
-    write_str("\033[15;3H+--------------------------------+");
-    for (int i = 0; i < 10; ++i) {
+    write_str("\033[14;3H+--------------------------------+");
+    write_str("\033[16;3H+--------------------------------+");
+    for (int i = 0; i < 11; ++i) {
         char row[80];
         sprintf(row, "\033[%d;3H|%s%.32s\033[0m|",
                 ITEM_ROWS[i], (i == menu_sel_) ? "\033[7m" : "", ITEMS[i]);
@@ -613,6 +621,32 @@ OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
         write_str(" March C- test cancelled by operator.\r\n");
     } else {
         write_str(" Press T for quick self-test, M for full March C- test, Esc to return.\r\n");
+    }
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
+    char buf[160];
+    int active = node_ ? node_->total_active_connections() : 0;
+    int disc_left = node_ ? node_->disconnecting_count() : 0;
+    write_str("\033[H\033[2J");
+    write_str("\033[7m ENTER TEENSY 4.1 HALFKAY BOOTLOADER (FIRMWARE UPGRADE)       Esc:Cancel \033[0m\r\n\r\n");
+    if (!bootloader_pending_) {
+        if (active > 0) {
+            sprintf(buf, " Enter HalfKay bootloader? (%d active connection(s))\r\n\r\n", active);
+            write_str(buf);
+            write_str(" Remote users will be notified that the node is going offline for a\r\n");
+            write_str(" firmware upgrade and gracefully disconnected before rebooting.\r\n\r\n");
+        } else {
+            write_str(" Enter HalfKay bootloader? (no active connections)\r\n\r\n");
+        }
+        write_str(" \033[7m WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m\r\n");
+        write_str(" until you flash new firmware or power-cycle the Teensy 4.1 board.\r\n\r\n");
+        write_str("   [Y] Enter HalfKay Bootloader     [N / Esc] Cancel\r\n");
+    } else {
+        oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
+        sprintf(buf, " Notifying remote users & draining AX.25 disconnects (%d remaining, %lu/3000 ms)...\r\n",
+                disc_left, static_cast<unsigned long>(elapsed));
+        write_str(buf);
     }
 }
 
@@ -962,6 +996,10 @@ void TinyTmuxConsole::handle_console_key(int key) {
     } else if (key == 'p' || key == 'P') {
         view_ = TMUX_VIEW_PSRAM;
         render();
+    } else if (key == 'u' || key == 'U') {
+        bootloader_pending_ = 0;
+        view_ = TMUX_VIEW_BOOTLOADER;
+        render();
     } else if (key == 0x0C) {
         render();
     }
@@ -972,19 +1010,19 @@ void TinyTmuxConsole::handle_menu_key(int key) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
     } else if (key == TMUX_KEY_UP) {
-        menu_sel_ = (menu_sel_ + 9) % 10;
+        menu_sel_ = (menu_sel_ + 10) % 11;
         render();
     } else if (key == TMUX_KEY_DOWN) {
-        menu_sel_ = (menu_sel_ + 1) % 10;
+        menu_sel_ = (menu_sel_ + 1) % 11;
         render();
     } else if (key == TMUX_KEY_HOME) {
         menu_sel_ = 0;
         render();
     } else if (key == TMUX_KEY_END) {
-        menu_sel_ = 9;
+        menu_sel_ = 10;
         render();
     } else if (key == '\r' || key == '\n') {
-        static const int KEYS[10] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'x' };
+        static const int KEYS[11] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'u', 'x' };
         int k = KEYS[menu_sel_];
         view_ = TMUX_VIEW_CONSOLE;
         if (k == 'x') render();
@@ -993,7 +1031,7 @@ void TinyTmuxConsole::handle_menu_key(int key) {
                key == 'l' || key == 'L' || key == 'f' || key == 'F' ||
                key == 'r' || key == 'R' || key == 's' || key == 'S' ||
                key == 't' || key == 'T' || key == 'b' || key == 'B' ||
-               key == 'p' || key == 'P') {
+               key == 'p' || key == 'P' || key == 'u' || key == 'U') {
         view_ = TMUX_VIEW_CONSOLE;
         handle_console_key(key);
     }
@@ -1201,6 +1239,22 @@ void TinyTmuxConsole::handle_psram_key(int key) {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
+    if (bootloader_pending_) return;
+    if (key == 27 || key == 'n' || key == 'N') {
+        view_ = TMUX_VIEW_CONSOLE;
+        render();
+    } else if (key == 'y' || key == 'Y') {
+        char call_s[16], notice[128];
+        oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
+        sprintf(notice, "\r*** Node %s going offline for firmware upgrade. Expect a delay before reconnect.\r", call_s);
+        node_->begin_shutdown_with_notice(notice);
+        bootloader_pending_ = 1;
+        bootloader_start_ms_ = now_ms_;
+        render();
+    }
+}
+
 void TinyTmuxConsole::handle_lterm_key(int key) {
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;
@@ -1284,6 +1338,7 @@ void TinyTmuxConsole::dispatch_key(int key) {
         case TMUX_VIEW_RIG:        handle_rig_key(key); break;
         case TMUX_VIEW_SETTINGS:   handle_settings_key(key); break;
         case TMUX_VIEW_PSRAM:      handle_psram_key(key); break;
+        case TMUX_VIEW_BOOTLOADER: handle_bootloader_key(key); break;
     }
 }
 
@@ -1346,6 +1401,16 @@ void TinyTmuxConsole::tick(oyk_u32 now_ms) {
             (!still_running || (now_ms_ - last_marchc_redraw_ms_) >= 120UL)) {
             last_marchc_redraw_ms_ = now_ms_;
             render();
+        }
+    }
+
+    if (bootloader_pending_) {
+        if (node_->disconnecting_count() == 0 || (now_ms_ - bootloader_start_ms_) >= 3000UL) {
+            bootloader_pending_ = 0;
+            node_->finish_shutdown();
+            tinytmux_fs_unmount();
+            write_str("\r\n\033[7m Node halted in HalfKay bootloader. Flash firmware or power-cycle board. \033[0m\r\n");
+            tinytmux_board_enter_bootloader();
         }
     }
 }

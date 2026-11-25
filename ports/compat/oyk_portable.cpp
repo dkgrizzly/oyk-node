@@ -1435,11 +1435,15 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
     return 1;
 }
 
-int OykPortableNode::begin_shutdown() {
+int OykPortableNode::begin_shutdown_with_notice(const char* notice_line) {
     accept_incoming_ = 0;
-    char node_s[16], signoff[80];
-    oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
-    sprintf(signoff, "\r*** Node shutting down. 73 de %s\r", node_s);
+    char node_s[16], signoff[128];
+    if (notice_line && notice_line[0]) {
+        safe_copy(signoff, sizeof(signoff), notice_line);
+    } else {
+        oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
+        sprintf(signoff, "\r*** Node shutting down. 73 de %s\r", node_s);
+    }
 
     int count = 0;
     for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
@@ -1451,6 +1455,10 @@ int OykPortableNode::begin_shutdown() {
         }
     }
     return count;
+}
+
+int OykPortableNode::begin_shutdown() {
+    return begin_shutdown_with_notice(NULL);
 }
 
 int OykPortableNode::disconnecting_count() const {

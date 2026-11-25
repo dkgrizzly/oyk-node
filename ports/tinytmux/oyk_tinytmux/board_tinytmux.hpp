@@ -84,6 +84,8 @@ void tinytmux_board_set_link_led(int speed_100mbps);
 void tinytmux_board_set_usbh_vbus(int on);
 const TinyTmuxPsramInfo* tinytmux_board_psram_info();
 oyk_u32 tinytmux_board_millis();
+void tinytmux_board_enter_bootloader();
+int tinytmux_board_sim_bootloader_count();
 
 int tinytmux_uart_init(int logical_port, const TinyTmuxUartConfig* cfg);
 size_t tinytmux_uart_write(int logical_port, const oyk_u8* data, size_t len);

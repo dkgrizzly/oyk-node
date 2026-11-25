@@ -142,6 +142,19 @@ size_t tinytmux_uart_read(int logical_port, oyk_u8* out, size_t max_len) {
     return got;
 }
 
+extern "C" void _reboot_Teensyduino_(void);
+
+void tinytmux_board_enter_bootloader() {
+    Serial.flush();
+    SerialUSB1.flush();
+    delay(50);
+    _reboot_Teensyduino_();
+}
+
+int tinytmux_board_sim_bootloader_count() {
+    return 0;
+}
+
 extern "C" void tinytmux_early_puts(const char* /*s*/) {}
 extern "C" void tinytmux_early_puthex(oyk_u32 /*v*/) {}
 
@@ -152,6 +165,7 @@ static int s_host_status_led = 0;
 static int s_host_led = 0;
 static int s_host_usbh_vbus = 0;
 static oyk_u32 s_host_ms = 0;
+static int s_host_bootloader_calls = 0;
 
 void tinytmux_board_init() {
     s_host_status_led = 0;
@@ -185,6 +199,14 @@ const TinyTmuxPsramInfo* tinytmux_board_psram_info() {
 
 oyk_u32 tinytmux_board_millis() {
     return s_host_ms;
+}
+
+void tinytmux_board_enter_bootloader() {
+    s_host_bootloader_calls++;
+}
+
+int tinytmux_board_sim_bootloader_count() {
+    return s_host_bootloader_calls;
 }
 
 int tinytmux_uart_init(int logical_port, const TinyTmuxUartConfig* cfg) {
