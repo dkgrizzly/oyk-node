@@ -3,8 +3,6 @@
 
 # OYK Packet Node — Freescale/NXP i.MX RT1060 (Teensy 4.1 / TinyTMUX) Port
 
-> **Branch Note:** This port is under active development on the `port/tinytmux` branch and is kept separate from `main` until hardware integration is finalized.
-
 This port targets the **Teensy 4.1** (**NXP/Freescale MIMXRT1062DVJ6A**, ARM Cortex-M7F @ 600 MHz, 1 MB SRAM, 8 MB QSPI Flash, 10/100 Ethernet PHY, USB High-Speed OTG, microSD) on the **TinyTMUX** 8-UART carrier board.
 
 ## Features
@@ -49,7 +47,14 @@ Matches the `TinyTMUX` board layout (XBAR-mapped CTS and hardware RTS flow contr
 
 ## Building for Teensy 4.1 (`arm-none-eabi-gcc`)
 
-Install the GNU Arm Embedded Toolchain (`gcc-arm-none-eabi`), clone `lwip` and `tinyusb`, then build:
+Install the GNU Arm Embedded Toolchain (`gcc-arm-none-eabi`), clone `lwip` and `tinyusb`, then build either from the repository root (`-DBUILD_TINYTMUX_PORT=ON`):
+
+```bash
+cmake -B build-tinytmux -DBUILD_TINYTMUX_PORT=ON
+cmake --build build-tinytmux --target oyk-tinytmux
+```
+
+Or invoke [ports/tinytmux/CMakeLists.txt](CMakeLists.txt) directly when passing custom `LWIP_DIR` / `TINYUSB_DIR` paths:
 
 ```bash
 cmake -S ports/tinytmux -B build-tinytmux \
@@ -67,7 +72,7 @@ teensy_loader_cli --mcu=TEENSY41 -w -v build-tinytmux/oyk-tinytmux.hex
 
 ## Host Simulation & Unit Tests (Linux)
 
-On the `port/tinytmux` branch, the host unit test target `oyk_tinytmux_tests` compiles the TinyTMUX board pinout, RFC 1661/1662/1332 PPP engine, simultaneous Ethernet + RadioFoundry PPP AXUDP/AXIP bridge, and ANSI/VT100 operator console natively under strict C++98 and runs under CTest:
+The host unit test target `oyk_tinytmux_tests` compiles the TinyTMUX board pinout, FlexSPI2 QSPI PSRAM probe/self-test, TinyUSB Host RadioFoundry transport (`usb-cdc-net` and `usb-cdc-serial`), RFC 1661/1662/1332 PPP engine, simultaneous Ethernet + RadioFoundry AXUDP/AXIP/rig control bridge, and ANSI/VT100 operator console natively under strict C++98 and runs under CTest:
 
 ```bash
 cmake -B build && cmake --build build -j && ctest --test-dir build --output-on-failure -V

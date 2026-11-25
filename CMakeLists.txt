@@ -306,6 +306,22 @@ if(BUILD_WINDOWS_PORT)
     endif()
 endif()
 
+# Optional Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware target - built only if requested
+if(BUILD_TINYTMUX_PORT)
+    find_program(ARM_NONE_EABI_CXX arm-none-eabi-g++)
+    if(NOT ARM_NONE_EABI_CXX)
+        message(FATAL_ERROR "BUILD_TINYTMUX_PORT requires 'arm-none-eabi-g++' in PATH")
+    endif()
+    set(_tinytmux_build_dir "${CMAKE_CURRENT_BINARY_DIR}/tinytmux")
+    add_custom_target(oyk-tinytmux
+        COMMAND ${CMAKE_COMMAND} -S "${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux"
+                -B "${_tinytmux_build_dir}"
+                -DCMAKE_TOOLCHAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/arm-imxrt1062.cmake"
+        COMMAND ${CMAKE_COMMAND} --build "${_tinytmux_build_dir}" -j
+        COMMENT "Building Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware (oyk-tinytmux.hex)"
+    )
+endif()
+
 if(BUILD_TESTS AND NOT WIN32)
     enable_testing()
 
