@@ -43,6 +43,38 @@ struct TinyTmuxPsramInfo {
     TinyTmuxPsramChipInfo chips[TINYTMUX_PSRAM_MAX_CHIPS];
 };
 
+enum TinyTmuxMarchCState {
+    TMUX_MARCHC_IDLE = 0,
+    TMUX_MARCHC_RUNNING,
+    TMUX_MARCHC_PASSED,
+    TMUX_MARCHC_FAILED,
+    TMUX_MARCHC_CANCELLED
+};
+
+enum TinyTmuxMarchCChipRes {
+    TMUX_MARCHC_CHIP_NONE = 0,
+    TMUX_MARCHC_CHIP_PENDING,
+    TMUX_MARCHC_CHIP_RUNNING,
+    TMUX_MARCHC_CHIP_PASS,
+    TMUX_MARCHC_CHIP_FAIL
+};
+
+struct TinyTmuxMarchCStatus {
+    int state;
+    int active_chip;
+    int active_pass;
+    char pass_label[24];
+    oyk_u8 chip_percent[TINYTMUX_PSRAM_MAX_CHIPS];
+    int chip_result[TINYTMUX_PSRAM_MAX_CHIPS];
+    int fail_chip;
+    int fail_pass;
+    oyk_u32 fail_addr;
+    oyk_u32 fail_expected;
+    oyk_u32 fail_actual;
+    oyk_u32 start_ms;
+    oyk_u32 elapsed_ms;
+};
+
 /*
  * Fast multi-pattern verification (~20-50 ms per 8 MB chip at 600 MHz):
  *   1. Data bus walking-1 and walking-0 across all 32 data bits
@@ -67,6 +99,15 @@ const TinyTmuxPsramInfo* tinytmux_psram_info();
 
 /* Short header badge string: "16M", "8M", "NO", or "ERR". */
 void tinytmux_psram_format_short(const TinyTmuxPsramInfo* info, char* out, size_t out_sz);
+
+/* Descriptive Teensy 4.1 PCB footprint label for chip_idx (0=CS0 small pads, 1=CS1 large pads). */
+const char* tinytmux_psram_footprint_label(int chip_idx);
+
+/* Cooperative chunked full 6-element / 10-op March C- PSRAM test (manual trigger). */
+int tinytmux_psram_marchc_start(oyk_u32 now_ms);
+int tinytmux_psram_marchc_step(oyk_u32 now_ms, size_t max_words_per_step);
+void tinytmux_psram_marchc_cancel();
+const TinyTmuxMarchCStatus* tinytmux_psram_marchc_status();
 
 /* Host/unit-test simulation hooks (no-op on IMXRT1060 hardware). */
 void tinytmux_psram_set_sim_chips(oyk_u32* cs0_buf, size_t cs0_words, oyk_u8 cs0_mfg, oyk_u8 cs0_kgd,

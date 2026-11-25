@@ -57,7 +57,8 @@ TinyTmuxConsole::TinyTmuxConsole()
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
       lterm_sid_(0), lterm_is_local_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
-      esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0) {
+      esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
+      last_marchc_redraw_ms_(0) {
     esc_buf_[0] = '\0';
     strcpy(status_line_, "TinyTMUX Ready. M:Menu  Tab:Term  S:Settings  F:Files  R:Radio");
     dialog_fb_[0] = '\0';
@@ -512,13 +513,27 @@ void TinyTmuxConsole::render_settings() {
     write_str(buf);
 }
 
+static void format_progress_bar(oyk_u8 pct, char* out, size_t out_sz) {
+    if (!out || out_sz < 23) return;
+    int filled = (static_cast<int>(pct) * 20) / 100;
+    if (filled < 0) filled = 0;
+    if (filled > 20) filled = 20;
+    out[0] = '[';
+    for (int i = 0; i < 20; ++i) {
+        out[1 + i] = (i < filled) ? '#' : '.';
+    }
+    out[21] = ']';
+    out[22] = '\0';
+}
+
 void TinyTmuxConsole::render_psram() {
-    char buf[160], tag[8];
+    char buf[192], tag[8];
     const TinyTmuxPsramInfo* info = tinytmux_psram_info();
+    const TinyTmuxMarchCStatus* mc = tinytmux_psram_marchc_status();
     tinytmux_psram_format_short(info, tag, sizeof(tag));
     write_str("\033[H\033[2J");
-    write_str("\033[7m TEENSY 4.1 FLEXSPI2 QSPI PSRAM DIAGNOSTICS         T:Re-Test  Esc:Back \033[0m\r\n");
-    sprintf(buf, " Status      : %-6s  Base: 0x%08lX  Test time: %lu ms\r\n",
+    write_str("\033[7m TEENSY 4.1 FLEXSPI2 PSRAM DIAGNOSTICS   T:Quick  M:MarchC-  Esc:Back \033[0m\r\n");
+    sprintf(buf, " Status      : %-6s  Base: 0x%08lX  Quick test: %lu ms\r\n",
             tag,
             static_cast<unsigned long>(info->base_addr),
             static_cast<unsigned long>(info->test_time_ms));
@@ -531,22 +546,57 @@ void TinyTmuxConsole::render_psram() {
 
     for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
         const TinyTmuxPsramChipInfo& c = info->chips[i];
-        sprintf(buf, " Chip %d (CS%d @ 0x%08lX): detected=%s  passed=%s  size=%lu MB  JEDEC=%02X %02X\r\n",
+        sprintf(buf, " Chip %d (CS%d @ 0x%08lX): %s  %s  %lu MB  JEDEC=%02X %02X\r\n",
                 i, i,
                 static_cast<unsigned long>(c.base_addr),
-                c.detected ? "YES" : "NO",
+                c.detected ? "DETECTED" : "EMPTY",
                 c.passed ? "PASS" : (c.detected ? "FAIL" : "-"),
                 static_cast<unsigned long>(c.size_bytes / (1024UL * 1024UL)),
                 static_cast<unsigned int>(c.mfg_id),
                 static_cast<unsigned int>(c.kgd));
         write_str(buf);
+        if (mc->state != TMUX_MARCHC_IDLE && mc->chip_result[i] != TMUX_MARCHC_CHIP_NONE) {
+            char bar[28];
+            format_progress_bar(mc->chip_percent[i], bar, sizeof(bar));
+            const char* res_s = "WAIT";
+            if (mc->chip_result[i] == TMUX_MARCHC_CHIP_RUNNING) res_s = mc->pass_label;
+            else if (mc->chip_result[i] == TMUX_MARCHC_CHIP_PASS) res_s = "PASS";
+            else if (mc->chip_result[i] == TMUX_MARCHC_CHIP_FAIL) res_s = "FAIL";
+            sprintf(buf, "   March C-: %s %3u%%  %-16s\r\n",
+                    bar, static_cast<unsigned int>(mc->chip_percent[i]), res_s);
+            write_str(buf);
+        }
         if (c.detected && !c.passed) {
-            sprintf(buf, "   Fault @ 0x%08lX (chip disabled; continuing cleanly)\r\n",
-                    static_cast<unsigned long>(c.fail_addr));
+            sprintf(buf, "   Fault @ 0x%08lX  Check footprint: %s\r\n",
+                    static_cast<unsigned long>(c.fail_addr),
+                    tinytmux_psram_footprint_label(i));
             write_str(buf);
         }
     }
-    write_str("\r\n Press T to run live PSRAM self-test, Esc to return.\r\n");
+
+    write_str("\r\n");
+    if (mc->state == TMUX_MARCHC_RUNNING) {
+        sprintf(buf, " March C- RUNNING: Chip %d (%s)  Elapsed: %lu ms  (Esc: Cancel)\r\n",
+                mc->active_chip, mc->pass_label, static_cast<unsigned long>(mc->elapsed_ms));
+        write_str(buf);
+    } else if (mc->state == TMUX_MARCHC_PASSED) {
+        sprintf(buf, " March C- PASSED cleanly on all detected chips in %lu ms.\r\n",
+                static_cast<unsigned long>(mc->elapsed_ms));
+        write_str(buf);
+    } else if (mc->state == TMUX_MARCHC_FAILED) {
+        sprintf(buf, " \033[7m MARCH C- FAIL: Chip %d @ 0x%08lX (exp %08lX got %08lX) \033[0m\r\n",
+                mc->fail_chip,
+                static_cast<unsigned long>(mc->fail_addr),
+                static_cast<unsigned long>(mc->fail_expected),
+                static_cast<unsigned long>(mc->fail_actual));
+        write_str(buf);
+        sprintf(buf, " Check/resolder footprint: %s\r\n", tinytmux_psram_footprint_label(mc->fail_chip));
+        write_str(buf);
+    } else if (mc->state == TMUX_MARCHC_CANCELLED) {
+        write_str(" March C- test cancelled by operator.\r\n");
+    } else {
+        write_str(" Press T for quick self-test, M for full March C- test, Esc to return.\r\n");
+    }
 }
 
 void TinyTmuxConsole::render_prompt_overlay() {
@@ -1108,11 +1158,25 @@ void TinyTmuxConsole::handle_settings_key(int key) {
 
 void TinyTmuxConsole::handle_psram_key(int key) {
     if (key == 27) {
-        view_ = TMUX_VIEW_CONSOLE;
-        render();
+        if (tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING) {
+            tinytmux_psram_marchc_cancel();
+            render();
+        } else {
+            view_ = TMUX_VIEW_CONSOLE;
+            render();
+        }
     } else if (key == 't' || key == 'T' || key == 'r' || key == 'R') {
+        if (tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING) {
+            tinytmux_psram_marchc_cancel();
+        }
         tinytmux_psram_retest();
         render();
+    } else if (key == 'm' || key == 'M') {
+        if (tinytmux_psram_marchc_status()->state != TMUX_MARCHC_RUNNING) {
+            tinytmux_psram_marchc_start(now_ms_);
+            last_marchc_redraw_ms_ = now_ms_;
+            render();
+        }
     }
 }
 
@@ -1252,6 +1316,15 @@ void TinyTmuxConsole::tick(oyk_u32 now_ms) {
     } else if (esc_state_ != ESC_IDLE) {
         if ((now_ms_ - esc_start_ms_) >= 100UL) {
             reset_escape();
+        }
+    }
+
+    if (tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING) {
+        int still_running = tinytmux_psram_marchc_step(now_ms_, 16384UL);
+        if (view_ == TMUX_VIEW_PSRAM &&
+            (!still_running || (now_ms_ - last_marchc_redraw_ms_) >= 120UL)) {
+            last_marchc_redraw_ms_ = now_ms_;
+            render();
         }
     }
 }
