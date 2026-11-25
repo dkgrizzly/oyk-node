@@ -21,7 +21,7 @@ RC  = wrc
 LD  = wlink
 
 WIN_INC = -I$(WATCOM_DIR)/h -I$(WATCOM_DIR)/h/win
-CFLAGS  = -2 -ml -zw -os -bt=windows -wx -zq $(WIN_INC) -I../compat
+CFLAGS  = -2 -ml -zt=512 -zw -os -bt=windows -wx -zq $(WIN_INC) -I../compat
 
 OBJS = win_main.obj oyk_portable.obj oyk_yapp.obj
 

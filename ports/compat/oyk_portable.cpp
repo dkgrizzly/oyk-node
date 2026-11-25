@@ -2,18 +2,25 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "oyk_portable.hpp"
+#include "oyk_yapp.hpp"
 
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32) || defined(_WIN64)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <direct.h>
 #define OYK_MKDIR(p) _mkdir(p)
 #elif defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS) || defined(__WATCOMC__)
 #include <direct.h>
+#include <dos.h>
 #define OYK_MKDIR(p) mkdir(p)
 #else
+#include <dirent.h>
 #include <sys/stat.h>
 #define OYK_MKDIR(p) mkdir((p), 0755)
 #endif
@@ -846,6 +853,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
     oyk_parse_callsign("OYKBBS", &cfg->bbs_alias);
     safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), "mail");
+    safe_copy(cfg->bbs_files_path, sizeof(cfg->bbs_files_path), "files");
     safe_copy(cfg->bbs_welcome, sizeof(cfg->bbs_welcome),
               "Welcome to OYK Packet BBS! Type H for help, B to exit.");
     cfg->bbs_max_msg_bytes = static_cast<oyk_u16>(OYK_MAX_BBS_BODY - 1);
@@ -1100,6 +1108,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 else oyk_parse_callsign(v, &cfg->bbs_alias);
             } else if (stricmp_ascii(k, "mailpath") == 0 || stricmp_ascii(k, "mail_path") == 0) {
                 if (v[0]) safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), v);
+            } else if (stricmp_ascii(k, "filespath") == 0 || stricmp_ascii(k, "files_path") == 0) {
+                if (v[0]) safe_copy(cfg->bbs_files_path, sizeof(cfg->bbs_files_path), v);
             } else if (stricmp_ascii(k, "welcome") == 0) {
                 safe_copy(cfg->bbs_welcome, sizeof(cfg->bbs_welcome), v);
             } else if (stricmp_ascii(k, "max_msg_bytes") == 0) {
@@ -1179,6 +1189,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
         fprintf(fp, "alias = %s%s", ba, nl);
     }
     fprintf(fp, "mailpath = %s%s", cfg->bbs_mail_path, nl);
+    fprintf(fp, "filespath = %s%s", cfg->bbs_files_path, nl);
     fprintf(fp, "welcome = %s%s", cfg->bbs_welcome, nl);
     fprintf(fp, "max_msg_bytes = %u%s", static_cast<unsigned int>(cfg->bbs_max_msg_bytes), nl);
 
@@ -1222,7 +1233,8 @@ OykPortableNode::OykPortableNode()
       banlist_eol_(oyk_platform_default_eol()),
       banlist_has_eol_(0), banlist_mixed_eol_(0),
       ban_count_(0), console_log_count_(0),
-      bbs_next_id_(1), bbs_msg_count_(0) {
+      bbs_next_id_(1), bbs_msg_count_(0),
+      bbs_yapp_(NULL), bbs_yapp_sid_(0), bbs_yapp_tx_sess_(NULL) {
     oyk_config_init_default(&cfg_);
     memset(ifaces_, 0, sizeof(ifaces_));
     memset(sessions_, 0, sizeof(sessions_));
@@ -1232,6 +1244,14 @@ OykPortableNode::OykPortableNode()
     memset(console_logs_, 0, sizeof(console_logs_));
     memset(bbs_msgs_, 0, sizeof(bbs_msgs_));
     banlist_path_[0] = '\0';
+}
+
+OykPortableNode::~OykPortableNode() {
+    if (bbs_yapp_) {
+        oyk_yapp_reset(bbs_yapp_);
+        delete bbs_yapp_;
+        bbs_yapp_ = NULL;
+    }
 }
 
 void OykPortableNode::set_now_override(time_t fixed_now) {
@@ -1912,6 +1932,30 @@ void OykPortableNode::record_heard(const OykCallsign* src, int iface_idx) {
     log_message(OYK_LOG_INFO, msg);
 }
 
+void OykPortableNode::send_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len) {
+    if (!sess || !data || len == 0 || sess->is_local_loopback || !tx_cb_) return;
+    size_t pos = 0;
+    while (pos < len) {
+        size_t chunk = len - pos;
+        if (chunk > 220) chunk = 220;
+        OykFrame f;
+        memset(&f, 0, sizeof(f));
+        f.dst = sess->remote_call;
+        f.src = sess->local_call;
+        f.is_command = 1;
+        f.control = static_cast<oyk_u8>(((sess->vs & 0x07U) << 1) | ((sess->vr & 0x07U) << 5));
+        f.has_pid = 1;
+        f.pid = 0xF0U;
+        f.info_len = static_cast<oyk_u16>(chunk);
+        memcpy(f.info, data + pos, chunk);
+        sess->vs = static_cast<oyk_u8>((sess->vs + 1) & 0x07U);
+        if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
+            ifaces_[sess->iface_idx].tx_frames++;
+        }
+        pos += chunk;
+    }
+}
+
 void OykPortableNode::send_text(OykSession* sess, const char* text) {
     if (!sess || !text) return;
     if (sess->is_local_loopback) {
@@ -1962,6 +2006,387 @@ void OykPortableNode::send_disc(OykSession* sess) {
     if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
         ifaces_[sess->iface_idx].tx_frames++;
     }
+}
+
+/* ==================== Portable BBS Files Area & Sysop Approval ==================== */
+
+struct OykDirEnt {
+    char name[32];
+    int is_dir;
+    oyk_u32 size;
+};
+
+static int oyk_list_dir_entries(const char* dir_path, OykDirEnt* out, int max_out) {
+    if (!dir_path || !dir_path[0] || !out || max_out <= 0) return 0;
+    int count = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    char pat[192];
+    join_path(dir_path, "*", pat, sizeof(pat));
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (!oyk_yapp_is_safe_filename(fd.cFileName)) continue;
+        if (count < max_out) {
+            safe_copy(out[count].name, sizeof(out[count].name), fd.cFileName);
+            out[count].is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+            out[count].size = static_cast<oyk_u32>(fd.nFileSizeLow);
+            ++count;
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#elif defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS) || defined(__WATCOMC__)
+    char pat[192];
+    join_path(dir_path, "*.*", pat, sizeof(pat));
+    struct find_t fi;
+    if (_dos_findfirst(pat, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) == 0) {
+        do {
+            if (!oyk_yapp_is_safe_filename(fi.name)) continue;
+            if (count < max_out) {
+                safe_copy(out[count].name, sizeof(out[count].name), fi.name);
+                out[count].is_dir = (fi.attrib & _A_SUBDIR) ? 1 : 0;
+                out[count].size = static_cast<oyk_u32>(fi.size);
+                ++count;
+            }
+        } while (_dos_findnext(&fi) == 0);
+    }
+#else
+    DIR* d = opendir(dir_path);
+    if (!d) return 0;
+    struct dirent* de = NULL;
+    while ((de = readdir(d)) != NULL && count < max_out) {
+        if (!oyk_yapp_is_safe_filename(de->d_name)) continue;
+        char full[240];
+        join_path(dir_path, de->d_name, full, sizeof(full));
+        struct stat st;
+        if (lstat(full, &st) != 0) continue;
+        if (S_ISLNK(st.st_mode)) continue; /* Reject symlinks to prevent root escape */
+        if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) continue;
+        safe_copy(out[count].name, sizeof(out[count].name), de->d_name);
+        out[count].is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
+        out[count].size = S_ISREG(st.st_mode) ? static_cast<oyk_u32>(st.st_size) : 0UL;
+        ++count;
+    }
+    closedir(d);
+#endif
+    /* Sort: directories first, then alphabetical */
+    for (int i = 0; i < count; ++i) {
+        for (int j = i + 1; j < count; ++j) {
+            int swap = 0;
+            if (out[j].is_dir != out[i].is_dir) {
+                swap = out[j].is_dir > out[i].is_dir;
+            } else if (stricmp_ascii(out[j].name, out[i].name) < 0) {
+                swap = 1;
+            }
+            if (swap) {
+                OykDirEnt tmp = out[i];
+                out[i] = out[j];
+                out[j] = tmp;
+            }
+        }
+    }
+    return count;
+}
+
+static int oyk_is_regular_file(const char* path) {
+    if (!path || !path[0]) return 0;
+#if defined(_WIN32) || defined(_WIN64)
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) ? 1 : 0;
+#elif defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS) || defined(__WATCOMC__)
+    struct find_t fi;
+    if (_dos_findfirst(path, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) != 0) return 0;
+    return (fi.attrib & _A_SUBDIR) ? 0 : 1;
+#else
+    struct stat st;
+    if (lstat(path, &st) != 0) return 0;
+    return S_ISREG(st.st_mode) ? 1 : 0;
+#endif
+}
+
+static int oyk_is_directory(const char* path) {
+    if (!path || !path[0]) return 0;
+#if defined(_WIN32) || defined(_WIN64)
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) ? 1 : 0;
+#elif defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS) || defined(__WATCOMC__)
+    struct find_t fi;
+    if (_dos_findfirst(path, _A_SUBDIR, &fi) == 0 && (fi.attrib & _A_SUBDIR)) return 1;
+    /* Root or existing dir with probe */
+    char pat[192];
+    join_path(path, "*.*", pat, sizeof(pat));
+    return (_dos_findfirst(pat, _A_NORMAL | _A_RDONLY | _A_ARCH | _A_SUBDIR, &fi) == 0) ? 1 : 0;
+#else
+    struct stat st;
+    if (lstat(path, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
+#endif
+}
+
+static void make_dirs_recursive(const char* path) {
+    if (!path || !path[0]) return;
+    char tmp[192];
+    safe_copy(tmp, sizeof(tmp), path);
+    size_t len = strlen(tmp);
+    for (size_t i = 1; i < len; ++i) {
+        if (tmp[i] == '/' || tmp[i] == '\\') {
+            if (i == 2 && tmp[1] == ':') continue;
+            char saved = tmp[i];
+            tmp[i] = '\0';
+            make_dir_simple(tmp);
+            tmp[i] = saved;
+        }
+    }
+    make_dir_simple(tmp);
+}
+
+int oyk_bbs_resolve_safe_path(const char* files_root,
+                              const char* cur_rel,
+                              const char* user_arg,
+                              int allow_parent_in_root,
+                              char* abs_out, size_t abs_sz,
+                              char* rel_out, size_t rel_sz,
+                              char* err_out, size_t err_sz) {
+    if (abs_out && abs_sz > 0) abs_out[0] = '\0';
+    if (rel_out && rel_sz > 0) rel_out[0] = '\0';
+    const char* root = (files_root && files_root[0]) ? files_root : "files";
+    const char* arg = user_arg ? user_arg : "";
+
+    for (size_t k = 0; arg[k]; ++k) {
+        unsigned char c = static_cast<unsigned char>(arg[k]);
+        if (c < 0x20U || c >= 0x7FU) {
+            safe_copy(err_out, err_sz, "Access denied: invalid characters in path.");
+            return 0;
+        }
+        if (c == ':') {
+            safe_copy(err_out, err_sz, "Access denied: drive specifiers not permitted.");
+            return 0;
+        }
+        if (c == '\\') {
+            safe_copy(err_out, err_sz, "Access denied: backslashes not permitted.");
+            return 0;
+        }
+    }
+
+    char stack[8][32];
+    int depth = 0;
+
+    char arg_copy[96];
+    safe_copy(arg_copy, sizeof(arg_copy), arg);
+    trim_inplace(arg_copy);
+
+    if (arg_copy[0] != '/') {
+        /* Seed stack from cur_rel */
+        const char* p = cur_rel ? cur_rel : "";
+        while (*p && depth < 8) {
+            while (*p == '/') ++p;
+            char seg[32];
+            size_t sl = 0;
+            while (*p && *p != '/' && sl < sizeof(seg) - 1) seg[sl++] = *p++;
+            seg[sl] = '\0';
+            if (sl > 0 && strcmp(seg, ".") != 0 && strcmp(seg, "..") != 0) {
+                safe_copy(stack[depth++], sizeof(stack[0]), seg);
+            }
+        }
+    }
+
+    const char* p = arg_copy;
+    while (*p) {
+        while (*p == '/') ++p;
+        if (!*p) break;
+        char seg[32];
+        size_t sl = 0;
+        while (*p && *p != '/' && sl < sizeof(seg) - 1) seg[sl++] = *p++;
+        seg[sl] = '\0';
+        if (*p && *p != '/') {
+            safe_copy(err_out, err_sz, "Access denied: path segment too long.");
+            return 0;
+        }
+        if (strcmp(seg, ".") == 0) {
+            continue;
+        } else if (strcmp(seg, "..") == 0) {
+            if (!allow_parent_in_root) {
+                safe_copy(err_out, err_sz, "Access denied: directory traversal is not permitted.");
+                return 0;
+            }
+            if (depth <= 0) {
+                safe_copy(err_out, err_sz, "Access denied: cannot navigate above files area root.");
+                return 0;
+            }
+            --depth;
+        } else {
+            if (!oyk_yapp_is_safe_filename(seg)) {
+                safe_copy(err_out, err_sz, "Access denied: invalid path component.");
+                return 0;
+            }
+            if (depth >= 8) {
+                safe_copy(err_out, err_sz, "Access denied: path depth limit exceeded.");
+                return 0;
+            }
+            safe_copy(stack[depth++], sizeof(stack[0]), seg);
+        }
+    }
+
+    char abs_buf[192];
+    char rel_buf[96];
+    safe_copy(abs_buf, sizeof(abs_buf), root);
+    /* Strip trailing slash from root copy */
+    size_t rlen = strlen(abs_buf);
+    while (rlen > 1 && (abs_buf[rlen - 1] == '/' || abs_buf[rlen - 1] == '\\')) {
+        abs_buf[--rlen] = '\0';
+    }
+    rel_buf[0] = '\0';
+    for (int i = 0; i < depth; ++i) {
+        char next_abs[192];
+        join_path(abs_buf, stack[i], next_abs, sizeof(next_abs));
+        safe_copy(abs_buf, sizeof(abs_buf), next_abs);
+        if (rel_buf[0] && strlen(rel_buf) + 1 < sizeof(rel_buf)) strcat(rel_buf, "/");
+        if (strlen(rel_buf) + strlen(stack[i]) < sizeof(rel_buf) - 1) strcat(rel_buf, stack[i]);
+    }
+
+    if (abs_out) safe_copy(abs_out, abs_sz, abs_buf);
+    if (rel_out) safe_copy(rel_out, rel_sz, rel_buf);
+    return 1;
+}
+
+int oyk_bbs_list_incoming(const char* incoming_root,
+                          OykPendingIncoming* out, int max_out) {
+    if (!out || max_out <= 0) return 0;
+    const char* root = (incoming_root && incoming_root[0]) ? incoming_root : "incoming";
+    OykDirEnt* dirs = new OykDirEnt[24];
+    OykDirEnt* files = new OykDirEnt[24];
+    int ndirs = oyk_list_dir_entries(root, dirs, 24);
+    int total = 0;
+    for (int i = 0; i < ndirs && total < max_out; ++i) {
+        if (!dirs[i].is_dir) continue;
+        char sub[192];
+        join_path(root, dirs[i].name, sub, sizeof(sub));
+        int nfiles = oyk_list_dir_entries(sub, files, 24);
+        for (int j = 0; j < nfiles && total < max_out; ++j) {
+            if (files[j].is_dir) continue;
+            safe_copy(out[total].uploader, sizeof(out[total].uploader), dirs[i].name);
+            safe_copy(out[total].filename, sizeof(out[total].filename), files[j].name);
+            out[total].size = files[j].size;
+            ++total;
+        }
+    }
+    delete[] files;
+    delete[] dirs;
+    return total;
+}
+
+int oyk_bbs_approve_incoming_file(const char* incoming_root,
+                                  const char* files_root,
+                                  const char* uploader,
+                                  const char* filename,
+                                  const char* dest_subdir,
+                                  int allow_overwrite,
+                                  char* dest_out, size_t dest_sz,
+                                  int* already_exists_out,
+                                  char* err_out, size_t err_sz) {
+    if (already_exists_out) *already_exists_out = 0;
+    if (dest_out && dest_sz > 0) dest_out[0] = '\0';
+
+    if (!oyk_yapp_is_safe_filename(uploader) || !oyk_yapp_is_safe_filename(filename)) {
+        safe_copy(err_out, err_sz, "Invalid uploader or filename.");
+        return 0;
+    }
+
+    const char* inc = (incoming_root && incoming_root[0]) ? incoming_root : "incoming";
+    const char* froot = (files_root && files_root[0]) ? files_root : "files";
+
+    char src_dir[160], src_path[192];
+    join_path(inc, uploader, src_dir, sizeof(src_dir));
+    join_path(src_dir, filename, src_path, sizeof(src_path));
+    if (!oyk_is_regular_file(src_path)) {
+        safe_copy(err_out, err_sz, "Incoming file not found.");
+        return 0;
+    }
+
+    char dst_dir[192], rel_dir[96];
+    if (!oyk_bbs_resolve_safe_path(froot, "", dest_subdir ? dest_subdir : "", 0,
+                                   dst_dir, sizeof(dst_dir), rel_dir, sizeof(rel_dir),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    make_dirs_recursive(dst_dir);
+
+    char dst_path[220];
+    join_path(dst_dir, filename, dst_path, sizeof(dst_path));
+    if (oyk_is_regular_file(dst_path)) {
+        if (!allow_overwrite) {
+            if (already_exists_out) *already_exists_out = 1;
+            if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+            safe_copy(err_out, err_sz, "File already exists in BBS files area.");
+            return 0;
+        }
+        remove(dst_path);
+    }
+
+    if (rename(src_path, dst_path) != 0) {
+        FILE* in_fp = fopen(src_path, "rb");
+        if (!in_fp) {
+            safe_copy(err_out, err_sz, "Failed to open incoming file.");
+            return 0;
+        }
+        FILE* out_fp = fopen(dst_path, "wb");
+        if (!out_fp) {
+            fclose(in_fp);
+            safe_copy(err_out, err_sz, "Failed to create destination file.");
+            return 0;
+        }
+        char buf[512];
+        size_t n = 0;
+        int ok = 1;
+        while ((n = fread(buf, 1, sizeof(buf), in_fp)) > 0) {
+            if (fwrite(buf, 1, n, out_fp) != n) { ok = 0; break; }
+        }
+        fclose(out_fp);
+        fclose(in_fp);
+        if (!ok) {
+            remove(dst_path);
+            safe_copy(err_out, err_sz, "Disk write error while moving file.");
+            return 0;
+        }
+        remove(src_path);
+    }
+
+    if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+    return 1;
+}
+
+int oyk_bbs_delete_incoming_file(const char* incoming_root,
+                                 const char* uploader,
+                                 const char* filename,
+                                 char* err_out, size_t err_sz) {
+    if (!oyk_yapp_is_safe_filename(uploader) || !oyk_yapp_is_safe_filename(filename)) {
+        safe_copy(err_out, err_sz, "Invalid uploader or filename.");
+        return 0;
+    }
+    const char* inc = (incoming_root && incoming_root[0]) ? incoming_root : "incoming";
+    char src_dir[160], src_path[192];
+    join_path(inc, uploader, src_dir, sizeof(src_dir));
+    join_path(src_dir, filename, src_path, sizeof(src_path));
+    if (!oyk_is_regular_file(src_path)) {
+        safe_copy(err_out, err_sz, "Incoming file not found.");
+        return 0;
+    }
+    if (remove(src_path) != 0) {
+        safe_copy(err_out, err_sz, "Failed to delete incoming file.");
+        return 0;
+    }
+    return 1;
+}
+
+int OykPortableNode::bbs_yapp_send_trampoline(const oyk_u8* data, size_t len, void* ctx) {
+    OykPortableNode* self = static_cast<OykPortableNode*>(ctx);
+    if (!self || !self->bbs_yapp_tx_sess_ || !data || len == 0) return 0;
+    self->send_raw_bytes(self->bbs_yapp_tx_sess_, data, len);
+    return 1;
+}
+
+static int portable_bbs_yapp_no_overwrite_cb(const char* /*target*/, const char* /*fname*/, void* /*ctx*/) {
+    return 0;
 }
 
 static void bbs_base_call(const char* in, char* out, size_t out_sz) {
@@ -2210,6 +2635,9 @@ void OykPortableNode::bbs_enter(OykSession* sess, int direct_connect) {
     sess->bbs_stage = 0;
     sess->bbs_draft_len = 0;
     sess->bbs_draft_body[0] = '\0';
+    sess->bbs_files_rel[0] = '\0';
+    sess->bbs_yapp_active = 0;
+    sess->bbs_yapp_upload = 0;
 
     OykCallsign bbs_c;
     oyk_config_resolved_bbs_callsign(&cfg_, &bbs_c);
@@ -2347,7 +2775,7 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
     if (strcmp(cmd, "H") == 0 || strcmp(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
         send_text(sess,
                   "BBS Commands: L/LL, LM/LN, LB/LP, L>/L</L@/LC/LS, R <n>, RM, "
-                  "SP/SB/ST <to>, SR <n>, K <n>, KM, I, B\r");
+                  "SP/SB/ST <to>, SR <n>, K <n>, KM, FILES/DIR, CD, PWD, TYPE, GET, UPLOAD, I, B\r");
         bbs_send_prompt(sess);
         return;
     }
@@ -2600,8 +3028,257 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
         return;
     }
 
+    if (strcmp(cmd, "F") == 0 || strcmp(cmd, "FILES") == 0 || strcmp(cmd, "DIR") == 0) {
+        char abs_dir[192], rel_dir[96], perr[80];
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_dir, sizeof(abs_dir), rel_dir, sizeof(rel_dir),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char hdr[120];
+        sprintf(hdr, "Files Area: /%s\r", rel_dir);
+        send_text(sess, hdr);
+        OykDirEnt* ents = new OykDirEnt[32];
+        int cnt = oyk_list_dir_entries(abs_dir, ents, 32);
+        if (cnt == 0) {
+            send_text(sess, "(no files in this directory)\r");
+        } else {
+            send_text(sess, "Name                     Size\r");
+            for (int i = 0; i < cnt; ++i) {
+                char row[64];
+                if (ents[i].is_dir) {
+                    sprintf(row, "%-24.24s <DIR>\r", ents[i].name);
+                } else {
+                    sprintf(row, "%-24.24s %lu\r", ents[i].name, static_cast<unsigned long>(ents[i].size));
+                }
+                send_text(sess, row);
+            }
+        }
+        delete[] ents;
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "PWD") == 0) {
+        char msg[96];
+        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
+        send_text(sess, msg);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "CD") == 0) {
+        if (!arg[0] || strcmp(arg, "/") == 0) {
+            sess->bbs_files_rel[0] = '\0';
+            send_text(sess, "Files Area: /\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char abs_dir[192], rel_dir[64], perr[80];
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 1,
+                                       abs_dir, sizeof(abs_dir), rel_dir, sizeof(rel_dir),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_directory(abs_dir)) {
+            send_text(sess, "Directory not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        safe_copy(sess->bbs_files_rel, sizeof(sess->bbs_files_rel), rel_dir);
+        char msg[96];
+        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
+        send_text(sess, msg);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "TYPE") == 0 || strcmp(cmd, "CAT") == 0) {
+        if (!arg[0]) {
+            send_text(sess, "Usage: TYPE <filename>\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char abs_f[192], rel_f[96], perr[80];
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_f, sizeof(abs_f), rel_f, sizeof(rel_f),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_regular_file(abs_f)) {
+            send_text(sess, "File not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        FILE* fp = fopen(abs_f, "rb");
+        if (!fp) {
+            send_text(sess, "Unable to open file.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char out_buf[160];
+        size_t out_len = 0;
+        oyk_u32 shown = 0;
+        int c = 0;
+        while ((c = fgetc(fp)) != EOF && shown < 4096UL) {
+            if (c == '\n') {
+                out_buf[out_len++] = '\r';
+                ++shown;
+            } else if (c != '\r' && (c == '\t' || (c >= 0x20 && c <= 0x7E))) {
+                out_buf[out_len++] = static_cast<char>(c);
+                ++shown;
+            }
+            if (out_len >= sizeof(out_buf) - 2) {
+                out_buf[out_len] = '\0';
+                send_text(sess, out_buf);
+                out_len = 0;
+            }
+        }
+        if (out_len > 0) {
+            out_buf[out_len] = '\0';
+            send_text(sess, out_buf);
+        }
+        fclose(fp);
+        send_text(sess, "\r--- EOF ---\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "D") == 0 || strcmp(cmd, "GET") == 0 ||
+        strcmp(cmd, "DOWNLOAD") == 0 || strcmp(cmd, "YAPP") == 0) {
+        if (!arg[0]) {
+            send_text(sess, "Usage: GET <filename>\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (sess->is_local_loopback) {
+            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
+            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char abs_f[192], rel_f[96], perr[80];
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_f, sizeof(abs_f), rel_f, sizeof(rel_f),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_regular_file(abs_f)) {
+            send_text(sess, "File not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
+        bbs_yapp_tx_sess_ = sess;
+        oyk_yapp_init(bbs_yapp_, "incoming",
+                      OykPortableNode::bbs_yapp_send_trampoline, this,
+                      portable_bbs_yapp_no_overwrite_cb, this);
+        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
+        char yerr[80];
+        if (!oyk_yapp_start_send(bbs_yapp_, abs_f, yerr, sizeof(yerr))) {
+            bbs_yapp_tx_sess_ = NULL;
+            send_text(sess, "*** YAPP error: ");
+            send_text(sess, yerr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        bbs_yapp_sid_ = sess->id;
+        sess->bbs_yapp_active = 1;
+        sess->bbs_yapp_upload = 0;
+        return;
+    }
+
+    if (strcmp(cmd, "U") == 0 || strcmp(cmd, "UPLOAD") == 0 || strcmp(cmd, "YU") == 0) {
+        if (sess->is_local_loopback) {
+            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
+            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
+        bbs_yapp_tx_sess_ = sess;
+        oyk_yapp_init(bbs_yapp_, "incoming",
+                      OykPortableNode::bbs_yapp_send_trampoline, this,
+                      portable_bbs_yapp_no_overwrite_cb, this);
+        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
+        bbs_yapp_sid_ = sess->id;
+        sess->bbs_yapp_active = 1;
+        sess->bbs_yapp_upload = 1;
+        send_text(sess, "*** Ready for YAPP upload into incoming/. Start YAPP send now (Ctrl-X to cancel).\r");
+        return;
+    }
+
     send_text(sess, "Unknown BBS command. Type H for help.\r");
     bbs_send_prompt(sess);
+}
+
+void OykPortableNode::bbs_cleanup_yapp(OykSession* sess) {
+    if (!sess) return;
+    if (bbs_yapp_sid_ == sess->id) {
+        if (bbs_yapp_) oyk_yapp_reset(bbs_yapp_);
+        bbs_yapp_sid_ = 0;
+        bbs_yapp_tx_sess_ = NULL;
+    }
+    sess->bbs_yapp_active = 0;
+    sess->bbs_yapp_upload = 0;
+}
+
+void OykPortableNode::bbs_handle_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len) {
+    if (!sess || !sess->bbs_yapp_active || !bbs_yapp_ || bbs_yapp_sid_ != sess->id) return;
+    bbs_yapp_tx_sess_ = sess;
+    oyk_u8 plain[64];
+    size_t pn = oyk_yapp_feed_bytes(bbs_yapp_, data, len, plain, sizeof(plain));
+    if (bbs_yapp_->state == OYK_YAPP_COMPLETE ||
+        bbs_yapp_->state == OYK_YAPP_ABORTED ||
+        bbs_yapp_->state == OYK_YAPP_ERROR) {
+        int was_up = sess->bbs_yapp_upload;
+        int ok = (bbs_yapp_->state == OYK_YAPP_COMPLETE) ? 1 : 0;
+        char st_msg[128];
+        safe_copy(st_msg, sizeof(st_msg), bbs_yapp_->status);
+        char target_copy[128];
+        safe_copy(target_copy, sizeof(target_copy), bbs_yapp_->target_path);
+        bbs_cleanup_yapp(sess);
+        send_text(sess, "\r*** ");
+        send_text(sess, st_msg);
+        send_text(sess, "\r");
+        if (was_up && ok) {
+            send_text(sess, "*** File stored in incoming queue pending sysop approval.\r");
+            char lmsg[128];
+            sprintf(lmsg, "BBS incoming upload: %.80s (pending sysop approval)", target_copy);
+            log_message(OYK_LOG_INFO, lmsg);
+        }
+        bbs_send_prompt(sess);
+    } else if (!oyk_yapp_is_active(bbs_yapp_) && pn > 0) {
+        for (size_t i = 0; i < pn; ++i) {
+            if (plain[i] == OYK_YAPP_CAN || plain[i] == 0x03U) {
+                bbs_cleanup_yapp(sess);
+                send_text(sess, "\r*** YAPP upload cancelled.\r");
+                bbs_send_prompt(sess);
+                break;
+            }
+        }
+    }
 }
 
 void OykPortableNode::chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text) {
@@ -3060,6 +3737,7 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
         }
         oyk_u32 sid = sess->id;
         int was_local = sess->is_local_term;
+        if (sess->in_bbs) bbs_cleanup_yapp(sess);
         if (sess->in_chat) chat_leave(sess, "Disconnected");
         sess->state = OYK_SESS_FREE;
         if (was_local && local_cb_) {
@@ -3071,6 +3749,7 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     if (ft == OYK_FT_DM || (ft == OYK_FT_UA && sess->state == OYK_SESS_DISCONNECTING)) {
         oyk_u32 sid = sess->id;
         int was_local = sess->is_local_term;
+        if (sess->in_bbs) bbs_cleanup_yapp(sess);
         if (sess->in_chat) chat_leave(sess, "Disconnected");
         sess->state = OYK_SESS_FREE;
         if (was_local && local_cb_) {
@@ -3097,6 +3776,13 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
             if (sess->is_local_term) {
                 if (local_cb_ && frame->info_len > 0) {
                     local_cb_(sess->id, 2, frame->info, frame->info_len, NULL, local_ctx_);
+                }
+                return;
+            }
+
+            if (sess->in_bbs && sess->bbs_yapp_active) {
+                if (frame->info_len > 0) {
+                    bbs_handle_raw_bytes(sess, frame->info, frame->info_len);
                 }
                 return;
             }

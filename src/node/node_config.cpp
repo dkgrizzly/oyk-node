@@ -112,6 +112,20 @@ std::string NodeConfig::resolved_bbs_mail_path() const {
     return (cfg_dir / p).string();
 }
 
+std::string NodeConfig::resolved_bbs_files_path() const {
+    namespace fs = std::filesystem;
+    std::string raw = bbs.files_path.empty() ? "files/" : expand_tilde(bbs.files_path);
+    fs::path p(raw);
+    if (p.is_absolute() || source_path.empty()) {
+        return p.string();
+    }
+    fs::path cfg_dir = fs::path(source_path).parent_path();
+    if (cfg_dir.empty()) {
+        return p.string();
+    }
+    return (cfg_dir / p).string();
+}
+
 ax25::Callsign NodeConfig::resolved_chat_callsign() const {
     if (chat.callsign.valid()) {
         return chat.callsign;
@@ -370,6 +384,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 }
             } else if (key == "mailpath" || key == "mail_path") {
                 if (!val.empty()) cfg.bbs.mail_path = val;
+            } else if (key == "filespath" || key == "files_path") {
+                if (!val.empty()) cfg.bbs.files_path = val;
             } else if (key == "welcome") {
                 cfg.bbs.welcome = val;
             } else if (key == "max_msg_bytes") {
@@ -487,6 +503,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         lines.push_back("alias = " + bbs.alias.str());
     }
     lines.push_back("mailpath = " + bbs.mail_path);
+    lines.push_back("filespath = " + bbs.files_path);
     lines.push_back("welcome = " + bbs.welcome);
     lines.push_back("max_msg_bytes = " + std::to_string(bbs.max_msg_bytes));
 

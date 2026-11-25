@@ -1194,6 +1194,120 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* count_out) {
+    HWND lb = GetDlgItem(hdlg, IDC_APP_LIST);
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    int n = oyk_bbs_list_incoming("incoming", items, 32);
+    *count_out = n;
+    for (int i = 0; i < n; ++i) {
+        char row[96];
+        sprintf(row, "%-12.12s %-34.34s %lu B",
+                items[i].uploader, items[i].filename,
+                static_cast<unsigned long>(items[i].size));
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+    }
+    if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+}
+
+OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    static OykPendingIncoming* s_items = NULL;
+    static int s_count = 0;
+
+    switch (msg) {
+        case WM_INITDIALOG: {
+            if (!s_items) s_items = new OykPendingIncoming[32];
+            SendDlgItemMessage(hdlg, IDC_APP_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            populate_approve_list(hdlg, s_items, &s_count);
+            char st[128];
+            sprintf(st, "Files Area: %.72s (%d pending)", g_node.config().bbs_files_path, s_count);
+            SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+            return TRUE;
+        }
+        case WM_DESTROY:
+            if (s_items) {
+                delete[] s_items;
+                s_items = NULL;
+            }
+            s_count = 0;
+            return TRUE;
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDC_APP_REFRESH) {
+                populate_approve_list(hdlg, s_items, &s_count);
+                char st[96];
+                sprintf(st, "Refreshed (%d pending file(s)).", s_count);
+                SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+                return TRUE;
+            }
+            if (id == IDC_APP_APPROVE || id == IDC_APP_DELETE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_LIST, LB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= s_count) {
+                    SetDlgItemText(hdlg, IDC_APP_STATUS, "Select a pending file first.");
+                    return TRUE;
+                }
+                if (id == IDC_APP_APPROVE) {
+                    char subdir[64], dest[160], err[96];
+                    GetDlgItemText(hdlg, IDC_APP_SUBDIR, subdir, sizeof(subdir));
+                    int exists = 0;
+                    int ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
+                                                           s_items[sel].uploader, s_items[sel].filename,
+                                                           subdir, 0, dest, sizeof(dest),
+                                                           &exists, err, sizeof(err));
+                    if (!ok && exists) {
+                        char prompt[240];
+                        sprintf(prompt, "File already exists in BBS files area:\n%s\n\nOverwrite existing file?", dest);
+                        if (MessageBox(hdlg, prompt, "Confirm Overwrite", MB_YESNO | MB_ICONEXCLAMATION) == IDYES) {
+                            ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
+                                                               s_items[sel].uploader, s_items[sel].filename,
+                                                               subdir, 1, dest, sizeof(dest),
+                                                               &exists, err, sizeof(err));
+                        } else {
+                            SetDlgItemText(hdlg, IDC_APP_STATUS, "Overwrite declined; file remains in incoming.");
+                            return TRUE;
+                        }
+                    }
+                    if (ok) {
+                        char msg_s[160];
+                        sprintf(msg_s, "Approved %s/%s -> %s", s_items[sel].uploader, s_items[sel].filename, dest);
+                        g_node.log_message(OYK_LOG_INFO, msg_s);
+                        set_status(msg_s);
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
+                        populate_approve_list(hdlg, s_items, &s_count);
+                    } else {
+                        SetDlgItemText(hdlg, IDC_APP_STATUS, err);
+                    }
+                } else {
+                    char prompt[128], err[96];
+                    sprintf(prompt, "Delete incoming file %s\\%s?",
+                            s_items[sel].uploader, s_items[sel].filename);
+                    if (MessageBox(hdlg, prompt, "Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        if (oyk_bbs_delete_incoming_file("incoming", s_items[sel].uploader,
+                                                         s_items[sel].filename, err, sizeof(err))) {
+                            char msg_s[96];
+                            sprintf(msg_s, "Deleted incoming file %s/%s",
+                                    s_items[sel].uploader, s_items[sel].filename);
+                            g_node.log_message(OYK_LOG_INFO, msg_s);
+                            set_status(msg_s);
+                            SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
+                            populate_approve_list(hdlg, s_items, &s_count);
+                        } else {
+                            SetDlgItemText(hdlg, IDC_APP_STATUS, err);
+                        }
+                    }
+                }
+                return TRUE;
+            }
+            if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
 static void layout_controls(HWND /*hwnd*/, int cw, int ch) {
     const int pad = 6;
     const int hdr_h = 20;
@@ -1284,6 +1398,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         ShowWindow(g_lterm_hwnd, SW_SHOW);
                     }
                 }
+                refresh_gui();
+            } else if (id == IDM_APPROVE_FILES) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {

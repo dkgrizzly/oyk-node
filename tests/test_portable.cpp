@@ -28,6 +28,11 @@
   #define OYK_T_BBS_IDX     "tmail\\BBS.IDX"
   #define OYK_T_BBS_M1      "tmail\\M1.MSG"
   #define OYK_T_BBS_M2      "tmail\\M2.MSG"
+  #define OYK_T_BBS_FILES   "tfiles"
+  #define OYK_T_BBS_INC     "tinc2"
+  #define OYK_T_BBS_INC_DIR "tinc2\\W1AW-0"
+  #define OYK_T_BBS_INC_F   "tinc2\\W1AW-0\\up1.txt"
+  #define OYK_T_BBS_DST_F   "tfiles\\up1.txt"
 #else
   #define OYK_T_CFG_MIXED   "/tmp/oyk_port_mixed.cfg"
   #define OYK_T_CFG_SAVED   "/tmp/oyk_port_saved.cfg"
@@ -43,6 +48,11 @@
   #define OYK_T_BBS_IDX     "/tmp/oyk_port_mail/BBS.IDX"
   #define OYK_T_BBS_M1      "/tmp/oyk_port_mail/M1.MSG"
   #define OYK_T_BBS_M2      "/tmp/oyk_port_mail/M2.MSG"
+  #define OYK_T_BBS_FILES   "/tmp/oyk_port_files"
+  #define OYK_T_BBS_INC     "/tmp/oyk_port_inc2"
+  #define OYK_T_BBS_INC_DIR "/tmp/oyk_port_inc2/W1AW-0"
+  #define OYK_T_BBS_INC_F   "/tmp/oyk_port_inc2/W1AW-0/up1.txt"
+  #define OYK_T_BBS_DST_F   "/tmp/oyk_port_files/up1.txt"
 #endif
 
 static char* load_raw_file(const char* path, size_t* len_out) {
@@ -576,6 +586,77 @@ static void test_portable_bbs() {
     const char* lb = "LB\r";
     assert(node2->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(lb), strlen(lb)) == 1);
     assert(strstr(cap->buf, "Test Subj") != NULL);
+
+    /* Portable BBS Files Area: traversal rejection & sysop approval flow */
+    {
+        char abs_p[160], rel_p[64], perr[64];
+        assert(oyk_bbs_resolve_safe_path(OYK_T_BBS_FILES, "", "../secret.txt", 0,
+                                         abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                         perr, sizeof(perr)) == 0);
+        assert(oyk_bbs_resolve_safe_path(OYK_T_BBS_FILES, "", "..\\secret.txt", 0,
+                                         abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                         perr, sizeof(perr)) == 0);
+        assert(oyk_bbs_resolve_safe_path(OYK_T_BBS_FILES, "", "C:win.ini", 0,
+                                         abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                         perr, sizeof(perr)) == 0);
+        assert(oyk_bbs_resolve_safe_path(OYK_T_BBS_FILES, "", "..", 1,
+                                         abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                         perr, sizeof(perr)) == 0);
+
+        remove(OYK_T_BBS_INC_F);
+        remove(OYK_T_BBS_DST_F);
+
+        /* Stage an incoming file via YAPP loopback into OYK_T_BBS_INC/W1AW-0/ */
+        write_raw_file(OYK_T_YAPP_SRC, "Portable BBS approved file payload!\n");
+        OykYappSession* tx_y = new OykYappSession();
+        OykYappSession* rx_y = new OykYappSession();
+        PortableYappPipe tx_pipe, rx_pipe;
+        tx_pipe.peer = rx_y; tx_pipe.overwrite_allow = 1; tx_pipe.overwrite_calls = 0;
+        rx_pipe.peer = tx_y; rx_pipe.overwrite_allow = 1; rx_pipe.overwrite_calls = 0;
+        oyk_yapp_init(tx_y, OYK_T_BBS_INC, yapp_pipe_send, &tx_pipe, yapp_test_overwrite, &tx_pipe);
+        oyk_yapp_init(rx_y, OYK_T_BBS_INC, yapp_pipe_send, &rx_pipe, yapp_test_overwrite, &rx_pipe);
+        OykCallsign up_call;
+        oyk_parse_callsign("W1AW-0", &up_call);
+        oyk_yapp_set_remote(rx_y, &up_call);
+        assert(oyk_yapp_start_send(tx_y, OYK_T_YAPP_SRC, perr, sizeof(perr)) == 1);
+        assert(rx_y->state == OYK_YAPP_COMPLETE);
+        delete tx_y;
+        delete rx_y;
+        remove(OYK_T_YAPP_SRC);
+
+        OykPendingIncoming* plist = new OykPendingIncoming[8];
+        int pcnt = oyk_bbs_list_incoming(OYK_T_BBS_INC, plist, 8);
+        assert(pcnt >= 1);
+
+        /* Reject traversal subdir on approval */
+        char dst_out[160];
+        int exists = 0;
+        assert(oyk_bbs_approve_incoming_file(OYK_T_BBS_INC, OYK_T_BBS_FILES,
+                                             plist[0].uploader, plist[0].filename,
+                                             "../escape", 0, dst_out, sizeof(dst_out),
+                                             &exists, perr, sizeof(perr)) == 0);
+
+        /* Valid approval moves incoming file into OYK_T_BBS_FILES */
+        assert(oyk_bbs_approve_incoming_file(OYK_T_BBS_INC, OYK_T_BBS_FILES,
+                                             plist[0].uploader, plist[0].filename,
+                                             "", 1, dst_out, sizeof(dst_out),
+                                             &exists, perr, sizeof(perr)) == 1);
+        assert(oyk_bbs_list_incoming(OYK_T_BBS_INC, plist, 8) == pcnt - 1);
+        remove(dst_out);
+        delete[] plist;
+    }
+
+    /* Verify BBS traversal commands rejected in live portable BBS session */
+    strcpy(pcfg->bbs_files_path, OYK_T_BBS_FILES);
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* bad_type = "TYPE ../secret.txt\r";
+    assert(node2->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(bad_type), strlen(bad_type)) == 1);
+    assert(strstr(cap->buf, "Access denied") != NULL);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* loc_get = "GET readme.txt\r";
+    assert(node2->send_local_bytes(sid, reinterpret_cast<const oyk_u8*>(loc_get), strlen(loc_get)) == 1);
+    assert(strstr(cap->buf, "disallowed") != NULL);
 
     node2->close_local_terminal(sid);
     delete node2;

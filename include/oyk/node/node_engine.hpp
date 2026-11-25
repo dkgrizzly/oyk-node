@@ -131,6 +131,21 @@ public:
     std::vector<MHeardRecord> mheard(std::size_t max_entries = 20) const;
     Logger& logger() noexcept { return logger_; }
 
+    // Sysop incoming file approval workflow (incoming/<CALLSIGN-SSID>/<file> -> BBS filespath)
+    std::string bbs_files_path() const;
+    std::string bbs_incoming_path() const;
+    std::vector<PendingIncomingFile> list_pending_incoming_files() const;
+    bool approve_incoming_file(const std::string& uploader,
+                               const std::string& filename,
+                               const std::string& dest_subdir,
+                               bool allow_overwrite,
+                               std::string& dest_path_out,
+                               bool& already_exists_out,
+                               std::string& error_out);
+    bool delete_incoming_file(const std::string& uploader,
+                              const std::string& filename,
+                              std::string& error_out);
+
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }
 

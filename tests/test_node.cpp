@@ -2016,6 +2016,183 @@ void test_bbs_ssid11_persistence_and_privacy() {
     std::cout << "[PASS] test_bbs_ssid11_persistence_and_privacy\n";
 }
 
+void test_bbs_files_area_traversal_and_approval() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_bbs_files";
+    fs::remove_all(tmp_root);
+    const std::string files_dir = tmp_root + "/files";
+    const std::string docs_dir = files_dir + "/docs";
+    const std::string inc_dir = tmp_root + "/incoming";
+    const std::string secret_file = tmp_root + "/secret.txt";
+    fs::create_directories(docs_dir);
+    fs::create_directories(inc_dir + "/W1AW-0");
+
+    {
+        std::ofstream ofs(secret_file);
+        ofs << "TOP SECRET OUTSIDE FILES ROOT\n";
+    }
+    {
+        std::ofstream ofs(files_dir + "/readme.txt");
+        ofs << "Welcome to the BBS files area!\n";
+    }
+    {
+        std::ofstream ofs(docs_dir + "/guide.txt");
+        ofs << "Packet Radio Operating Guide\n";
+    }
+    // Create a symlink inside files_dir pointing outside to secret.txt
+    std::error_code sym_ec;
+    fs::create_symlink(secret_file, files_dir + "/escape_link.txt", sym_ec);
+
+    // 1. Verify configs/node.cfg defines filespath in [bbs]
+    {
+        std::string cfg_file = fs::exists("configs/node.cfg") ? "configs/node.cfg" : "../configs/node.cfg";
+        node::NodeConfig ex_cfg;
+        std::string err;
+        assert(node::NodeConfig::load_from_file(cfg_file, ex_cfg, err));
+        assert(ex_cfg.bbs.files_path == "files/");
+    }
+
+    // 2. Unit-test BbsServer::resolve_safe_files_path against traversal exploits
+    {
+        std::string abs_out, rel_out, perr;
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "../secret.txt", false, abs_out, rel_out, perr));
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "..\\secret.txt", false, abs_out, rel_out, perr));
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "docs", "../../secret.txt", true, abs_out, rel_out, perr));
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "C:\\Windows\\win.ini", false, abs_out, rel_out, perr));
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "docs/../secret.txt", false, abs_out, rel_out, perr));
+        if (!sym_ec) {
+            assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "escape_link.txt", false, abs_out, rel_out, perr));
+        }
+        // Valid navigation inside files_dir succeeds
+        assert(node::BbsServer::resolve_safe_files_path(files_dir, "", "docs", true, abs_out, rel_out, perr));
+        assert(rel_out == "docs");
+        assert(node::BbsServer::resolve_safe_files_path(files_dir, "docs", "..", true, abs_out, rel_out, perr));
+        assert(rel_out.empty());
+        // Cannot CD .. above root
+        assert(!node::BbsServer::resolve_safe_files_path(files_dir, "", "..", true, abs_out, rel_out, perr));
+    }
+
+    // 3. Test live BBS Files Area commands, YAPP download, YAPP upload to incoming/, and sysop approval
+    node::BbsServer bbs;
+    std::string berr;
+    assert(bbs.configure("K7OYK-11", "OYKBBS", tmp_root + "/mail", files_dir, inc_dir,
+                         "Welcome!", 8192, berr));
+
+    const auto now_tp = std::chrono::system_clock::now();
+    auto enter_res = bbs.enter(1, "W1AW-0", "axudp0", true, false, false, now_tp);
+    assert(enter_res.response_text.find("de K7OYK-11>") != std::string::npos);
+
+    // DIR lists readme.txt & docs/, MUST NOT list escape_link.txt or secret.txt
+    auto r_dir = bbs.handle_line(1, "FILES", now_tp);
+    assert(r_dir.response_text.find("readme.txt") != std::string::npos);
+    assert(r_dir.response_text.find("docs") != std::string::npos);
+    assert(r_dir.response_text.find("escape_link.txt") == std::string::npos);
+    assert(r_dir.response_text.find("secret.txt") == std::string::npos);
+
+    // Traversal attempts via DIR / CD / TYPE / GET are all rejected
+    assert(bbs.handle_line(1, "DIR ..", now_tp).response_text.find("Access denied") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE ../secret.txt", now_tp).response_text.find("Access denied") != std::string::npos);
+    assert(bbs.handle_line(1, "GET ../secret.txt", now_tp).response_text.find("Access denied") != std::string::npos);
+    if (!sym_ec) {
+        assert(bbs.handle_line(1, "TYPE escape_link.txt", now_tp).response_text.find("Access denied") != std::string::npos);
+    }
+
+    // Navigate into docs/, TYPE guide.txt, CD .. back to root
+    assert(bbs.handle_line(1, "CD docs", now_tp).response_text.find("/docs") != std::string::npos);
+    assert(bbs.handle_line(1, "TYPE guide.txt", now_tp).response_text.find("Packet Radio Operating Guide") != std::string::npos);
+    assert(bbs.handle_line(1, "CD ..", now_tp).response_text.find("Files Area: /") != std::string::npos);
+
+    // YAPP download of readme.txt from files area -> client receives it cleanly
+    protocol::YappSession client_yapp(tmp_root + "/client_inc");
+    client_yapp.set_remote_callsign(ax25::Callsign("K7OYK", 11));
+    std::vector<uint8_t> client_to_bbs;
+    client_yapp.set_send_callback([&](const std::vector<uint8_t>& pkt) {
+        client_to_bbs.insert(client_to_bbs.end(), pkt.begin(), pkt.end());
+    });
+    auto dl_start = bbs.handle_line(1, "GET readme.txt", now_tp);
+    assert(bbs.is_yapp_active(1) && !dl_start.tx_bytes.empty());
+    std::vector<uint8_t> bbs_to_client = dl_start.tx_bytes;
+    for (int step = 0; step < 32 && bbs.is_yapp_active(1); ++step) {
+        if (!bbs_to_client.empty()) {
+            std::vector<uint8_t> plain;
+            client_yapp.feed_bytes(bbs_to_client.data(), bbs_to_client.size(), plain);
+            bbs_to_client.clear();
+        }
+        if (!client_to_bbs.empty()) {
+            auto br = bbs.handle_raw_bytes(1, client_to_bbs);
+            client_to_bbs.clear();
+            bbs_to_client.insert(bbs_to_client.end(), br.tx_bytes.begin(), br.tx_bytes.end());
+        }
+    }
+    if (!bbs_to_client.empty()) {
+        std::vector<uint8_t> plain;
+        client_yapp.feed_bytes(bbs_to_client.data(), bbs_to_client.size(), plain);
+    }
+    assert(!bbs.is_yapp_active(1));
+    assert(client_yapp.progress().state == protocol::YappState::Complete);
+    assert(read_file_text(tmp_root + "/client_inc/K7OYK-11/readme.txt") == "Welcome to the BBS files area!\n");
+
+    // YAPP upload from remote user W1AW -> saved ONLY in incoming/W1AW-0/upload.txt (NOT in files/)
+    const std::string upload_src = tmp_root + "/upload.txt";
+    {
+        std::ofstream ofs(upload_src);
+        ofs << "Fresh packet upload from W1AW!\n";
+    }
+    auto up_ready = bbs.handle_line(1, "UPLOAD", now_tp);
+    assert(bbs.is_yapp_active(1));
+    assert(up_ready.response_text.find("incoming/W1AW-0/") != std::string::npos);
+
+    client_yapp.reset();
+    client_to_bbs.clear();
+    std::string yerr;
+    assert(client_yapp.start_send(upload_src, yerr));
+    for (int step = 0; step < 32 && bbs.is_yapp_active(1); ++step) {
+        if (!client_to_bbs.empty()) {
+            auto br = bbs.handle_raw_bytes(1, client_to_bbs);
+            client_to_bbs.clear();
+            if (!br.tx_bytes.empty()) {
+                std::vector<uint8_t> plain;
+                client_yapp.feed_bytes(br.tx_bytes.data(), br.tx_bytes.size(), plain);
+            }
+        }
+    }
+    assert(!bbs.is_yapp_active(1));
+    assert(fs::exists(inc_dir + "/W1AW-0/upload.txt"));
+    assert(!fs::exists(files_dir + "/upload.txt"));
+    // User cannot see unapproved upload in BBS files area yet
+    assert(bbs.handle_line(1, "FILES", now_tp).response_text.find("upload.txt") == std::string::npos);
+
+    // 4. Sysop lists incoming queue and approves upload.txt -> moves to files/approved/upload.txt
+    auto pending = node::BbsServer::list_pending_incoming(inc_dir);
+    assert(pending.size() == 1);
+    assert(pending[0].uploader == "W1AW-0" && pending[0].filename == "upload.txt");
+
+    // Sysop cannot approve with a traversal destination subdir
+    std::string dest_path, app_err;
+    bool exists = false;
+    assert(!node::BbsServer::approve_incoming_file(inc_dir, files_dir, "W1AW-0", "upload.txt",
+                                                   "../outside", false, dest_path, exists, app_err));
+
+    // Valid sysop approval moves upload.txt into files/approved/
+    assert(node::BbsServer::approve_incoming_file(inc_dir, files_dir, "W1AW-0", "upload.txt",
+                                                  "approved", false, dest_path, exists, app_err));
+    assert(!fs::exists(inc_dir + "/W1AW-0/upload.txt"));
+    assert(fs::exists(files_dir + "/approved/upload.txt"));
+    assert(node::BbsServer::list_pending_incoming(inc_dir).empty());
+
+    // Now remote user CAN see & TYPE approved/upload.txt!
+    auto r_app = bbs.handle_line(1, "TYPE approved/upload.txt", now_tp);
+    assert(r_app.response_text.find("Fresh packet upload from W1AW!") != std::string::npos);
+
+    // Local loopback BBS session MUST disallow YAPP GET & UPLOAD
+    (void)bbs.enter(2, "K7OYK-7", "local", true, true, true, now_tp);
+    assert(bbs.handle_line(2, "GET readme.txt", now_tp).response_text.find("disallowed") != std::string::npos);
+    assert(bbs.handle_line(2, "UPLOAD", now_tp).response_text.find("disallowed") != std::string::npos);
+
+    fs::remove_all(tmp_root);
+    std::cout << "[PASS] test_bbs_files_area_traversal_and_approval\n";
+}
+
 } // namespace
 
 int main() {
@@ -2036,6 +2213,7 @@ int main() {
     test_ban_lift_chat_and_local_loopback();
     test_x11_geometry_parser();
     test_bbs_ssid11_persistence_and_privacy();
+    test_bbs_files_area_traversal_and_approval();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

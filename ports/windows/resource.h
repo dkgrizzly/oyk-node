@@ -9,6 +9,7 @@
 #define IDM_ALLOW_INCOMING  201
 #define IDM_DENY_INCOMING   202
 #define IDM_TERMINAL        203
+#define IDM_APPROVE_FILES   207
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -49,5 +50,13 @@
 #define IDC_LTERM_SEND      430
 #define IDC_LTERM_LBL_PORT  431
 #define IDC_LTERM_LBL_TGT   432
+
+#define IDD_APPROVE         440
+#define IDC_APP_LIST        441
+#define IDC_APP_SUBDIR      442
+#define IDC_APP_APPROVE     443
+#define IDC_APP_DELETE      444
+#define IDC_APP_REFRESH     445
+#define IDC_APP_STATUS      446
 
 #endif /* OYK_WIN_RESOURCE_H */

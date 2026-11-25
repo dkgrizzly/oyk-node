@@ -675,6 +675,137 @@ static void run_dos_local_terminal() {
     }
 }
 
+static void run_dos_approve_incoming_files() {
+    static OykPendingIncoming items[32];
+    int count = oyk_bbs_list_incoming("incoming", items, 32);
+    int sel = 0;
+    int top = 0;
+    char feedback[78];
+    sprintf(feedback, "Target BBS Files Area: %.50s", g_node.config().bbs_files_path);
+
+    const int panel_x = 4;
+    const int panel_w = 72;
+    const int list_y = 5;
+    const int list_h = 13;
+
+    while (!g_break_flag) {
+        PACKET_PROCESS_SINGLE;
+        Arp::driveArp();
+        Tcp::drivePackets();
+        g_node.tick();
+
+        if (sel >= count) sel = (count > 0) ? (count - 1) : 0;
+        if (sel < top) top = sel;
+        if (sel >= top + list_h) top = sel - list_h + 1;
+
+        vid_puts(2, panel_x, 0x1F,
+                 "+-[ Approve Incoming Files (incoming/ -> BBS files/) ]-----------------+", panel_w);
+        char hdr[74];
+        sprintf(hdr, "| Incoming: incoming/  ->  Files Area: %-30.30s |",
+                g_node.config().bbs_files_path);
+        vid_puts(3, panel_x, 0x1E, hdr, panel_w);
+        vid_puts(4, panel_x, 0x1F,
+                 "| Uploader      Filename                                     Size     |", panel_w);
+
+        for (int i = 0; i < list_h; ++i) {
+            int idx = top + i;
+            if (count == 0 && i == 1) {
+                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
+                vid_puts(list_y + i, panel_x + 1, 0x1F,
+                         " (No pending files in incoming\\<CALLSIGN-SSID>\\)", panel_w - 2);
+                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            } else if (idx < count) {
+                char row[72];
+                sprintf(row, " %-13.13s %-42.42s %9lu ",
+                        items[idx].uploader, items[idx].filename,
+                        static_cast<unsigned long>(items[idx].size));
+                oyk_u8 attr = (idx == sel) ? 0x30 : 0x1F;
+                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
+                vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
+                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            } else {
+                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
+                vid_puts(list_y + i, panel_x + 1, 0x1F, "", panel_w - 2);
+                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            }
+        }
+        vid_puts(list_y + list_h, panel_x, 0x1F,
+                 "+----------------------------------------------------------------------+", panel_w);
+        vid_puts(list_y + list_h + 1, panel_x, 0x30,
+                 " Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close               ", panel_w);
+        vid_puts(24, 0, 0x0E, feedback, 80);
+
+        if (!kbhit()) continue;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72 && sel > 0) --sel;
+            else if (ext == 80 && sel + 1 < count) ++sel;
+            else if (ext == 73) sel = (sel > list_h) ? (sel - list_h) : 0;
+            else if (ext == 81 && count > 0) sel = (sel + list_h < count) ? (sel + list_h) : (count - 1);
+        } else if (ch == 27 || ch == 'q' || ch == 'Q') {
+            break;
+        } else if (ch == 'r' || ch == 'R') {
+            count = oyk_bbs_list_incoming("incoming", items, 32);
+            sprintf(feedback, "Refreshed (%d pending file(s)).", count);
+        } else if ((ch == '\r' || ch == '\n' || ch == 'a' || ch == 'A') && count > 0) {
+            char subdir[48], dest[160], err[80];
+            prompt_line("Subfolder in files area (blank=root): ", subdir, sizeof(subdir));
+            int exists = 0;
+            int ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
+                                                   items[sel].uploader, items[sel].filename,
+                                                   subdir, 0, dest, sizeof(dest),
+                                                   &exists, err, sizeof(err));
+            if (!ok && exists) {
+                char yn[4];
+                prompt_line("File exists in files area. Overwrite? [Y/N]: ", yn, sizeof(yn));
+                if (yn[0] == 'y' || yn[0] == 'Y') {
+                    ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
+                                                       items[sel].uploader, items[sel].filename,
+                                                       subdir, 1, dest, sizeof(dest),
+                                                       &exists, err, sizeof(err));
+                } else {
+                    strcpy(feedback, "Overwrite declined; file remains in incoming/.");
+                    continue;
+                }
+            }
+            if (ok) {
+                char lmsg[96];
+                sprintf(lmsg, "Approved %s/%s -> %.52s", items[sel].uploader, items[sel].filename, dest);
+                g_node.log_message(OYK_LOG_INFO, lmsg);
+                strncpy(feedback, lmsg, sizeof(feedback) - 1);
+                feedback[sizeof(feedback) - 1] = '\0';
+                strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
+                g_status_line[sizeof(g_status_line) - 1] = '\0';
+                count = oyk_bbs_list_incoming("incoming", items, 32);
+            } else {
+                sprintf(feedback, "Error: %.68s", err);
+            }
+        } else if ((ch == 'd' || ch == 'D') && count > 0) {
+            char cp[72], yn[4], err[80];
+            sprintf(cp, "Delete incoming\\%s\\%s? [Y/N]: ", items[sel].uploader, items[sel].filename);
+            prompt_line(cp, yn, sizeof(yn));
+            if (yn[0] == 'y' || yn[0] == 'Y') {
+                if (oyk_bbs_delete_incoming_file("incoming", items[sel].uploader, items[sel].filename,
+                                                 err, sizeof(err))) {
+                    char lmsg[80];
+                    sprintf(lmsg, "Deleted incoming file %s/%s", items[sel].uploader, items[sel].filename);
+                    g_node.log_message(OYK_LOG_INFO, lmsg);
+                    strncpy(feedback, lmsg, sizeof(feedback) - 1);
+                    feedback[sizeof(feedback) - 1] = '\0';
+                    strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
+                    g_status_line[sizeof(g_status_line) - 1] = '\0';
+                    count = oyk_bbs_list_incoming("incoming", items, 32);
+                } else {
+                    sprintf(feedback, "Error: %.68s", err);
+                }
+            } else {
+                strcpy(feedback, "Delete cancelled.");
+            }
+        }
+    }
+}
+
 static void run_dos_menu_action(int chosen, int* running) {
     if (chosen == 0) {
         g_node.set_accept_incoming(1);
@@ -685,13 +816,15 @@ static void run_dos_menu_action(int chosen, int* running) {
     } else if (chosen == 2) {
         run_dos_local_terminal();
     } else if (chosen == 3) {
+        run_dos_approve_incoming_files();
+    } else if (chosen == 4) {
         char id_buf[12];
         prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
         if (id_buf[0]) {
             g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
                                      g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 4) {
+    } else if (chosen == 5) {
         char call_buf[16];
         prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
         if (call_buf[0] == '-' && call_buf[1]) {
@@ -711,7 +844,7 @@ static void run_dos_menu_action(int chosen, int* running) {
                                 lift_buf[0] ? lift_buf : "permanent",
                                 g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 5) {
+    } else if (chosen == 6) {
         if (confirm_dos_exit()) {
             *running = 0;
         }
@@ -719,24 +852,25 @@ static void run_dos_menu_action(int chosen, int* running) {
 }
 
 static void open_dos_node_menu(int* running) {
-    static const char* ITEMS[6] = {
+    static const char* ITEMS[7] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
+        " [F] Approve Incoming Files...  ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
-    static const int ITEM_ROWS[6] = { 2, 3, 5, 6, 7, 9 };
+    static const int ITEM_ROWS[7] = { 2, 3, 5, 6, 7, 8, 10 };
 
     int sel = 0;
     int chosen = -1;
     while (chosen < 0 && !g_break_flag) {
         vid_puts(1, 1, 0x70, "+--------------------------------+", 34);
         vid_puts(4, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(8, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(10, 1, 0x70, "+--------------------------------+", 34);
-        for (int i = 0; i < 6; ++i) {
+        vid_puts(9, 1, 0x70, "+--------------------------------+", 34);
+        vid_puts(11, 1, 0x70, "+--------------------------------+", 34);
+        for (int i = 0; i < 7; ++i) {
             vid_puts(ITEM_ROWS[i], 1, 0x70, "|", 1);
             vid_puts(ITEM_ROWS[i], 2, (i == sel) ? 0x1F : 0x70, ITEMS[i], 32);
             vid_puts(ITEM_ROWS[i], 34, 0x70, "|", 1);
@@ -745,8 +879,8 @@ static void open_dos_node_menu(int* running) {
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72) sel = (sel + 5) % 6;      /* Up arrow */
-            else if (ext == 80) sel = (sel + 1) % 6; /* Down arrow */
+            if (ext == 72) sel = (sel + 6) % 7;      /* Up arrow */
+            else if (ext == 80) sel = (sel + 1) % 7; /* Down arrow */
             else if (ext == 68) break;               /* F10 closes menu */
         } else if (ch == 27) {
             break;
@@ -758,12 +892,14 @@ static void open_dos_node_menu(int* running) {
             chosen = 1;
         } else if (ch == 'l' || ch == 'L') {
             chosen = 2;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'f' || ch == 'F') {
             chosen = 3;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 4;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 5;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 6;
         }
     }
 
@@ -978,12 +1114,14 @@ int main(int argc, char* argv[]) {
                     run_dos_menu_action(1, &running);
                 } else if (ch == 'l' || ch == 'L') {
                     run_dos_menu_action(2, &running);
-                } else if (ch == 't' || ch == 'T') {
+                } else if (ch == 'f' || ch == 'F') {
                     run_dos_menu_action(3, &running);
-                } else if (ch == 'b' || ch == 'B') {
+                } else if (ch == 't' || ch == 'T') {
                     run_dos_menu_action(4, &running);
-                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                } else if (ch == 'b' || ch == 'B') {
                     run_dos_menu_action(5, &running);
+                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                    run_dos_menu_action(6, &running);
                 }
                 render_dos_screen();
             }
