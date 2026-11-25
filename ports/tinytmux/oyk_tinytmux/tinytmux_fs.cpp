@@ -208,6 +208,72 @@ OYK_FLASHMEM int tinytmux_fs_tier_info(int tier, TinyTmuxStorageTierInfo* out) {
 }
 
 void tinytmux_fs_set_sim_tiers(int /*sd_present*/, int /*qspi_present*/, int /*internal_present*/) {}
+int tinytmux_fs_sim_format_count(int /*tier*/) { return 0; }
+
+static void fs_make_default_dirs() {
+    if (!s_active_fs) return;
+    const char* dirs[4] = { "/logs", "/mail", "/files", "/incoming" };
+    for (int i = 0; i < 4; ++i) {
+        if (!s_active_fs->exists(dirs[i])) s_active_fs->mkdir(dirs[i]);
+    }
+}
+
+OYK_FLASHMEM int tinytmux_fs_rescan() {
+    tinytmux_fs_unmount();
+    return tinytmux_fs_mount();
+}
+
+OYK_FLASHMEM int tinytmux_fs_format_tier(int tier, char* msg_out, size_t msg_sz) {
+    char tmp[96];
+    tmp[0] = '\0';
+    int ok = 0;
+    close_all_handles();
+
+    if (tier == TMUX_STORAGE_SD) {
+        s_active_fs = NULL;
+        s_fs_mounted = 0;
+        if (!SD.sdfs.cardBegin(SdioConfig(FIFO_SDIO))) {
+            fs_str_copy(tmp, sizeof(tmp), "No microSD card detected.");
+        } else if (!SD.sdfs.format(NULL)) {
+            fs_str_copy(tmp, sizeof(tmp), "microSD format FAILED.");
+        } else {
+            ok = 1;
+            fs_str_copy(tmp, sizeof(tmp), "microSD formatted (FAT32/exFAT by capacity).");
+        }
+    } else if (tier == TMUX_STORAGE_QSPI) {
+        s_active_fs = NULL;
+        s_fs_mounted = 0;
+        if (!s_qspi_begun) s_qspi_begun = s_qspi_fs.begin() ? 1 : 0;
+        if (!s_qspi_begun) {
+            fs_str_copy(tmp, sizeof(tmp), "No QSPI Flash detected on CS1 (Pin 51 pads).");
+        } else if (!s_qspi_fs.format(0, 0, Serial)) {
+            fs_str_copy(tmp, sizeof(tmp), "QSPI Flash format FAILED.");
+        } else {
+            ok = 1;
+            fs_str_copy(tmp, sizeof(tmp), "QSPI Flash LittleFS formatted.");
+        }
+    } else if (tier == TMUX_STORAGE_INTERNAL) {
+        s_active_fs = NULL;
+        s_fs_mounted = 0;
+        if (!s_prog_begun) s_prog_begun = s_prog_fs.begin(TINYTMUX_INTERNAL_FS_BYTES) ? 1 : 0;
+        if (!s_prog_begun) {
+            fs_str_copy(tmp, sizeof(tmp), "Internal 4 MB flash unavailable.");
+        } else if (!s_prog_fs.format(0, 0, Serial)) {
+            fs_str_copy(tmp, sizeof(tmp), "Internal Flash format FAILED.");
+        } else {
+            ok = 1;
+            fs_str_copy(tmp, sizeof(tmp), "Internal 4 MB LittleFS formatted.");
+        }
+    } else {
+        fs_str_copy(tmp, sizeof(tmp), "Unknown storage tier.");
+    }
+
+    s_fs_mounted = 0;
+    tinytmux_fs_mount();
+    if (ok) fs_make_default_dirs();
+    fs_str_copy(msg_out, msg_sz, tmp);
+    return ok;
+}
 
 int oyk_imxrt_mkdir(const char* path) {
     if (!s_fs_mounted || !s_active_fs || !path || !path[0]) return -1;
@@ -507,8 +573,32 @@ int mkdir(const char* path, mode_t /*mode*/) {
 static int s_sim_sd_ok = 1;
 static int s_sim_qspi_ok = 0;
 static int s_sim_int_ok = 1;
+static int s_sim_format_counts[4] = { 0, 0, 0, 0 };
 
 extern "C" {
+
+int tinytmux_fs_sim_format_count(int tier) {
+    return (tier >= 0 && tier < 4) ? s_sim_format_counts[tier] : 0;
+}
+
+int tinytmux_fs_format_tier(int tier, char* msg_out, size_t msg_sz) {
+    int ok = 0;
+    if (tier == TMUX_STORAGE_SD) ok = s_sim_sd_ok;
+    else if (tier == TMUX_STORAGE_QSPI) ok = s_sim_qspi_ok;
+    else if (tier == TMUX_STORAGE_INTERNAL) ok = s_sim_int_ok;
+    if (ok) {
+        s_sim_format_counts[tier]++;
+        fs_str_copy(msg_out, msg_sz, "Storage tier formatted.");
+    } else {
+        fs_str_copy(msg_out, msg_sz, "Storage tier not present.");
+    }
+    return ok;
+}
+
+int tinytmux_fs_rescan() {
+    tinytmux_fs_unmount();
+    return tinytmux_fs_mount();
+}
 
 void tinytmux_fs_set_sim_tiers(int sd_present, int qspi_present, int internal_present) {
     s_sim_sd_ok = sd_present ? 1 : 0;

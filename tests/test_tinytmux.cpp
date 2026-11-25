@@ -902,6 +902,36 @@ static void test_vt100_console_full_parity() {
     assert(tinytmux_psram_info()->has_valid_qspi_flash_cs1 == 1);
     tinytmux_psram_set_sim_flash(1, TMUX_FLEXSPI_NONE, 0, 0, 0, 0);
 
+    /* Storage Manager: menu G, select tiers, wrong confirmation rejected, exact FORMAT formats */
+    tinytmux_fs_set_sim_tiers(1, 1, 1);
+    tinytmux_fs_unmount();
+    assert(tinytmux_fs_mount() == 1);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("mg"), 2);
+    assert(con->view_mode() == TMUX_VIEW_STORAGE);
+    assert(strstr(cap->buf, "STORAGE MANAGER") != NULL);
+    assert(strstr(cap->buf, "microSD Card (SDIO)") != NULL);
+    assert(strstr(cap->buf, "ERASES ALL") != NULL || strstr(cap->buf, "ERASES ALL DATA") != NULL);
+    /* Wrong confirmation text does NOT format */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("fformat\r"), 8);
+    assert(tinytmux_fs_sim_format_count(TMUX_STORAGE_SD) == 0);
+    /* Exact FORMAT formats selected tier (microSD) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("fFORMAT\r"), 8);
+    assert(tinytmux_fs_sim_format_count(TMUX_STORAGE_SD) == 1);
+    /* Select QSPI (Down) and Internal (End) tiers and format each */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[B"), 3);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("fFORMAT\r"), 8);
+    assert(tinytmux_fs_sim_format_count(TMUX_STORAGE_QSPI) == 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("fFORMAT\r"), 8);
+    assert(tinytmux_fs_sim_format_count(TMUX_STORAGE_INTERNAL) == 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("r"), 1);
+    assert(con->view_mode() == TMUX_VIEW_STORAGE);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(t += 50UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+    tinytmux_fs_set_sim_tiers(1, 0, 1);
+
     /* HalfKay Bootloader workflow: cancel first, then confirm with active connection & verify notice + drain */
     assert(tinytmux_board_sim_bootloader_count() == 0);
     cap->len = 0; cap->buf[0] = '\0';
