@@ -157,6 +157,7 @@ struct OykLogFileEntry {
 struct OykConfig {
     OykCallsign callsign;
     OykCallsign alias;
+    char welcome_text[96];
     char info_text[80];
     char source_path[128];
     char banlist_path[128];
@@ -168,6 +169,7 @@ struct OykConfig {
     int has_detected_eol;
 
     int bbs_enabled;
+    int bbs_files_enabled;
     oyk_u8 bbs_ssid;  /* Default 11 -> <callsign.base>-11 */
     OykCallsign bbs_callsign;
     OykCallsign bbs_alias;
@@ -235,6 +237,17 @@ struct OykPendingIncoming {
     char uploader[16];
     char filename[32];
     oyk_u32 size;
+};
+
+struct OykConfigApplyResult {
+    int applied;
+    int saved_to_disk;
+    int identity_restarted;
+    int interfaces_changed;
+    int signed_off_sessions;
+    char save_path[128];
+    char warning[160];
+    char error[96];
 };
 
 struct OykSession {
@@ -410,6 +423,8 @@ public:
     /* Local operator controls */
     void set_accept_incoming(int allow);
     int accept_incoming() const { return accept_incoming_; }
+    int manual_deny_incoming() const { return manual_deny_incoming_; }
+    int apply_config(const OykConfig* new_cfg, int save_to_disk, OykConfigApplyResult* res_out);
     int terminate_session(oyk_u32 session_id, char* msg_out, size_t msg_sz);
     int ban_callsign(const char* call_spec, oyk_u32 flags, const char* reason,
                      const char* lift_spec, char* msg_out, size_t msg_sz);
@@ -492,6 +507,7 @@ private:
     time_t started_at_;
     time_t fixed_now_;
     int accept_incoming_;
+    int manual_deny_incoming_;
     oyk_u32 next_session_id_;
 
     int iface_count_;

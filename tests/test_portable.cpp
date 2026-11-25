@@ -669,11 +669,144 @@ static void test_portable_bbs() {
     printf("[PASS] test_portable_bbs\n");
 }
 
+static void test_portable_settings_reconfig_and_readonly() {
+    OykConfig* cfg = new OykConfig;
+    OykPortableNode* node = new OykPortableNode;
+    MockTxLog* tx = new MockTxLog;
+    tx->count = 0;
+
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("K7OYK-7", &cfg->callsign);
+    strcpy(cfg->welcome_text, "Portable Welcome 1");
+    strcpy(cfg->info_text, "Portable Info 1");
+    strcpy(cfg->source_path, OYK_T_PNODE_CFG);
+    cfg->bbs_enabled = 1;
+    cfg->bbs_files_enabled = 1;
+    cfg->bbs_ssid = 11;
+    cfg->chat_enabled = 1;
+    cfg->chat_ssid = 12;
+
+    char err[64];
+    assert(oyk_config_save(cfg, OYK_T_PNODE_CFG) == 1);
+    assert(node->init(cfg, mock_tx, tx, err, sizeof(err)) == 1);
+
+    /* 1. Toggle BBS Files Area OFF/ON & edit welcome/info without restarting sessions */
+    PortableBbsCap* cap = new PortableBbsCap;
+    cap->len = 0; cap->buf[0] = '\0';
+    node->set_local_event_callback(test_bbs_local_cb, cap);
+
+    oyk_u32 bbs_sid = 0;
+    int is_loc = 0;
+    assert(node->open_local_terminal(-1, "BBS", &bbs_sid, NULL, &is_loc, err, sizeof(err)) == 1);
+
+    OykConfig* upd = new OykConfig;
+    *upd = node->config();
+    upd->bbs_files_enabled = 0;
+    strcpy(upd->welcome_text, "Portable Welcome 2");
+    strcpy(upd->info_text, "Portable Info 2");
+    OykConfigApplyResult res;
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.applied == 1 && res.saved_to_disk == 1 && res.identity_restarted == 0 && res.signed_off_sessions == 0);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* fcmd = "FILES\r";
+    assert(node->send_local_bytes(bbs_sid, reinterpret_cast<const oyk_u8*>(fcmd), strlen(fcmd)) == 1);
+    assert(strstr(cap->buf, "Files Area is currently disabled") != NULL);
+
+    /* 2. Connect remote CHAT session, then change callsign/SSID + disable CHAT */
+    OykCallsign chat_c;
+    oyk_config_resolved_chat_callsign(&node->config(), &chat_c);
+    OykFrame csabm;
+    memset(&csabm, 0, sizeof(csabm));
+    csabm.dst = chat_c;
+    oyk_parse_callsign("W2CHT", &csabm.src);
+    csabm.is_command = 1;
+    csabm.control = 0x3FU;
+    node->on_rx_frame(0, &csabm, 0x7F000001UL, 10093, 0);
+
+    tx->count = 0;
+    cap->len = 0; cap->buf[0] = '\0';
+    *upd = node->config();
+    oyk_parse_callsign("W1AW-7", &upd->callsign);
+    upd->bbs_ssid = 10;     /* BBS moves to W1AW-10 */
+    upd->chat_enabled = 0;  /* CHAT disabled */
+    upd->accept_incoming = 1;
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.applied == 1 && res.saved_to_disk == 1 && res.identity_restarted == 1);
+    assert(res.signed_off_sessions == 2);
+    assert(node->accept_incoming() == 1);
+
+    /* Local BBS session received W1AW-10 restart notice */
+    assert(strstr(cap->buf, "restarting for configuration changes") != NULL);
+    assert(strstr(cap->buf, "W1AW-10") != NULL);
+
+    /* Remote CHAT session received TX I-frame with unavailability notice + DISC */
+    int saw_chat_unavail = 0;
+    for (int i = 0; i < tx->count; ++i) {
+        if (oyk_frame_type(&tx->frames[i]) == OYK_FT_I) {
+            char tmp[260];
+            size_t n = tx->frames[i].info_len;
+            if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+            memcpy(tmp, tx->frames[i].info, n);
+            tmp[n] = '\0';
+            if (strstr(tmp, "not be available") != NULL) saw_chat_unavail = 1;
+        }
+    }
+    assert(saw_chat_unavail == 1);
+
+    /* 3. Manual deny MUST stay disabled across config changes */
+    node->set_accept_incoming(0);
+    assert(node->accept_incoming() == 0);
+    *upd = node->config();
+    oyk_parse_callsign("W2AW-7", &upd->callsign);
+    upd->accept_incoming = 1;
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.applied == 1 && node->accept_incoming() == 0);
+    node->set_accept_incoming(1);
+    assert(node->accept_incoming() == 1);
+
+    /* 4. Add & remove interface mapping */
+    *upd = node->config();
+    assert(upd->iface_count < OYK_MAX_INTERFACES);
+    OykIfaceConfig* ni = &upd->ifaces[upd->iface_count++];
+    memset(ni, 0, sizeof(*ni));
+    strcpy(ni->id, "telnet0");
+    strcpy(ni->type, "telnet");
+    strcpy(ni->host, "0.0.0.0");
+    ni->port = 8010;
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.interfaces_changed == 1 && node->iface_count() == 2);
+    upd->iface_count = 1;
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.interfaces_changed == 1 && node->iface_count() == 1);
+
+    /* 5. Unwritable config path applies in memory with warning */
+    *upd = node->config();
+    strcpy(upd->source_path, "/nonexistent_oyk_ro_dir/node.cfg");
+    oyk_parse_callsign("K7MEM-7", &upd->callsign);
+    assert(node->apply_config(upd, 1, &res) == 1);
+    assert(res.applied == 1 && res.saved_to_disk == 0);
+    assert(strstr(res.warning, "not writable") != NULL);
+    char cur_call[16];
+    oyk_format_callsign(&node->config().callsign, cur_call, sizeof(cur_call));
+    assert(strcmp(cur_call, "K7MEM-7") == 0);
+
+    node->shutdown();
+    delete upd;
+    delete cap;
+    delete tx;
+    delete node;
+    delete cfg;
+    remove(OYK_T_PNODE_CFG);
+    printf("[PASS] test_portable_settings_reconfig_and_readonly\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
     test_portable_yapp_and_local_terminal();
     test_portable_bbs();
+    test_portable_settings_reconfig_and_readonly();
     return 0;
 }
 

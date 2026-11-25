@@ -2193,6 +2193,264 @@ void test_bbs_files_area_traversal_and_approval() {
     std::cout << "[PASS] test_bbs_files_area_traversal_and_approval\n";
 }
 
+void test_live_settings_reconfig_and_readonly_fs() {
+    namespace fs = std::filesystem;
+    const std::string tmp_root = "/tmp/oyk_test_settings_reconfig";
+    std::error_code ec;
+    fs::permissions(tmp_root, fs::perms::owner_all, fs::perm_options::replace, ec);
+    fs::remove_all(tmp_root, ec);
+    fs::create_directories(tmp_root + "/files");
+    const std::string cfg_path = tmp_root + "/node.cfg";
+
+    // 1. Start node with AXUDP interface, BBS enabled (SSID 11), CHAT enabled (SSID 12)
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign{"K7OYK", 7};
+    cfg.alias = ax25::Callsign{"OYKNOD", 0};
+    cfg.welcome_text = "Initial Welcome Banner";
+    cfg.info_text = "Initial Node Info";
+    cfg.source_path = cfg_path;
+    cfg.logging.log_path = tmp_root + "/logs";
+    cfg.bbs.enabled = true;
+    cfg.bbs.ssid = 11;
+    cfg.bbs.files_enabled = true;
+    cfg.bbs.mail_path = tmp_root + "/mail";
+    cfg.bbs.files_path = tmp_root + "/files";
+    cfg.chat.enabled = true;
+    cfg.chat.ssid = 12;
+
+    radio::RadioInterfaceConfig ax;
+    ax.id = "axudp0";
+    ax.type = "axudp";
+    ax.description = "Primary AXUDP";
+    ax.params["bind_host"] = "127.0.0.1";
+    ax.params["bind_port"] = "19451";
+    ax.params["auto_learn"] = "true";
+    cfg.interfaces.push_back(ax);
+    assert(cfg.save_to_file(cfg_path));
+
+    node::NodeEngine engine(cfg);
+    std::string err;
+    assert(engine.start(err));
+
+    // Verify BBS Files Area toggle ON -> OFF -> ON via apply_config()
+    {
+        uint64_t sid = 0;
+        std::string rx_accum;
+        std::mutex rx_mtx;
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.append(reinterpret_cast<const char*>(b.data()), b.size());
+        };
+        assert(engine.open_local_terminal("local", "BBS", cbs, sid, nullptr, err));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+        // Disable files_enabled (no callsign/SSID change -> session stays connected!)
+        node::NodeConfig upd = engine.config();
+        upd.bbs.files_enabled = false;
+        upd.welcome_text = "Updated Welcome Banner!";
+        upd.info_text = "Updated Node Info!";
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk);
+        assert(!res.identity_restarted);
+        assert(res.signed_off_sessions == 0);
+
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.clear();
+        }
+        std::string cmd = "FILES\r";
+        assert(engine.send_local_terminal_bytes(sid, std::vector<uint8_t>(cmd.begin(), cmd.end())));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Files Area is currently disabled") != std::string::npos);
+        }
+
+        // Re-enable files_enabled
+        upd.bbs.files_enabled = true;
+        res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk);
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.clear();
+        }
+        assert(engine.send_local_terminal_bytes(sid, std::vector<uint8_t>(cmd.begin(), cmd.end())));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Files Area: /") != std::string::npos);
+        }
+        engine.close_local_terminal(sid);
+    }
+
+    // 2. Verify updated welcome & info messages on fresh local node session
+    {
+        uint64_t sid = 0;
+        std::string rx_accum;
+        std::mutex rx_mtx;
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            rx_accum.append(reinterpret_cast<const char*>(b.data()), b.size());
+        };
+        assert(engine.open_local_terminal("local", "LOCAL", cbs, sid, nullptr, err));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            std::lock_guard<std::mutex> lk(rx_mtx);
+            assert(rx_accum.find("Updated Welcome Banner!") != std::string::npos);
+        }
+        engine.close_local_terminal(sid);
+    }
+
+    // 3. Add and remove an interface mapping live via apply_config()
+    {
+        node::NodeConfig upd = engine.config();
+        radio::RadioInterfaceConfig ax2;
+        ax2.id = "axudp1";
+        ax2.type = "axudp";
+        ax2.description = "Secondary AXUDP";
+        ax2.params["bind_host"] = "127.0.0.1";
+        ax2.params["bind_port"] = "19452";
+        ax2.params["auto_learn"] = "true";
+        upd.interfaces.push_back(ax2);
+
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.interfaces_reloaded);
+        assert(engine.find_interface("axudp1") != nullptr);
+        assert(engine.snapshot().interfaces.size() == 2);
+
+        // Remove secondary interface
+        upd.interfaces.pop_back();
+        res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.interfaces_reloaded);
+        assert(engine.find_interface("axudp1") == nullptr);
+        assert(engine.snapshot().interfaces.size() == 1);
+    }
+
+    // 4. Callsign/SSID change signs off active Node, BBS, and CHAT sessions with
+    //    appropriate new callsign/SSID or unavailability notices, then re-enables incoming
+    {
+        std::mutex m;
+        std::string rx_node, rx_bbs, rx_chat;
+        bool closed_node = false, closed_bbs = false, closed_chat = false;
+
+        auto make_cbs = [&](std::string& buf, bool& closed) {
+            node::NodeEngine::LocalTerminalCallbacks cbs;
+            cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+                std::lock_guard<std::mutex> lk(m);
+                buf.append(reinterpret_cast<const char*>(b.data()), b.size());
+            };
+            cbs.on_closed = [&](uint64_t, const std::string&) {
+                std::lock_guard<std::mutex> lk(m);
+                closed = true;
+            };
+            return cbs;
+        };
+
+        uint64_t s_node = 0, s_bbs = 0, s_chat = 0;
+        assert(engine.open_local_terminal("local", "LOCAL", make_cbs(rx_node, closed_node), s_node, nullptr, err));
+        assert(engine.open_local_terminal("local", "BBS", make_cbs(rx_bbs, closed_bbs), s_bbs, nullptr, err));
+        assert(engine.open_local_terminal("local", "CHAT", make_cbs(rx_chat, closed_chat), s_chat, nullptr, err));
+
+        node::NodeConfig upd = engine.config();
+        upd.callsign = ax25::Callsign{"W1AW", 7};
+        upd.bbs.enabled = true;
+        upd.bbs.ssid = 10;     // BBS moves to W1AW-10
+        upd.chat.enabled = false; // CHAT becomes unavailable!
+        upd.accept_incoming_default = true;
+
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.saved_to_disk && res.identity_restarted);
+        assert(res.signed_off_sessions == 3);
+        assert(engine.accept_incoming() == true);
+
+        {
+            std::lock_guard<std::mutex> lk(m);
+            assert(closed_node && closed_bbs && closed_chat);
+            assert(rx_node.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_node.find("W1AW-7") != std::string::npos);
+            assert(rx_bbs.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_bbs.find("W1AW-10") != std::string::npos);
+            assert(rx_chat.find("restarting for configuration changes") != std::string::npos);
+            assert(rx_chat.find("not be available") != std::string::npos);
+        }
+    }
+
+    // 5. Manually disabled incoming connections MUST STAY DISABLED after config edit
+    {
+        engine.set_accept_incoming(false);
+        assert(!engine.accept_incoming());
+        node::NodeConfig upd = engine.config();
+        upd.callsign = ax25::Callsign{"W2AW", 7};
+        upd.accept_incoming_default = true;
+        auto res = engine.apply_config(upd, true);
+        assert(res.applied && res.identity_restarted);
+        assert(!engine.accept_incoming()); // Must remain disabled!
+
+        // Manually re-enabling works
+        engine.set_accept_incoming(true);
+        assert(engine.accept_incoming());
+    }
+
+    engine.stop();
+
+    // 6. Read-only filesystem / unwritable config graceful operation
+    {
+        const std::string ro_dir = tmp_root + "/ro_env";
+        fs::create_directories(ro_dir);
+        const std::string ro_cfg_path = ro_dir + "/node.cfg";
+
+        node::NodeConfig ro_cfg;
+        ro_cfg.callsign = ax25::Callsign{"K7RO", 7};
+        ro_cfg.source_path = ro_cfg_path;
+        ro_cfg.logging.log_path = ro_dir + "/logs"; // Uncreatable once ro_dir is 0555!
+        ro_cfg.bbs.mail_path = ro_dir + "/mail";
+        ro_cfg.bbs.files_path = ro_dir + "/files";
+        radio::RadioInterfaceConfig ro_ax;
+        ro_ax.id = "axudp0";
+        ro_ax.type = "axudp";
+        ro_ax.params["bind_host"] = "127.0.0.1";
+        ro_ax.params["bind_port"] = "19453";
+        ro_cfg.interfaces.push_back(ro_ax);
+        assert(ro_cfg.save_to_file(ro_cfg_path));
+
+        // Lock down file and directory read-only (0444 file, 0555 dir)
+        fs::permissions(ro_cfg_path, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
+        fs::permissions(ro_dir, fs::perms::owner_read | fs::perms::owner_exec |
+                                fs::perms::group_read | fs::perms::group_exec |
+                                fs::perms::others_read | fs::perms::others_exec);
+
+        node::NodeConfig loaded_ro;
+        assert(node::NodeConfig::load_from_file(ro_cfg_path, loaded_ro, err));
+
+        node::NodeEngine ro_engine(loaded_ro);
+        // Must start gracefully even though log directory cannot be created!
+        assert(ro_engine.start(err));
+
+        // Apply settings change on read-only config -> applied in memory, warning returned
+        node::NodeConfig edit = ro_engine.config();
+        edit.callsign = ax25::Callsign{"K7MEM", 7};
+        edit.info_text = "In-memory read-only test";
+        auto res = ro_engine.apply_config(edit, true);
+        assert(res.applied);
+        assert(!res.saved_to_disk);
+        assert(res.warning.find("not writable") != std::string::npos);
+        assert(res.warning.find("memory only") != std::string::npos);
+        assert(ro_engine.config().callsign.str() == "K7MEM-7");
+        assert(ro_engine.config().info_text == "In-memory read-only test");
+
+        ro_engine.stop();
+
+        // Restore write permissions so cleanup succeeds
+        fs::permissions(ro_dir, fs::perms::owner_all);
+        fs::permissions(ro_cfg_path, fs::perms::owner_all);
+    }
+
+    fs::remove_all(tmp_root, ec);
+    std::cout << "[PASS] test_live_settings_reconfig_and_readonly_fs\n";
+}
+
 } // namespace
 
 int main() {
@@ -2214,6 +2472,7 @@ int main() {
     test_x11_geometry_parser();
     test_bbs_ssid11_persistence_and_privacy();
     test_bbs_files_area_traversal_and_approval();
+    test_live_settings_reconfig_and_readonly_fs();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

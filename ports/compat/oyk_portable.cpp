@@ -840,6 +840,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     memset(cfg, 0, sizeof(*cfg));
     oyk_parse_callsign("N0CALL-7", &cfg->callsign);
     oyk_parse_callsign("OYKNOD", &cfg->alias);
+    safe_copy(cfg->welcome_text, sizeof(cfg->welcome_text), "Type HELP or ? for commands.");
     safe_copy(cfg->info_text, sizeof(cfg->info_text), "OYK Portable Amateur Radio Packet Node");
     safe_copy(cfg->log_path, sizeof(cfg->log_path), "logs");
     cfg->console_level = OYK_DEFAULT_CONSOLE_MASK;
@@ -849,6 +850,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->has_detected_eol = 0;
 
     cfg->bbs_enabled = 1;
+    cfg->bbs_files_enabled = 1;
     cfg->bbs_ssid = 11;
     memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
     oyk_parse_callsign("OYKBBS", &cfg->bbs_alias);
@@ -1010,6 +1012,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 oyk_parse_callsign(v, &cfg->alias);
+            } else if (stricmp_ascii(k, "welcome") == 0 || stricmp_ascii(k, "welcome_text") == 0) {
+                safe_copy(cfg->welcome_text, sizeof(cfg->welcome_text), v);
             } else if (stricmp_ascii(k, "info") == 0 || stricmp_ascii(k, "info_text") == 0) {
                 safe_copy(cfg->info_text, sizeof(cfg->info_text), v);
             } else if (stricmp_ascii(k, "logpath") == 0) {
@@ -1108,6 +1112,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 else oyk_parse_callsign(v, &cfg->bbs_alias);
             } else if (stricmp_ascii(k, "mailpath") == 0 || stricmp_ascii(k, "mail_path") == 0) {
                 if (v[0]) safe_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), v);
+            } else if (stricmp_ascii(k, "files_enabled") == 0 || stricmp_ascii(k, "filesenabled") == 0) {
+                cfg->bbs_files_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "filespath") == 0 || stricmp_ascii(k, "files_path") == 0) {
                 if (v[0]) safe_copy(cfg->bbs_files_path, sizeof(cfg->bbs_files_path), v);
             } else if (stricmp_ascii(k, "welcome") == 0) {
@@ -1160,6 +1166,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "[node]%s", nl);
     fprintf(fp, "callsign = %s%s", call_s, nl);
     if (alias_s[0]) fprintf(fp, "alias = %s%s", alias_s, nl);
+    fprintf(fp, "welcome = %s%s", cfg->welcome_text, nl);
     fprintf(fp, "info = %s%s", cfg->info_text, nl);
     fprintf(fp, "accept_incoming = %s%s", cfg->accept_incoming ? "true" : "false", nl);
     fprintf(fp, "logpath = %s%s", cfg->log_path, nl);
@@ -1189,6 +1196,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
         fprintf(fp, "alias = %s%s", ba, nl);
     }
     fprintf(fp, "mailpath = %s%s", cfg->bbs_mail_path, nl);
+    fprintf(fp, "files_enabled = %s%s", cfg->bbs_files_enabled ? "true" : "false", nl);
     fprintf(fp, "filespath = %s%s", cfg->bbs_files_path, nl);
     fprintf(fp, "welcome = %s%s", cfg->bbs_welcome, nl);
     fprintf(fp, "max_msg_bytes = %u%s", static_cast<unsigned int>(cfg->bbs_max_msg_bytes), nl);
@@ -1214,9 +1222,43 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
         fprintf(fp, "%s[interface %s]%s", nl, ic->id, nl);
         fprintf(fp, "type = %s%s", ic->type, nl);
         if (ic->description[0]) fprintf(fp, "description = %s%s", ic->description, nl);
-        if (ic->host[0]) fprintf(fp, "bind_host = %s%s", ic->host, nl);
-        if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
-        if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
+        if (stricmp_ascii(ic->type, "kiss-tcp") == 0) {
+            fprintf(fp, "mode = %s%s", ic->server_mode ? "server" : "client", nl);
+            if (ic->host[0]) fprintf(fp, "host = %s%s", ic->host, nl);
+            if (ic->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(ic->port), nl);
+            fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
+        } else if (stricmp_ascii(ic->type, "kiss-serial") == 0) {
+            if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
+            if (ic->baud > 0) fprintf(fp, "baud = %lu%s", static_cast<unsigned long>(ic->baud), nl);
+            fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
+        } else {
+            if (ic->host[0]) fprintf(fp, "bind_host = %s%s", ic->host, nl);
+            if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
+            if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
+        }
+        for (int p = 0; p < ic->peer_count; ++p) {
+            oyk_u32 ip = ic->peers[p].ip;
+            const oyk_u8* b = reinterpret_cast<const oyk_u8*>(&ip);
+            if (ic->peers[p].callsign[0]) {
+                if (ic->peers[p].port > 0) {
+                    fprintf(fp, "peer = %s@%u.%u.%u.%u:%u%s",
+                            ic->peers[p].callsign,
+                            static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
+                            static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]),
+                            static_cast<unsigned int>(ic->peers[p].port), nl);
+                } else {
+                    fprintf(fp, "peer = %s@%u.%u.%u.%u%s",
+                            ic->peers[p].callsign,
+                            static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
+                            static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]), nl);
+                }
+            } else {
+                fprintf(fp, "peer = %u.%u.%u.%u:%u%s",
+                        static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
+                        static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]),
+                        static_cast<unsigned int>(ic->peers[p].port), nl);
+            }
+        }
     }
 
     fclose(fp);
@@ -1228,7 +1270,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
 OykPortableNode::OykPortableNode()
     : tx_cb_(NULL), tx_ctx_(NULL), local_cb_(NULL), local_ctx_(NULL),
       started_at_(0), fixed_now_(0),
-      accept_incoming_(1), next_session_id_(1), iface_count_(0),
+      accept_incoming_(1), manual_deny_incoming_(0), next_session_id_(1), iface_count_(0),
       mheard_count_(0), new_heard_count_(0),
       banlist_eol_(oyk_platform_default_eol()),
       banlist_has_eol_(0), banlist_mixed_eol_(0),
@@ -1269,6 +1311,7 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
     tx_ctx_ = tx_ctx;
     started_at_ = now_time();
     accept_incoming_ = cfg_.accept_incoming;
+    manual_deny_incoming_ = 0;
 
     /* Ensure default node.log and appeals.log exist in log_files */
     int has_node_log = 0, has_appeals_log = 0;
@@ -1475,10 +1518,15 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
         } else if (direct_chat) {
             chat_join(sess, 1);
         } else {
-            char node_s[16], banner[140];
+            char node_s[16], banner[200];
             oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
-            sprintf(banner, "*** Connected to %s Packet Node\rType HELP or ?\r%s> ",
-                    node_s, node_s);
+            if (cfg_.welcome_text[0]) {
+                sprintf(banner, "*** Connected to %s Packet Node\r%s\r%s> ",
+                        node_s, cfg_.welcome_text, node_s);
+            } else {
+                sprintf(banner, "*** Connected to %s Packet Node\r%s> ",
+                        node_s, node_s);
+            }
             send_text(sess, banner);
         }
         char cs[12], msg[80];
@@ -2773,9 +2821,15 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
     while (*arg && isspace(static_cast<unsigned char>(*arg))) ++arg;
 
     if (strcmp(cmd, "H") == 0 || strcmp(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
-        send_text(sess,
-                  "BBS Commands: L/LL, LM/LN, LB/LP, L>/L</L@/LC/LS, R <n>, RM, "
-                  "SP/SB/ST <to>, SR <n>, K <n>, KM, FILES/DIR, CD, PWD, TYPE, GET, UPLOAD, I, B\r");
+        if (cfg_.bbs_files_enabled) {
+            send_text(sess,
+                      "BBS Commands: L/LL, LM/LN, LB/LP, L>/L</L@/LC/LS, R <n>, RM, "
+                      "SP/SB/ST <to>, SR <n>, K <n>, KM, FILES/DIR, CD, PWD, TYPE, GET, UPLOAD, I, B\r");
+        } else {
+            send_text(sess,
+                      "BBS Commands: L/LL, LM/LN, LB/LP, L>/L</L@/LC/LS, R <n>, RM, "
+                      "SP/SB/ST <to>, SR <n>, K <n>, KM, I, B (Files Area disabled)\r");
+        }
         bbs_send_prompt(sess);
         return;
     }
@@ -2788,11 +2842,12 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
             if (bbs_msgs_[i].type == 'P') ++pers;
             else if (bbs_msgs_[i].type == 'B') ++bull;
         }
-        char us[16], ub[12], resp[140];
+        char us[16], ub[12], resp[160];
         oyk_format_callsign(&sess->remote_call, us, sizeof(us));
         bbs_base_call(us, ub, sizeof(ub));
-        sprintf(resp, "OYK Packet BBS [OYK-0.1-HMR$] Active:%d (P:%d B:%d) Unread:%d\r",
-                active, pers, bull, bbs_unread_for(ub));
+        sprintf(resp, "OYK Packet BBS [OYK-0.1-HMR$] Active:%d (P:%d B:%d) Unread:%d Files:%s\r",
+                active, pers, bull, bbs_unread_for(ub),
+                cfg_.bbs_files_enabled ? "ON" : "OFF");
         send_text(sess, resp);
         bbs_send_prompt(sess);
         return;
@@ -3026,6 +3081,19 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
         if (!found) send_text(sess, "Message not found.\r");
         bbs_send_prompt(sess);
         return;
+    }
+
+    if (strcmp(cmd, "F") == 0 || strcmp(cmd, "FILES") == 0 || strcmp(cmd, "DIR") == 0 ||
+        strcmp(cmd, "PWD") == 0 || strcmp(cmd, "CD") == 0 ||
+        strcmp(cmd, "TYPE") == 0 || strcmp(cmd, "CAT") == 0 ||
+        strcmp(cmd, "D") == 0 || strcmp(cmd, "GET") == 0 ||
+        strcmp(cmd, "DOWNLOAD") == 0 || strcmp(cmd, "YAPP") == 0 ||
+        strcmp(cmd, "U") == 0 || strcmp(cmd, "UPLOAD") == 0 || strcmp(cmd, "YU") == 0) {
+        if (!cfg_.bbs_files_enabled) {
+            send_text(sess, "*** BBS Files Area is currently disabled.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
     }
 
     if (strcmp(cmd, "F") == 0 || strcmp(cmd, "FILES") == 0 || strcmp(cmd, "DIR") == 0) {
@@ -3674,10 +3742,15 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                         static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
                 log_message(OYK_LOG_INFO, msg);
             } else {
-                char node_s[16], banner[140];
+                char node_s[16], banner[200];
                 oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
-                sprintf(banner, "*** Connected to %s Packet Node\rType HELP or ?\r%s> ",
-                        node_s, node_s);
+                if (cfg_.welcome_text[0]) {
+                    sprintf(banner, "*** Connected to %s Packet Node\r%s\r%s> ",
+                            node_s, cfg_.welcome_text, node_s);
+                } else {
+                    sprintf(banner, "*** Connected to %s Packet Node\r%s> ",
+                            node_s, node_s);
+                }
                 send_text(sess, banner);
                 char msg[72];
                 sprintf(msg, "Session #%lu connected: %s on %s",
@@ -3956,8 +4029,246 @@ void OykPortableNode::tick() {
 
 void OykPortableNode::set_accept_incoming(int allow) {
     accept_incoming_ = allow ? 1 : 0;
+    manual_deny_incoming_ = allow ? 0 : 1;
     log_message(allow ? OYK_LOG_INFO : OYK_LOG_WARNING,
                 allow ? "Incoming connections ALLOWED" : "Incoming connections DENIED");
+}
+
+static int portable_iface_eq(const OykIfaceConfig* a, const OykIfaceConfig* b) {
+    if (strcmp(a->id, b->id) != 0) return 0;
+    if (stricmp_ascii(a->type, b->type) != 0) return 0;
+    if (strcmp(a->description, b->description) != 0) return 0;
+    if (strcmp(a->host, b->host) != 0) return 0;
+    if (a->port != b->port) return 0;
+    if (strcmp(a->device, b->device) != 0) return 0;
+    if (a->baud != b->baud) return 0;
+    if (a->kiss_port != b->kiss_port) return 0;
+    if (a->server_mode != b->server_mode) return 0;
+    if (a->peer_count != b->peer_count) return 0;
+    for (int i = 0; i < a->peer_count; ++i) {
+        if (strcmp(a->peers[i].callsign, b->peers[i].callsign) != 0 ||
+            a->peers[i].ip != b->peers[i].ip ||
+            a->peers[i].port != b->peers[i].port) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
+                                  OykConfigApplyResult* res_out) {
+    OykConfigApplyResult local_res;
+    memset(&local_res, 0, sizeof(local_res));
+    OykConfigApplyResult* res = res_out ? res_out : &local_res;
+    memset(res, 0, sizeof(*res));
+
+    if (!new_cfg || !new_cfg->callsign.base[0]) {
+        safe_copy(res->error, sizeof(res->error), "Invalid node callsign.");
+        return 0;
+    }
+    if (new_cfg->iface_count < 0 || new_cfg->iface_count > OYK_MAX_INTERFACES) {
+        safe_copy(res->error, sizeof(res->error), "Invalid interface count.");
+        return 0;
+    }
+    for (int i = 0; i < new_cfg->iface_count; ++i) {
+        if (!new_cfg->ifaces[i].id[0] || !new_cfg->ifaces[i].type[0]) {
+            safe_copy(res->error, sizeof(res->error), "Interface ID and type are required.");
+            return 0;
+        }
+        for (int j = i + 1; j < new_cfg->iface_count; ++j) {
+            if (stricmp_ascii(new_cfg->ifaces[i].id, new_cfg->ifaces[j].id) == 0) {
+                safe_copy(res->error, sizeof(res->error), "Duplicate interface ID.");
+                return 0;
+            }
+        }
+    }
+
+    OykConfig next_cfg = *new_cfg;
+    next_cfg.bbs_ssid = static_cast<oyk_u8>(next_cfg.bbs_ssid & 0x0FU);
+    next_cfg.chat_ssid = static_cast<oyk_u8>(next_cfg.chat_ssid & 0x0FU);
+    if (!next_cfg.source_path[0] && cfg_.source_path[0]) {
+        safe_copy(next_cfg.source_path, sizeof(next_cfg.source_path), cfg_.source_path);
+    }
+    if (!next_cfg.has_detected_eol && cfg_.has_detected_eol) {
+        next_cfg.line_ending = cfg_.line_ending;
+        next_cfg.has_detected_eol = 1;
+    }
+
+    OykCallsign old_bbs_c, new_bbs_c, old_chat_c, new_chat_c;
+    oyk_config_resolved_bbs_callsign(&cfg_, &old_bbs_c);
+    oyk_config_resolved_bbs_callsign(&next_cfg, &new_bbs_c);
+    oyk_config_resolved_chat_callsign(&cfg_, &old_chat_c);
+    oyk_config_resolved_chat_callsign(&next_cfg, &new_chat_c);
+
+    int node_id_changed = (!oyk_callsign_eq(&cfg_.callsign, &next_cfg.callsign) ||
+                           !oyk_callsign_eq(&cfg_.alias, &next_cfg.alias)) ? 1 : 0;
+    int bbs_id_changed = (!oyk_callsign_eq(&old_bbs_c, &new_bbs_c) ||
+                          !oyk_callsign_eq(&cfg_.bbs_alias, &next_cfg.bbs_alias)) ? 1 : 0;
+    int chat_id_changed = (!oyk_callsign_eq(&old_chat_c, &new_chat_c) ||
+                           !oyk_callsign_eq(&cfg_.chat_alias, &next_cfg.chat_alias)) ? 1 : 0;
+    int bbs_disabled = (cfg_.bbs_enabled && !next_cfg.bbs_enabled) ? 1 : 0;
+    int chat_disabled = (cfg_.chat_enabled && !next_cfg.chat_enabled) ? 1 : 0;
+    int identity_restart = (node_id_changed || bbs_id_changed || chat_id_changed) ? 1 : 0;
+
+    int ifaces_changed = (cfg_.iface_count != next_cfg.iface_count) ? 1 : 0;
+    if (!ifaces_changed) {
+        for (int i = 0; i < cfg_.iface_count; ++i) {
+            if (!portable_iface_eq(&cfg_.ifaces[i], &next_cfg.ifaces[i])) {
+                ifaces_changed = 1;
+                break;
+            }
+        }
+    }
+
+    res->identity_restarted = identity_restart;
+    res->interfaces_changed = ifaces_changed;
+
+    char new_node_s[16], new_bbs_s[16], new_chat_s[16];
+    oyk_format_callsign(&next_cfg.callsign, new_node_s, sizeof(new_node_s));
+    oyk_format_callsign(&new_bbs_c, new_bbs_s, sizeof(new_bbs_s));
+    oyk_format_callsign(&new_chat_c, new_chat_s, sizeof(new_chat_s));
+
+    /* Phase 1: Temporarily disable new incoming connections & sign off affected sessions */
+    if (identity_restart) {
+        accept_incoming_ = 0;
+    }
+
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        OykSession* s = &sessions_[i];
+        if (s->state != OYK_SESS_CONNECTED && s->state != OYK_SESS_CONNECTING) continue;
+
+        int iface_removed_or_changed = 0;
+        if (s->iface_idx >= 0 && s->iface_idx < iface_count_) {
+            int found_same = 0;
+            for (int k = 0; k < next_cfg.iface_count; ++k) {
+                if (portable_iface_eq(&ifaces_[s->iface_idx].cfg, &next_cfg.ifaces[k])) {
+                    found_same = 1;
+                    break;
+                }
+            }
+            if (!found_same) iface_removed_or_changed = 1;
+        }
+
+        int must_signoff = identity_restart ||
+                           (bbs_disabled && s->in_bbs) ||
+                           (chat_disabled && s->in_chat) ||
+                           iface_removed_or_changed;
+        if (!must_signoff) continue;
+
+        char signoff[176];
+        if (s->in_bbs) {
+            if (next_cfg.bbs_enabled) {
+                sprintf(signoff,
+                        "\r*** Node is restarting for configuration changes. "
+                        "BBS will be accessible on %s after restart. 73!\r",
+                        new_bbs_s);
+            } else {
+                strcpy(signoff,
+                       "\r*** Node is restarting for configuration changes. "
+                       "BBS will not be available after this change. 73!\r");
+            }
+        } else if (s->in_chat) {
+            if (next_cfg.chat_enabled) {
+                sprintf(signoff,
+                        "\r*** Node is restarting for configuration changes. "
+                        "CHAT will be accessible on %s after restart. 73!\r",
+                        new_chat_s);
+            } else {
+                strcpy(signoff,
+                       "\r*** Node is restarting for configuration changes. "
+                       "CHAT will not be available after this change. 73!\r");
+            }
+        } else {
+            sprintf(signoff,
+                    "\r*** Node is restarting for configuration changes. "
+                    "Node will be accessible on %s after restart. 73!\r",
+                    new_node_s);
+        }
+
+        if (s->in_bbs) bbs_cleanup_yapp(s);
+        if (s->in_chat) chat_leave(s, "Node restarting for configuration changes");
+
+        if (s->state == OYK_SESS_CONNECTED) {
+            send_text(s, signoff);
+        }
+        oyk_u32 sid = s->id;
+        int was_local = (s->is_local_loopback || s->is_local_term) ? 1 : 0;
+        if (!s->is_local_loopback) {
+            send_disc(s);
+        }
+        s->state = OYK_SESS_FREE;
+        if (was_local && local_cb_) {
+            local_cb_(sid, 3, NULL, 0, "Configuration change restart", local_ctx_);
+        }
+        res->signed_off_sessions++;
+    }
+
+    /* Phase 2: Attempt to save config file (apply in memory even if read-only) */
+    const char* target_path = next_cfg.source_path[0] ? next_cfg.source_path : "node.cfg";
+    safe_copy(res->save_path, sizeof(res->save_path), target_path);
+    if (save_to_disk) {
+        if (oyk_config_save(&next_cfg, target_path)) {
+            res->saved_to_disk = 1;
+            safe_copy(next_cfg.source_path, sizeof(next_cfg.source_path), target_path);
+        } else {
+            res->saved_to_disk = 0;
+            safe_copy(res->warning, sizeof(res->warning),
+                      "Config file not writable; changes remain in memory only and will be lost on exit.");
+        }
+    }
+
+    /* Phase 3: Apply running configuration */
+    int mail_path_changed = (strcmp(cfg_.bbs_mail_path, next_cfg.bbs_mail_path) != 0) ? 1 : 0;
+    OykIfaceRuntime old_ifaces[OYK_MAX_INTERFACES];
+    int old_iface_count = iface_count_;
+    memcpy(old_ifaces, ifaces_, sizeof(old_ifaces));
+
+    cfg_ = next_cfg;
+
+    iface_count_ = cfg_.iface_count;
+    for (int i = 0; i < iface_count_; ++i) {
+        int matched = -1;
+        for (int j = 0; j < old_iface_count; ++j) {
+            if (portable_iface_eq(&old_ifaces[j].cfg, &cfg_.ifaces[i])) {
+                matched = j;
+                break;
+            }
+        }
+        if (matched >= 0) {
+            ifaces_[i] = old_ifaces[matched];
+            ifaces_[i].cfg = cfg_.ifaces[i];
+        } else {
+            memset(&ifaces_[i], 0, sizeof(ifaces_[i]));
+            ifaces_[i].cfg = cfg_.ifaces[i];
+            ifaces_[i].running = 0;
+            safe_copy(ifaces_[i].status, sizeof(ifaces_[i].status), "INIT");
+        }
+    }
+
+    if (cfg_.bbs_enabled && mail_path_changed) {
+        bbs_load_index();
+    }
+
+    /* Restore incoming state respecting manual operator disable */
+    if (manual_deny_incoming_) {
+        accept_incoming_ = 0;
+    } else {
+        accept_incoming_ = cfg_.accept_incoming ? 1 : 0;
+    }
+
+    if (res->warning[0]) {
+        log_message(OYK_LOG_WARNING, res->warning);
+    }
+    char lmsg[104];
+    sprintf(lmsg, "Config applied (%s BBS:%s CHAT:%s Files:%s)",
+            new_node_s,
+            cfg_.bbs_enabled ? new_bbs_s : "OFF",
+            cfg_.chat_enabled ? new_chat_s : "OFF",
+            cfg_.bbs_files_enabled ? "ON" : "OFF");
+    log_message(OYK_LOG_INFO, lmsg);
+
+    res->applied = 1;
+    return 1;
 }
 
 int OykPortableNode::terminate_session(oyk_u32 session_id, char* msg_out, size_t msg_sz) {
@@ -4016,7 +4327,7 @@ int OykPortableNode::ban_callsign(const char* call_spec, oyk_u32 flags, const ch
     e->flags = flags;
     safe_copy(e->reason, sizeof(e->reason),
               (reason && reason[0]) ? reason : "Banned by sysop.");
-    save_banlist();
+    int ban_saved = save_banlist();
 
     /* Disconnect any matching active sessions */
     char now_c[16];
@@ -4029,8 +4340,12 @@ int OykPortableNode::ban_callsign(const char* call_spec, oyk_u32 flags, const ch
         }
     }
 
-    char msg[80];
-    sprintf(msg, "Banned %s: %.48s", key, e->reason);
+    char msg[96];
+    if (ban_saved) {
+        sprintf(msg, "Banned %s: %.48s", key, e->reason);
+    } else {
+        sprintf(msg, "Banned %s (in memory only; banlist not writable)", key);
+    }
     log_message(OYK_LOG_BAN, msg);
     if (msg_out) safe_copy(msg_out, msg_sz, msg);
     return 1;
@@ -4048,9 +4363,13 @@ int OykPortableNode::unban_callsign(const char* call_spec, char* msg_out, size_t
                 bans_[j - 1] = bans_[j];
             }
             --ban_count_;
-            save_banlist();
-            char msg[48];
-            sprintf(msg, "Unbanned %s", key);
+            int ban_saved = save_banlist();
+            char msg[80];
+            if (ban_saved) {
+                sprintf(msg, "Unbanned %s", key);
+            } else {
+                sprintf(msg, "Unbanned %s (in memory only; banlist not writable)", key);
+            }
             log_message(OYK_LOG_BAN, msg);
             if (msg_out) safe_copy(msg_out, msg_sz, msg);
             return 1;

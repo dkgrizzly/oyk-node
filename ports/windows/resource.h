@@ -10,6 +10,7 @@
 #define IDM_DENY_INCOMING   202
 #define IDM_TERMINAL        203
 #define IDM_APPROVE_FILES   207
+#define IDM_SETTINGS        208
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -58,5 +59,36 @@
 #define IDC_APP_DELETE      444
 #define IDC_APP_REFRESH     445
 #define IDC_APP_STATUS      446
+
+#define IDD_SETTINGS        450
+#define IDC_SET_CALL        451
+#define IDC_SET_ALIAS       452
+#define IDC_SET_ACCEPT      453
+#define IDC_SET_WELCOME     454
+#define IDC_SET_INFO        455
+#define IDC_SET_BBS_EN      456
+#define IDC_SET_BBS_SSID    457
+#define IDC_SET_BBS_CALL    458
+#define IDC_SET_BBS_ALIAS   459
+#define IDC_SET_FILES_EN    460
+#define IDC_SET_FILES_PATH  461
+#define IDC_SET_BBS_WELC    462
+#define IDC_SET_CHAT_EN     463
+#define IDC_SET_CHAT_SSID   464
+#define IDC_SET_CHAT_CALL   465
+#define IDC_SET_CHAT_ALIAS  466
+#define IDC_SET_CHAT_TOPIC  467
+#define IDC_SET_CHAT_WELC   468
+#define IDC_SET_IF_LIST     469
+#define IDC_SET_IF_ADD      470
+#define IDC_SET_IF_REM      471
+
+#define IDD_ADD_IFACE       480
+#define IDC_AIF_ID          481
+#define IDC_AIF_TYPE        482
+#define IDC_AIF_DESC        483
+#define IDC_AIF_HOST        484
+#define IDC_AIF_PORT        485
+#define IDC_AIF_PEER        486
 
 #endif /* OYK_WIN_RESOURCE_H */

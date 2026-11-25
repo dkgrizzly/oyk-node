@@ -305,6 +305,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                     }
                     cfg.alias = *parsed;
                 }
+            } else if (key == "welcome" || key == "welcome_text") {
+                cfg.welcome_text = val;
             } else if (key == "info" || key == "info_text") {
                 cfg.info_text = val;
             } else if (key == "logpath") {
@@ -384,6 +386,8 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 }
             } else if (key == "mailpath" || key == "mail_path") {
                 if (!val.empty()) cfg.bbs.mail_path = val;
+            } else if (key == "files_enabled" || key == "filesenabled") {
+                cfg.bbs.files_enabled = parse_bool(val, true);
             } else if (key == "filespath" || key == "files_path") {
                 if (!val.empty()) cfg.bbs.files_path = val;
             } else if (key == "welcome") {
@@ -463,6 +467,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     if (alias.valid()) {
         lines.push_back("alias = " + alias.str());
     }
+    lines.push_back("welcome = " + welcome_text);
     lines.push_back("info = " + info_text);
     lines.push_back("accept_incoming = " + std::string(accept_incoming_default ? "true" : "false"));
     lines.push_back("paclen = " + std::to_string(paclen));
@@ -503,6 +508,7 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         lines.push_back("alias = " + bbs.alias.str());
     }
     lines.push_back("mailpath = " + bbs.mail_path);
+    lines.push_back("files_enabled = " + std::string(bbs.files_enabled ? "true" : "false"));
     lines.push_back("filespath = " + bbs.files_path);
     lines.push_back("welcome = " + bbs.welcome);
     lines.push_back("max_msg_bytes = " + std::to_string(bbs.max_msg_bytes));
@@ -532,6 +538,16 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         }
         for (const auto& peer : iface.peers) {
             lines.push_back("peer = " + peer);
+        }
+    }
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path p(target);
+    if (p.has_parent_path() && !p.parent_path().empty()) {
+        fs::create_directories(p.parent_path(), ec);
+        if (ec) {
+            return false;
         }
     }
 

@@ -69,8 +69,10 @@ bool NodeEngine::start(std::string& error_out) {
         return true;
     }
 
-    if (!logger_.configure(config_.logging, error_out)) {
-        return false;
+    std::string log_warn;
+    (void)logger_.configure(config_.logging, log_warn);
+    if (!log_warn.empty()) {
+        log_msg(LOG_WARNING, log_warn);
     }
 
     {
@@ -167,6 +169,7 @@ bool NodeEngine::start(std::string& error_out) {
             const std::string mail_dir = config_.resolved_bbs_mail_path();
             const std::string files_dir = config_.resolved_bbs_files_path();
             std::string bbs_err;
+            bbs_server_.set_files_enabled(config_.bbs.files_enabled);
             if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir, files_dir, "incoming",
                                        config_.bbs.welcome, config_.bbs.max_msg_bytes, bbs_err)) {
                 log_msg(LOG_WARNING, "BBS startup warning: " + bbs_err);
@@ -264,6 +267,7 @@ void NodeEngine::stop() {
 
 void NodeEngine::set_accept_incoming(bool allow) {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    manual_deny_incoming_ = !allow;
     if (accept_incoming_ != allow) {
         accept_incoming_ = allow;
         log_msg(allow ? LOG_INFO : LOG_WARNING,
@@ -274,6 +278,7 @@ void NodeEngine::set_accept_incoming(bool allow) {
 bool NodeEngine::toggle_accept_incoming() {
     std::lock_guard<std::mutex> lock(state_mutex_);
     accept_incoming_ = !accept_incoming_;
+    manual_deny_incoming_ = !accept_incoming_;
     log_msg(accept_incoming_ ? LOG_INFO : LOG_WARNING,
             std::string("Incoming connections ") + (accept_incoming_ ? "ALLOWED" : "DENIED"));
     return accept_incoming_;
@@ -345,9 +350,12 @@ bool NodeEngine::ban_callsign(std::string_view callsign_spec,
         entry.reason = reason.empty() ? "Banned by sysop." : reason;
 
         ban_list_.upsert(entry);
+        bool ban_saved = true;
         if (!ban_list_.file_path().empty()) {
             if (!ban_list_.save_to_file()) {
-                log_msg(LOG_ERROR, "Failed to save banlist to " + ban_list_.file_path());
+                ban_saved = false;
+                log_msg(LOG_WARNING, "Banlist file '" + ban_list_.file_path() +
+                                     "' not writable; ban kept in memory only.");
             }
         }
 
@@ -372,6 +380,9 @@ bool NodeEngine::ban_callsign(std::string_view callsign_spec,
                           ", " + entry.format_lift_at() + "]: " + entry.reason;
         if (disconnected > 0) {
             msg += " (disconnected " + std::to_string(disconnected) + " active)";
+        }
+        if (!ban_saved) {
+            msg += " [in memory only; banlist.cfg not writable]";
         }
         log_msg(LOG_BAN, msg);
         if (message_out) *message_out = msg;
@@ -399,12 +410,18 @@ bool NodeEngine::unban_callsign(std::string_view callsign_spec, std::string* mes
     std::lock_guard<std::mutex> lock(state_mutex_);
     std::string removed_key;
     if (ban_list_.remove(callsign_spec, &removed_key)) {
+        bool ban_saved = true;
         if (!ban_list_.file_path().empty()) {
             if (!ban_list_.save_to_file()) {
-                log_msg(LOG_ERROR, "Failed to save banlist to " + ban_list_.file_path());
+                ban_saved = false;
+                log_msg(LOG_WARNING, "Banlist file '" + ban_list_.file_path() +
+                                     "' not writable; unban kept in memory only.");
             }
         }
         std::string msg = "Unbanned callsign " + removed_key;
+        if (!ban_saved) {
+            msg += " [in memory only; banlist.cfg not writable]";
+        }
         log_msg(LOG_BAN, msg);
         if (message_out) *message_out = msg;
         return true;
@@ -480,7 +497,11 @@ std::string NodeEngine::welcome_banner() const {
     if (config_.alias.valid()) {
         oss << " (" << config_.alias.str() << ")";
     }
-    oss << " Packet Node\rType HELP or ? for commands.\r" << prompt_string();
+    oss << " Packet Node\r";
+    if (!config_.welcome_text.empty()) {
+        oss << config_.welcome_text << "\r";
+    }
+    oss << prompt_string();
     return oss.str();
 }
 
@@ -1477,8 +1498,10 @@ NodeSnapshot NodeEngine::snapshot() const {
 
     snap.node_callsign = config_.callsign.str();
     snap.node_alias = config_.alias.str();
+    snap.welcome_text = config_.welcome_text;
     snap.info_text = config_.info_text;
     snap.accept_incoming = accept_incoming_;
+    snap.manual_deny_incoming = manual_deny_incoming_;
 
     if (running_.load()) {
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
@@ -1609,6 +1632,363 @@ radio::RadioInterface* NodeEngine::find_interface(const std::string& id) const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     auto it = iface_by_id_.find(id);
     return (it != iface_by_id_.end()) ? it->second : nullptr;
+}
+
+NodeConfig NodeEngine::config() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return config_;
+}
+
+namespace {
+
+bool iface_cfg_equal(const radio::RadioInterfaceConfig& a,
+                     const radio::RadioInterfaceConfig& b) {
+    return a.id == b.id &&
+           a.type == b.type &&
+           a.description == b.description &&
+           a.params == b.params &&
+           a.peers == b.peers;
+}
+
+bool is_supported_iface_type(const std::string& t) {
+    return t == "axudp" || t == "axip" || t == "kiss-serial" ||
+           t == "kiss-tcp" || t == "telnet";
+}
+
+} // namespace
+
+ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk) {
+    ConfigApplyResult result;
+
+    if (!new_cfg.callsign.valid()) {
+        result.error = "Invalid node callsign.";
+        return result;
+    }
+    new_cfg.bbs.ssid = static_cast<uint8_t>(new_cfg.bbs.ssid & 0x0Fu);
+    new_cfg.chat.ssid = static_cast<uint8_t>(new_cfg.chat.ssid & 0x0Fu);
+
+    {
+        std::set<std::string> seen_ids;
+        for (const auto& ic : new_cfg.interfaces) {
+            if (ic.id.empty()) {
+                result.error = "Interface ID cannot be empty.";
+                return result;
+            }
+            if (!seen_ids.insert(ic.id).second) {
+                result.error = "Duplicate interface ID: " + ic.id;
+                return result;
+            }
+            if (!is_supported_iface_type(ic.type)) {
+                result.error = "Unsupported interface type '" + ic.type + "' for " + ic.id;
+                return result;
+            }
+        }
+    }
+
+    NodeConfig old_cfg;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        old_cfg = config_;
+        if (new_cfg.source_path.empty()) {
+            new_cfg.source_path = old_cfg.source_path;
+        }
+        if (!new_cfg.has_detected_line_ending && old_cfg.has_detected_line_ending) {
+            new_cfg.line_ending = old_cfg.line_ending;
+            new_cfg.has_detected_line_ending = true;
+        }
+    }
+
+    const std::string new_node_call = new_cfg.callsign.str();
+    const std::string new_bbs_call  = new_cfg.resolved_bbs_callsign().str();
+    const std::string new_chat_call = new_cfg.resolved_chat_callsign().str();
+
+    const bool node_id_changed =
+        (old_cfg.callsign != new_cfg.callsign) || (old_cfg.alias != new_cfg.alias);
+    const bool bbs_id_changed =
+        (old_cfg.resolved_bbs_callsign() != new_cfg.resolved_bbs_callsign()) ||
+        (old_cfg.bbs.alias != new_cfg.bbs.alias);
+    const bool chat_id_changed =
+        (old_cfg.resolved_chat_callsign() != new_cfg.resolved_chat_callsign()) ||
+        (old_cfg.chat.alias != new_cfg.chat.alias);
+    const bool bbs_disabled  = (old_cfg.bbs.enabled && !new_cfg.bbs.enabled);
+    const bool chat_disabled = (old_cfg.chat.enabled && !new_cfg.chat.enabled);
+    const bool identity_restart = (node_id_changed || bbs_id_changed || chat_id_changed);
+
+    result.identity_restarted = identity_restart;
+
+    // Determine which interfaces need to be stopped/recreated
+    std::map<std::string, radio::RadioInterfaceConfig> old_if_map;
+    for (const auto& ic : old_cfg.interfaces) old_if_map[ic.id] = ic;
+    std::map<std::string, radio::RadioInterfaceConfig> new_if_map;
+    for (const auto& ic : new_cfg.interfaces) new_if_map[ic.id] = ic;
+
+    std::set<std::string> ifaces_to_stop_ids;
+    std::vector<radio::RadioInterfaceConfig> ifaces_to_start_cfgs;
+
+    for (const auto& [id, oic] : old_if_map) {
+        auto nit = new_if_map.find(id);
+        bool telnet_needs_restart = (node_id_changed && oic.type == "telnet");
+        if (nit == new_if_map.end() || !iface_cfg_equal(oic, nit->second) || telnet_needs_restart) {
+            ifaces_to_stop_ids.insert(id);
+        }
+    }
+    for (const auto& nic : new_cfg.interfaces) {
+        auto oit = old_if_map.find(nic.id);
+        bool telnet_needs_restart = (node_id_changed && nic.type == "telnet");
+        if (oit == old_if_map.end() || !iface_cfg_equal(oit->second, nic) || telnet_needs_restart) {
+            ifaces_to_start_cfgs.push_back(nic);
+        }
+    }
+
+    const bool ifaces_changed = !ifaces_to_stop_ids.empty() || !ifaces_to_start_cfgs.empty();
+    result.interfaces_reloaded = ifaces_changed;
+
+    // Phase 1: Temporarily disable new incoming connections & gracefully sign off affected sessions
+    std::vector<PendingTx> pending_tx;
+    std::vector<PendingLocalEvent> pending_local;
+    std::set<uint64_t> signed_off_ids;
+    bool wait_for_remote_drain = false;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (identity_restart) {
+            accept_incoming_ = false;
+        }
+
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            Session* sess = it->second.get();
+            if (!sess || !sess->is_active()) {
+                ++it;
+                continue;
+            }
+            const bool is_bbs  = (sess->mode() == SessionMode::Bbs);
+            const bool is_chat = (sess->mode() == SessionMode::Chat);
+            const bool iface_stopping = (ifaces_to_stop_ids.count(sess->interface_id()) > 0);
+            const bool must_signoff =
+                identity_restart ||
+                (bbs_disabled && is_bbs) ||
+                (chat_disabled && is_chat) ||
+                iface_stopping;
+
+            if (!must_signoff) {
+                ++it;
+                continue;
+            }
+
+            std::string signoff;
+            if (is_bbs) {
+                if (new_cfg.bbs.enabled) {
+                    signoff = "\r*** Node is restarting for configuration changes. "
+                              "BBS will be accessible on " + new_bbs_call + " after restart. 73!\r";
+                } else {
+                    signoff = "\r*** Node is restarting for configuration changes. "
+                              "BBS will not be available after this change. 73!\r";
+                }
+            } else if (is_chat) {
+                if (new_cfg.chat.enabled) {
+                    signoff = "\r*** Node is restarting for configuration changes. "
+                              "CHAT will be accessible on " + new_chat_call + " after restart. 73!\r";
+                } else {
+                    signoff = "\r*** Node is restarting for configuration changes. "
+                              "CHAT will not be available after this change. 73!\r";
+                }
+            } else {
+                signoff = "\r*** Node is restarting for configuration changes. "
+                          "Node will be accessible on " + new_node_call + " after restart. 73!\r";
+            }
+
+            const uint64_t sid = sess->id();
+            bbs_server_.leave(sid);
+            (void)chat_room_.leave(sid, "Node restarting for configuration changes");
+            sess->set_bridged_session_id(0);
+
+            ++result.signed_off_sessions;
+            signed_off_ids.insert(sid);
+
+            if (sess->is_local_loopback()) {
+                auto cbit = local_callbacks_.find(sid);
+                if (cbit != local_callbacks_.end()) {
+                    PendingLocalEvent ple;
+                    ple.session_id = sid;
+                    ple.rx_bytes.assign(signoff.begin(), signoff.end());
+                    ple.closed = true;
+                    ple.close_reason = "Configuration change restart";
+                    ple.callbacks = cbit->second;
+                    pending_local.push_back(std::move(ple));
+                    local_callbacks_.erase(cbit);
+                }
+                it = sessions_.erase(it);
+                continue;
+            }
+
+            if (sess->state() == SessionState::Connected) {
+                auto msg_ev = sess->queue_text(signoff);
+                queue_session_frames(*sess, msg_ev.tx_frames, pending_tx);
+            }
+            auto disc_ev = sess->initiate_disconnect("Configuration change restart");
+            queue_session_frames(*sess, disc_ev.tx_frames, pending_tx);
+            if (sess->state() == SessionState::Closed) {
+                it = sessions_.erase(it);
+                continue;
+            }
+            wait_for_remote_drain = true;
+            ++it;
+        }
+    }
+
+    dispatch_tx(pending_tx);
+    dispatch_local_events(pending_local);
+
+    if (wait_for_remote_drain && running_.load()) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(600);
+        while (std::chrono::steady_clock::now() < deadline) {
+            bool any_pending = false;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                for (uint64_t sid : signed_off_ids) {
+                    auto it = sessions_.find(sid);
+                    if (it != sessions_.end() && it->second && it->second->is_active()) {
+                        any_pending = true;
+                        break;
+                    }
+                }
+            }
+            if (!any_pending) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+
+    // Remove any remaining disconnecting sessions that were signed off
+    if (!signed_off_ids.empty()) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        for (uint64_t sid : signed_off_ids) {
+            sessions_.erase(sid);
+            local_callbacks_.erase(sid);
+        }
+    }
+
+    // Phase 2: Attempt to save config file (apply in memory even if read-only/unwritable)
+    const std::string target_save_path =
+        !new_cfg.source_path.empty() ? new_cfg.source_path : "./node.cfg";
+    result.save_path = target_save_path;
+    if (save_to_disk) {
+        if (new_cfg.save_to_file(target_save_path)) {
+            result.saved_to_disk = true;
+            new_cfg.source_path = target_save_path;
+        } else {
+            result.saved_to_disk = false;
+            result.warning = "Config file '" + target_save_path +
+                             "' is not writable. Changes remain in memory only while running "
+                             "and will be lost on exit.";
+        }
+    }
+
+    // Phase 3: Stop removed/modified interfaces outside state_mutex_
+    std::vector<std::unique_ptr<radio::RadioInterface>> removed_ifaces;
+    if (!ifaces_to_stop_ids.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            for (auto it = interfaces_.begin(); it != interfaces_.end();) {
+                if (*it && ifaces_to_stop_ids.count((*it)->id()) > 0) {
+                    iface_by_id_.erase((*it)->id());
+                    removed_ifaces.push_back(std::move(*it));
+                    it = interfaces_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (auto& rif : removed_ifaces) {
+            if (rif) rif->stop();
+        }
+    }
+
+    // Start added/modified interfaces outside state_mutex_
+    std::vector<std::unique_ptr<radio::RadioInterface>> new_ifaces;
+    if (!ifaces_to_start_cfgs.empty() && running_.load()) {
+        auto& reg = radio::InterfaceRegistry::instance();
+        for (const auto& raw_icfg : ifaces_to_start_cfgs) {
+            radio::RadioInterfaceConfig icfg = raw_icfg;
+            if (icfg.params.find("node_callsign") == icfg.params.end() || icfg.type == "telnet") {
+                icfg.params["node_callsign"] = new_cfg.callsign.str();
+            }
+            std::string create_err;
+            auto iface = reg.create(icfg, create_err);
+            if (!iface) {
+                std::string w = "Interface '" + icfg.id + "': " + create_err;
+                log_msg(LOG_ERROR, w);
+                if (!result.warning.empty()) result.warning += " ";
+                result.warning += w;
+                continue;
+            }
+            std::string start_err;
+            auto cb = [this](const ax25::Frame& f, const radio::RadioFrameMeta& meta) {
+                this->on_radio_frame(f, meta);
+            };
+            if (!iface->start(std::move(cb), start_err)) {
+                std::string w = "Failed to start interface '" + iface->id() + "': " + start_err;
+                log_msg(LOG_ERROR, w);
+                if (!result.warning.empty()) result.warning += " ";
+                result.warning += w;
+                continue;
+            }
+            log_msg(LOG_INFO, "Interface " + iface->id() + " (" + iface->type() + ") started: " +
+                              iface->status_summary());
+            new_ifaces.push_back(std::move(iface));
+        }
+    }
+
+    // Phase 4: Commit updated configuration, reconfigure services, and restore incoming state
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        for (auto& nif : new_ifaces) {
+            if (nif && iface_by_id_.count(nif->id()) == 0) {
+                iface_by_id_[nif->id()] = nif.get();
+                interfaces_.push_back(std::move(nif));
+            }
+        }
+
+        config_ = std::move(new_cfg);
+
+        // Reconfigure BBS
+        bbs_server_.set_files_enabled(config_.bbs.files_enabled);
+        if (config_.bbs.enabled) {
+            const std::string bbs_call = config_.resolved_bbs_callsign().str();
+            const std::string bbs_alias = config_.bbs.alias.valid() ? config_.bbs.alias.str() : "";
+            const std::string mail_dir = config_.resolved_bbs_mail_path();
+            const std::string files_dir = config_.resolved_bbs_files_path();
+            std::string bbs_err;
+            if (!bbs_server_.configure(bbs_call, bbs_alias, mail_dir, files_dir, "incoming",
+                                       config_.bbs.welcome, config_.bbs.max_msg_bytes, bbs_err)) {
+                log_msg(LOG_WARNING, "BBS reload warning: " + bbs_err);
+            }
+        }
+
+        // Reconfigure CHAT
+        if (config_.chat.enabled) {
+            chat_room_.configure(config_.resolved_chat_callsign().str(),
+                                 config_.chat.default_topic,
+                                 config_.chat.welcome);
+        }
+
+        // Re-enable incoming connections ONLY if allowed by config AND not manually disabled by operator
+        if (manual_deny_incoming_) {
+            accept_incoming_ = false;
+        } else {
+            accept_incoming_ = config_.accept_incoming_default;
+        }
+
+        if (!result.warning.empty()) {
+            log_msg(LOG_WARNING, result.warning);
+        }
+        log_msg(LOG_INFO, "Configuration applied (" + config_.callsign.str() +
+                          ", BBS:" + (config_.bbs.enabled ? config_.resolved_bbs_callsign().str() : "OFF") +
+                          (config_.bbs.enabled ? (config_.bbs.files_enabled ? " [Files:ON]" : " [Files:OFF]") : "") +
+                          ", CHAT:" + (config_.chat.enabled ? config_.resolved_chat_callsign().str() : "OFF") +
+                          ", Incoming:" + (accept_incoming_ ? "ALLOW" : "DENY") + ")");
+    }
+
+    result.applied = true;
+    return result;
 }
 
 } // namespace oyk::node

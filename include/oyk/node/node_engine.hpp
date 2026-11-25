@@ -71,9 +71,11 @@ struct SessionSnapshot {
 struct NodeSnapshot {
     std::string node_callsign;
     std::string node_alias;
+    std::string welcome_text;
     std::string info_text;
     uint64_t uptime_seconds = 0;
     bool accept_incoming = true;
+    bool manual_deny_incoming = false;
     std::size_t total_active_connections = 0;
 
     std::vector<InterfaceSnapshot> interfaces;
@@ -82,6 +84,17 @@ struct NodeSnapshot {
     std::vector<std::string> banned_callsigns;
     std::vector<BanEntry> ban_entries;
     std::vector<std::string> recent_logs;
+};
+
+struct ConfigApplyResult {
+    bool applied = false;
+    bool saved_to_disk = false;
+    bool identity_restarted = false;
+    bool interfaces_reloaded = false;
+    std::size_t signed_off_sessions = 0;
+    std::string save_path;
+    std::string warning;
+    std::string error;
 };
 
 class NodeEngine {
@@ -126,7 +139,9 @@ public:
     bool unban_callsign(std::string_view callsign_spec, std::string* message_out = nullptr);
     bool is_banned(const ax25::Callsign& call) const;
 
-    // Query APIs (thread-safe)
+    // Query & live configuration APIs (thread-safe)
+    NodeConfig config() const;
+    ConfigApplyResult apply_config(NodeConfig new_cfg, bool save_to_disk = true);
     NodeSnapshot snapshot() const;
     std::vector<MHeardRecord> mheard(std::size_t max_entries = 20) const;
     Logger& logger() noexcept { return logger_; }
@@ -251,6 +266,7 @@ private:
 
     mutable std::mutex state_mutex_;
     bool accept_incoming_ = true;
+    bool manual_deny_incoming_ = false;
     uint64_t next_session_id_ = 1;
 
     std::vector<std::unique_ptr<radio::RadioInterface>> interfaces_;
