@@ -120,6 +120,7 @@ public:
 
     /* Rig Control (Hamlib rigctld TCP 4532 + RadioFoundry UDP 4191) */
     void sync_rig_config();
+    void sync_printer_config();
     const OykRigStatus* rig_status() const { return &rig_status_; }
     OykRigStatus* rig_status_mut() { return &rig_status_; }
     int rig_poll_now(oyk_u32 now_ms);
@@ -132,13 +133,16 @@ public:
     int rig_rf_step_zone(int delta);
     int rig_rf_stop_notify();
 
-    /* OykPortableNode transmit callback trampoline */
+    /* OykPortableNode transmit & printer callback trampolines */
     static int node_tx_callback(int iface_idx,
                                 const OykFrame* frame,
                                 oyk_u32 peer_ip,
                                 oyk_u16 peer_port,
                                 oyk_u16 peer_handle,
                                 void* user_ctx);
+    static void node_printer_callback(oyk_u32 level,
+                                      const char* formatted_line,
+                                      void* user_ctx);
 
     OykPppLink* ppp_link(int slot);
     const OykPppLink* ppp_link(int slot) const;
@@ -177,6 +181,9 @@ private:
     int rigctl_exchange(const char* cmd, size_t cmd_len, char* reply_out, size_t reply_cap);
     void handle_rf_udp_payload(const oyk_u8* payload, size_t len);
 
+    void handle_printer_line(oyk_u32 level, const char* formatted_line);
+    int ensure_usb_printer_inited();
+
     static size_t uart_serial_tx_trampoline(const oyk_u8* data, size_t len, void* ctx);
     static size_t usb_acm_tx_trampoline(const oyk_u8* data, size_t len, void* ctx);
     static void ppp_ax25_rx_trampoline(int is_axip,
@@ -212,6 +219,12 @@ private:
     TinyTmuxUsbHost usb_host_;
     OykRigStatus rig_status_;
     oyk_u32 rig_last_poll_ms_;
+
+    int printer_uart_;
+    int printer_usb_slot_;
+    int printer_mode_; /* 0=none, 1=USB printer class, 2=UART serial printer */
+    int printer_proto_;
+    int printer_inited_;
 
     IfaceBinding bindings_[OYK_MAX_INTERFACES];
     PppSlot ppp_slots_[TINYTMUX_MAX_PPP_LINKS];

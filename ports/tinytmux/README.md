@@ -15,6 +15,7 @@ This port targets the **Teensy 4.1** (**NXP/Freescale MIMXRT1062DVJ6A**, ARM Cor
   - **PPP over Serial** (`ser0`..`ser7`) for **RadioFoundry** firmware radios: RFC 1661 LCP, RFC 1662 Async HDLC framing & FCS-16, RFC 1332 IPCP IPv4 negotiation, ICMP Echo Reply (`ping`), carrying both **AXUDP**, **AXIP (IP proto 93)**, and RadioFoundry UDP 4191 control.
   - **KISS Serial TNC** support on any remaining UART (`ser0`..`ser7`).
 - **Rig Control (`oyk_rig`)**: Hamlib `rigctld` (TCP 4532) and RadioFoundry / takRF Zone & Channel Control (UDP 4191) across Ethernet, UART PPP, and USB Host transports.
+- **Direct Line-by-Line Printer Logging (`[printer]`)**: Streams log lines directly to a USB Printer Class (`0x07/0x01`) device or USB-to-parallel adapter on the USB Host port (`usb-printer`), or to a serial printer on `ser0`..`ser7`, supporting `generic`, `mx80` (Epson MX-80), and `escp2` (Epson ESC/P2) protocols without any spooler.
 - **FlexSPI2 QSPI PSRAM Startup Detection & Self-Test**: Uses Teensyduino's boot-time `external_psram_size` probe (`0x70000000`, 0/8/16 MB) plus our multi-pattern memory test and exposes live diagnostics/re-test (`P`) in the console.
 - **MicroSD (`SD.h` / `BUILTIN_SDCARD`)**: 4-bit SDIO microSD storage (`/node.cfg`, `banlist.cfg`, `logs/`, `mail/`, `files/`, `incoming/`) with POSIX newlib stdio hooks preserving Teensyduino `Print::printf()`.
 - **Dual USB-CDC (`USB_DUAL_SERIAL`) + Full VT100 Operator Console**:

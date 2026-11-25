@@ -202,6 +202,13 @@ struct OykConfig {
     oyk_u16 rig_poll_sec;  /* Default 30s keepalive */
     int rig_notify;        /* Receive RadioFoundry UDP 4191 notifications */
 
+    int printer_enabled;
+    char printer_device[48];   /* e.g. "/dev/lp0", "LPT1:", "usb-printer", "ser1" */
+    char printer_protocol[16]; /* "generic", "mx80", "escp2" */
+    oyk_u32 printer_baud;      /* Serial baud rate for serial printers (e.g. 9600) */
+    oyk_u32 printer_level;     /* Severity bitmask (default 0x77) */
+    int printer_condensed;     /* 1 = 132-col condensed mode on MX-80 / ESC/P2 */
+
     int log_file_count;
     OykLogFileEntry log_files[OYK_MAX_LOG_FILES];
 
@@ -336,6 +343,11 @@ typedef void (*OykLocalEventCallback)(oyk_u32 session_id,
                                       const char* reason,
                                       void* user_ctx);
 
+/* Direct line-by-line printer log callback implemented by platform ports */
+typedef void (*OykPrinterWriteCallback)(oyk_u32 level,
+                                        const char* formatted_line,
+                                        void* user_ctx);
+
 /* KISS framing helpers */
 struct OykKissDecoder {
     int in_frame;
@@ -460,6 +472,7 @@ public:
 
     /* Local operator outbound terminal (supports raw binary YAPP + interactive text) */
     void set_local_event_callback(OykLocalEventCallback cb, void* ctx);
+    void set_printer_callback(OykPrinterWriteCallback cb, void* ctx);
     int find_peer_for_call(int iface_idx, const OykCallsign* call,
                            oyk_u32* ip_out, oyk_u16* port_out) const;
     int open_local_terminal(int iface_idx, const char* target_spec,
@@ -536,6 +549,8 @@ private:
     void* tx_ctx_;
     OykLocalEventCallback local_cb_;
     void* local_ctx_;
+    OykPrinterWriteCallback printer_cb_;
+    void* printer_ctx_;
     time_t started_at_;
     time_t fixed_now_;
     int accept_incoming_;

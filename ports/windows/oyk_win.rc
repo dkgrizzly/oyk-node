@@ -115,12 +115,13 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "OYK Node Settings"
 FONT 8, "MS Sans Serif"
 BEGIN
-    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces | Rig */
-    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 56, 15
-    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 64, 6, 52, 15
-    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 118, 6, 54, 15
-    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 174, 6, 68, 15
-    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 244, 6, 54, 15
+    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces | Rig | Printer */
+    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 52, 15
+    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 60, 6, 46, 15
+    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 108, 6, 48, 15
+    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 158, 6, 62, 15
+    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 222, 6, 50, 15
+    PUSHBUTTON      "Printer", IDC_SET_TAB_PRN, 274, 6, 68, 15
 
     GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 152
 
@@ -181,6 +182,18 @@ BEGIN
     LTEXT           "Poll Interval (s):", IDC_SET_L_RPOLL, 14, 118, 76, 10
     EDITTEXT        IDC_SET_RIG_POLL, 94, 116, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
     CHECKBOX        "Receive RadioFoundry UDP 4191 change notifications", IDC_SET_RIG_NOTIFY, 14, 138, 230, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+
+    /* Tab 6: Line Printer */
+    CHECKBOX        "Enable Line-by-Line Printer Logging", IDC_SET_PRN_EN, 14, 38, 180, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Device (LPT1:/COM1:):", IDC_SET_L_PDEV, 14, 58, 82, 10
+    EDITTEXT        IDC_SET_PRN_DEV, 100, 56, 140, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Protocol:", IDC_SET_L_PPROTO, 14, 78, 82, 10
+    COMBOBOX        IDC_SET_PRN_PROTO, 100, 76, 110, 62, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Serial Baud Rate:", IDC_SET_L_PBAUD, 14, 98, 82, 10
+    EDITTEXT        IDC_SET_PRN_BAUD, 100, 96, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Log Mask (hex):", IDC_SET_L_PLVL, 14, 118, 82, 10
+    EDITTEXT        IDC_SET_PRN_LVL, 100, 116, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Use 132-column condensed mode (MX-80 / ESC/P2)", IDC_SET_PRN_COND, 14, 138, 230, 11, BS_AUTOCHECKBOX | WS_TABSTOP
 
     DEFPUSHBUTTON   "&Save && Apply", IDOK, 206, 182, 68, 15
     PUSHBUTTON      "Cancel", IDCANCEL, 278, 182, 64, 15

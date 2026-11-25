@@ -25,6 +25,7 @@
 #include "../compat/oyk_portable.hpp"
 #include "../compat/oyk_yapp.hpp"
 #include "../compat/oyk_rig.hpp"
+#include "../compat/oyk_printer.hpp"
 #include "resource.h"
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -2044,18 +2045,149 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     for (i = 0; i < static_cast<int>(sizeof(RIG_IDS) / sizeof(RIG_IDS[0])); ++i) {
         ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 4) ? SW_SHOW : SW_HIDE);
     }
+    static const int PRN_IDS[] = {
+        IDC_SET_PRN_EN, IDC_SET_L_PDEV, IDC_SET_PRN_DEV,
+        IDC_SET_L_PPROTO, IDC_SET_PRN_PROTO, IDC_SET_L_PBAUD, IDC_SET_PRN_BAUD,
+        IDC_SET_L_PLVL, IDC_SET_PRN_LVL, IDC_SET_PRN_COND
+    };
+    for (i = 0; i < static_cast<int>(sizeof(PRN_IDS) / sizeof(PRN_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, PRN_IDS[i]), (tab == 5) ? SW_SHOW : SW_HIDE);
+    }
 
     SetDlgItemText(hdlg, IDC_SET_TAB_NODE, (tab == 0) ? "[ Node ]" : "Node");
     SetDlgItemText(hdlg, IDC_SET_TAB_BBS,  (tab == 1) ? "[ BBS ]" : "BBS");
     SetDlgItemText(hdlg, IDC_SET_TAB_CHAT, (tab == 2) ? "[ CHAT ]" : "CHAT");
     SetDlgItemText(hdlg, IDC_SET_TAB_IF,   (tab == 3) ? "[ Interfaces ]" : "Interfaces");
     SetDlgItemText(hdlg, IDC_SET_TAB_RIG,  (tab == 4) ? "[ Rig ]" : "Rig");
+    SetDlgItemText(hdlg, IDC_SET_TAB_PRN,  (tab == 5) ? "[ Printer ]" : "Printer");
 
-    static const char* BOX_TITLES[5] = {
+    static const char* BOX_TITLES[6] = {
         "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings",
-        "Interface Mappings", "Radio / Rig Control Settings"
+        "Interface Mappings", "Radio / Rig Control Settings", "Line Printer Logging Settings"
     };
-    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 5) ? tab : 0]);
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 6) ? tab : 0]);
+}
+
+#if defined(_WIN32) || defined(_WIN64)
+static HANDLE g_prn_handle = INVALID_HANDLE_VALUE;
+#else
+static int g_prn_cid = -1;
+#endif
+static int g_prn_proto = OYK_PRN_NONE;
+
+static void win_printer_close() {
+#if defined(_WIN32) || defined(_WIN64)
+    if (g_prn_handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_prn_handle);
+        g_prn_handle = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (g_prn_cid >= 0) {
+        CloseComm(g_prn_cid);
+        g_prn_cid = -1;
+    }
+#endif
+    g_prn_proto = OYK_PRN_NONE;
+}
+
+static int win_printer_write_bytes(const unsigned char* data, size_t len) {
+    if (!data || len == 0) return 1;
+#if defined(_WIN32) || defined(_WIN64)
+    if (g_prn_handle == INVALID_HANDLE_VALUE) return 0;
+    DWORD written = 0;
+    if (!WriteFile(g_prn_handle, data, static_cast<DWORD>(len), &written, NULL)) return 0;
+    return (written == static_cast<DWORD>(len)) ? 1 : 0;
+#else
+    if (g_prn_cid < 0) return 0;
+    int wrote = WriteComm(g_prn_cid, data, static_cast<int>(len));
+    return (wrote > 0) ? 1 : 0;
+#endif
+}
+
+static void win_printer_init() {
+    win_printer_close();
+    const OykConfig& cfg = g_node.config();
+    if (!cfg.printer_enabled || !cfg.printer_device[0]) return;
+    int proto = oyk_printer_parse_protocol(cfg.printer_protocol);
+    if (proto == OYK_PRN_NONE) return;
+
+    char dev[48];
+    size_t dn = strlen(cfg.printer_device);
+    if (dn >= sizeof(dev)) dn = sizeof(dev) - 1;
+    memcpy(dev, cfg.printer_device, dn);
+    dev[dn] = '\0';
+    while (dn > 0 && dev[dn - 1] == ':') dev[--dn] = '\0';
+    if (!dev[0]) return;
+
+#if defined(_WIN32) || defined(_WIN64)
+    char win_path[56];
+    if ((dev[0] == 'C' || dev[0] == 'c') &&
+        (dev[1] == 'O' || dev[1] == 'o') &&
+        (dev[2] == 'M' || dev[2] == 'm') &&
+        dev[3] >= '0' && dev[3] <= '9' && dev[4] >= '0' && dev[4] <= '9') {
+        sprintf(win_path, "\\\\.\\%s", dev);
+    } else {
+        strcpy(win_path, dev);
+    }
+    HANDLE h = CreateFileA(win_path, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+
+    if ((dev[0] == 'C' || dev[0] == 'c') &&
+        (dev[1] == 'O' || dev[1] == 'o') &&
+        (dev[2] == 'M' || dev[2] == 'm')) {
+        DCB dcb;
+        memset(&dcb, 0, sizeof(dcb));
+        dcb.DCBlength = sizeof(dcb);
+        if (GetCommState(h, &dcb)) {
+            dcb.BaudRate = cfg.printer_baud ? static_cast<DWORD>(cfg.printer_baud) : 9600UL;
+            dcb.ByteSize = 8;
+            dcb.Parity = NOPARITY;
+            dcb.StopBits = ONESTOPBIT;
+            SetCommState(h, &dcb);
+        }
+        COMMTIMEOUTS to;
+        memset(&to, 0, sizeof(to));
+        to.WriteTotalTimeoutConstant = 250;
+        SetCommTimeouts(h, &to);
+    }
+    g_prn_handle = h;
+    g_prn_proto = proto;
+#else
+    int cid = OpenComm(dev, 256, 256);
+    if (cid < 0) return;
+    if ((dev[0] == 'C' || dev[0] == 'c') &&
+        (dev[1] == 'O' || dev[1] == 'o') &&
+        (dev[2] == 'M' || dev[2] == 'm')) {
+        DCB dcb;
+        if (GetCommState(cid, &dcb) == 0) {
+            dcb.BaudRate = static_cast<UINT>(cfg.printer_baud ? cfg.printer_baud : 9600U);
+            dcb.ByteSize = 8;
+            dcb.Parity = NOPARITY;
+            dcb.StopBits = ONESTOPBIT;
+            SetCommState(&dcb);
+        }
+    }
+    g_prn_cid = cid;
+    g_prn_proto = proto;
+#endif
+
+    unsigned char init_buf[32];
+    size_t ilen = oyk_printer_build_init(g_prn_proto, cfg.printer_condensed,
+                                         init_buf, sizeof(init_buf));
+    if (ilen > 0) {
+        (void)win_printer_write_bytes(init_buf, ilen);
+    }
+}
+
+static void win_printer_callback(oyk_u32 level, const char* formatted_line, void* user_ctx) {
+    (void)user_ctx;
+    if (g_prn_proto == OYK_PRN_NONE || !formatted_line) return;
+    unsigned char out[384];
+    size_t len = oyk_printer_format_line(g_prn_proto, static_cast<unsigned long>(level),
+                                         formatted_line, out, sizeof(out));
+    if (len > 0) {
+        (void)win_printer_write_bytes(out, len);
+    }
 }
 
 OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -2112,6 +2244,23 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_SET_RIG_POLL, buf);
             CheckDlgButton(hdlg, IDC_SET_RIG_NOTIFY, g_set_draft.rig_notify ? 1 : 0);
 
+            CheckDlgButton(hdlg, IDC_SET_PRN_EN, g_set_draft.printer_enabled ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_SET_PRN_DEV, g_set_draft.printer_device);
+            HWND pcb = GetDlgItem(hdlg, IDC_SET_PRN_PROTO);
+            SendMessage(pcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("generic"));
+            SendMessage(pcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("mx80"));
+            SendMessage(pcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("escp2"));
+            int psel = 0;
+            int pp = oyk_printer_parse_protocol(g_set_draft.printer_protocol);
+            if (pp == OYK_PRN_MX80) psel = 1;
+            else if (pp == OYK_PRN_ESCP2) psel = 2;
+            SendMessage(pcb, CB_SETCURSEL, psel, 0);
+            sprintf(buf, "%lu", static_cast<unsigned long>(g_set_draft.printer_baud ? g_set_draft.printer_baud : 9600UL));
+            SetDlgItemText(hdlg, IDC_SET_PRN_BAUD, buf);
+            sprintf(buf, "0x%lX", static_cast<unsigned long>(g_set_draft.printer_level));
+            SetDlgItemText(hdlg, IDC_SET_PRN_LVL, buf);
+            CheckDlgButton(hdlg, IDC_SET_PRN_COND, g_set_draft.printer_condensed ? 1 : 0);
+
             populate_settings_ifaces(hdlg);
             switch_settings_tab(hdlg, 0);
             return TRUE;
@@ -2123,6 +2272,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_SET_TAB_CHAT) { switch_settings_tab(hdlg, 2); return TRUE; }
             if (id == IDC_SET_TAB_IF)   { switch_settings_tab(hdlg, 3); return TRUE; }
             if (id == IDC_SET_TAB_RIG)  { switch_settings_tab(hdlg, 4); return TRUE; }
+            if (id == IDC_SET_TAB_PRN)  { switch_settings_tab(hdlg, 5); return TRUE; }
             if (id == IDC_SET_IF_ADD) {
                 if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
                     MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
@@ -2234,12 +2384,26 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 if (rpl >= 0L && rpl <= 3600L) g_set_draft.rig_poll_sec = static_cast<oyk_u16>(rpl);
                 g_set_draft.rig_notify = (IsDlgButtonChecked(hdlg, IDC_SET_RIG_NOTIFY) != 0) ? 1 : 0;
 
+                g_set_draft.printer_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_PRN_EN) != 0) ? 1 : 0;
+                GetDlgItemText(hdlg, IDC_SET_PRN_DEV, g_set_draft.printer_device, sizeof(g_set_draft.printer_device));
+                int ppsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_PRN_PROTO, CB_GETCURSEL, 0, 0));
+                strcpy(g_set_draft.printer_protocol, (ppsel == 1) ? "mx80" : ((ppsel == 2) ? "escp2" : "generic"));
+                char pbaud_s[16], plvl_s[24];
+                GetDlgItemText(hdlg, IDC_SET_PRN_BAUD, pbaud_s, sizeof(pbaud_s));
+                long pbv = atol(pbaud_s);
+                if (pbv >= 300L) g_set_draft.printer_baud = static_cast<oyk_u32>(pbv);
+                GetDlgItemText(hdlg, IDC_SET_PRN_LVL, plvl_s, sizeof(plvl_s));
+                oyk_u32 pm = 0;
+                if (oyk_parse_log_mask(plvl_s, &pm)) g_set_draft.printer_level = pm;
+                g_set_draft.printer_condensed = (IsDlgButtonChecked(hdlg, IDC_SET_PRN_COND) != 0) ? 1 : 0;
+
                 static OykConfigApplyResult res;
                 if (!g_node.apply_config(&g_set_draft, 1, &res)) {
                     MessageBox(hdlg, res.error[0] ? res.error : "Invalid configuration.",
                                "Settings Error", MB_OK | MB_ICONSTOP);
                     return TRUE;
                 }
+                win_printer_init();
                 if (res.identity_restarted || res.interfaces_changed) {
                     /* Sign off any Telnet clients still sitting at the login prompt */
                     if (res.identity_restarted) {
@@ -2647,6 +2811,7 @@ static void drain_win_shutdown() {
     }
 
     g_node.finish_shutdown();
+    win_printer_close();
     if (g_win_rf_sock != INVALID_SOCKET) {
         closesocket(g_win_rf_sock);
         g_win_rf_sock = INVALID_SOCKET;
@@ -2825,7 +2990,9 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         return 1;
     }
 
+    g_node.set_printer_callback(win_printer_callback, NULL);
     init_win_interfaces();
+    win_printer_init();
 
     if (!hprev) {
         WNDCLASS wc;

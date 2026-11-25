@@ -39,7 +39,8 @@ enum TinyTmuxPortRole {
     TMUX_ROLE_UNUSED = 0,
     TMUX_ROLE_PPP_RADIO,    /* RFC 1661/1662/1332 PPP link (e.g. RadioFoundry firmware radio) */
     TMUX_ROLE_KISS_TNC,     /* KISS serial TNC */
-    TMUX_ROLE_CONSOLE       /* Local VT100/ANSI operator console */
+    TMUX_ROLE_CONSOLE,      /* Local VT100/ANSI operator console */
+    TMUX_ROLE_PRINTER       /* Direct serial log printer */
 };
 
 struct TinyTmuxUartMap {
@@ -90,5 +91,8 @@ int tinytmux_board_sim_bootloader_count();
 int tinytmux_uart_init(int logical_port, const TinyTmuxUartConfig* cfg);
 size_t tinytmux_uart_write(int logical_port, const oyk_u8* data, size_t len);
 size_t tinytmux_uart_read(int logical_port, oyk_u8* out, size_t max_len);
+
+typedef void (*TinyTmuxUartSimTxFn)(int logical_port, const oyk_u8* data, size_t len, void* ctx);
+void tinytmux_uart_set_sim_tx_hook(TinyTmuxUartSimTxFn cb, void* ctx);
 
 #endif /* OYK_BOARD_TINYTMUX_HPP */

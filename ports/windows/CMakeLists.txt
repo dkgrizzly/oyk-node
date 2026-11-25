@@ -10,6 +10,7 @@ add_executable(oyk-node-win WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_portable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_yapp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_rig.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_printer.cpp
 )
 
 target_include_directories(oyk-node-win

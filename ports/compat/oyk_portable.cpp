@@ -893,6 +893,13 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->rig_poll_sec = 30;
     cfg->rig_notify = 1;
 
+    cfg->printer_enabled = 0;
+    cfg->printer_device[0] = '\0';
+    safe_copy(cfg->printer_protocol, sizeof(cfg->printer_protocol), "generic");
+    cfg->printer_baud = 9600;
+    cfg->printer_level = OYK_DEFAULT_CONSOLE_MASK;
+    cfg->printer_condensed = 0;
+
     cfg->iface_count = 1;
     safe_copy(cfg->ifaces[0].id, sizeof(cfg->ifaces[0].id), "axudp0");
     safe_copy(cfg->ifaces[0].type, sizeof(cfg->ifaces[0].type), "axudp");
@@ -958,7 +965,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                                             &found_eol, &mixed_eol);
     cfg->has_detected_eol = found_eol;
 
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig */
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer */
     OykIfaceConfig* cur_if = NULL;
     int node_call_explicit_ssid = 0;
     int node_ssid_set = 0;
@@ -995,6 +1002,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if = NULL;
             } else if (stricmp_ascii(sec, "rig") == 0 || stricmp_ascii(sec, "radio") == 0) {
                 section = 5;
+                cur_if = NULL;
+            } else if (stricmp_ascii(sec, "printer") == 0) {
+                section = 6;
                 cur_if = NULL;
             } else if (strlen(sec) > 9 &&
                        (sec[0] == 'i' || sec[0] == 'I') &&
@@ -1175,6 +1185,21 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             } else if (stricmp_ascii(k, "notify") == 0) {
                 cfg->rig_notify = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             }
+        } else if (section == 6) {
+            if (stricmp_ascii(k, "enabled") == 0) {
+                cfg->printer_enabled = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "device") == 0 || stricmp_ascii(k, "port") == 0) {
+                safe_copy(cfg->printer_device, sizeof(cfg->printer_device), v);
+            } else if (stricmp_ascii(k, "protocol") == 0 || stricmp_ascii(k, "type") == 0) {
+                if (v[0]) safe_copy(cfg->printer_protocol, sizeof(cfg->printer_protocol), v);
+            } else if (stricmp_ascii(k, "baud") == 0) {
+                long bv = atol(v);
+                if (bv >= 300L) cfg->printer_baud = static_cast<oyk_u32>(bv);
+            } else if (stricmp_ascii(k, "level") == 0 || stricmp_ascii(k, "mask") == 0) {
+                oyk_parse_log_mask(v, &cfg->printer_level);
+            } else if (stricmp_ascii(k, "condensed") == 0) {
+                cfg->printer_condensed = (stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0) ? 1 : 0;
+            }
         }
     }
 
@@ -1288,6 +1313,14 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "poll_interval_sec = %u%s", static_cast<unsigned int>(cfg->rig_poll_sec), nl);
     fprintf(fp, "notify = %s%s", cfg->rig_notify ? "true" : "false", nl);
 
+    fprintf(fp, "%s[printer]%s", nl, nl);
+    fprintf(fp, "enabled = %s%s", cfg->printer_enabled ? "true" : "false", nl);
+    fprintf(fp, "device = %s%s", cfg->printer_device, nl);
+    fprintf(fp, "protocol = %s%s", cfg->printer_protocol[0] ? cfg->printer_protocol : "generic", nl);
+    fprintf(fp, "baud = %lu%s", static_cast<unsigned long>(cfg->printer_baud ? cfg->printer_baud : 9600UL), nl);
+    fprintf(fp, "level = 0x%lx%s", static_cast<unsigned long>(cfg->printer_level), nl);
+    fprintf(fp, "condensed = %s%s", cfg->printer_condensed ? "true" : "false", nl);
+
     for (int i = 0; i < cfg->iface_count; ++i) {
         const OykIfaceConfig* ic = &cfg->ifaces[i];
         fprintf(fp, "%s[interface %s]%s", nl, ic->id, nl);
@@ -1340,6 +1373,7 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
 
 OykPortableNode::OykPortableNode()
     : tx_cb_(NULL), tx_ctx_(NULL), local_cb_(NULL), local_ctx_(NULL),
+      printer_cb_(NULL), printer_ctx_(NULL),
       started_at_(0), fixed_now_(0),
       accept_incoming_(1), manual_deny_incoming_(0), storage_is_flash_(0), next_session_id_(1), iface_count_(0),
       mheard_count_(0), new_heard_count_(0),
@@ -1486,6 +1520,11 @@ void OykPortableNode::shutdown() {
 void OykPortableNode::set_local_event_callback(OykLocalEventCallback cb, void* ctx) {
     local_cb_ = cb;
     local_ctx_ = ctx;
+}
+
+void OykPortableNode::set_printer_callback(OykPrinterWriteCallback cb, void* ctx) {
+    printer_cb_ = cb;
+    printer_ctx_ = ctx;
 }
 
 int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
@@ -2005,6 +2044,9 @@ void OykPortableNode::log_message(oyk_u32 level, const char* msg) {
             }
         }
     }
+    if (printer_cb_ && cfg_.printer_enabled && (level & cfg_.printer_level) != 0) {
+        printer_cb_(level, fline, printer_ctx_);
+    }
 }
 
 void OykPortableNode::log_appeal(const char* callsign, const char* clean_appeal) {
@@ -2029,6 +2071,9 @@ void OykPortableNode::log_appeal(const char* callsign, const char* clean_appeal)
                 write_log_file_line(&cfg_.log_files[i], aline, today);
             }
         }
+    }
+    if (printer_cb_ && cfg_.printer_enabled && (OYK_LOG_APPEAL & cfg_.printer_level) != 0) {
+        printer_cb_(OYK_LOG_APPEAL, aline, printer_ctx_);
     }
 }
 

@@ -2032,7 +2032,7 @@ void NcursesUI::modal_settings() {
     };
 
     // Five logical tabs matching GTK/Windows/DOS: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig
-    static const char* TAB_NAMES[5] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig" };
+    static const char* TAB_NAMES[6] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig", "6:Printer" };
     static const char* NODE_LABELS[5] = {
         "Node Callsign",
         "Node Alias",
@@ -2067,6 +2067,14 @@ void NcursesUI::modal_settings() {
         "Poll Interval (sec)",
         "RadioFoundry Notify"
     };
+    static const char* PRN_LABELS[6] = {
+        "Enable Line Printer",
+        "Device (/dev/parport0,/dev/ttyS0)",
+        "Protocol (generic/mx80/escp2)",
+        "Serial Baud Rate",
+        "Printer Log Mask (0x..)",
+        "Condensed 132-Col Mode"
+    };
 
     auto tab_item_count = [&](int t) -> int {
         if (t == 0) return 5;
@@ -2081,6 +2089,7 @@ void NcursesUI::modal_settings() {
         if (t == 1) return BBS_LABELS[idx];
         if (t == 2) return CHAT_LABELS[idx];
         if (t == 4) return RIG_LABELS[idx];
+        if (t == 5) return PRN_LABELS[idx];
         return "";
     };
 
@@ -2133,11 +2142,26 @@ void NcursesUI::modal_settings() {
                 default: return "";
             }
         }
+        if (t == 5) {
+            switch (idx) {
+                case 0: return draft.logging.printer.enabled ? "[ON]" : "[OFF]";
+                case 1: return draft.logging.printer.device.empty() ? "(none)" : draft.logging.printer.device;
+                case 2: return draft.logging.printer.protocol.empty() ? "generic" : draft.logging.printer.protocol;
+                case 3: return std::to_string(draft.logging.printer.baud);
+                case 4: {
+                    std::ostringstream oss;
+                    oss << "0x" << std::hex << draft.logging.printer.level;
+                    return oss.str();
+                }
+                case 5: return draft.logging.printer.condensed ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        }
         return "";
     };
 
     int tab = 0;
-    int sel[5] = { 0, 0, 0, 0, 0 };
+    int sel[6] = { 0, 0, 0, 0, 0, 0 };
     int if_scroll = 0;
     const int content_h = std::max(1, h - 8);
     std::string feedback = "Config: " + (draft.source_path.empty() ? std::string("./node.cfg") : draft.source_path);
@@ -2158,9 +2182,9 @@ void NcursesUI::modal_settings() {
         box(win, 0, 0);
         mvwprintw(win, 0, 2, " Node Settings ");
 
-        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces | Rig)
+        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces | Rig | Printer)
         int tx = 2;
-        for (int t = 0; t < 5; ++t) {
+        for (int t = 0; t < 6; ++t) {
             std::string lbl = std::string(" ") + TAB_NAMES[t] + " ";
             if (t == tab) {
                 if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
@@ -2220,8 +2244,8 @@ void NcursesUI::modal_settings() {
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
         mvwhline(win, h - 1, 1, ' ', w - 2);
         const char* help_bar = (tab == 3)
-            ? "Tab/1-5:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
-            : "Tab/Left/Right/1-5:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
+            ? "Tab/1-6:Tabs  A:Add Interface  D/Del:Remove  S/F2:Save & Apply  Esc:Cancel"
+            : "Tab/Left/Right/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
         mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
@@ -2231,14 +2255,14 @@ void NcursesUI::modal_settings() {
         if (ch == 27) break;
 
         if (ch == '\t' || ch == KEY_RIGHT) {
-            tab = (tab + 1) % 5;
+            tab = (tab + 1) % 6;
             continue;
         }
         if (ch == KEY_BTAB || ch == KEY_LEFT) {
-            tab = (tab + 4) % 5;
+            tab = (tab + 5) % 6;
             continue;
         }
-        if (ch >= '1' && ch <= '5') {
+        if (ch >= '1' && ch <= '6') {
             tab = ch - '1';
             continue;
         }
@@ -2399,6 +2423,14 @@ void NcursesUI::modal_settings() {
                 continue;
             }
             if (tab == 4 && f == 5) { draft.rig.notify = !draft.rig.notify; continue; }
+            if (tab == 5 && f == 0) { draft.logging.printer.enabled = !draft.logging.printer.enabled; continue; }
+            if (tab == 5 && f == 2) {
+                if (draft.logging.printer.protocol == "generic") draft.logging.printer.protocol = "mx80";
+                else if (draft.logging.printer.protocol == "mx80") draft.logging.printer.protocol = "escp2";
+                else draft.logging.printer.protocol = "generic";
+                continue;
+            }
+            if (tab == 5 && f == 5) { draft.logging.printer.condensed = !draft.logging.printer.condensed; continue; }
 
             std::string val;
             if (tab == 0) {
@@ -2423,6 +2455,14 @@ void NcursesUI::modal_settings() {
                 if (f == 2) val = draft.rig.host;
                 else if (f == 3) val = std::to_string(draft.rig.port);
                 else if (f == 4) val = std::to_string(draft.rig.poll_interval_sec);
+            } else if (tab == 5) {
+                if (f == 1) val = draft.logging.printer.device;
+                else if (f == 3) val = std::to_string(draft.logging.printer.baud);
+                else if (f == 4) {
+                    std::ostringstream oss;
+                    oss << "0x" << std::hex << draft.logging.printer.level;
+                    val = oss.str();
+                }
             }
 
             if (!prompt_edit(std::string(tab_field_label(tab, f)) + ": ", val)) continue;
@@ -2498,6 +2538,20 @@ void NcursesUI::modal_settings() {
                         if (iv < 0 || iv > 3600) feedback = "Interval must be 0..3600.";
                         else draft.rig.poll_interval_sec = static_cast<uint32_t>(iv);
                     } catch (...) { feedback = "Invalid interval."; }
+                }
+            } else if (tab == 5) {
+                if (f == 1) {
+                    draft.logging.printer.device = val;
+                } else if (f == 3) {
+                    try {
+                        int bv = std::stoi(val);
+                        if (bv < 300) feedback = "Baud rate must be >= 300.";
+                        else draft.logging.printer.baud = static_cast<uint32_t>(bv);
+                    } catch (...) { feedback = "Invalid baud rate."; }
+                } else if (f == 4) {
+                    uint32_t mask = 0;
+                    if (!node::parse_log_mask(val, mask)) feedback = "Invalid log mask (e.g. 0x77 or ALL).";
+                    else draft.logging.printer.level = mask;
                 }
             }
         }

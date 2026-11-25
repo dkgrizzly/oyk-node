@@ -149,10 +149,10 @@ private:
     OykApprovedFile approved_files_[16];
     int approved_count_;
 
-    /* Settings draft & navigation (5 tabs: Node, BBS, CHAT, Interfaces, Rig) */
+    /* Settings draft & navigation (6 tabs: Node, BBS, CHAT, Interfaces, Rig, Printer) */
     OykConfig draft_;
     int settings_tab_;
-    int settings_sel_[5];
+    int settings_sel_[6];
     int settings_iface_field_;
 
     /* Line prompt state */

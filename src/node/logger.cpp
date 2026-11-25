@@ -2,13 +2,29 @@
 // Copyright (C) 2026 KR4OYK - David Kuder
 
 #include "oyk/node/logger.hpp"
+#include "oyk_printer.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstring>
 #include <ctime>
+#include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <unistd.h>
+#if defined(__linux__) && defined(__has_include)
+#  if __has_include(<linux/ppdev.h>)
+#    if __has_include(<linux/parport.h>)
+#      include <linux/parport.h>
+#    endif
+#    include <linux/ppdev.h>
+#    define OYK_HAVE_LINUX_PPDEV 1
+#  endif
+#endif
 
 namespace oyk::node {
 
@@ -74,6 +90,38 @@ bool parse_single_symbol(std::string_view tok, uint32_t& val) {
         return true;
     }
     return false;
+}
+
+speed_t baud_to_speed(uint32_t baud) {
+    switch (baud) {
+        case 1200:   return B1200;
+        case 2400:   return B2400;
+        case 4800:   return B4800;
+        case 9600:   return B9600;
+        case 19200:  return B19200;
+        case 38400:  return B38400;
+        case 57600:  return B57600;
+        case 115200: return B115200;
+        default:     return B9600;
+    }
+}
+
+bool write_all_fd(int fd, const unsigned char* data, std::size_t len) {
+    std::size_t off = 0;
+    int retries = 0;
+    while (off < len) {
+        ssize_t n = ::write(fd, data + off, len - off);
+        if (n > 0) {
+            off += static_cast<std::size_t>(n);
+            retries = 0;
+            continue;
+        }
+        if (n < 0 && (errno == EINTR || (errno == EAGAIN && retries++ < 50))) {
+            continue;
+        }
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -165,6 +213,7 @@ std::string Logger::format_timestamp_full(std::chrono::system_clock::time_point 
 
 Logger::~Logger() {
     std::lock_guard<std::mutex> lock(mutex_);
+    close_printer_locked();
     for (auto& t : targets_) {
         if (t.stream.is_open()) {
             t.stream.flush();
@@ -177,6 +226,7 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
     namespace fs = std::filesystem;
     std::lock_guard<std::mutex> lock(mutex_);
 
+    close_printer_locked();
     for (auto& t : targets_) {
         if (t.stream.is_open()) {
             t.stream.flush();
@@ -185,6 +235,13 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
     }
     targets_.clear();
     config_ = config;
+
+    std::string prn_warn;
+    open_printer_locked(prn_warn);
+    if (!prn_warn.empty()) {
+        error_out = prn_warn;
+        push_console_locked("[WARN] " + prn_warn);
+    }
 
     // Ensure defaults for node.log and appeals.log if not explicitly specified
     if (config_.log_files.find("node.log") == config_.log_files.end()) {
@@ -198,10 +255,12 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (ec) {
-        error_out = "Log directory '" + dir.string() + "' is not writable (" + ec.message() +
-                    "); logging to console memory only.";
+        std::string dir_warn = "Log directory '" + dir.string() + "' is not writable (" + ec.message() +
+                               "); logging to console memory only.";
+        if (!error_out.empty()) error_out += " ";
+        error_out += dir_warn;
         configured_ = true;
-        push_console_locked("[WARN] " + error_out);
+        push_console_locked("[WARN] " + dir_warn);
         return true;
     }
 
@@ -239,11 +298,120 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
 
     configured_ = true;
     if (!failed_files.empty()) {
-        error_out = "Log file(s) not writable (read-only filesystem?): " + failed_files.front() +
-                    "; continuing with in-memory console logging.";
-        push_console_locked("[WARN] " + error_out);
+        std::string file_warn = "Log file(s) not writable (read-only filesystem?): " + failed_files.front() +
+                                "; continuing with in-memory console logging.";
+        if (!error_out.empty()) error_out += " ";
+        error_out += file_warn;
+        push_console_locked("[WARN] " + file_warn);
     }
     return true;
+}
+
+bool Logger::reconfigure_printer(const PrinterConfig& printer, std::string& error_out) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    config_.printer = printer;
+    open_printer_locked(error_out);
+    if (!error_out.empty()) {
+        push_console_locked("[WARN] " + error_out);
+    }
+    return error_out.empty();
+}
+
+void Logger::close_printer_locked() {
+    if (printer_fd_ >= 0) {
+#ifdef OYK_HAVE_LINUX_PPDEV
+        if (printer_ppdev_claimed_) {
+            (void)::ioctl(printer_fd_, PPRELEASE);
+        }
+#endif
+        ::close(printer_fd_);
+        printer_fd_ = -1;
+    }
+    printer_ppdev_claimed_ = false;
+    printer_proto_ = OYK_PRN_NONE;
+}
+
+void Logger::open_printer_locked(std::string& error_out) {
+    close_printer_locked();
+    if (!config_.printer.enabled || config_.printer.device.empty()) {
+        return;
+    }
+
+    int proto = oyk_printer_parse_protocol(config_.printer.protocol.c_str());
+    if (proto == OYK_PRN_NONE) {
+        if (config_.printer.protocol.empty()) {
+            proto = OYK_PRN_GENERIC;
+        } else {
+            error_out = "Printer protocol '" + config_.printer.protocol + "' disabled or unknown.";
+            return;
+        }
+    }
+
+    const std::string& dev = config_.printer.device;
+    const bool is_parport = (dev.rfind("/dev/parport", 0) == 0);
+    const int flags = (is_parport ? O_RDWR : O_WRONLY) | O_NOCTTY | O_NONBLOCK;
+    int fd = ::open(dev.c_str(), flags);
+    if (fd < 0) {
+        error_out = "Printer device '" + dev + "' unavailable (" + std::strerror(errno) + ").";
+        return;
+    }
+
+#ifdef OYK_HAVE_LINUX_PPDEV
+    if (is_parport) {
+        if (::ioctl(fd, PPCLAIM) == 0) {
+            printer_ppdev_claimed_ = true;
+#ifdef IEEE1284_MODE_COMPAT
+            int mode = IEEE1284_MODE_COMPAT;
+            (void)::ioctl(fd, PPSETMODE, &mode);
+#endif
+        } else {
+            error_out = "Printer ppdev claim failed on '" + dev + "' (" + std::strerror(errno) + ").";
+            ::close(fd);
+            return;
+        }
+    }
+#endif
+
+    if (::isatty(fd)) {
+        struct termios tio{};
+        if (::tcgetattr(fd, &tio) == 0) {
+            ::cfmakeraw(&tio);
+            tio.c_cflag |= (CLOCAL | CREAD | CS8);
+            tio.c_cflag &= ~(PARENB | CSTOPB);
+            const speed_t spd = baud_to_speed(config_.printer.baud);
+            (void)::cfsetispeed(&tio, spd);
+            (void)::cfsetospeed(&tio, spd);
+            (void)::tcsetattr(fd, TCSANOW, &tio);
+        }
+    }
+
+    int fl = ::fcntl(fd, F_GETFL, 0);
+    if (fl >= 0 && (fl & O_NONBLOCK) != 0) {
+        (void)::fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    }
+
+    printer_fd_ = fd;
+    printer_proto_ = proto;
+
+    unsigned char init_buf[32];
+    std::size_t init_len = oyk_printer_build_init(printer_proto_, config_.printer.condensed ? 1 : 0,
+                                                  init_buf, sizeof(init_buf));
+    if (init_len > 0 && !write_all_fd(printer_fd_, init_buf, init_len)) {
+        error_out = "Printer init write failed on '" + dev + "'.";
+        close_printer_locked();
+    }
+}
+
+void Logger::write_printer_locked(LogLevel level, const std::string& line) {
+    if (printer_fd_ < 0 || !config_.printer.enabled) return;
+    if ((static_cast<uint32_t>(level) & config_.printer.level) == 0) return;
+    unsigned char buf[512];
+    std::size_t n = oyk_printer_format_line(printer_proto_, static_cast<unsigned long>(level),
+                                            line.c_str(), buf, sizeof(buf));
+    if (n > 0 && !write_all_fd(printer_fd_, buf, n)) {
+        push_console_locked("[WARN] Printer write failed; disabling active printer handle.");
+        close_printer_locked();
+    }
 }
 
 void Logger::open_target_locked(FileTarget& target, const std::string& today) {
@@ -325,6 +493,8 @@ void Logger::log_at(LogLevel level, const std::string& message,
             target.stream.flush();
         }
     }
+
+    write_printer_locked(level, file_line);
 }
 
 void Logger::log_appeal(const std::string& callsign,
@@ -353,6 +523,8 @@ void Logger::log_appeal(const std::string& callsign,
             target.stream.flush();
         }
     }
+
+    write_printer_locked(LOG_APPEAL, appeal_line);
 }
 
 std::vector<std::string> Logger::recent_console_logs() const {

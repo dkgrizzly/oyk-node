@@ -3,6 +3,7 @@
 
 #include "lwip_net_bridge.hpp"
 #include "tinytmux_enet.hpp"
+#include "oyk_printer.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,7 +66,12 @@ TinyTmuxNetBridge::TinyTmuxNetBridge()
       enet_tx_fn_(NULL), enet_tx_ctx_(NULL),
       enet_udp_tx_fn_(NULL), enet_udp_tx_ctx_(NULL),
       rig_tcp_fn_(NULL), rig_tcp_ctx_(NULL),
-      rig_last_poll_ms_(0) {
+      rig_last_poll_ms_(0),
+      printer_uart_(-1),
+      printer_usb_slot_(-1),
+      printer_mode_(0),
+      printer_proto_(OYK_PRN_NONE),
+      printer_inited_(0) {
     memset(bindings_, 0, sizeof(bindings_));
     for (int i = 0; i < OYK_MAX_INTERFACES; ++i) {
         bindings_[i].ppp_slot = -1;
@@ -164,6 +170,7 @@ int TinyTmuxNetBridge::init(OykPortableNode* node, oyk_u32 now_ms) {
     usb_host_.set_acm_rx_callback(usb_acm_rx_trampoline, this);
     usb_host_.set_ax25_rx_callback(usb_ax25_rx_trampoline, this);
     usb_host_.set_udp_rx_callback(usb_udp_rx_trampoline, this);
+    node_->set_printer_callback(node_printer_callback, this);
 
 #if defined(TEENSYDUINO)
     if (!rig_tcp_fn_) {
@@ -326,6 +333,7 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
     }
 
     sync_rig_config();
+    sync_printer_config();
     return 1;
 }
 
@@ -689,6 +697,108 @@ void TinyTmuxNetBridge::poll(oyk_u32 now_ms) {
             if (rig_last_poll_ms_ == 0 || (now_ms - rig_last_poll_ms_) >= interval_ms) {
                 rig_poll_now(now_ms);
             }
+        }
+        if (printer_mode_ == 1) {
+            (void)ensure_usb_printer_inited();
+        }
+    }
+}
+
+void TinyTmuxNetBridge::sync_printer_config() {
+    printer_uart_ = -1;
+    printer_usb_slot_ = -1;
+    printer_mode_ = 0;
+    printer_proto_ = OYK_PRN_NONE;
+    printer_inited_ = 0;
+    if (!node_) return;
+
+    const OykConfig& cfg = node_->config();
+    if (!cfg.printer_enabled || !cfg.printer_device[0]) return;
+
+    int proto = oyk_printer_parse_protocol(cfg.printer_protocol);
+    if (proto == OYK_PRN_NONE) return;
+    printer_proto_ = proto;
+
+    int ser_idx = parse_ser_index(cfg.printer_device);
+    if (ser_idx >= 0) {
+        for (int i = 0; i < node_->iface_count(); ++i) {
+            if (bindings_[i].logical_uart == ser_idx) {
+                return;
+            }
+        }
+        TinyTmuxUartConfig ucfg;
+        ucfg.baudrate = cfg.printer_baud ? cfg.printer_baud : 9600UL;
+        ucfg.cts_rts = 1;
+        ucfg.role = TMUX_ROLE_PRINTER;
+        if (tinytmux_uart_init(ser_idx, &ucfg)) {
+            printer_uart_ = ser_idx;
+            printer_mode_ = 2;
+            unsigned char init_buf[32];
+            size_t ilen = oyk_printer_build_init(printer_proto_, cfg.printer_condensed,
+                                                 init_buf, sizeof(init_buf));
+            if (ilen > 0) {
+                tinytmux_uart_write(printer_uart_, init_buf, ilen);
+            }
+            printer_inited_ = 1;
+        }
+        return;
+    }
+
+    int usb_idx = TinyTmuxUsbHost::parse_device_slot(cfg.printer_device);
+    if (strieq_local(cfg.printer_device, "usb-printer") ||
+        strieq_local(cfg.printer_device, "usbprn") ||
+        strieq_local(cfg.printer_device, "usbprn0") ||
+        strieq_local(cfg.printer_device, "usblp0") ||
+        strieq_local(cfg.printer_device, "/dev/usb/lp0") ||
+        usb_idx >= 0) {
+        printer_usb_slot_ = usb_idx;
+        printer_mode_ = 1;
+        (void)ensure_usb_printer_inited();
+    }
+}
+
+int TinyTmuxNetBridge::ensure_usb_printer_inited() {
+    if (!node_ || printer_mode_ != 1) return 0;
+    int slot = (printer_usb_slot_ >= 0) ? printer_usb_slot_ : usb_host_.find_first_printer_slot();
+    const TinyTmuxUsbRadioSlot* us = (slot >= 0) ? usb_host_.slot_info(slot) : NULL;
+    if (!us || !us->in_use || us->kind != TMUX_USBH_PRINTER) {
+        printer_inited_ = 0;
+        return 0;
+    }
+    if (!printer_inited_) {
+        unsigned char init_buf[32];
+        size_t ilen = oyk_printer_build_init(printer_proto_, node_->config().printer_condensed,
+                                             init_buf, sizeof(init_buf));
+        if (ilen > 0) {
+            usb_host_.send_printer_bytes(slot, init_buf, ilen);
+        }
+        printer_inited_ = 1;
+    }
+    return 1;
+}
+
+void TinyTmuxNetBridge::node_printer_callback(oyk_u32 level,
+                                              const char* formatted_line,
+                                              void* user_ctx) {
+    TinyTmuxNetBridge* self = static_cast<TinyTmuxNetBridge*>(user_ctx);
+    if (self) {
+        self->handle_printer_line(level, formatted_line);
+    }
+}
+
+void TinyTmuxNetBridge::handle_printer_line(oyk_u32 level, const char* formatted_line) {
+    if (!node_ || !formatted_line || printer_mode_ == 0 || printer_proto_ == OYK_PRN_NONE) return;
+    unsigned char out[384];
+    size_t len = oyk_printer_format_line(printer_proto_, static_cast<unsigned long>(level),
+                                         formatted_line, out, sizeof(out));
+    if (len == 0) return;
+
+    if (printer_mode_ == 2 && printer_uart_ >= 0) {
+        tinytmux_uart_write(printer_uart_, out, len);
+    } else if (printer_mode_ == 1 && ensure_usb_printer_inited()) {
+        int slot = (printer_usb_slot_ >= 0) ? printer_usb_slot_ : usb_host_.find_first_printer_slot();
+        if (slot >= 0) {
+            usb_host_.send_printer_bytes(slot, out, len);
         }
     }
 }

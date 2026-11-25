@@ -75,6 +75,7 @@
 #define IDC_SET_TAB_CHAT    453
 #define IDC_SET_TAB_IF      454
 #define IDC_SET_TAB_RIG     494
+#define IDC_SET_TAB_PRN     495
 #define IDC_SET_TAB_BOX     455
 
 #define IDC_SET_L_CALL      456
@@ -156,5 +157,17 @@
 #define IDC_RIG_BTN_5       553
 #define IDC_RIG_BTN_REF     554
 #define IDC_RIG_STATUS      555
+
+/* Settings Tab 6: Line Printer */
+#define IDC_SET_PRN_EN      560
+#define IDC_SET_L_PDEV      561
+#define IDC_SET_PRN_DEV     562
+#define IDC_SET_L_PPROTO    563
+#define IDC_SET_PRN_PROTO   564
+#define IDC_SET_L_PBAUD     565
+#define IDC_SET_PRN_BAUD    566
+#define IDC_SET_L_PLVL      567
+#define IDC_SET_PRN_LVL     568
+#define IDC_SET_PRN_COND    569
 
 #endif /* OYK_WIN_RESOURCE_H */

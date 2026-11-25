@@ -8,6 +8,7 @@
 #include "oyk_portable.hpp"
 #include "oyk_yapp.hpp"
 #include "oyk_rig.hpp"
+#include "oyk_printer.hpp"
 #include "../ports/dos/dos_usb.hpp"
 
 #include <assert.h>
@@ -981,6 +982,89 @@ static void test_portable_rig_and_dos_usb() {
     printf("[PASS] test_portable_rig_and_dos_usb\n");
 }
 
+struct TestPrnCap {
+    int count;
+    oyk_u32 last_level;
+    char last_line[160];
+};
+
+static void test_prn_cb(oyk_u32 level, const char* line, void* ctx) {
+    TestPrnCap* c = static_cast<TestPrnCap*>(ctx);
+    c->count++;
+    c->last_level = level;
+    strncpy(c->last_line, line, sizeof(c->last_line) - 1);
+    c->last_line[sizeof(c->last_line) - 1] = '\0';
+}
+
+static void test_portable_printer() {
+    assert(oyk_printer_parse_protocol("generic") == OYK_PRN_GENERIC);
+    assert(oyk_printer_parse_protocol("MX-80") == OYK_PRN_MX80);
+    assert(oyk_printer_parse_protocol("esc/p2") == OYK_PRN_ESCP2);
+    assert(oyk_printer_parse_protocol("unknown") == OYK_PRN_NONE);
+
+    unsigned char buf[256];
+    size_t n = oyk_printer_build_init(OYK_PRN_MX80, 1, buf, sizeof(buf));
+    assert(n == 3 && buf[0] == 0x1BU && buf[1] == '@' && buf[2] == 0x0FU);
+    n = oyk_printer_build_init(OYK_PRN_ESCP2, 0, buf, sizeof(buf));
+    assert(n == 7 && buf[0] == 0x1BU && buf[1] == '@' && buf[5] == 0x1BU && buf[6] == 'M');
+    assert(oyk_printer_build_init(OYK_PRN_GENERIC, 0, buf, sizeof(buf)) == 0);
+
+    n = oyk_printer_format_line(OYK_PRN_GENERIC, OYK_LOG_INFO, "Hello\x07World", buf, sizeof(buf));
+    assert(n == 13 && memcmp(buf, "Hello?World\r\n", 13) == 0);
+
+    n = oyk_printer_format_line(OYK_PRN_MX80, OYK_LOG_ERROR, "Fail", buf, sizeof(buf));
+    assert(n == 10 && memcmp(buf, "\x1B" "EFail" "\x1B" "F\r\n", 10) == 0);
+
+    n = oyk_printer_format_line(OYK_PRN_ESCP2, OYK_LOG_BAN, "Ban!", buf, sizeof(buf));
+    assert(n == 16 && memcmp(buf, "\x1B" "E\x1B-\x01" "Ban!\x1B-\x00\x1B" "F\r\n", 16) == 0);
+
+    /* Config round-trip & printer callback independence from allow_flash_logging */
+    OykConfig* cfg = new OykConfig;
+    oyk_config_init_default(cfg);
+    cfg->printer_enabled = 1;
+    strcpy(cfg->printer_device, "LPT1:");
+    strcpy(cfg->printer_protocol, "mx80");
+    cfg->printer_baud = 19200UL;
+    cfg->printer_level = OYK_LOG_ERROR | OYK_LOG_INFO | OYK_LOG_APPEAL;
+    cfg->printer_condensed = 1;
+    cfg->allow_flash_logging = 0;
+    assert(oyk_config_save(cfg, "tprncfg.cfg") == 1);
+
+    OykConfig* cfg2 = new OykConfig;
+    char err[128];
+    assert(oyk_config_load("tprncfg.cfg", cfg2, err, sizeof(err)) == 1);
+    remove("tprncfg.cfg");
+    assert(cfg2->printer_enabled == 1);
+    assert(strcmp(cfg2->printer_device, "LPT1:") == 0);
+    assert(strcmp(cfg2->printer_protocol, "mx80") == 0);
+    assert(cfg2->printer_baud == 19200UL);
+    assert(cfg2->printer_level == (OYK_LOG_ERROR | OYK_LOG_INFO | OYK_LOG_APPEAL));
+    assert(cfg2->printer_condensed == 1);
+
+    OykPortableNode* node = new OykPortableNode;
+    TestPrnCap cap;
+    memset(&cap, 0, sizeof(cap));
+    node->set_printer_callback(test_prn_cb, &cap);
+    assert(node->init(cfg2, mock_tx, NULL, err, sizeof(err)) == 1);
+    node->set_storage_is_flash(1);
+    assert(node->file_logging_allowed() == 0);
+
+    cap.count = 0;
+    node->log_message(OYK_LOG_DEBUG, "Suppressed debug");
+    assert(cap.count == 0);
+    node->log_message(OYK_LOG_ERROR, "Printed error");
+    assert(cap.count == 1 && cap.last_level == OYK_LOG_ERROR);
+    assert(strstr(cap.last_line, "Printed error") != NULL);
+    node->log_appeal("K7TMP-1", "Please unban me");
+    assert(cap.count == 2 && cap.last_level == OYK_LOG_APPEAL);
+
+    node->shutdown();
+    delete node;
+    delete cfg2;
+    delete cfg;
+    printf("[PASS] test_portable_printer\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -988,6 +1072,7 @@ int oyk_run_portable_tests() {
     test_portable_bbs();
     test_portable_settings_reconfig_and_readonly();
     test_portable_rig_and_dos_usb();
+    test_portable_printer();
     return 0;
 }
 
