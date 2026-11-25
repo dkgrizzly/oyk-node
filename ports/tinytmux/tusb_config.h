@@ -29,10 +29,15 @@ extern "C" {
 #define CFG_TUSB_DEBUG              0
 #endif
 
-/* Use USB_OTG1 (root hub port 0) in High-Speed Device mode */
+/* Use USB_OTG1 (root hub port 0) in High-Speed Device mode for Dual CDC console */
 #define CFG_TUSB_RHPORT0_MODE       (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 #define BOARD_TUD_RHPORT            0
 #define BOARD_TUD_MAX_SPEED         OPT_MODE_HIGH_SPEED
+
+/* Use USB_OTG2 (root hub port 1) in High-Speed Host mode for RadioFoundry radios */
+#define CFG_TUSB_RHPORT1_MODE       (OPT_MODE_HOST | OPT_MODE_HIGH_SPEED)
+#define BOARD_TUH_RHPORT            1
+#define BOARD_TUH_MAX_SPEED         OPT_MODE_HIGH_SPEED
 
 /* Place TinyUSB DMA buffers in non-cached OCRAM2 (.dmamem) */
 #define CFG_TUSB_MEM_SECTION        __attribute__((section(".dmamem")))
@@ -48,10 +53,28 @@ extern "C" {
 #define CFG_TUD_MIDI                0
 #define CFG_TUD_VENDOR              0
 
-/* CDC FIFO buffer sizes */
+/* CDC Device FIFO buffer sizes */
 #define CFG_TUD_CDC_RX_BUFSIZE      1024
 #define CFG_TUD_CDC_TX_BUFSIZE      2048
 #define CFG_TUD_CDC_EP_BUFSIZE      512
+
+/* Host Stack (Teensy 4.1 USB_OTG2 host port with hub support) */
+#define CFG_TUH_ENABLED             1
+#define CFG_TUH_ENUMERATION_BUFSIZE 512
+#define CFG_TUH_HUB                 1
+#define CFG_TUH_DEVICE_MAX          4
+#define CFG_TUH_CDC                 4
+#define CFG_TUH_CDC_FTDI            0
+#define CFG_TUH_CDC_CP210X          0
+#define CFG_TUH_CDC_CH34X           0
+#define CFG_TUH_NCM                 2
+#define CFG_TUH_MSC                 0
+#define CFG_TUH_HID                 0
+#define CFG_TUH_VENDOR              0
+
+#define CFG_TUH_CDC_RX_BUFSIZE      1024
+#define CFG_TUH_CDC_TX_BUFSIZE      1024
+#define CFG_TUH_CDC_EP_BUFSIZE      512
 
 #ifdef __cplusplus
 }

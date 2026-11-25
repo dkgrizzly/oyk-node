@@ -17,6 +17,7 @@
  */
 
 #include "board_tinytmux.hpp"
+#include "tinytmux_psram.hpp"
 
 #include <string.h>
 
@@ -86,6 +87,7 @@ void tinytmux_board_init() {
      * or MCUXpresso SDK clocks; enable LPUART RX/TX FIFOs on configure.
      */
     s_systick_ms = 0;
+    tinytmux_psram_init_and_test();
 }
 
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]) {
@@ -104,6 +106,22 @@ void tinytmux_board_set_link_led(int speed_100mbps) {
     } else {
         *reg32(GPIO1_DR_CLEAR) = mask;
     }
+}
+
+void tinytmux_board_set_usbh_vbus(int on) {
+    /* Teensy 4.1 USB Host 5V VBUS Power Switch -> GPIO_EMC_40 -> GPIO3_IO26 */
+    const oyk_u32 GPIO3_DR_SET   = 0x401C0084UL;
+    const oyk_u32 GPIO3_DR_CLEAR = 0x401C0088UL;
+    const oyk_u32 mask = (1UL << 26);
+    if (on) {
+        *reg32(GPIO3_DR_SET) = mask;
+    } else {
+        *reg32(GPIO3_DR_CLEAR) = mask;
+    }
+}
+
+const TinyTmuxPsramInfo* tinytmux_board_psram_info() {
+    return tinytmux_psram_info();
 }
 
 oyk_u32 tinytmux_board_millis() {
@@ -166,11 +184,14 @@ size_t tinytmux_uart_read(int logical_port, oyk_u8* out, size_t max_len) {
 
 /* Host stub implementation for Linux unit tests & simulation */
 static int s_host_led = 0;
+static int s_host_usbh_vbus = 0;
 static oyk_u32 s_host_ms = 0;
 
 void tinytmux_board_init() {
     s_host_led = 0;
+    s_host_usbh_vbus = 0;
     s_host_ms = 0;
+    tinytmux_psram_init_and_test();
 }
 
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]) {
@@ -179,6 +200,15 @@ void tinytmux_board_read_mac(oyk_u8 mac_out[6]) {
 
 void tinytmux_board_set_link_led(int speed_100mbps) {
     s_host_led = speed_100mbps ? 1 : 0;
+}
+
+void tinytmux_board_set_usbh_vbus(int on) {
+    s_host_usbh_vbus = on ? 1 : 0;
+    (void)s_host_usbh_vbus;
+}
+
+const TinyTmuxPsramInfo* tinytmux_board_psram_info() {
+    return tinytmux_psram_info();
 }
 
 oyk_u32 tinytmux_board_millis() {

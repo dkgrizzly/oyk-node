@@ -27,12 +27,15 @@ set(OYK_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../compat")
 set(TINYTMUX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tinytmux_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/board_tinytmux.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tinytmux_psram.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tinytmux_usb_host.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/oyk_ppp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/lwip_net_bridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tinytmux_console.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/usb_descriptors.c
     ${OYK_COMPAT_DIR}/oyk_portable.cpp
     ${OYK_COMPAT_DIR}/oyk_yapp.cpp
+    ${OYK_COMPAT_DIR}/oyk_rig.cpp
 )
 
 add_executable(oyk-tinytmux.elf ${TINYTMUX_SOURCES})
@@ -68,7 +71,7 @@ else()
     message(STATUS "TinyTMUX: LWIP_DIR not provided; building with standalone PPP/transport bridge")
 endif()
 
-# Optional TinyUSB integration (IMXRT1060 USB OTG1 High-Speed Dual USB-CDC ACM)
+# Optional TinyUSB integration (USB OTG1 High-Speed Dual CDC Device + USB OTG2 Host)
 if(TINYUSB_DIR AND EXISTS "${TINYUSB_DIR}/src/tusb.h")
     message(STATUS "TinyTMUX: enabling TinyUSB from ${TINYUSB_DIR}")
     target_sources(oyk-tinytmux.elf PRIVATE
@@ -78,6 +81,11 @@ if(TINYUSB_DIR AND EXISTS "${TINYUSB_DIR}/src/tusb.h")
         "${TINYUSB_DIR}/src/device/usbd_control.c"
         "${TINYUSB_DIR}/src/class/cdc/cdc_device.c"
         "${TINYUSB_DIR}/src/portable/chipidea/ci_hs/dcd_ci_hs.c"
+        "${TINYUSB_DIR}/src/host/usbh.c"
+        "${TINYUSB_DIR}/src/host/hub.c"
+        "${TINYUSB_DIR}/src/class/cdc/cdc_host.c"
+        "${TINYUSB_DIR}/src/class/net/ncm_host.c"
+        "${TINYUSB_DIR}/src/portable/ehci/ehci.c"
     )
     target_include_directories(oyk-tinytmux.elf PRIVATE "${TINYUSB_DIR}/src")
     target_compile_definitions(oyk-tinytmux.elf PRIVATE

@@ -47,6 +47,12 @@ typedef void (*OykPppAx25RxFn)(int is_axip,
                                oyk_u16 src_port_host,
                                void* ctx);
 typedef void (*OykPppRawIpRxFn)(const oyk_u8* ip_pkt, size_t len, void* ctx);
+typedef void (*OykPppUdpRxFn)(oyk_u32 src_ip_net,
+                              oyk_u16 src_port_host,
+                              oyk_u16 dst_port_host,
+                              const oyk_u8* payload,
+                              size_t len,
+                              void* ctx);
 
 /* RFC 1662 PPP FCS-16 helpers */
 oyk_u16 oyk_ppp_fcs16(const oyk_u8* data, size_t len);
@@ -70,6 +76,7 @@ public:
 
     void set_ax25_rx_callback(OykPppAx25RxFn cb, void* ctx);
     void set_raw_ip_rx_callback(OykPppRawIpRxFn cb, void* ctx);
+    void set_udp_rx_callback(OykPppUdpRxFn cb, void* ctx);
 
     /* Bring link up (begins LCP Configure-Request handshake) or cleanly terminate. */
     void open(oyk_u32 now_ms);
@@ -84,6 +91,10 @@ public:
     /* Send AX.25 frame over PPP as AXUDP (UDP) or AXIP (IP protocol 93). */
     int send_axudp(const OykFrame* frame, oyk_u32 dst_ip_net, oyk_u16 dst_port_host);
     int send_axip(const OykFrame* frame, oyk_u32 dst_ip_net);
+
+    /* Send generic UDP datagram over PPP (e.g. RadioFoundry UDP 4191 control). */
+    int send_udp(oyk_u32 dst_ip_net, oyk_u16 src_port_host, oyk_u16 dst_port_host,
+                 const oyk_u8* payload, size_t len);
 
     /* Send raw IPv4 packet over PPP (used by lwIP bridge or direct callers). */
     int send_ip_packet(const oyk_u8* ip_pkt, size_t len);
@@ -133,6 +144,8 @@ private:
     void* ax25_rx_ctx_;
     OykPppRawIpRxFn raw_ip_rx_cb_;
     void* raw_ip_rx_ctx_;
+    OykPppUdpRxFn udp_rx_cb_;
+    void* udp_rx_ctx_;
 
     /* Incremental HDLC RX decoder */
     int rx_in_frame_;

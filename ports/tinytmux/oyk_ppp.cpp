@@ -155,6 +155,7 @@ OykPppLink::OykPppLink()
       tx_fn_(NULL), tx_ctx_(NULL),
       ax25_rx_cb_(NULL), ax25_rx_ctx_(NULL),
       raw_ip_rx_cb_(NULL), raw_ip_rx_ctx_(NULL),
+      udp_rx_cb_(NULL), udp_rx_ctx_(NULL),
       rx_in_frame_(0), rx_escaped_(0), rx_overflow_(0), rx_len_(0),
       rx_frames_(0), tx_frames_(0), rx_fcs_errors_(0) {
 }
@@ -197,6 +198,11 @@ void OykPppLink::set_ax25_rx_callback(OykPppAx25RxFn cb, void* ctx) {
 void OykPppLink::set_raw_ip_rx_callback(OykPppRawIpRxFn cb, void* ctx) {
     raw_ip_rx_cb_ = cb;
     raw_ip_rx_ctx_ = ctx;
+}
+
+void OykPppLink::set_udp_rx_callback(OykPppUdpRxFn cb, void* ctx) {
+    udp_rx_cb_ = cb;
+    udp_rx_ctx_ = ctx;
 }
 
 void OykPppLink::open(oyk_u32 now_ms) {
@@ -584,19 +590,23 @@ void OykPppLink::handle_ipv4(const oyk_u8* pkt, size_t len) {
         return;
     }
 
-    if (ip_proto == OYK_IP_PROTO_UDP && ax25_rx_cb_ && total_len >= ihl + 8) {
+    if (ip_proto == OYK_IP_PROTO_UDP && total_len >= ihl + 8) {
         const oyk_u8* udp = pkt + ihl;
         oyk_u16 src_port = read_be16(udp);
         oyk_u16 dst_port = read_be16(udp + 2);
         oyk_u16 udp_len  = read_be16(udp + 4);
-        if (dst_port != axudp_port_) return;
         if (udp_len < 8 || ihl + udp_len > total_len) return;
         const oyk_u8* pay = udp + 8;
         size_t pay_len = udp_len - 8;
-        if (pay_len >= 17 && oyk_verify_fcs(pay, pay_len)) {
-            OykFrame f;
-            if (oyk_ax25_decode(pay, pay_len - 2, &f)) {
-                ax25_rx_cb_(0, &f, src_ip, src_port, ax25_rx_ctx_);
+        if (udp_rx_cb_) {
+            udp_rx_cb_(src_ip, src_port, dst_port, pay, pay_len, udp_rx_ctx_);
+        }
+        if (dst_port == axudp_port_ && ax25_rx_cb_) {
+            if (pay_len >= 17 && oyk_verify_fcs(pay, pay_len)) {
+                OykFrame f;
+                if (oyk_ax25_decode(pay, pay_len - 2, &f)) {
+                    ax25_rx_cb_(0, &f, src_ip, src_port, ax25_rx_ctx_);
+                }
             }
         }
     }
@@ -606,6 +616,41 @@ int OykPppLink::send_ip_packet(const oyk_u8* ip_pkt, size_t len) {
     if (state_ != OYK_PPP_UP || !ip_pkt || len < 20) return 0;
     send_ppp_frame(OYK_PPP_PROTO_IP, ip_pkt, len);
     return 1;
+}
+
+int OykPppLink::send_udp(oyk_u32 dst_ip_net,
+                         oyk_u16 src_port_host,
+                         oyk_u16 dst_port_host,
+                         const oyk_u8* payload,
+                         size_t len) {
+    if (state_ != OYK_PPP_UP || (!payload && len > 0)) return 0;
+    if (dst_ip_net == 0) dst_ip_net = remote_ip_;
+    if (dst_ip_net == 0 || dst_port_host == 0) return 0;
+    if (28U + len > 540U) return 0;
+
+    oyk_u8 pkt[540];
+    size_t udp_len = 8 + len;
+    size_t total_len = 20 + udp_len;
+
+    memset(pkt, 0, 20);
+    pkt[0] = 0x45U;
+    write_be16(pkt + 2, static_cast<oyk_u16>(total_len));
+    write_be16(pkt + 4, ip_ident_++);
+    pkt[8] = 64U;
+    pkt[9] = OYK_IP_PROTO_UDP;
+    memcpy(pkt + 12, &local_ip_, 4);
+    memcpy(pkt + 16, &dst_ip_net, 4);
+    write_be16(pkt + 10, oyk_ipv4_checksum(pkt, 20));
+
+    write_be16(pkt + 20, src_port_host ? src_port_host : axudp_port_);
+    write_be16(pkt + 22, dst_port_host);
+    write_be16(pkt + 24, static_cast<oyk_u16>(udp_len));
+    write_be16(pkt + 26, 0);
+    if (len > 0) {
+        memcpy(pkt + 28, payload, len);
+    }
+
+    return send_ip_packet(pkt, total_len);
 }
 
 int OykPppLink::send_axudp(const OykFrame* frame, oyk_u32 dst_ip_net, oyk_u16 dst_port_host) {

@@ -27,8 +27,11 @@
 #define IMXRT_LPUART8_BASE  0x401A0000UL
 #define IMXRT_ENET_BASE     0x402D8000UL
 #define IMXRT_USB1_BASE     0x402E0000UL
+#define IMXRT_USB2_BASE     0x402E0200UL
 #define IMXRT_OCOTP_MAC0    0x401F4620UL
 #define IMXRT_OCOTP_MAC1    0x401F4630UL
+
+struct TinyTmuxPsramInfo;
 
 /* Logical serial port roles on TinyTMUX */
 enum TinyTmuxPortRole {
@@ -67,6 +70,8 @@ void tinytmux_decode_ocotp_mac(oyk_u32 ocotp_mac0, oyk_u32 ocotp_mac1, oyk_u8 ma
 void tinytmux_board_init();
 void tinytmux_board_read_mac(oyk_u8 mac_out[6]);
 void tinytmux_board_set_link_led(int speed_100mbps);
+void tinytmux_board_set_usbh_vbus(int on);
+const TinyTmuxPsramInfo* tinytmux_board_psram_info();
 oyk_u32 tinytmux_board_millis();
 
 int tinytmux_uart_init(int logical_port, const TinyTmuxUartConfig* cfg);

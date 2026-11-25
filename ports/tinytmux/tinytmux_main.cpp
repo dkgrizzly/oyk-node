@@ -15,6 +15,7 @@
 #include "board_tinytmux.hpp"
 #include "lwip_net_bridge.hpp"
 #include "tinytmux_console.hpp"
+#include "tinytmux_psram.hpp"
 
 #include <stdio.h>
 #include <string.h>
@@ -103,9 +104,13 @@ static void build_default_tinytmux_config(OykConfig* cfg) {
 
 int main(void) {
     tinytmux_board_init();
+    tinytmux_board_set_usbh_vbus(1);
 
 #if defined(OYK_HAS_TINYUSB)
     tud_init(BOARD_TUD_RHPORT);
+#if defined(CFG_TUH_ENABLED) && CFG_TUH_ENABLED
+    tuh_init(BOARD_TUH_RHPORT);
+#endif
 #endif
 
     static OykConfig cfg;
@@ -120,6 +125,19 @@ int main(void) {
     oyk_u32 now_ms = tinytmux_board_millis();
     g_net.init(&g_node, now_ms);
     g_console.init(&g_node, usb_cdc0_console_tx, NULL);
+    g_console.set_net_bridge(&g_net);
+    g_console.set_now_ms(now_ms);
+
+    const TinyTmuxPsramInfo* psram = tinytmux_board_psram_info();
+    if (psram) {
+        char psram_tag[8], psram_msg[64];
+        tinytmux_psram_format_short(psram, psram_tag, sizeof(psram_tag));
+        sprintf(psram_msg, "FlexSPI2 PSRAM: %s (%lu MB usable, %d/%d chips)",
+                psram_tag,
+                static_cast<unsigned long>(psram->usable_bytes / (1024UL * 1024UL)),
+                psram->usable_chip_count, psram->chip_count);
+        g_node.log_message(OYK_LOG_INFO, psram_msg);
+    }
 
     oyk_u8 mac[6];
     tinytmux_board_read_mac(mac);
@@ -134,6 +152,7 @@ int main(void) {
 
     for (;;) {
         now_ms = tinytmux_board_millis();
+        g_console.set_now_ms(now_ms);
 
 #if defined(OYK_HAS_TINYUSB)
         tud_task();

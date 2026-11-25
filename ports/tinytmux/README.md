@@ -11,10 +11,15 @@ This port targets the **Teensy 4.1** (**NXP/Freescale MIMXRT1062DVJ6A**, ARM Cor
 
 - **Dual Network Transports (Simultaneous)**:
   - **10/100 Ethernet Jack** (`IMXRT1060 ENET` + `DP83825I` RMII PHY, Pin 18 100 Mbps speed LED) via **lwIP**: AXUDP (UDP), AXIP (IP protocol 93 / RFC 1226), and Incoming Telnet (TCP).
-  - **PPP over Serial** (`ser0`..`ser7`) for **RadioFoundry** firmware radios: RFC 1661 LCP, RFC 1662 Async HDLC framing & FCS-16, RFC 1332 IPCP IPv4 negotiation, ICMP Echo Reply (`ping`), carrying both **AXUDP** and **AXIP (IP proto 93)** over serial PPP alongside Ethernet.
+  - **Teensy 4.1 USB Host (`USB_OTG2` / `RHPORT1`)** for **RadioFoundry** radios (direct or via USB hub, `usbh0`..`usbh3`):
+    - **USB CDC-ECM / CDC-NCM Network (`usb-cdc-net`)**: Ethernet, ARP, IPv4/UDP, ICMP Echo, AXUDP, AXIP, plus RadioFoundry UDP 4191 zone/channel control.
+    - **USB CDC-ACM Serial (`usb-cdc-serial`)**: RFC 1661/1662 PPP or KISS over USB CDC-ACM.
+  - **PPP over Serial** (`ser0`..`ser7`) for **RadioFoundry** firmware radios: RFC 1661 LCP, RFC 1662 Async HDLC framing & FCS-16, RFC 1332 IPCP IPv4 negotiation, ICMP Echo Reply (`ping`), carrying both **AXUDP**, **AXIP (IP proto 93)**, and RadioFoundry UDP 4191 control.
   - **KISS Serial TNC** support on any remaining UART (`ser0`..`ser7`).
-- **Dual USB-CDC ACM** via **TinyUSB**:
-  - `usb0` (`CDC0`): Full 80×24 ANSI/VT100 Operator Console matching the Linux `ncurses` and MS-DOS layouts (including `Node` menu, switchable Local Terminal via `Tab`, and Incoming File Approval via `F`).
+- **Rig Control (`oyk_rig`)**: Hamlib `rigctld` (TCP 4532) and RadioFoundry / takRF Zone & Channel Control (UDP 4191) across Ethernet, UART PPP, and USB Host transports.
+- **FlexSPI2 QSPI PSRAM Startup Detection & Self-Test**: Probes CS0 (`0x70000000`, 8 MB) and CS1 (`0x70800000`, 8 MB) on boot for 0, 1 (8 MB), or 2 (16 MB) Teensy 4.1 PSRAM chips, runs a fast non-blocking multi-pattern memory test, disables any failing chip gracefully while booting normally on internal SRAM, and exposes live diagnostics/re-test (`P`) in the console.
+- **Dual USB-CDC ACM + Full VT100 Operator Console** via **TinyUSB** (`USB_OTG1` / `RHPORT0`):
+  - `usb0` (`CDC0`): Full 80×24 ANSI/VT100 Operator Console matching the Linux `ncurses`, GTK, Windows, and MS-DOS layouts (`Node` menu with `A`/`D`/`L`/`F` 2-tab Files Area / `R` Radio Control / `S` 5-tab Settings with live `apply_config()` / `T` Terminate / `B` Ban/Unban / `P` PSRAM Diagnostics).
   - `usb1` (`CDC1`): Auxiliary KISS / diagnostic / secondary terminal stream.
 - **Full OYK Portable Core (`ports/compat/`)**:
   - AX.25 v2.0 connected-mode L2, persistent `banlist.cfg` & ban appeals, Packet BBS (SSID 11) with sandboxed Files Area & YAPP, and multi-user Packet CHAT (SSID 12) in ~24 KB of RAM.

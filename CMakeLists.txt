@@ -334,15 +334,18 @@ if(BUILD_TESTS AND NOT WIN32)
     target_compile_options(oyk_portable_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_portable_tests COMMAND oyk_portable_tests)
 
-    # Strict C++98 host verification of Teensy 4.1 / IMXRT1060 (TinyTMUX) PPP, Ethernet bridge & VT100 console
+    # Strict C++98 host verification of Teensy 4.1 / IMXRT1060 (TinyTMUX) PSRAM, USB Host, PPP, Ethernet bridge & VT100 console
     add_executable(oyk_tinytmux_tests
         tests/test_tinytmux.cpp
         ports/tinytmux/board_tinytmux.cpp
+        ports/tinytmux/tinytmux_psram.cpp
+        ports/tinytmux/tinytmux_usb_host.cpp
         ports/tinytmux/oyk_ppp.cpp
         ports/tinytmux/lwip_net_bridge.cpp
         ports/tinytmux/tinytmux_console.cpp
         ports/compat/oyk_portable.cpp
         ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
     )
     target_include_directories(oyk_tinytmux_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
