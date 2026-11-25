@@ -31,8 +31,9 @@
 #if defined(_WIN32) || defined(_WIN64)
   #define OYK_DLG_RET         INT_PTR CALLBACK
   #define OYK_WND_RET         LRESULT CALLBACK
-  #define OYK_CMD_ID(wp, lp)  LOWORD(wp)
-  #define OYK_HMENU(id)       ((HMENU)(INT_PTR)(id))
+  #define OYK_CMD_ID(wp, lp)     LOWORD(wp)
+  #define OYK_CMD_NOTIFY(wp, lp) HIWORD(wp)
+  #define OYK_HMENU(id)          ((HMENU)(INT_PTR)(id))
   #define OYK_HBRUSH(idx)     ((HBRUSH)(INT_PTR)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPCSTR)(s))
@@ -42,10 +43,11 @@
   } while (0)
 #else
   /* 16-bit Windows 3.1 */
-  #define OYK_DLG_RET         BOOL FAR PASCAL __export
-  #define OYK_WND_RET         LRESULT FAR PASCAL __export
-  #define OYK_CMD_ID(wp, lp)  ((WORD)(wp))
-  #define OYK_HMENU(id)       ((HMENU)(id))
+  #define OYK_DLG_RET            BOOL FAR PASCAL __export
+  #define OYK_WND_RET            LRESULT FAR PASCAL __export
+  #define OYK_CMD_ID(wp, lp)     ((WORD)(wp))
+  #define OYK_CMD_NOTIFY(wp, lp) HIWORD(lp)
+  #define OYK_HMENU(id)          ((HMENU)(id))
   #define OYK_HBRUSH(idx)     ((HBRUSH)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPSTR)(s))
@@ -1934,36 +1936,189 @@ static void populate_settings_ifaces(HWND hdlg) {
     }
 }
 
+struct WinDriverOpt {
+    const char* type;
+    const char* desc;
+    const char* def_host;
+    const char* def_port;
+};
+
+static const WinDriverOpt WIN_DRIVERS[5] = {
+    { "axudp",       "AX.25 over UDP (BPQ / AXUDP)", "0.0.0.0",   "10093" },
+    { "axip",        "AX.25 over IP (Protocol 93)",  "0.0.0.0",   "0" },
+    { "kiss-serial", "KISS TNC over Serial (COM)",   "COM1",      "9600" },
+    { "kiss-tcp",    "KISS TNC over TCP (Direwolf)", "127.0.0.1", "8001" },
+    { "telnet",      "Plaintext Telnet User Port",   "0.0.0.0",   "8010" }
+};
+
+static int g_wiz_step = 0;
+static int g_wiz_drv = 0;
+static int g_wiz_last_drv = -1;
+
+static void sync_win_wiz_ui(HWND hdlg) {
+    static const char* PROG[4] = {
+        "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
+    };
+    SetDlgItemText(hdlg, IDC_AIF_PROG, PROG[g_wiz_step]);
+    SetDlgItemText(hdlg, IDC_AIF_ERR, "");
+    EnableWindow(GetDlgItem(hdlg, IDC_AIF_BACK), g_wiz_step > 0 ? TRUE : FALSE);
+    SetDlgItemText(hdlg, IDC_AIF_NEXT, (g_wiz_step == 3) ? "&Finish" : "&Next >");
+
+    const char* drv = WIN_DRIVERS[g_wiz_drv].type;
+    if (g_wiz_step == 0) {
+        SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Select the driver for the new interface:");
+    } else if (g_wiz_step == 1) {
+        SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Enter a unique interface ID and optional description:");
+    } else if (g_wiz_step == 2) {
+        if (g_wiz_drv == 0) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXUDP bind host, UDP port, and optional peer:");
+        else if (g_wiz_drv == 1) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXIP bind host and optional static peer:");
+        else if (g_wiz_drv == 2) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS serial COM port and baud rate:");
+        else if (g_wiz_drv == 3) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS-TCP host and TCP port:");
+        else SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure Telnet bind host and TCP port:");
+
+        SetDlgItemText(hdlg, IDC_AIF_L_HOST, (g_wiz_drv == 2) ? "Serial Device:" : ((g_wiz_drv == 3) ? "Host / IP:" : "Bind Host:"));
+        SetDlgItemText(hdlg, IDC_AIF_L_PORT, (g_wiz_drv == 2) ? "Baud Rate:" : ((g_wiz_drv == 0) ? "UDP Port:" : "TCP Port:"));
+    } else {
+        SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Review interface settings before committing:");
+        char id_b[24], desc_b[64], host_b[48], port_b[16], peer_b[64], sum[360];
+        GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
+        GetDlgItemText(hdlg, IDC_AIF_DESC, desc_b, sizeof(desc_b));
+        GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
+        GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+        GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
+        if (g_wiz_drv == 2) {
+            sprintf(sum,
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nSerial Device: %s\r\nBaud Rate:     %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b);
+        } else if (g_wiz_drv == 1) {
+            sprintf(sum,
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nStatic Peer:   %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, peer_b[0] ? peer_b : "(auto-learn)");
+        } else if (g_wiz_drv == 0) {
+            sprintf(sum,
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nUDP Port:      %s\r\nStatic Peer:   %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b, peer_b[0] ? peer_b : "(auto-learn)");
+        } else {
+            sprintf(sum,
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nHost / IP:     %s\r\nTCP Port:      %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b);
+        }
+        SetDlgItemText(hdlg, IDC_AIF_SUMMARY, sum);
+    }
+
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_DRV_LIST), (g_wiz_step == 0) ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_ID),     (g_wiz_step == 1) ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_ID),       (g_wiz_step == 1) ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_DESC),   (g_wiz_step == 1) ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_DESC),     (g_wiz_step == 1) ? SW_SHOW : SW_HIDE);
+
+    int show_s2 = (g_wiz_step == 2) ? 1 : 0;
+    int show_port = (show_s2 && g_wiz_drv != 1) ? 1 : 0;
+    int show_peer = (show_s2 && (g_wiz_drv == 0 || g_wiz_drv == 1)) ? 1 : 0;
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_HOST), show_s2 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_HOST),   show_s2 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_PORT), show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_PORT),   show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_PEER), show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_PEER),   show_peer ? SW_SHOW : SW_HIDE);
+
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_SUMMARY), (g_wiz_step == 3) ? SW_SHOW : SW_HIDE);
+
+    if (g_wiz_step == 0) SetFocus(GetDlgItem(hdlg, IDC_AIF_DRV_LIST));
+    else if (g_wiz_step == 1) SetFocus(GetDlgItem(hdlg, IDC_AIF_ID));
+    else if (g_wiz_step == 2) SetFocus(GetDlgItem(hdlg, IDC_AIF_HOST));
+}
+
 OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+#if defined(_WIN32) || defined(_WIN64)
     (void)lp;
+#endif
     switch (msg) {
         case WM_INITDIALOG: {
-            SetDlgItemText(hdlg, IDC_AIF_ID, "axudp1");
-            HWND cb = GetDlgItem(hdlg, IDC_AIF_TYPE);
-            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axudp"));
-            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("axip"));
-            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-serial"));
-            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("kiss-tcp"));
-            SendMessage(cb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("telnet"));
-            SendMessage(cb, CB_SETCURSEL, 0, 0);
-            SetDlgItemText(hdlg, IDC_AIF_HOST, "0.0.0.0");
-            SetDlgItemText(hdlg, IDC_AIF_PORT, "10093");
+            HWND hlist = GetDlgItem(hdlg, IDC_AIF_DRV_LIST);
+            for (int i = 0; i < 5; ++i) {
+                char row[80];
+                sprintf(row, "%-12s %s", WIN_DRIVERS[i].type, WIN_DRIVERS[i].desc);
+                SendMessage(hlist, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+            }
+            g_wiz_step = 0;
+            g_wiz_drv = 0;
+            g_wiz_last_drv = -1;
             g_add_if_ok = 0;
-            return TRUE;
+            SendMessage(hlist, LB_SETCURSEL, 0, 0);
+            sync_win_wiz_ui(hdlg);
+            return FALSE;
         }
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
-            if (id == IDOK) {
-                memset(&g_add_if_out, 0, sizeof(g_add_if_out));
-                GetDlgItemText(hdlg, IDC_AIF_ID, g_add_if_out.id, sizeof(g_add_if_out.id));
-                if (!g_add_if_out.id[0]) {
-                    MessageBox(hdlg, "Interface ID cannot be empty.", "Add Interface", MB_OK | MB_ICONEXCLAMATION);
+            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
+            if (id == IDC_AIF_BACK) {
+                if (g_wiz_step > 0) {
+                    --g_wiz_step;
+                    sync_win_wiz_ui(hdlg);
+                }
+                return TRUE;
+            }
+            if (id == IDC_AIF_NEXT || id == IDOK || (id == IDC_AIF_DRV_LIST && ntf == LBN_DBLCLK && g_wiz_step == 0)) {
+                if (g_wiz_step == 0) {
+                    int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_DRV_LIST, LB_GETCURSEL, 0, 0));
+                    if (sel < 0 || sel >= 5) sel = 0;
+                    g_wiz_drv = sel;
+                    if (g_wiz_drv != g_wiz_last_drv) {
+                        char next_id[24];
+                        oyk_derive_default_iface_id(&g_set_draft, WIN_DRIVERS[g_wiz_drv].type,
+                                                    next_id, sizeof(next_id));
+                        SetDlgItemText(hdlg, IDC_AIF_ID, next_id);
+                        SetDlgItemText(hdlg, IDC_AIF_DESC, "");
+                        SetDlgItemText(hdlg, IDC_AIF_HOST, WIN_DRIVERS[g_wiz_drv].def_host);
+                        SetDlgItemText(hdlg, IDC_AIF_PORT, WIN_DRIVERS[g_wiz_drv].def_port);
+                        SetDlgItemText(hdlg, IDC_AIF_PEER, "");
+                        g_wiz_last_drv = g_wiz_drv;
+                    }
+                    g_wiz_step = 1;
+                    sync_win_wiz_ui(hdlg);
                     return TRUE;
                 }
-                int tsel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_TYPE, CB_GETCURSEL, 0, 0));
-                static const char* TYPES[5] = { "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" };
-                if (tsel < 0 || tsel > 4) tsel = 0;
-                strcpy(g_add_if_out.type, TYPES[tsel]);
+                if (g_wiz_step == 1) {
+                    char id_b[24];
+                    GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
+                    if (!id_b[0]) {
+                        SetDlgItemText(hdlg, IDC_AIF_ERR, "Interface ID cannot be empty.");
+                        SetFocus(GetDlgItem(hdlg, IDC_AIF_ID));
+                        return TRUE;
+                    }
+                    for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                        if (win_strieq(g_set_draft.ifaces[i].id, id_b)) {
+                            SetDlgItemText(hdlg, IDC_AIF_ERR, "An interface with that ID already exists.");
+                            SetFocus(GetDlgItem(hdlg, IDC_AIF_ID));
+                            return TRUE;
+                        }
+                    }
+                    g_wiz_step = 2;
+                    sync_win_wiz_ui(hdlg);
+                    return TRUE;
+                }
+                if (g_wiz_step == 2) {
+                    char host_b[32], port_b[16];
+                    GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
+                    GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+                    if (!host_b[0]) {
+                        SetDlgItemText(hdlg, IDC_AIF_ERR, "Host / Serial Device cannot be empty.");
+                        SetFocus(GetDlgItem(hdlg, IDC_AIF_HOST));
+                        return TRUE;
+                    }
+                    if (g_wiz_drv != 1 && !port_b[0]) {
+                        SetDlgItemText(hdlg, IDC_AIF_ERR, "Port / Baud Rate cannot be empty.");
+                        SetFocus(GetDlgItem(hdlg, IDC_AIF_PORT));
+                        return TRUE;
+                    }
+                    g_wiz_step = 3;
+                    sync_win_wiz_ui(hdlg);
+                    return TRUE;
+                }
+                memset(&g_add_if_out, 0, sizeof(g_add_if_out));
+                GetDlgItemText(hdlg, IDC_AIF_ID, g_add_if_out.id, sizeof(g_add_if_out.id));
+                strcpy(g_add_if_out.type, WIN_DRIVERS[g_wiz_drv].type);
                 GetDlgItemText(hdlg, IDC_AIF_DESC, g_add_if_out.description, sizeof(g_add_if_out.description));
                 char host_b[32], port_b[16], peer_b[64];
                 GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
@@ -2599,14 +2754,16 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CLOSE: {
-            char msg_buf[64];
+            char msg_buf[128];
             int active = g_node.total_active_connections();
             if (active > 0) {
-                sprintf(msg_buf, "Exit node? (%d active)", active);
+                sprintf(msg_buf,
+                        "Exit OYK Node? (%d active connection%s)\nActive sessions will be gracefully disconnected.",
+                        active, (active == 1) ? "" : "s");
             } else {
-                strcpy(msg_buf, "Exit node?");
+                strcpy(msg_buf, "Are you sure you want to exit OYK Node?");
             }
-            if (MessageBox(hwnd, msg_buf, "Exit", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (MessageBox(hwnd, msg_buf, "Exit OYK Node", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 DestroyWindow(hwnd);
             }
             return 0;

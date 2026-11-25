@@ -406,6 +406,8 @@ int oyk_config_save(const OykConfig* cfg, const char* path);
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
+void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,
+                                 char* out, size_t out_sz);
 
 /* BBS Files Area path validation & Sysop incoming file approval helpers */
 int oyk_bbs_resolve_safe_path(const char* files_root,

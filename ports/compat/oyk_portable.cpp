@@ -948,6 +948,40 @@ void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out) {
     out->ssid = static_cast<oyk_u8>(cfg->chat_ssid & 0x0FU);
 }
 
+void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,
+                                 char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    const char* prefix = "iface";
+    if (iface_type && iface_type[0]) {
+        if (stricmp_ascii(iface_type, "axudp") == 0) prefix = "axudp";
+        else if (stricmp_ascii(iface_type, "axip") == 0) prefix = "axip";
+        else if (stricmp_ascii(iface_type, "kiss-serial") == 0) prefix = "kiss";
+        else if (stricmp_ascii(iface_type, "kiss-tcp") == 0) prefix = "kisstcp";
+        else if (stricmp_ascii(iface_type, "telnet") == 0) prefix = "telnet";
+        else if (stricmp_ascii(iface_type, "ppp") == 0) prefix = "ppp";
+        else if (stricmp_ascii(iface_type, "usb-cdc-net") == 0) prefix = "usbnet";
+        else if (stricmp_ascii(iface_type, "usb-cdc-serial") == 0) prefix = "usbser";
+    }
+    for (int n = 0; n < 100; ++n) {
+        char cand[24];
+        sprintf(cand, "%s%d", prefix, n);
+        int used = 0;
+        if (cfg) {
+            for (int i = 0; i < cfg->iface_count && i < OYK_MAX_INTERFACES; ++i) {
+                if (stricmp_ascii(cfg->ifaces[i].id, cand) == 0) {
+                    used = 1;
+                    break;
+                }
+            }
+        }
+        if (!used) {
+            safe_copy(out, out_sz, cand);
+            return;
+        }
+    }
+    safe_copy(out, out_sz, prefix);
+}
+
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz) {
     size_t raw_len = 0;
     char* raw = read_all_binary(path, &raw_len);

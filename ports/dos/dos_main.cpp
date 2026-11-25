@@ -20,6 +20,7 @@
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
 #include "dos_usb.hpp"
+#include "dos_video.hpp"
 #include "ems.hpp"
 
 #include <conio.h>
@@ -176,34 +177,16 @@ static oyk_u32 dos_ticks_elapsed_ms(oyk_u32 start_ticks) {
 
 static void dos_pump_network();
 
-/* ==================== Direct 80x25 Text Video RAM UI ==================== */
+/* ==================== Direct 80x25 Text Video RAM UI (Dirty-Diff, Zero Snow-Blank) ==================== */
 
-static oyk_u16 detect_video_seg() {
-    oyk_u8 mode = *reinterpret_cast<oyk_u8 __far*>(MK_FP(0x0040, 0x0049));
-    return (mode == 7) ? 0xB000U : 0xB800U; /* MDA/Hercules vs CGA/EGA/VGA */
-}
-
-static oyk_u16 g_vseg = 0xB800U;
+static OykDosVideo* g_vid = NULL;
 
 static void vid_puts(int row, int col, oyk_u8 attr, const char* s, int max_w) {
-    if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
-    oyk_u16 __far* scr = reinterpret_cast<oyk_u16 __far*>(MK_FP(g_vseg, (row * 80 + col) * 2));
-    int i = 0;
-    while (i < max_w && col + i < 80 && s[i] != '\0') {
-        scr[i] = static_cast<oyk_u16>((static_cast<oyk_u16>(attr) << 8) |
-                                      static_cast<oyk_u8>(s[i]));
-        ++i;
-    }
-    while (i < max_w && col + i < 80) {
-        scr[i] = static_cast<oyk_u16>((static_cast<oyk_u16>(attr) << 8) | ' ');
-        ++i;
-    }
+    if (g_vid) dos_vid_puts(g_vid, row, col, attr, s, max_w);
 }
 
 static void vid_clear(oyk_u8 attr) {
-    oyk_u16 __far* scr = reinterpret_cast<oyk_u16 __far*>(MK_FP(g_vseg, 0));
-    oyk_u16 cell = static_cast<oyk_u16>((static_cast<oyk_u16>(attr) << 8) | ' ');
-    for (int i = 0; i < 80 * 25; ++i) scr[i] = cell;
+    if (g_vid) dos_vid_clear(g_vid, attr);
 }
 
 static int dos_local_term_is_active();
@@ -213,13 +196,27 @@ static void render_dos_screen() {
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
 
+    oyk_u8 menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    oyk_u8 menu_sel = dos_vid_attr(g_vid, 0x30U, 0x0FU);
+    oyk_u8 top_hdr  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 allow_at = dos_vid_attr(g_vid, 0x2FU, 0x0FU);
+    oyk_u8 deny_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+    oyk_u8 bdr_at   = dos_vid_attr(g_vid, 0x03U, 0x07U);
+    oyk_u8 ttl_at   = dos_vid_attr(g_vid, 0x0BU, 0x0FU);
+    oyk_u8 list_hdr = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 norm_at  = 0x07U;
+    oyk_u8 dim_at   = dos_vid_attr(g_vid, 0x08U, 0x07U);
+    oyk_u8 run_up   = dos_vid_attr(g_vid, 0x0AU, 0x0FU);
+    oyk_u8 run_dn   = dos_vid_attr(g_vid, 0x0CU, 0x07U);
+    oyk_u8 stat_at  = dos_vid_attr(g_vid, 0x0EU, 0x0FU);
+
     /* Row 0: Top Menu Bar (matching GUI and ncurses menu bar) */
-    vid_puts(0, 0,  0x70, "", 80);
-    vid_puts(0, 1,  0x30, " Node ", 6);
+    vid_puts(0, 0,  menu_bg, "", 80);
+    vid_puts(0, 1,  menu_sel, " Node ", 6);
     if (dos_local_term_is_active()) {
-        vid_puts(0, 44, 0x70, "Tab/F9:Term(ACTIVE) F10/M:Menu ", 36);
+        vid_puts(0, 44, menu_bg, "Tab/F9:Term(ACTIVE) F10/M:Menu ", 36);
     } else {
-        vid_puts(0, 52, 0x70, "Tab/F9:Term  F10/M:Menu ", 28);
+        vid_puts(0, 52, menu_bg, "Tab/F9:Term  F10/M:Menu ", 28);
     }
 
     /* Row 1: Header bar */
@@ -229,43 +226,64 @@ static void render_dos_screen() {
             g_node.total_active_connections(),
             g_ems.available() ? "EMS " : "",
             g_usb_stack.installed ? "USB" : (g_mtcp_active ? "mTCP" : "STD"));
-    vid_puts(1, 0, 0x1F, line, 61);
-    vid_puts(1, 61, g_node.accept_incoming() ? 0x2F : 0x4F,
+    vid_puts(1, 0, top_hdr, line, 61);
+    vid_puts(1, 61, g_node.accept_incoming() ? allow_at : deny_at,
              g_node.accept_incoming() ? " [INCOMING: ALLOW] " : " [INCOMING: DENY]  ", 19);
 
-    /* Rows 2..8: Interfaces (left 0..43) + Last 5 New Callsigns Heard (right 44..79) */
-    vid_puts(2, 0,  0x0B, "Radio Interfaces (Active Conn)              ", 44);
-    vid_puts(2, 44, 0x0B, "Last 5 New Callsigns Heard          ", 36);
-    vid_puts(3, 0,  0x0F, "Port     Type    Conn Status         RX/TX  ", 44);
-    vid_puts(3, 44, 0x0F, "#  Callsign   Port     Heard        ", 36);
+    /* Row 2: Single-line border separating Interfaces (0..43) & New Heard (43..79) */
+    dos_vid_putc(g_vid, 2, 0, bdr_at, OYK_BOX_TL);
+    dos_vid_hline(g_vid, 2, 1, 42, bdr_at, OYK_BOX_H);
+    dos_vid_title(g_vid, 2, 2, 39, ttl_at, "Radio Interfaces (Active Conn)");
+    dos_vid_putc(g_vid, 2, 43, bdr_at, OYK_BOX_TT);
+    dos_vid_hline(g_vid, 2, 44, 35, bdr_at, OYK_BOX_H);
+    dos_vid_title(g_vid, 2, 45, 33, ttl_at, "Last 5 New Callsigns Heard");
+    dos_vid_putc(g_vid, 2, 79, bdr_at, OYK_BOX_TR);
 
+    /* Row 3: Dark-grey list headers (0x8F color / 0x70 mono) */
+    dos_vid_putc(g_vid, 3, 0, bdr_at, OYK_BOX_V);
+    vid_puts(3, 1, list_hdr, "Port    Type   Conn Status       RX/TX    ", 42);
+    dos_vid_putc(g_vid, 3, 43, bdr_at, OYK_BOX_V);
+    vid_puts(3, 44, list_hdr, "#  Callsign   Port     Heard       ", 35);
+    dos_vid_putc(g_vid, 3, 79, bdr_at, OYK_BOX_V);
+
+    /* Rows 4..8: Interfaces + New Callsigns Heard */
     for (int i = 0; i < 5; ++i) {
+        dos_vid_putc(g_vid, 4 + i, 0, bdr_at, OYK_BOX_V);
         if (i < g_node.iface_count()) {
             const OykIfaceRuntime& r = g_node.iface(i);
-            sprintf(line, "%-8.8s %-7.7s %-4d %-14.14s %lu/%lu",
+            sprintf(line, "%-7.7s %-6.6s %-4d %-12.12s %lu/%lu",
                     r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                     static_cast<unsigned long>(r.rx_frames),
                     static_cast<unsigned long>(r.tx_frames));
-            vid_puts(4 + i, 0, r.running ? 0x0A : 0x0C, line, 44);
+            vid_puts(4 + i, 1, r.running ? run_up : run_dn, line, 42);
         } else {
-            vid_puts(4 + i, 0, 0x07, "", 44);
+            vid_puts(4 + i, 1, norm_at, "", 42);
         }
 
+        dos_vid_putc(g_vid, 4 + i, 43, bdr_at, OYK_BOX_V);
         if (i < g_node.new_heard_count()) {
             const OykNewHeard& nh = g_node.new_heard(i);
             sprintf(line, "%d. %-10.10s %-8.8s %-8.8s",
                     i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-            vid_puts(4 + i, 44, 0x07, line, 36);
+            vid_puts(4 + i, 44, norm_at, line, 35);
         } else {
-            vid_puts(4 + i, 44, 0x08, (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", 36);
+            vid_puts(4 + i, 44, dim_at,
+                     (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", 35);
         }
+        dos_vid_putc(g_vid, 4 + i, 79, bdr_at, OYK_BOX_V);
     }
 
-    /* Rows 9..15: Active Connections */
+    /* Row 9..15: Active Connections section */
+    dos_vid_hdiv(g_vid, 9, 0, 80, bdr_at);
+    dos_vid_putc(g_vid, 9, 43, bdr_at, OYK_BOX_BT);
     sprintf(line, "Active Connections (%d) | Banned: %d",
             g_node.total_active_connections(), g_node.ban_count());
-    vid_puts(9, 0, 0x0B, line, 80);
-    vid_puts(10, 0, 0x0F, "ID   Callsign   Port     Since    Mode", 80);
+    dos_vid_title(g_vid, 9, 2, 76, ttl_at, line);
+
+    dos_vid_putc(g_vid, 10, 0, bdr_at, OYK_BOX_V);
+    vid_puts(10, 1, list_hdr, "ID   Callsign   Port     Since    Mode", 78);
+    dos_vid_putc(g_vid, 10, 79, bdr_at, OYK_BOX_V);
+
     int row = 11;
     for (int i = 0; i < g_node.max_sessions() && row < 16; ++i) {
         const OykSession& s = g_node.session_slot(i);
@@ -279,22 +297,37 @@ static void render_dos_screen() {
                                      : (s.in_bbs ? "BBS"
                                                  : (s.in_chat ? "CHAT"
                                                               : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"))));
-            vid_puts(row++, 0, 0x07, line, 80);
+            dos_vid_putc(g_vid, row, 0, bdr_at, OYK_BOX_V);
+            vid_puts(row, 1, norm_at, line, 78);
+            dos_vid_putc(g_vid, row, 79, bdr_at, OYK_BOX_V);
+            ++row;
         }
     }
-    while (row < 16) vid_puts(row++, 0, 0x07, "", 80);
-
-    /* Rows 16..23: Node Activity Log */
-    vid_puts(16, 0, 0x0B, "Node Activity Log", 80);
-    int total_logs = g_node.console_log_count();
-    int start = (total_logs > 7) ? (total_logs - 7) : 0;
-    for (int r = 0; r < 7; ++r) {
-        int idx = start + r;
-        vid_puts(17 + r, 0, 0x07, (idx < total_logs) ? g_node.console_log_line(idx) : "", 80);
+    while (row < 16) {
+        dos_vid_putc(g_vid, row, 0, bdr_at, OYK_BOX_V);
+        vid_puts(row, 1, norm_at, "", 78);
+        dos_vid_putc(g_vid, row, 79, bdr_at, OYK_BOX_V);
+        ++row;
     }
 
-    /* Row 24: Status message line (no bottom button bar) */
-    vid_puts(24, 0, 0x0E, g_status_line, 80);
+    /* Rows 16..23: Node Activity Log section */
+    dos_vid_hdiv(g_vid, 16, 0, 80, bdr_at);
+    dos_vid_title(g_vid, 16, 2, 76, ttl_at, "Node Activity Log");
+    int total_logs = g_node.console_log_count();
+    int start = (total_logs > 6) ? (total_logs - 6) : 0;
+    for (int r = 0; r < 6; ++r) {
+        int idx = start + r;
+        dos_vid_putc(g_vid, 17 + r, 0, bdr_at, OYK_BOX_V);
+        vid_puts(17 + r, 1, norm_at, (idx < total_logs) ? g_node.console_log_line(idx) : "", 78);
+        dos_vid_putc(g_vid, 17 + r, 79, bdr_at, OYK_BOX_V);
+    }
+    dos_vid_putc(g_vid, 23, 0, bdr_at, OYK_BOX_BL);
+    dos_vid_hline(g_vid, 23, 1, 78, bdr_at, OYK_BOX_H);
+    dos_vid_putc(g_vid, 23, 79, bdr_at, OYK_BOX_BR);
+
+    /* Row 24: Status message line */
+    vid_puts(24, 0, stat_at, g_status_line, 80);
+    dos_vid_flush(g_vid);
 }
 
 /* ==================== Transport Bridge (Optional mTCP / USB CDC / Serial) ==================== */
@@ -603,10 +636,14 @@ static int dos_rig_refresh(char* err_out, size_t err_sz) {
 
 static void prompt_line(const char* prompt, char* out, int max_len) {
     vid_puts(24, 0, 0x4F, prompt, 80);
+    dos_vid_flush_row(g_vid, 24);
     int len = 0;
     out[0] = '\0';
     int pcol = static_cast<int>(strlen(prompt));
-    while (1) {
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        if (!kbhit()) continue;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) { getch(); continue; }
         if (ch == 27) { out[0] = '\0'; return; }
@@ -618,19 +655,87 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
             out[len] = '\0';
         }
         vid_puts(24, pcol, 0x4F, out, 80 - pcol);
+        dos_vid_flush_row(g_vid, 24);
     }
 }
 
 static int confirm_dos_exit() {
-    char prompt[48], yn[4];
-    int active = g_node.total_active_connections();
-    if (active > 0) {
-        sprintf(prompt, "Exit node? (%d active) [Y/N]: ", active);
-    } else {
-        strcpy(prompt, "Exit node? [Y/N]: ");
+    const int top = 7, left = 12, h = 9, w = 56;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 warn_at = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
+    oyk_u8 btn_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+
+    int focus = 1; /* Default to [ No / Cancel ] */
+    int confirmed = 0;
+    int last_active = -1;
+    int dirty = 1;
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        int active = g_node.total_active_connections();
+        if (active != last_active) {
+            last_active = active;
+            dirty = 1;
+        }
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Exit OYK Node");
+
+            char line1[60];
+            if (active > 0) {
+                sprintf(line1, "Exit OYK Node? (%d active connection%s)",
+                        active, (active == 1) ? "" : "s");
+                vid_puts(top + 2, left + 3, warn_at, line1, w - 6);
+                vid_puts(top + 3, left + 3, fill_at,
+                         "Active sessions will be gracefully disconnected.", w - 6);
+            } else {
+                vid_puts(top + 2, left + 3, fill_at,
+                         "Are you sure you want to exit OYK Node?", w - 6);
+                vid_puts(top + 3, left + 3, fill_at,
+                         "(No active connections)", w - 6);
+            }
+
+            /* Centered buttons at row top + 5 */
+            vid_puts(top + 5, left + 13, (focus == 0) ? sel_at : btn_at, "[ Yes / Exit ]", 14);
+            vid_puts(top + 5, left + 30, (focus == 1) ? sel_at : btn_at, "[ No / Cancel ]", 15);
+
+            dos_vid_hdiv(g_vid, top + 6, left, w, bdr_at);
+            vid_puts(top + 7, left + 2, fill_at,
+                     "Left/Right/Tab:Select   Enter:OK   Y/N/Esc", w - 4);
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 75 || ext == 77) focus = 1 - focus; /* Left / Right */
+            continue;
+        }
+        if (ch == '\t') {
+            focus = 1 - focus;
+        } else if (ch == '\r' || ch == '\n' || ch == ' ') {
+            confirmed = (focus == 0) ? 1 : 0;
+            break;
+        } else if (ch == 'y' || ch == 'Y') {
+            confirmed = 1;
+            break;
+        } else if (ch == 'n' || ch == 'N' || ch == 27) {
+            confirmed = 0;
+            break;
+        }
     }
-    prompt_line(prompt, yn, sizeof(yn));
-    return (yn[0] == 'y' || yn[0] == 'Y') ? 1 : 0;
+
+    if (!confirmed) {
+        render_dos_screen();
+    }
+    return confirmed;
 }
 
 /* ==================== DOS Local Terminal, YAPP & Commander File Selector ==================== */
@@ -658,6 +763,7 @@ static int g_dterm_curline_len = 0;
 static char g_dterm_last_yapp[128];
 static char g_dterm_in_buf[160];
 static int g_dterm_in_len = 0;
+static int g_dterm_dirty = 1;
 
 static int dos_local_term_is_active() {
     return (g_dterm_connected || g_dterm_connecting) ? 1 : 0;
@@ -676,6 +782,7 @@ static void dterm_push_line(const char* s) {
         strncpy(g_dterm_lines[DOS_TERM_MAX_LINES - 1], s, 79);
         g_dterm_lines[DOS_TERM_MAX_LINES - 1][79] = '\0';
     }
+    g_dterm_dirty = 1;
 }
 
 static int dos_yapp_send_cb(const oyk_u8* data, size_t len, void* /*ctx*/) {
@@ -687,6 +794,7 @@ static int dos_yapp_overwrite_cb(const char* target_path, const char* /*filename
     char prompt[80];
     sprintf(prompt, "Overwrite %.48s? [Y/N]: ", target_path);
     vid_puts(24, 0, 0x4F, prompt, 80);
+    dos_vid_flush_row(g_vid, 24);
     while (!g_break_flag) {
         dos_pump_network();
         if (kbhit()) {
@@ -748,6 +856,7 @@ static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
         char msg[80];
         sprintf(msg, "*** Disconnected (%.56s)", reason ? reason : "Closed");
         dterm_push_line(msg);
+        g_dterm_dirty = 1;
     }
 }
 
@@ -793,10 +902,16 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
     int sel = 0;
     int top = 0;
     int picked = 0;
+    int dirty = 1;
     const int panel_x = 8;
     const int panel_w = 64;
-    const int list_y = 4;
-    const int list_h = 16;
+    const int list_y = 5;
+    const int list_h = 15;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 dir_at  = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
+    oyk_u8 file_at = dos_vid_attr(g_vid, 0x1FU, 0x07U);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -805,54 +920,62 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
         if (sel < top) top = sel;
         if (sel >= top + list_h) top = sel - list_h + 1;
 
-        /* Draw Norton Commander single-pane blue box */
-        char hdr[66];
-        sprintf(hdr, "+-- %-58.58s+", title ? title : "Select File");
-        vid_puts(1, panel_x, 0x1F, hdr, panel_w);
-        if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
-        sprintf(hdr, "| %-60.60s |", cur_dir);
-        vid_puts(2, panel_x, 0x1B, hdr, panel_w);
-        vid_puts(3, panel_x, 0x1F, "+--------------------------------------------------------------+", panel_w);
+        if (dirty) {
+            dirty = 0;
+            /* Draw Norton Commander single-pane box with single-line borders */
+            dos_vid_box(g_vid, 1, panel_x, 20, panel_w, bdr_at, file_at, 0);
+            dos_vid_title(g_vid, 1, panel_x + 2, panel_w - 4, bdr_at,
+                          title ? title : "Select File");
+            if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
+            char hdr[66];
+            sprintf(hdr, " %-60.60s ", cur_dir);
+            dos_vid_putc(g_vid, 2, panel_x, bdr_at, OYK_BOX_V);
+            vid_puts(2, panel_x + 1, dos_vid_attr(g_vid, 0x1BU, 0x07U), hdr, panel_w - 2);
+            dos_vid_putc(g_vid, 2, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
+            dos_vid_hdiv(g_vid, 3, panel_x, panel_w, bdr_at);
 
-        for (int i = 0; i < list_h; ++i) {
-            int idx = top + i;
-            if (idx < count) {
-                const DosFsEntry& e = entries[idx];
-                char sz_s[12];
-                if (e.is_dir) {
-                    strcpy(sz_s, "[DIR]");
-                } else if (e.size >= 1024UL) {
-                    sprintf(sz_s, "%luK", static_cast<unsigned long>(e.size / 1024UL));
+            /* Row 4: Dark-grey column header row */
+            dos_vid_putc(g_vid, 4, panel_x, bdr_at, OYK_BOX_V);
+            vid_puts(4, panel_x + 1, hdr_at, " Name                                            Size     ", panel_w - 2);
+            dos_vid_putc(g_vid, 4, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
+
+            for (int i = 0; i < list_h; ++i) {
+                int idx = top + i;
+                dos_vid_putc(g_vid, list_y + i, panel_x, bdr_at, OYK_BOX_V);
+                if (idx < count) {
+                    const DosFsEntry& e = entries[idx];
+                    char sz_s[12];
+                    if (e.is_dir) {
+                        strcpy(sz_s, "[DIR]");
+                    } else if (e.size >= 1024UL) {
+                        sprintf(sz_s, "%luK", static_cast<unsigned long>(e.size / 1024UL));
+                    } else {
+                        sprintf(sz_s, "%luB", static_cast<unsigned long>(e.size));
+                    }
+                    char row[66];
+                    sprintf(row, " %-47.47s %11s ", e.name, sz_s);
+                    oyk_u8 attr = (idx == sel) ? sel_at : (e.is_dir ? dir_at : file_at);
+                    vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
                 } else {
-                    sprintf(sz_s, "%luB", static_cast<unsigned long>(e.size));
+                    vid_puts(list_y + i, panel_x + 1, file_at, "", panel_w - 2);
                 }
-                char row[66];
-                sprintf(row, " %-46.46s %11s ", e.name, sz_s);
-                oyk_u8 attr = (idx == sel) ? 0x30 : (e.is_dir ? 0x1E : 0x1F);
-                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
-                vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
-                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
-            } else {
-                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
-                vid_puts(list_y + i, panel_x + 1, 0x1F, "", panel_w - 2);
-                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+                dos_vid_putc(g_vid, list_y + i, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
             }
+            vid_puts(21, panel_x, dos_vid_attr(g_vid, 0x30U, 0x70U),
+                     " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel              ", panel_w);
+            dos_vid_flush(g_vid);
         }
-        vid_puts(list_y + list_h, panel_x, 0x1F,
-                 "+--------------------------------------------------------------+", panel_w);
-        vid_puts(list_y + list_h + 1, panel_x, 0x30,
-                 " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel              ", panel_w);
 
         if (!kbhit()) continue;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72 && sel > 0) --sel;                      /* Up */
-            else if (ext == 80 && sel + 1 < count) ++sel;         /* Down */
-            else if (ext == 73) sel = (sel > list_h) ? (sel - list_h) : 0; /* PgUp */
-            else if (ext == 81) sel = (sel + list_h < count) ? (sel + list_h) : (count > 0 ? count - 1 : 0); /* PgDn */
-            else if (ext == 71) sel = 0;                          /* Home */
-            else if (ext == 79 && count > 0) sel = count - 1;     /* End */
+            if (ext == 72 && sel > 0) { --sel; dirty = 1; }                              /* Up */
+            else if (ext == 80 && sel + 1 < count) { ++sel; dirty = 1; }                 /* Down */
+            else if (ext == 73) { sel = (sel > list_h) ? (sel - list_h) : 0; dirty = 1; }/* PgUp */
+            else if (ext == 81) { sel = (sel + list_h < count) ? (sel + list_h) : (count > 0 ? count - 1 : 0); dirty = 1; } /* PgDn */
+            else if (ext == 71) { sel = 0; dirty = 1; }                                  /* Home */
+            else if (ext == 79 && count > 0) { sel = count - 1; dirty = 1; }             /* End */
         } else if (ch == 27) {
             break;
         } else if (ch == 8) {
@@ -860,6 +983,7 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
                 count = dos_fs_load(entries, DOS_FS_MAX_ENTRIES);
                 sel = 0;
                 top = 0;
+                dirty = 1;
             }
         } else if ((ch == '\r' || ch == '\n') && count > 0) {
             const DosFsEntry& e = entries[sel];
@@ -868,6 +992,7 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
                     count = dos_fs_load(entries, DOS_FS_MAX_ENTRIES);
                     sel = 0;
                     top = 0;
+                    dirty = 1;
                 }
             } else {
                 if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
@@ -891,6 +1016,11 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
 }
 
 static void render_dos_terminal(const char* input_buf) {
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x03U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x0BU, 0x0FU);
+    oyk_u8 top_hdr = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+
     char hdr[82];
     if (g_dterm_connected) {
         char cs[16];
@@ -904,13 +1034,18 @@ static void render_dos_terminal(const char* input_buf) {
     } else {
         strcpy(hdr, " LOCAL TERMINAL | DISCONNECTED (Press F2 to Connect)");
     }
-    vid_puts(0, 0, 0x1F, hdr, 80);
+    vid_puts(0, 0, top_hdr, hdr, 80);
 
-    int body_h = 21;
+    dos_vid_box(g_vid, 1, 0, 21, 80, bdr_at, 0x07U, 0);
+    dos_vid_title(g_vid, 1, 2, 76, ttl_at, "Terminal Output");
+
+    int body_h = 19;
     int start = (g_dterm_line_count > body_h) ? (g_dterm_line_count - body_h) : 0;
     for (int r = 0; r < body_h; ++r) {
         int idx = start + r;
-        vid_puts(1 + r, 0, 0x07, (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", 80);
+        dos_vid_putc(g_vid, 2 + r, 0, bdr_at, OYK_BOX_V);
+        vid_puts(2 + r, 1, 0x07U, (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", 78);
+        dos_vid_putc(g_vid, 2 + r, 79, bdr_at, OYK_BOX_V);
     }
 
     char bar[82];
@@ -921,12 +1056,14 @@ static void render_dos_terminal(const char* input_buf) {
     } else {
         strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
     }
-    vid_puts(22, 0, 0x30, bar, 80);
+    vid_puts(22, 0, bar_at, bar, 80);
 
     char in_row[82];
     sprintf(in_row, "> %.77s", input_buf);
-    vid_puts(23, 0, 0x0F, in_row, 80);
-    vid_puts(24, 0, 0x0E, "F9/Esc switches to Console without closing active terminal session.", 80);
+    vid_puts(23, 0, 0x0FU, in_row, 80);
+    vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x07U),
+             "F9/Esc switches to Console without closing active terminal session.", 80);
+    dos_vid_flush(g_vid);
 }
 
 static void run_dos_local_terminal() {
@@ -950,15 +1087,23 @@ static void run_dos_local_terminal() {
         dterm_push_line("*** F2:Connect (LOCAL, CHAT, CALL@ip:port) | F3:YAPP Upload | F9/Esc:Console");
     }
 
-    oyk_u32 last_draw = 0UL;
+    g_dterm_dirty = 1;
+    oyk_u32 last_yapp_bytes = g_dterm_yapp.bytes_transferred;
+    int prev_yapp_state = g_dterm_yapp.state;
 
     while (!g_break_flag) {
         dos_pump_network();
         g_node.tick();
 
-        if (dos_ticks_elapsed_ms(last_draw) >= 100UL) {
+        if (g_dterm_yapp.bytes_transferred != last_yapp_bytes ||
+            g_dterm_yapp.state != prev_yapp_state) {
+            last_yapp_bytes = g_dterm_yapp.bytes_transferred;
+            prev_yapp_state = g_dterm_yapp.state;
+            g_dterm_dirty = 1;
+        }
+        if (g_dterm_dirty) {
+            g_dterm_dirty = 0;
             render_dos_terminal(g_dterm_in_buf);
-            last_draw = dos_ticks_now();
         }
 
         if (!kbhit()) continue;
@@ -1027,7 +1172,7 @@ static void run_dos_local_terminal() {
                 oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
                 dterm_push_line("*** YAPP transfer aborted.");
             }
-            render_dos_terminal(g_dterm_in_buf);
+            g_dterm_dirty = 1;
         } else if (ch == 27) {
             break;
         } else if (ch == '\r' || ch == '\n') {
@@ -1044,18 +1189,17 @@ static void run_dos_local_terminal() {
             }
             g_dterm_in_len = 0;
             g_dterm_in_buf[0] = '\0';
-            render_dos_terminal(g_dterm_in_buf);
+            g_dterm_dirty = 1;
         } else if ((ch == 8 || ch == 127) && g_dterm_in_len > 0) {
             g_dterm_in_buf[--g_dterm_in_len] = '\0';
-            render_dos_terminal(g_dterm_in_buf);
+            g_dterm_dirty = 1;
         } else if (ch >= 32 && ch < 127 && g_dterm_in_len < 76) {
             g_dterm_in_buf[g_dterm_in_len++] = static_cast<char>(ch);
             g_dterm_in_buf[g_dterm_in_len] = '\0';
-            render_dos_terminal(g_dterm_in_buf);
+            g_dterm_dirty = 1;
         }
     }
 
-    vid_clear(0x07);
     if (g_dterm_connected || g_dterm_connecting) {
         strcpy(g_status_line, "Operator Console (Terminal active in background; Tab/F9 to return).");
     } else {
@@ -1078,6 +1222,13 @@ static void run_dos_approve_incoming_files() {
     const int panel_w = 72;
     const int list_y = 6;
     const int list_h = 12;
+    int dirty = 1;
+    oyk_u8 bdr_at = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 hdr_at = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 tab_bg = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 tab_hi = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 row_at = dos_vid_attr(g_vid, 0x1FU, 0x07U);
+    oyk_u8 sel_at = dos_vid_attr(g_vid, 0x30U, 0x70U);
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -1088,64 +1239,64 @@ static void run_dos_approve_incoming_files() {
         if (sel[tab] < top[tab]) top[tab] = sel[tab];
         if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
 
-        vid_puts(2, panel_x, 0x1F,
-                 "+-[ Manage BBS Files Area ]--------------------------------------------+", panel_w);
-        vid_puts(3, panel_x, 0x70, "", panel_w);
-        vid_puts(3, panel_x, 0x1F, "|", 1);
-        vid_puts(3, panel_x + 2, (tab == 0) ? 0x1F : 0x70, " 1:Pending Incoming ", 20);
-        vid_puts(3, panel_x + 23, (tab == 1) ? 0x1F : 0x70, " 2:Approved Files ", 18);
-        vid_puts(3, panel_x + panel_w - 1, 0x1F, "|", 1);
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, 2, panel_x, 17, panel_w, bdr_at, row_at, 0);
+            dos_vid_title(g_vid, 2, panel_x + 2, panel_w - 4, bdr_at, "Manage BBS Files Area");
 
-        if (tab == 0) {
-            vid_puts(4, panel_x, 0x1E,
-                     "| Uploader      Filename                                     Size     |", panel_w);
-        } else {
-            vid_puts(4, panel_x, 0x1E,
-                     "| Approved File Path                                         Size     |", panel_w);
-        }
-        vid_puts(5, panel_x, 0x1F,
-                 "+----------------------------------------------------------------------+", panel_w);
+            vid_puts(3, panel_x + 1, tab_bg, "", panel_w - 2);
+            dos_vid_putc(g_vid, 3, panel_x, bdr_at, OYK_BOX_V);
+            vid_puts(3, panel_x + 2, (tab == 0) ? tab_hi : tab_bg, " 1:Pending Incoming ", 20);
+            vid_puts(3, panel_x + 23, (tab == 1) ? tab_hi : tab_bg, " 2:Approved Files ", 18);
+            dos_vid_putc(g_vid, 3, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
 
-        for (int i = 0; i < list_h; ++i) {
-            int idx = top[tab] + i;
-            if (count == 0 && i == 1) {
-                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
-                vid_puts(list_y + i, panel_x + 1, 0x1F,
-                         (tab == 0) ? " (No pending files in incoming\\<CALLSIGN-SSID>\\)"
-                                    : " (No approved files in BBS files area)",
-                         panel_w - 2);
-                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
-            } else if (idx < count) {
-                char row[72];
-                if (tab == 0) {
-                    sprintf(row, " %-13.13s %-42.42s %9lu ",
-                            items[idx].uploader, items[idx].filename,
-                            static_cast<unsigned long>(items[idx].size));
-                } else {
-                    sprintf(row, " %-56.56s %9lu ",
-                            approved[idx].rel_path,
-                            static_cast<unsigned long>(approved[idx].size));
-                }
-                oyk_u8 attr = (idx == sel[tab]) ? 0x30 : 0x1F;
-                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
-                vid_puts(list_y + i, panel_x + 1, attr, row, panel_w - 2);
-                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+            dos_vid_putc(g_vid, 4, panel_x, bdr_at, OYK_BOX_V);
+            if (tab == 0) {
+                vid_puts(4, panel_x + 1, hdr_at,
+                         " Uploader      Filename                                     Size      ", panel_w - 2);
             } else {
-                vid_puts(list_y + i, panel_x, 0x1F, "|", 1);
-                vid_puts(list_y + i, panel_x + 1, 0x1F, "", panel_w - 2);
-                vid_puts(list_y + i, panel_x + panel_w - 1, 0x1F, "|", 1);
+                vid_puts(4, panel_x + 1, hdr_at,
+                         " Approved File Path                                         Size      ", panel_w - 2);
             }
+            dos_vid_putc(g_vid, 4, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
+            dos_vid_hdiv(g_vid, 5, panel_x, panel_w, bdr_at);
+
+            for (int i = 0; i < list_h; ++i) {
+                int idx = top[tab] + i;
+                dos_vid_putc(g_vid, list_y + i, panel_x, bdr_at, OYK_BOX_V);
+                if (count == 0 && i == 1) {
+                    vid_puts(list_y + i, panel_x + 1, row_at,
+                             (tab == 0) ? " (No pending files in incoming\\<CALLSIGN-SSID>\\)"
+                                        : " (No approved files in BBS files area)",
+                             panel_w - 2);
+                } else if (idx < count) {
+                    char row[72];
+                    if (tab == 0) {
+                        sprintf(row, " %-13.13s %-42.42s %9lu ",
+                                items[idx].uploader, items[idx].filename,
+                                static_cast<unsigned long>(items[idx].size));
+                    } else {
+                        sprintf(row, " %-56.56s %9lu ",
+                                approved[idx].rel_path,
+                                static_cast<unsigned long>(approved[idx].size));
+                    }
+                    vid_puts(list_y + i, panel_x + 1, (idx == sel[tab]) ? sel_at : row_at, row, panel_w - 2);
+                } else {
+                    vid_puts(list_y + i, panel_x + 1, row_at, "", panel_w - 2);
+                }
+                dos_vid_putc(g_vid, list_y + i, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
+            }
+            vid_puts(list_y + list_h + 1, panel_x, dos_vid_attr(g_vid, 0x30U, 0x70U),
+                     (tab == 0)
+                         ? " Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close        "
+                         : " Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close           ",
+                     panel_w);
+            vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), feedback, 80);
+            dos_vid_flush(g_vid);
         }
-        vid_puts(list_y + list_h, panel_x, 0x1F,
-                 "+----------------------------------------------------------------------+", panel_w);
-        vid_puts(list_y + list_h + 1, panel_x, 0x30,
-                 (tab == 0)
-                     ? " Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close        "
-                     : " Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close           ",
-                 panel_w);
-        vid_puts(24, 0, 0x0E, feedback, 80);
 
         if (!kbhit()) continue;
+        dirty = 1;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
@@ -1251,8 +1402,10 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
     if (len >= max_len) { len = max_len - 1; buf[len] = '\0'; }
     int pcol = static_cast<int>(strlen(prompt));
     if (pcol > 60) pcol = 60;
-    vid_puts(24, 0, 0x4F, prompt, 80);
-    vid_puts(24, pcol, 0x4F, buf, 80 - pcol);
+    int avail = 80 - pcol;
+    int start = (len > avail) ? (len - avail) : 0;
+    vid_puts(24, pcol, 0x4F, buf + start, avail);
+    dos_vid_flush_row(g_vid, 24);
     if (accepted_out) *accepted_out = 0;
     while (!g_break_flag) {
         dos_pump_network();
@@ -1268,9 +1421,9 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
             buf[len++] = static_cast<char>(ch);
             buf[len] = '\0';
         }
-        int avail = 80 - pcol;
-        int start = (len > avail) ? (len - avail) : 0;
+        start = (len > avail) ? (len - avail) : 0;
         vid_puts(24, pcol, 0x4F, buf + start, avail);
+        dos_vid_flush_row(g_vid, 24);
     }
 }
 
@@ -1367,61 +1520,84 @@ static void run_dos_rig_control() {
         }
     }
 
+    int dirty = 1;
+    int prev_rf = g_rf_reply_flag;
+    oyk_u8 top_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1BU, 0x07U);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 val_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 hdr_at  = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
+
     while (!g_break_flag) {
         dos_pump_network();
         g_node.tick();
 
-        vid_clear(0x17);
-        vid_puts(0, 0, 0x30, " OYK RADIO / RIG CONTROL (MS-DOS)                              Esc:Close", 80);
+        if (g_rf_reply_flag != prev_rf) {
+            prev_rf = g_rf_reply_flag;
+            dirty = 1;
+        }
+        if (dirty) {
+            dirty = 0;
+            vid_clear(fill_at);
+            vid_puts(0, 0, top_at, " OYK RADIO / RIG CONTROL (MS-DOS)                              Esc:Close", 80);
 
-        char row[82];
-        sprintf(row, " Protocol : %-14s  Endpoint: %s:%u  [%s]",
-                oyk_rig_protocol_name(proto),
-                cfg.rig_host[0] ? cfg.rig_host : "127.0.0.1",
-                static_cast<unsigned int>(cfg.rig_port),
-                cfg.rig_enabled ? (g_rig_status.reachable ? "ONLINE" : "NO REPLY") : "DISABLED");
-        vid_puts(2, 0, 0x1F, row, 80);
-        vid_puts(3, 0, 0x1B, "--------------------------------------------------------------------------------", 80);
+            dos_vid_box(g_vid, 2, 0, 19, 80, bdr_at, fill_at, 0);
+            dos_vid_title(g_vid, 2, 2, 76, val_at, "Radio / Rig Control");
 
-        if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
-            sprintf(row, " Zone / Pos   : Zone %d, Channel Pos %d (0-based)", g_rig_status.zone, g_rig_status.pos);
-            vid_puts(5, 0, 0x1F, row, 80);
-            sprintf(row, " Channel Name : %s", g_rig_status.channel_name[0] ? g_rig_status.channel_name : "(unknown)");
-            vid_puts(6, 0, 0x1F, row, 80);
-            sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
-            vid_puts(7, 0, 0x1F, row, 80);
-            if (g_rig_status.is_dmr) {
-                sprintf(row, " DMR Params   : CC %d  TS %d  TG %ld",
-                        g_rig_status.color_code, g_rig_status.timeslot, g_rig_status.talkgroup);
+            char row[82];
+            sprintf(row, " Protocol : %-14s  Endpoint: %s:%u  [%s]",
+                    oyk_rig_protocol_name(proto),
+                    cfg.rig_host[0] ? cfg.rig_host : "127.0.0.1",
+                    static_cast<unsigned int>(cfg.rig_port),
+                    cfg.rig_enabled ? (g_rig_status.reachable ? "ONLINE" : "NO REPLY") : "DISABLED");
+            vid_puts(3, 1, val_at, row, 78);
+            dos_vid_hdiv(g_vid, 4, 0, 80, bdr_at);
+
+            if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
+                sprintf(row, " Zone / Pos   : Zone %d, Channel Pos %d (0-based)", g_rig_status.zone, g_rig_status.pos);
+                vid_puts(5, 1, val_at, row, 78);
+                sprintf(row, " Channel Name : %s", g_rig_status.channel_name[0] ? g_rig_status.channel_name : "(unknown)");
+                vid_puts(6, 1, val_at, row, 78);
+                sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
+                vid_puts(7, 1, val_at, row, 78);
+                if (g_rig_status.is_dmr) {
+                    sprintf(row, " DMR Params   : CC %d  TS %d  TG %ld",
+                            g_rig_status.color_code, g_rig_status.timeslot, g_rig_status.talkgroup);
+                } else {
+                    strcpy(row, " DMR Params   : (analog / not reported)");
+                }
+                vid_puts(8, 1, val_at, row, 78);
+                sprintf(row, " Raw Status   : %.60s", g_rig_status.raw_status[0] ? g_rig_status.raw_status : "(none)");
+                vid_puts(10, 1, fill_at, row, 78);
+                dos_vid_hdiv(g_vid, 12, 0, 80, bdr_at);
+                dos_vid_title(g_vid, 12, 2, 76, hdr_at, "Commands (RadioFoundry / takRF UDP 4191)");
+                vid_puts(14, 1, fill_at, "  [Q/R] Query (select)    [Z] Select Zone & Pos   [N] Stop Notify", 78);
+                vid_puts(15, 1, fill_at, "  [+/-] Step Channel      [[/]] Step Zone         [Esc] Close", 78);
             } else {
-                strcpy(row, " DMR Params   : (analog / not reported)");
+                sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
+                vid_puts(5, 1, val_at, row, 78);
+                sprintf(row, " Mode / PB    : %s (%lu Hz)",
+                        g_rig_status.mode[0] ? g_rig_status.mode : "(unknown)",
+                        static_cast<unsigned long>(g_rig_status.passband_hz));
+                vid_puts(6, 1, val_at, row, 78);
+                sprintf(row, " PTT / VFO    : %s  |  VFO: %s",
+                        g_rig_status.ptt > 0 ? "TX" : (g_rig_status.ptt == 0 ? "RX" : "UNKNOWN"),
+                        g_rig_status.vfo[0] ? g_rig_status.vfo : "(unknown)");
+                vid_puts(7, 1, val_at, row, 78);
+                dos_vid_hdiv(g_vid, 12, 0, 80, bdr_at);
+                dos_vid_title(g_vid, 12, 2, 76, hdr_at, "Commands (Hamlib rigctld TCP 4532)");
+                vid_puts(14, 1, fill_at, "  [Q/R] Query Rig         [F] Set Frequency (Hz)  [M] Set Mode", 78);
+                vid_puts(15, 1, fill_at, "  [P]   Toggle PTT RX/TX  [V] Set VFO             [Esc] Close", 78);
             }
-            vid_puts(8, 0, 0x1F, row, 80);
-            sprintf(row, " Raw Status   : %.60s", g_rig_status.raw_status[0] ? g_rig_status.raw_status : "(none)");
-            vid_puts(10, 0, 0x17, row, 80);
-            vid_puts(13, 0, 0x1E, " Commands (RadioFoundry / takRF UDP 4191):", 80);
-            vid_puts(14, 0, 0x17, "  [Q/R] Query (select)    [Z] Select Zone & Pos   [N] Stop Notify", 80);
-            vid_puts(15, 0, 0x17, "  [+/-] Step Channel      [[/]] Step Zone         [Esc] Close", 80);
-        } else {
-            sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
-            vid_puts(5, 0, 0x1F, row, 80);
-            sprintf(row, " Mode / PB    : %s (%lu Hz)",
-                    g_rig_status.mode[0] ? g_rig_status.mode : "(unknown)",
-                    static_cast<unsigned long>(g_rig_status.passband_hz));
-            vid_puts(6, 0, 0x1F, row, 80);
-            sprintf(row, " PTT / VFO    : %s  |  VFO: %s",
-                    g_rig_status.ptt > 0 ? "TX" : (g_rig_status.ptt == 0 ? "RX" : "UNKNOWN"),
-                    g_rig_status.vfo[0] ? g_rig_status.vfo : "(unknown)");
-            vid_puts(7, 0, 0x1F, row, 80);
-            vid_puts(13, 0, 0x1E, " Commands (Hamlib rigctld TCP 4532):", 80);
-            vid_puts(14, 0, 0x17, "  [Q/R] Query Rig         [F] Set Frequency (Hz)  [M] Set Mode", 80);
-            vid_puts(15, 0, 0x17, "  [P]   Toggle PTT RX/TX  [V] Set VFO             [Esc] Close", 80);
+
+            vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
+            vid_puts(24, 0, dos_vid_attr(g_vid, 0x70U, 0x70U),
+                     " Q/R:Refresh  Esc:Return to Operator Console                                    ", 80);
+            dos_vid_flush(g_vid);
         }
 
-        vid_puts(23, 0, 0x1E, fb, 80);
-        vid_puts(24, 0, 0x70, " Q/R:Refresh  Esc:Return to Operator Console                                    ", 80);
-
         if (!kbhit()) continue;
+        dirty = 1;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) { getch(); continue; }
         if (ch == 27) break;
@@ -1523,6 +1699,367 @@ static void run_dos_rig_control() {
     vid_clear(0x07);
 }
 
+struct DosAddWizState {
+    int step;
+    int drv;
+    int last_drv;
+    int focus;
+    int btn; /* 0=Back, 1=Next/Finish, 2=Cancel */
+    char id[16];
+    char desc[32];
+    char ep[32];
+    char port[12];
+    char peer[32];
+    char err[64];
+};
+
+static int dos_strieq(const char* a, const char* b) {
+    while (*a && *b) {
+        char ca = (*a >= 'a' && *a <= 'z') ? static_cast<char>(*a - 32) : *a;
+        char cb = (*b >= 'a' && *b <= 'z') ? static_cast<char>(*b - 32) : *b;
+        if (ca != cb) return 0;
+        ++a;
+        ++b;
+    }
+    return (*a == '\0' && *b == '\0') ? 1 : 0;
+}
+
+static int dos_wiz_field_count(const DosAddWizState* st) {
+    if (st->step == 1) return 2;
+    if (st->step == 2) return (st->drv == 0) ? 3 : 2;
+    return 0;
+}
+
+static void dos_wiz_apply_defaults(const OykConfig* draft, DosAddWizState* st) {
+    static const char* TYPES[5] = {
+        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
+    };
+    const char* t = TYPES[st->drv];
+    oyk_derive_default_iface_id(draft, t, st->id, sizeof(st->id));
+    st->desc[0] = '\0';
+    st->peer[0] = '\0';
+    if (strcmp(t, "kiss-serial") == 0) {
+        strcpy(st->ep, "COM1");
+        strcpy(st->port, "9600");
+    } else if (strcmp(t, "usb-cdc-serial") == 0) {
+        strcpy(st->ep, "USBCOM1");
+        strcpy(st->port, "115200");
+    } else if (strcmp(t, "telnet") == 0) {
+        strcpy(st->ep, "0.0.0.0");
+        strcpy(st->port, "8010");
+    } else {
+        strcpy(st->ep, "0.0.0.0");
+        strcpy(st->port, "10093");
+    }
+    st->last_drv = st->drv;
+}
+
+static int dos_wiz_try_advance(const OykConfig* draft, DosAddWizState* st, OykIfaceConfig* out_ic) {
+    static const char* TYPES[5] = {
+        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
+    };
+    st->err[0] = '\0';
+    if (st->step == 0) {
+        if (st->drv != st->last_drv) {
+            dos_wiz_apply_defaults(draft, st);
+        }
+        st->step = 1;
+        st->focus = 0;
+        st->btn = 1;
+        return 0;
+    }
+    if (st->step == 1) {
+        if (!st->id[0]) {
+            strcpy(st->err, "Interface ID cannot be empty.");
+            st->focus = 0;
+            return 0;
+        }
+        for (int i = 0; i < draft->iface_count; ++i) {
+            if (dos_strieq(draft->ifaces[i].id, st->id)) {
+                sprintf(st->err, "Duplicate interface ID: %.24s", st->id);
+                st->focus = 0;
+                return 0;
+            }
+        }
+        st->step = 2;
+        st->focus = 0;
+        st->btn = 1;
+        return 0;
+    }
+    if (st->step == 2) {
+        if (!st->ep[0]) {
+            strcpy(st->err, (st->drv == 1 || st->drv == 2) ? "Serial device cannot be empty." : "Host cannot be empty.");
+            st->focus = 0;
+            return 0;
+        }
+        if (!st->port[0]) {
+            strcpy(st->err, (st->drv == 1 || st->drv == 2) ? "Baud rate cannot be empty." : "Port cannot be empty.");
+            st->focus = 1;
+            return 0;
+        }
+        st->step = 3;
+        st->focus = 0;
+        st->btn = 1;
+        return 0;
+    }
+    if (st->step == 3) {
+        memset(out_ic, 0, sizeof(*out_ic));
+        strncpy(out_ic->id, st->id, sizeof(out_ic->id) - 1);
+        strncpy(out_ic->type, TYPES[st->drv], sizeof(out_ic->type) - 1);
+        strncpy(out_ic->description, st->desc, sizeof(out_ic->description) - 1);
+        if (st->drv == 1 || st->drv == 2) {
+            strncpy(out_ic->device, st->ep, sizeof(out_ic->device) - 1);
+            long bv = atol(st->port);
+            out_ic->baud = (bv >= 300L) ? static_cast<oyk_u32>(bv) : ((st->drv == 2) ? 115200UL : 9600UL);
+        } else {
+            strncpy(out_ic->host, st->ep, sizeof(out_ic->host) - 1);
+            long pv = atol(st->port);
+            out_ic->port = (pv > 0L && pv <= 65535L)
+                               ? static_cast<oyk_u16>(pv)
+                               : ((st->drv == 4) ? 8010U : 10093U);
+            if (st->drv == 0 && st->peer[0]) {
+                OykPeerEntry pe;
+                memset(&pe, 0, sizeof(pe));
+                if (oyk_parse_peer_spec(st->peer, pe.callsign, sizeof(pe.callsign),
+                                        &pe.ip, &pe.port, out_ic->port ? out_ic->port : 10093U)) {
+                    out_ic->peers[0] = pe;
+                    out_ic->peer_count = 1;
+                }
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_ic) {
+    static const char* DRV_TYPES[5] = {
+        "axudp", "kiss-serial", "usb-cdc-serial", "usb-cdc-net", "telnet"
+    };
+    static const char* DRV_DESCS[5] = {
+        "AX.25 over UDP (mTCP / Packet Driver)",
+        "KISS TNC over Serial (COM1..COM4)",
+        "KISS TNC over USB-CDC Serial",
+        "AXUDP over USB-CDC Network",
+        "Plaintext Telnet User Port"
+    };
+    static const char* PROG[4] = {
+        "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
+    };
+
+    const int top = 4, left = 6, h = 16, w = 68;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+
+    DosAddWizState st;
+    memset(&st, 0, sizeof(st));
+    st.last_drv = -1;
+    st.btn = 1;
+    int dirty = 1;
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Add Interface");
+            dos_vid_title(g_vid, top, left + w - 18, 16, ttl_at, PROG[st.step]);
+
+            const char* prompt = "Select the driver for the new interface:";
+            if (st.step == 1) {
+                prompt = "Enter a unique interface ID and optional description:";
+            } else if (st.step == 2) {
+                if (st.drv == 1 || st.drv == 2) prompt = "Configure serial device and baud rate:";
+                else if (st.drv == 4) prompt = "Configure Telnet bind host IP and TCP port:";
+                else if (st.drv == 3) prompt = "Configure USB-CDC host IP and UDP port:";
+                else prompt = "Configure AXUDP bind host, UDP port, and optional peer:";
+            } else if (st.step == 3) {
+                prompt = "Review interface configuration before committing:";
+            }
+            vid_puts(top + 1, left + 2, ttl_at, prompt, w - 4);
+
+            if (st.step == 0) {
+                vid_puts(top + 2, left + 1, hdr_at,
+                         " #  Driver           Description", w - 2);
+                for (int i = 0; i < 5; ++i) {
+                    char row[68];
+                    sprintf(row, " %d. %-15.15s %-44.44s",
+                            i + 1, DRV_TYPES[i], DRV_DESCS[i]);
+                    vid_puts(top + 3 + i, left + 1, (i == st.drv) ? sel_at : fill_at, row, w - 2);
+                }
+            } else if (st.step == 1) {
+                char row[68];
+                sprintf(row, "Driver       : %s", DRV_TYPES[st.drv]);
+                vid_puts(top + 3, left + 3, fill_at, row, w - 6);
+                vid_puts(top + 5, left + 3, fill_at, "Interface ID : ", 15);
+                vid_puts(top + 5, left + 18, (st.focus == 0) ? sel_at : inp_at, st.id, 36);
+                vid_puts(top + 7, left + 3, fill_at, "Description  : ", 15);
+                vid_puts(top + 7, left + 18, (st.focus == 1) ? sel_at : inp_at, st.desc, 36);
+            } else if (st.step == 2) {
+                char row[68];
+                sprintf(row, "Interface    : %s (%s)", st.id, DRV_TYPES[st.drv]);
+                vid_puts(top + 3, left + 3, fill_at, row, w - 6);
+                vid_puts(top + 5, left + 3, fill_at,
+                         (st.drv == 1 || st.drv == 2) ? "Serial Device: " : "Host / IP    : ", 15);
+                vid_puts(top + 5, left + 18, (st.focus == 0) ? sel_at : inp_at, st.ep, 36);
+                vid_puts(top + 7, left + 3, fill_at,
+                         (st.drv == 1 || st.drv == 2) ? "Baud Rate    : " : ((st.drv == 4) ? "TCP Port     : " : "UDP Port     : "), 15);
+                vid_puts(top + 7, left + 18, (st.focus == 1) ? sel_at : inp_at, st.port, 36);
+                if (st.drv == 0) {
+                    vid_puts(top + 9, left + 3, fill_at, "Peer (opt)   : ", 15);
+                    vid_puts(top + 9, left + 18, (st.focus == 2) ? sel_at : inp_at, st.peer, 36);
+                }
+            } else {
+                char row[68];
+                sprintf(row, "Driver       : %-46.46s", DRV_TYPES[st.drv]);
+                vid_puts(top + 3, left + 3, fill_at, row, w - 6);
+                sprintf(row, "Interface ID : %-46.46s", st.id);
+                vid_puts(top + 4, left + 3, fill_at, row, w - 6);
+                sprintf(row, "Description  : %-46.46s", st.desc[0] ? st.desc : "(none)");
+                vid_puts(top + 5, left + 3, fill_at, row, w - 6);
+                sprintf(row, "%s: %-46.46s",
+                        (st.drv == 1 || st.drv == 2) ? "Serial Device" : "Host / IP    ", st.ep);
+                vid_puts(top + 6, left + 3, fill_at, row, w - 6);
+                sprintf(row, "%s: %-46.46s",
+                        (st.drv == 1 || st.drv == 2) ? "Baud Rate    " : "Port         ", st.port);
+                vid_puts(top + 7, left + 3, fill_at, row, w - 6);
+                if (st.drv == 0) {
+                    sprintf(row, "Static Peer  : %-46.46s", st.peer[0] ? st.peer : "(auto-learn)");
+                    vid_puts(top + 8, left + 3, fill_at, row, w - 6);
+                }
+                vid_puts(top + 10, left + 3, ttl_at,
+                         "Select Finish to add this interface to Settings draft.", w - 6);
+            }
+
+            if (st.err[0]) {
+                vid_puts(top + 12, left + 2, err_at, st.err, w - 4);
+            }
+            dos_vid_hdiv(g_vid, top + 13, left, w, bdr_at);
+
+            int fcnt = dos_wiz_field_count(&st);
+            int on_bar = (st.step == 0 || st.step == 3 || st.focus == fcnt);
+            if (st.step > 0) {
+                vid_puts(top + 14, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
+            } else {
+                vid_puts(top + 14, left + 2, fill_at, "  < Back  ", 10);
+            }
+            vid_puts(top + 14, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
+                     (st.step == 3) ? "[ Finish ]" : "[ Next > ]", 10);
+            vid_puts(top + 14, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 14, left + 38, fill_at,
+                     (st.step > 0) ? "PgUp/F3/Ctrl+B:Back" : "Up/Dn/1-5:Pick", w - 40);
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 73 || ext == 61) { /* PgUp / F3 -> Back */
+                if (st.step > 0) { st.step--; st.focus = 0; st.btn = 1; st.err[0] = '\0'; }
+                continue;
+            }
+            if (st.step == 0) {
+                if (ext == 72) st.drv = (st.drv + 4) % 5;
+                else if (ext == 80) st.drv = (st.drv + 1) % 5;
+                else if (ext == 71) st.drv = 0;
+                else if (ext == 79) st.drv = 4;
+                else if (ext == 75 || ext == 77) st.btn = (st.btn == 1) ? 2 : 1;
+            } else if (st.step == 3) {
+                if (ext == 75) st.btn = (st.btn + 2) % 3;
+                else if (ext == 77) st.btn = (st.btn + 1) % 3;
+            } else {
+                int fcnt = dos_wiz_field_count(&st);
+                if (ext == 72) st.focus = (st.focus + fcnt) % (fcnt + 1);
+                else if (ext == 80) st.focus = (st.focus + 1) % (fcnt + 1);
+                else if (st.focus == fcnt) {
+                    if (ext == 75) st.btn = (st.btn + 2) % 3;
+                    else if (ext == 77) st.btn = (st.btn + 1) % 3;
+                }
+            }
+            continue;
+        }
+
+        if (ch == 27) return 0;
+        if (ch == 2 && st.step > 0) { /* Ctrl+B -> Back */
+            st.step--; st.focus = 0; st.btn = 1; st.err[0] = '\0';
+            continue;
+        }
+
+        if (st.step == 0) {
+            if (ch >= '1' && ch <= '5') st.drv = ch - '1';
+            else if (ch == '\t') st.btn = (st.btn == 1) ? 2 : 1;
+            else if (ch == '\r' || ch == '\n') {
+                if (st.btn == 2) return 0;
+                if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+
+        if (st.step == 3) {
+            if (ch == '\t') st.btn = (st.btn + 1) % 3;
+            else if (ch == 'b' || ch == 'B') {
+                st.step = 2; st.focus = 0; st.btn = 1; st.err[0] = '\0';
+            } else if (ch == '\r' || ch == '\n' || ch == ' ') {
+                if (st.btn == 0) { st.step = 2; st.focus = 0; st.btn = 1; st.err[0] = '\0'; }
+                else if (st.btn == 2) return 0;
+                else if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+
+        int fcnt = dos_wiz_field_count(&st);
+        if (ch == '\t') {
+            st.focus = (st.focus + 1) % (fcnt + 1);
+            continue;
+        }
+        if (st.focus == fcnt) {
+            if (ch == '\r' || ch == '\n' || ch == ' ') {
+                if (st.btn == 0) { st.step--; st.focus = 0; st.btn = 1; st.err[0] = '\0'; }
+                else if (st.btn == 2) return 0;
+                else if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+
+        char* target = NULL;
+        size_t cap = 0;
+        if (st.step == 1) {
+            if (st.focus == 0) { target = st.id; cap = sizeof(st.id); }
+            else { target = st.desc; cap = sizeof(st.desc); }
+        } else {
+            if (st.focus == 0) { target = st.ep; cap = sizeof(st.ep); }
+            else if (st.focus == 1) { target = st.port; cap = sizeof(st.port); }
+            else { target = st.peer; cap = sizeof(st.peer); }
+        }
+
+        if (ch == '\r' || ch == '\n') {
+            if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+        } else if (target && (ch == 8 || ch == 127)) {
+            size_t n = strlen(target);
+            if (n > 0) target[n - 1] = '\0';
+            st.err[0] = '\0';
+        } else if (target && ch >= 32 && ch < 127) {
+            size_t n = strlen(target);
+            if (n + 1 < cap) {
+                target[n] = static_cast<char>(ch);
+                target[n + 1] = '\0';
+            }
+            st.err[0] = '\0';
+        }
+    }
+    return 0;
+}
+
 static void run_dos_settings() {
     static OykConfig draft;
     draft = g_node.config();
@@ -1573,8 +2110,17 @@ static void run_dos_settings() {
 
     int tab = 0;
     int sel[6] = { 0, 0, 0, 0, 0, 0 };
+    int dirty = 1;
     char fb[78];
     sprintf(fb, "Config: %.68s", draft.source_path[0] ? draft.source_path : "node.cfg");
+
+    oyk_u8 top_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1BU, 0x07U);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 tab_bg  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 tab_hi  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -1584,94 +2130,100 @@ static void run_dos_settings() {
         if (cnt <= 0) sel[tab] = 0;
         else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
 
-        vid_clear(0x17);
-        vid_puts(0, 0, 0x30, " OYK NODE SETTINGS (MS-DOS)                      F2/S:Save & Apply  Esc:Cancel", 80);
+        if (dirty) {
+            dirty = 0;
+            vid_clear(fill_at);
+            vid_puts(0, 0, top_at, " OYK NODE SETTINGS (MS-DOS)                      F2/S:Save & Apply  Esc:Cancel", 80);
 
-        /* Row 1: Tab bar */
-        vid_puts(1, 0, 0x70, "", 80);
-        int tx = 1;
-        for (int t = 0; t < 6; ++t) {
-            int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
-            vid_puts(1, tx, (t == tab) ? 0x1F : 0x70, TAB_NAMES[t], tlen);
-            tx += tlen + 1;
-        }
-        vid_puts(2, 0, 0x1B, "--------------------------------------------------------------------------------", 80);
-
-        if (tab != 3) {
-            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
-            for (int i = 0; i < cnt; ++i) {
-                char val[56], cs[16], row[82];
-                val[0] = '\0';
-                if (tab == 0) {
-                    if (i == 0) oyk_format_callsign(&draft.callsign, val, sizeof(val));
-                    else if (i == 1) { if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                    else if (i == 2) { strncpy(val, draft.welcome_text, 50); val[50] = '\0'; }
-                    else if (i == 3) { strncpy(val, draft.info_text, 50); val[50] = '\0'; }
-                    else if (i == 4) strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]");
-                } else if (tab == 1) {
-                    if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
-                    else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.bbs_ssid), cs); }
-                    else if (i == 2) { if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
-                    else if (i == 3) { if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                    else if (i == 4) strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]");
-                    else if (i == 5) { strncpy(val, draft.bbs_files_path, 50); val[50] = '\0'; }
-                    else if (i == 6) { strncpy(val, draft.bbs_mail_path, 50); val[50] = '\0'; }
-                    else if (i == 7) { strncpy(val, draft.bbs_welcome, 50); val[50] = '\0'; }
-                } else if (tab == 2) {
-                    if (i == 0) strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]");
-                    else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); }
-                    else if (i == 2) { if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
-                    else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                    else if (i == 4) { strncpy(val, draft.chat_topic, 50); val[50] = '\0'; }
-                    else if (i == 5) { strncpy(val, draft.chat_welcome, 50); val[50] = '\0'; }
-                } else if (tab == 4) {
-                    if (i == 0) strcpy(val, draft.rig_enabled ? "[ON]" : "[OFF]");
-                    else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 50); val[50] = '\0'; }
-                    else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 50); val[50] = '\0'; }
-                    else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft.rig_port));
-                    else if (i == 4) sprintf(val, "%u s", static_cast<unsigned int>(draft.rig_poll_sec));
-                    else if (i == 5) strcpy(val, draft.rig_notify ? "[ON]" : "[OFF]");
-                } else {
-                    if (i == 0) strcpy(val, draft.printer_enabled ? "[ON]" : "[OFF]");
-                    else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 50); val[50] = '\0'; }
-                    else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 50); val[50] = '\0'; }
-                    else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
-                    else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft.printer_level));
-                    else if (i == 5) strcpy(val, draft.printer_condensed ? "[ON]" : "[OFF]");
-                }
-                sprintf(row, " %-30.30s: %-45.45s", labels[i], val);
-                vid_puts(3 + i, 0, (i == sel[tab]) ? 0x30 : 0x17, row, 80);
+            /* Row 1: Tab bar */
+            vid_puts(1, 0, tab_bg, "", 80);
+            int tx = 1;
+            for (int t = 0; t < 6; ++t) {
+                int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
+                vid_puts(1, tx, (t == tab) ? tab_hi : tab_bg, TAB_NAMES[t], tlen);
+                tx += tlen + 1;
             }
-        } else {
-            vid_puts(3, 0, 0x1E, " #  ID          Type         Endpoint / Device             Peers", 80);
-            if (draft.iface_count == 0) {
-                vid_puts(4, 0, 0x17, " (no interfaces configured - press A to add)", 80);
-            } else {
-                for (int i = 0; i < draft.iface_count; ++i) {
-                    const OykIfaceConfig& ic = draft.ifaces[i];
-                    char row[82], ep[32];
-                    if (strcmp(ic.type, "kiss-serial") == 0 || strcmp(ic.type, "usb-cdc-serial") == 0) {
-                        sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
-                                static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+
+            dos_vid_box(g_vid, 2, 0, 20, 80, bdr_at, fill_at, 0);
+
+            if (tab != 3) {
+                const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
+                for (int i = 0; i < cnt; ++i) {
+                    char val[56], cs[16], row[82];
+                    val[0] = '\0';
+                    if (tab == 0) {
+                        if (i == 0) oyk_format_callsign(&draft.callsign, val, sizeof(val));
+                        else if (i == 1) { if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                        else if (i == 2) { strncpy(val, draft.welcome_text, 48); val[48] = '\0'; }
+                        else if (i == 3) { strncpy(val, draft.info_text, 48); val[48] = '\0'; }
+                        else if (i == 4) strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]");
+                    } else if (tab == 1) {
+                        if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
+                        else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.bbs_ssid), cs); }
+                        else if (i == 2) { if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
+                        else if (i == 3) { if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                        else if (i == 4) strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]");
+                        else if (i == 5) { strncpy(val, draft.bbs_files_path, 48); val[48] = '\0'; }
+                        else if (i == 6) { strncpy(val, draft.bbs_mail_path, 48); val[48] = '\0'; }
+                        else if (i == 7) { strncpy(val, draft.bbs_welcome, 48); val[48] = '\0'; }
+                    } else if (tab == 2) {
+                        if (i == 0) strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]");
+                        else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); }
+                        else if (i == 2) { if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
+                        else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
+                        else if (i == 4) { strncpy(val, draft.chat_topic, 48); val[48] = '\0'; }
+                        else if (i == 5) { strncpy(val, draft.chat_welcome, 48); val[48] = '\0'; }
+                    } else if (tab == 4) {
+                        if (i == 0) strcpy(val, draft.rig_enabled ? "[ON]" : "[OFF]");
+                        else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 48); val[48] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 48); val[48] = '\0'; }
+                        else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft.rig_port));
+                        else if (i == 4) sprintf(val, "%u s", static_cast<unsigned int>(draft.rig_poll_sec));
+                        else if (i == 5) strcpy(val, draft.rig_notify ? "[ON]" : "[OFF]");
                     } else {
-                        sprintf(ep, "%.20s:%u", ic.host[0] ? ic.host : "0.0.0.0",
-                                static_cast<unsigned int>(ic.port));
+                        if (i == 0) strcpy(val, draft.printer_enabled ? "[ON]" : "[OFF]");
+                        else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 48); val[48] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 48); val[48] = '\0'; }
+                        else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
+                        else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft.printer_level));
+                        else if (i == 5) strcpy(val, draft.printer_condensed ? "[ON]" : "[OFF]");
                     }
-                    sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
-                            i + 1, ic.id, ic.type, ep, ic.peer_count);
-                    vid_puts(4 + i, 0, (i == sel[3]) ? 0x30 : 0x17, row, 80);
+                    sprintf(row, " %-29.29s: %-46.46s", labels[i], val);
+                    vid_puts(3 + i, 1, (i == sel[tab]) ? sel_at : fill_at, row, 78);
+                }
+            } else {
+                vid_puts(3, 1, hdr_at, " #  ID          Type         Endpoint / Device             Peers", 78);
+                if (draft.iface_count == 0) {
+                    vid_puts(4, 1, fill_at, " (no interfaces configured - press A to add)", 78);
+                } else {
+                    for (int i = 0; i < draft.iface_count && i < 16; ++i) {
+                        const OykIfaceConfig& ic = draft.ifaces[i];
+                        char row[82], ep[32];
+                        if (strcmp(ic.type, "kiss-serial") == 0 || strcmp(ic.type, "usb-cdc-serial") == 0) {
+                            sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
+                                    static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
+                        } else {
+                            sprintf(ep, "%.20s:%u", ic.host[0] ? ic.host : "0.0.0.0",
+                                    static_cast<unsigned int>(ic.port));
+                        }
+                        sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
+                                i + 1, ic.id, ic.type, ep, ic.peer_count);
+                        vid_puts(4 + i, 1, (i == sel[3]) ? sel_at : fill_at, row, 78);
+                    }
                 }
             }
-        }
 
-        vid_puts(23, 0, 0x1E, fb, 80);
-        if (tab == 3) {
-            vid_puts(24, 0, 0x70, " Tab/1-6:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
-        } else {
-            vid_puts(24, 0, 0x70, " Tab/Lt/Rt/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
+            vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
+            if (tab == 3) {
+                vid_puts(24, 0, tab_bg, " Tab/1-6:Tabs  A:Add Interface  D:Remove  S/F2:Save & Apply  Esc:Cancel ", 80);
+            } else {
+                vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
+            }
+            dos_vid_flush(g_vid);
         }
 
         if (!kbhit()) continue;
+        dirty = 1;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
@@ -1704,6 +2256,7 @@ static void run_dos_settings() {
                 vid_puts(10, 4, 0x4F, "Changes have been applied to the running node in memory only", 72);
                 vid_puts(11, 4, 0x4F, "and will be lost when the software exits.", 72);
                 vid_puts(14, 4, 0x4E, "Press any key to continue...", 72);
+                dos_vid_flush(g_vid);
                 getch();
                 strcpy(g_status_line, "Settings applied IN MEMORY ONLY (config not writable).");
             } else {
@@ -1719,44 +2272,13 @@ static void run_dos_settings() {
                     continue;
                 }
                 OykIfaceConfig ic;
-                memset(&ic, 0, sizeof(ic));
-                int ok = 0;
-                strcpy(ic.id, "axudp1");
-                prompt_line_prefill("Interface ID: ", ic.id, sizeof(ic.id), &ok);
-                if (!ok || !ic.id[0]) { strcpy(fb, "Add cancelled."); continue; }
-                int dup = 0;
-                for (int i = 0; i < draft.iface_count; ++i) {
-                    if (strcmp(draft.ifaces[i].id, ic.id) == 0) { dup = 1; break; }
-                }
-                if (dup) { strcpy(fb, "Duplicate interface ID."); continue; }
-
-                strcpy(ic.type, "axudp");
-                prompt_line_prefill("Type [axudp|kiss-serial|usb-cdc-serial|usb-cdc-net|telnet]: ", ic.type, sizeof(ic.type), &ok);
-                if (!ok || !ic.type[0]) { strcpy(fb, "Add cancelled."); continue; }
-
-                if (strcmp(ic.type, "kiss-serial") == 0 || strcmp(ic.type, "usb-cdc-serial") == 0) {
-                    strcpy(ic.device, (strcmp(ic.type, "usb-cdc-serial") == 0) ? "USBCOM1" : "COM1");
-                    prompt_line_prefill("Serial Device (COM1..4 or USBCOM1): ", ic.device, sizeof(ic.device), &ok);
-                    if (!ok) continue;
-                    char bb[12];
-                    strcpy(bb, (strcmp(ic.type, "usb-cdc-serial") == 0) ? "115200" : "9600");
-                    prompt_line_prefill("Baud rate: ", bb, sizeof(bb), &ok);
-                    ic.baud = atol(bb) > 0L ? static_cast<oyk_u32>(atol(bb)) : 9600UL;
+                if (run_dos_add_iface_wizard(&draft, &ic)) {
+                    draft.ifaces[draft.iface_count++] = ic;
+                    sel[3] = draft.iface_count - 1;
+                    sprintf(fb, "Added interface %s (press S/F2 to Save & Apply).", ic.id);
                 } else {
-                    strcpy(ic.host, "0.0.0.0");
-                    prompt_line_prefill("Host / Bind IP: ", ic.host, sizeof(ic.host), &ok);
-                    if (!ok) continue;
-                    char pb[10];
-                    if (strcmp(ic.type, "telnet") == 0) strcpy(pb, "8010");
-                    else if (strcmp(ic.type, "kiss-tcp") == 0) strcpy(pb, "8001");
-                    else strcpy(pb, "10093");
-                    prompt_line_prefill("Port: ", pb, sizeof(pb), &ok);
-                    if (!ok) continue;
-                    ic.port = static_cast<oyk_u16>(atoi(pb));
+                    strcpy(fb, "Add interface cancelled.");
                 }
-                draft.ifaces[draft.iface_count++] = ic;
-                sel[3] = draft.iface_count - 1;
-                sprintf(fb, "Added interface %s (press S/F2 to Save & Apply).", ic.id);
             } else if ((ch == 'd' || ch == 'D') && draft.iface_count > 0) {
                 char yn[4], pr[48];
                 sprintf(pr, "Remove interface %s? [Y/N]: ", draft.ifaces[sel[3]].id);
@@ -1934,17 +2456,27 @@ static void open_dos_node_menu(int* running) {
 
     int sel = 0;
     int chosen = -1;
+    int dirty = 1;
+    oyk_u8 menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    oyk_u8 menu_sel = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     while (chosen < 0 && !g_break_flag) {
-        vid_puts(1, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(4, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(11, 1, 0x70, "+--------------------------------+", 34);
-        vid_puts(13, 1, 0x70, "+--------------------------------+", 34);
-        for (int i = 0; i < 9; ++i) {
-            vid_puts(ITEM_ROWS[i], 1, 0x70, "|", 1);
-            vid_puts(ITEM_ROWS[i], 2, (i == sel) ? 0x1F : 0x70, ITEMS[i], 32);
-            vid_puts(ITEM_ROWS[i], 34, 0x70, "|", 1);
+        dos_pump_network();
+        g_node.tick();
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, 1, 1, 13, 34, menu_bg, menu_bg, 0);
+            dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
+            dos_vid_hdiv(g_vid, 11, 1, 34, menu_bg);
+            for (int i = 0; i < 9; ++i) {
+                dos_vid_putc(g_vid, ITEM_ROWS[i], 1, menu_bg, OYK_BOX_V);
+                vid_puts(ITEM_ROWS[i], 2, (i == sel) ? menu_sel : menu_bg, ITEMS[i], 32);
+                dos_vid_putc(g_vid, ITEM_ROWS[i], 34, menu_bg, OYK_BOX_V);
+            }
+            dos_vid_flush(g_vid);
         }
 
+        if (!kbhit()) continue;
+        dirty = 1;
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
@@ -2008,6 +2540,21 @@ static void print_dos_usage(const char* prog) {
     printf("      --port <UDP_PORT>    Override first AXUDP bind port (default 10093)\n");
     printf("      --headless           Run without full-screen UI (log to stdout)\n");
     printf("  -h, --help               Show this help\n");
+}
+
+static oyk_u32 dos_screen_signature() {
+    oyk_u32 sig = g_node.uptime_seconds();
+    sig = (sig * 1315423911UL) ^ static_cast<oyk_u32>(g_node.total_active_connections());
+    sig = (sig << 5) ^ static_cast<oyk_u32>(g_node.ban_count());
+    sig = (sig << 5) ^ static_cast<oyk_u32>(g_node.console_log_count());
+    sig = (sig << 5) ^ static_cast<oyk_u32>(g_node.new_heard_count());
+    sig ^= g_node.accept_incoming() ? 0x10000UL : 0UL;
+    sig ^= dos_local_term_is_active() ? 0x20000UL : 0UL;
+    for (int i = 0; i < g_node.iface_count(); ++i) {
+        const OykIfaceRuntime& r = g_node.iface(i);
+        sig ^= (r.rx_frames + r.tx_frames + (r.running ? 1UL : 0UL)) << ((i & 3) * 4);
+    }
+    return sig;
 }
 
 int main(int argc, char* argv[]) {
@@ -2178,11 +2725,12 @@ int main(int argc, char* argv[]) {
             }
         }
     } else {
-        g_vseg = detect_video_seg();
-        vid_clear(0x07);
+        g_vid = new OykDosVideo;
+        dos_vid_init(g_vid);
 
         int running = 1;
-        oyk_u32 last_draw = dos_ticks_now();
+        render_dos_screen();
+        oyk_u32 last_sig = dos_screen_signature();
 
         while (running && !g_break_flag) {
             dos_pump_network();
@@ -2221,11 +2769,13 @@ int main(int argc, char* argv[]) {
                     run_dos_menu_action(8, &running);
                 }
                 render_dos_screen();
-            }
-
-            if (dos_ticks_elapsed_ms(last_draw) >= 250UL) {
-                last_draw = dos_ticks_now();
-                render_dos_screen();
+                last_sig = dos_screen_signature();
+            } else {
+                oyk_u32 sig = dos_screen_signature();
+                if (sig != last_sig) {
+                    last_sig = sig;
+                    render_dos_screen();
+                }
             }
         }
     }
@@ -2261,7 +2811,11 @@ int main(int argc, char* argv[]) {
     dos_printer_close();
     oyk_dos_pktdrv_shutdown(&g_pktdrv);
     g_ems.shutdown();
-    vid_clear(0x07);
+    if (!headless && g_vid) {
+        dos_vid_shutdown(g_vid);
+        delete g_vid;
+        g_vid = NULL;
+    }
     printf("OYK Packet Node (MS-DOS) exited cleanly.\n");
     return 0;
 }

@@ -42,6 +42,13 @@ enum TinyTmuxViewMode {
     TMUX_VIEW_STORAGE
 };
 
+enum TinyTmuxTermType {
+    TMUX_TERM_VT100 = 0,
+    TMUX_TERM_VT220,
+    TMUX_TERM_VT340,
+    TMUX_TERM_XTERM256
+};
+
 class TinyTmuxConsole {
 public:
     TinyTmuxConsole();
@@ -51,7 +58,12 @@ public:
     void set_now_ms(oyk_u32 now_ms) { now_ms_ = now_ms; }
     void tick(oyk_u32 now_ms);
 
-    /* Render current screen as ANSI/VT100 escape sequences */
+    /* Called when USB-CDC0 operator terminal connects: sends DA1/DA2 inquiry & renders */
+    void on_usb_connect();
+    TinyTmuxTermType term_type() const { return term_type_; }
+    const char* term_type_label() const;
+
+    /* Render current screen as ANSI/VT escape sequences */
     void render();
 
     /* Process incoming keystrokes / ANSI escapes from USB-CDC0 or UART terminal */
@@ -77,8 +89,7 @@ private:
         PROMPT_BAN_ACTION,
         PROMPT_BAN_REASON,
         PROMPT_SETTINGS_VALUE,
-        PROMPT_SETTINGS_NEW_IFACE_ID,
-        PROMPT_SETTINGS_NEW_IFACE_TYPE,
+        PROMPT_SETTINGS_ADD_WIZARD,
         PROMPT_RIG_FREQ,
         PROMPT_RIG_MODE,
         PROMPT_RIG_VFO,
@@ -99,6 +110,19 @@ private:
     void dispatch_key(int key);
     void process_csi_final(char final_ch);
     void process_ss3_final(char ch);
+    void handle_da_csi();
+
+    const char* sgr_border() const;
+    const char* sgr_title() const;
+    const char* sgr_header() const;
+    const char* sgr_menubar() const;
+    const char* sgr_menusel() const;
+    const char* sgr_list_hdr() const;
+    const char* sgr_sel() const;
+    const char* sgr_warn() const;
+    void draw_dec_box(int row, int col, int h, int w, const char* title, int clear_interior);
+    void draw_dec_hdiv(int row, int col, int w);
+
     void render_console();
     void render_menu();
     void render_local_terminal();
@@ -109,6 +133,14 @@ private:
     void render_bootloader();
     void render_storage();
     void render_prompt_overlay();
+    void render_add_iface_wizard();
+    void render_confirm_format_modal();
+
+    void handle_add_wizard_key(int key);
+    void wizard_apply_driver_defaults();
+    int wizard_try_advance();
+    void wizard_commit();
+    int wizard_step_field_count() const;
 
     void handle_console_key(int key);
     void handle_menu_key(int key);
@@ -136,6 +168,7 @@ private:
     void* tx_ctx_;
     oyk_u32 now_ms_;
 
+    TinyTmuxTermType term_type_;
     TinyTmuxViewMode view_;
     int menu_sel_;
     char status_line_[96];
@@ -155,14 +188,24 @@ private:
     int settings_sel_[6];
     int settings_iface_field_;
 
-    /* Line prompt state */
+    /* Line & modal prompt state */
     PromptKind prompt_kind_;
     char prompt_label_[48];
     char prompt_buf_[128];
     int prompt_len_;
     char ban_call_tmp_[16];
     char ban_action_tmp_[16];
-    char new_iface_id_tmp_[16];
+    int wiz_step_;
+    int wiz_drv_;
+    int wiz_last_drv_;
+    int wiz_focus_;
+    int wiz_btn_;
+    char wiz_id_[16];
+    char wiz_desc_[32];
+    char wiz_ep_[32];
+    char wiz_port_[12];
+    char wiz_peer_[32];
+    char wiz_err_[56];
 
     /* Persistent switchable local terminal state */
     oyk_u32 lterm_sid_;
@@ -175,7 +218,7 @@ private:
     int lterm_input_len_;
 
     EscState esc_state_;
-    char esc_buf_[16];
+    char esc_buf_[48];
     int esc_len_;
     oyk_u32 esc_start_ms_;
     oyk_u32 last_marchc_redraw_ms_;

@@ -351,6 +351,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
         ports/dos/dos_usb.cpp
+        ports/dos/dos_video.cpp
     )
     target_include_directories(oyk_portable_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat

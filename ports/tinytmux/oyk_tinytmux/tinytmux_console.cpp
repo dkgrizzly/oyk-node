@@ -41,22 +41,37 @@ static void con_str_copy(char* dst, size_t dst_sz, const char* src) {
     dst[n] = '\0';
 }
 
+struct TinyTmuxDriverOpt {
+    const char* type;
+    const char* desc;
+};
+
+static const TinyTmuxDriverOpt TINYTMUX_DRIVERS[7] = {
+    { "axudp",          "AX.25 over UDP (Ethernet/USB)" },
+    { "axip",           "AX.25 over IP (Protocol 93)" },
+    { "ppp",            "PPP over Hardware UART (serN)" },
+    { "kiss-serial",    "KISS TNC over UART (serN)" },
+    { "usb-cdc-net",    "AXUDP over USB Host CDC-ECM" },
+    { "usb-cdc-serial", "KISS over USB Host CDC-ACM" },
+    { "telnet",         "Plaintext Telnet User Port" }
+};
+
 static const char* cycle_iface_type(const char* cur) {
-    static const char* TYPES[7] = {
-        "axudp", "axip", "ppp", "kiss-serial", "usb-cdc-net", "usb-cdc-serial", "telnet"
-    };
     for (int i = 0; i < 7; ++i) {
-        if (strieq_ci(cur, TYPES[i])) return TYPES[(i + 1) % 7];
+        if (strieq_ci(cur, TINYTMUX_DRIVERS[i].type)) {
+            return TINYTMUX_DRIVERS[(i + 1) % 7].type;
+        }
     }
-    return TYPES[0];
+    return TINYTMUX_DRIVERS[0].type;
 }
 
 TinyTmuxConsole::TinyTmuxConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL), now_ms_(0),
-      view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
+      term_type_(TMUX_TERM_VT100), view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
       files_tab_(0), pending_count_(0), approved_count_(0),
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
+      wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
       lterm_sid_(0), lterm_is_local_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
@@ -75,7 +90,12 @@ TinyTmuxConsole::TinyTmuxConsole()
     prompt_buf_[0] = '\0';
     ban_call_tmp_[0] = '\0';
     ban_action_tmp_[0] = '\0';
-    new_iface_id_tmp_[0] = '\0';
+    wiz_id_[0] = '\0';
+    wiz_desc_[0] = '\0';
+    wiz_ep_[0] = '\0';
+    wiz_port_[0] = '\0';
+    wiz_peer_[0] = '\0';
+    wiz_err_[0] = '\0';
     memset(lterm_lines_, 0, sizeof(lterm_lines_));
     lterm_curline_[0] = '\0';
     lterm_input_[0] = '\0';
@@ -85,6 +105,7 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     node_ = node;
     tx_fn_ = tx_fn;
     tx_ctx_ = tx_ctx;
+    term_type_ = TMUX_TERM_VT100;
     view_ = TMUX_VIEW_CONSOLE;
     menu_sel_ = 0;
     files_tab_ = 0;
@@ -92,6 +113,17 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     files_sel_[1] = 0;
     prompt_kind_ = PROMPT_NONE;
     prompt_len_ = 0;
+    wiz_step_ = 0;
+    wiz_drv_ = 0;
+    wiz_last_drv_ = -1;
+    wiz_focus_ = 0;
+    wiz_btn_ = 1;
+    wiz_id_[0] = '\0';
+    wiz_desc_[0] = '\0';
+    wiz_ep_[0] = '\0';
+    wiz_port_[0] = '\0';
+    wiz_peer_[0] = '\0';
+    wiz_err_[0] = '\0';
     lterm_sid_ = 0;
     lterm_is_local_ = 0;
     lterm_line_count_ = 0;
@@ -106,6 +138,134 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
 
 void TinyTmuxConsole::set_net_bridge(TinyTmuxNetBridge* bridge) {
     bridge_ = bridge;
+}
+
+const char* TinyTmuxConsole::term_type_label() const {
+    switch (term_type_) {
+        case TMUX_TERM_VT220:    return "VT220";
+        case TMUX_TERM_VT340:    return "VT340";
+        case TMUX_TERM_XTERM256: return "xterm-256";
+        default:                 return "VT100";
+    }
+}
+
+void TinyTmuxConsole::on_usb_connect() {
+    term_type_ = TMUX_TERM_VT100;
+    reset_escape();
+    /* Asynchronous DA1 + DA2 inquiry; safe fallback stays in VT100 if terminal ignores queries. */
+    write_str("\033[c\033[>c");
+    render();
+}
+
+const char* TinyTmuxConsole::sgr_border() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[38;5;38m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[36m";
+    return "";
+}
+
+const char* TinyTmuxConsole::sgr_title() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;38;5;81m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;36m";
+    return "\033[1m";
+}
+
+const char* TinyTmuxConsole::sgr_header() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;24m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;37;44m";
+    return "\033[1m";
+}
+
+const char* TinyTmuxConsole::sgr_menubar() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[30;48;5;252m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[30;47m";
+    return "\033[7m";
+}
+
+const char* TinyTmuxConsole::sgr_menusel() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;25m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;37;44m";
+    return "\033[7m";
+}
+
+const char* TinyTmuxConsole::sgr_list_hdr() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;238m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;97;100m";
+    return "\033[1;7m";
+}
+
+const char* TinyTmuxConsole::sgr_sel() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;30;48;5;45m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;30;46m";
+    return "\033[7m";
+}
+
+const char* TinyTmuxConsole::sgr_warn() const {
+    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;38;5;220m";
+    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;33m";
+    return "\033[1m";
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
+                                                const char* title, int clear_interior) {
+    if (h < 2 || w < 4) return;
+    char line[112];
+    int inner = w - 2;
+    if (inner > 78) inner = 78;
+
+    /* Top border */
+    sprintf(line, "\033[%d;%dH%s\033(0l", row, col, sgr_border());
+    write_str(line);
+    for (int i = 0; i < inner; ++i) line[i] = 'q';
+    line[inner] = 'k';
+    line[inner + 1] = '\0';
+    write_str(line);
+    write_str("\033(B\033[0m");
+
+    if (title && title[0] && inner > 4) {
+        char tbuf[80];
+        int max_t = inner - 4;
+        if (max_t > 68) max_t = 68;
+        sprintf(tbuf, " %.*s ", max_t, title);
+        sprintf(line, "\033[%d;%dH%s%s\033[0m", row, col + 2, sgr_title(), tbuf);
+        write_str(line);
+    }
+
+    /* Sides */
+    for (int r = 1; r < h - 1; ++r) {
+        if (clear_interior) {
+            sprintf(line, "\033[%d;%dH%s\033(0x\033(B\033[0m%*s%s\033(0x\033(B\033[0m",
+                    row + r, col, sgr_border(), inner, "", sgr_border());
+            write_str(line);
+        } else {
+            sprintf(line, "\033[%d;%dH%s\033(0x\033(B\033[0m\033[%d;%dH%s\033(0x\033(B\033[0m",
+                    row + r, col, sgr_border(),
+                    row + r, col + w - 1, sgr_border());
+            write_str(line);
+        }
+    }
+
+    /* Bottom border */
+    sprintf(line, "\033[%d;%dH%s\033(0m", row + h - 1, col, sgr_border());
+    write_str(line);
+    for (int i = 0; i < inner; ++i) line[i] = 'q';
+    line[inner] = 'j';
+    line[inner + 1] = '\0';
+    write_str(line);
+    write_str("\033(B\033[0m");
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::draw_dec_hdiv(int row, int col, int w) {
+    if (w < 4) return;
+    char line[96];
+    int inner = w - 2;
+    if (inner > 78) inner = 78;
+    sprintf(line, "\033[%d;%dH%s\033(0t", row, col, sgr_border());
+    write_str(line);
+    for (int i = 0; i < inner; ++i) line[i] = 'q';
+    line[inner] = 'u';
+    line[inner + 1] = '\0';
+    write_str(line);
+    write_str("\033(B\033[0m");
 }
 
 void TinyTmuxConsole::write_str(const char* s) {
@@ -161,6 +321,9 @@ void TinyTmuxConsole::on_local_term_event(oyk_u32 sid, int event_type,
 
 void TinyTmuxConsole::render() {
     if (!node_ || !tx_fn_) return;
+    if (term_type_ >= TMUX_TERM_VT220) {
+        write_str("\033[?25l");
+    }
     switch (view_) {
         case TMUX_VIEW_LOCAL_TERM:
             render_local_terminal();
@@ -191,8 +354,20 @@ void TinyTmuxConsole::render() {
             render_console();
             break;
     }
-    if (prompt_kind_ != PROMPT_NONE) {
+    if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
+        render_add_iface_wizard();
+    } else if (prompt_kind_ == PROMPT_CONFIRM_FORMAT) {
+        render_confirm_format_modal();
+    } else if (prompt_kind_ != PROMPT_NONE) {
         render_prompt_overlay();
+    }
+    if (term_type_ >= TMUX_TERM_VT220 &&
+        (view_ == TMUX_VIEW_LOCAL_TERM ||
+         (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD &&
+          (wiz_step_ == 1 || wiz_step_ == 2) &&
+          wiz_focus_ < wizard_step_field_count()) ||
+         (prompt_kind_ != PROMPT_NONE && prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD))) {
+        write_str("\033[?25h");
     }
 }
 
@@ -210,12 +385,15 @@ void TinyTmuxConsole::render_console() {
     write_str("\033[H\033[2J");
 
     /* Row 1: Top Menu Bar */
-    sprintf(buf, "\033[7m Node (M) | Settings (S) | Files (F) | Radio (R) | %-26s \033[0m\r\n",
-            lterm_sid_ ? "Tab:Term(ACTIVE)" : "Tab:Term");
+    sprintf(buf, "%s Node (M) | Settings (S) | Files (F) | Radio (R) | %-16s [%-9s] \033[0m",
+            sgr_menubar(),
+            lterm_sid_ ? "Tab:Term(ACTIVE)" : "Tab:Term",
+            term_type_label());
     write_str(buf);
 
     /* Row 2: Header Bar with PSRAM and USBH hardware indicators */
-    sprintf(buf, "\033[1;36mOYK TMUX: %-9s Up:%lus C:%d [IN:%s] PSRAM:%-3s USBH:%-3s\033[0m\r\n",
+    sprintf(buf, "\033[2;1H%s OYK TMUX: %-9s Up:%-5lus C:%-2d [IN:%-5s] PSRAM:%-3s USBH:%-3s            \033[0m",
+            sgr_header(),
             call_s,
             static_cast<unsigned long>(node_->uptime_seconds()),
             node_->total_active_connections(),
@@ -224,35 +402,47 @@ void TinyTmuxConsole::render_console() {
             usbh_s);
     write_str(buf);
 
-    /* Interfaces & Last 5 New Callsigns Heard */
-    write_str("Port     Type    Conn Status             RX/TX  | Last 5 New Callsigns\r\n");
+    /* Rows 3..10: Side-by-side DEC-bordered Interfaces (left) & New Callsigns (right) */
+    draw_dec_box(3, 1, 8, 45, "Interfaces", 0);
+    draw_dec_box(3, 46, 8, 35, "Last 5 New Callsigns Heard", 0);
+
+    sprintf(buf, "\033[4;2H%s %-8s %-12s %-2s %-14s\033[0m",
+            sgr_list_hdr(), "Port", "Type", "C", "Status / RX-TX");
+    write_str(buf);
+    sprintf(buf, "\033[4;47H%s %-2s %-9s %-7s %-8s \033[0m",
+            sgr_list_hdr(), "#", "Callsign", "Iface", "Time");
+    write_str(buf);
+
     for (int i = 0; i < 5; ++i) {
-        char left[80], right[40];
+        char left[48], right[40];
         if (i < node_->iface_count()) {
             const OykIfaceRuntime& r = node_->iface(i);
-            sprintf(left, "%-8.8s %-7.7s %-4d %-18.18s %lu/%lu",
-                    r.cfg.id, r.cfg.type, node_->active_connections_on(i), r.status,
-                    static_cast<unsigned long>(r.rx_frames),
-                    static_cast<unsigned long>(r.tx_frames));
+            sprintf(left, " %-8.8s %-12.12s %-2d %-14.14s",
+                    r.cfg.id, r.cfg.type, node_->active_connections_on(i), r.status);
         } else {
             left[0] = '\0';
         }
         if (i < node_->new_heard_count()) {
             const OykNewHeard& nh = node_->new_heard(i);
-            sprintf(right, "%d.%-9.9s %-7.7s %s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
+            sprintf(right, " %d %-9.9s %-7.7s %-8.8s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
         } else {
             right[0] = '\0';
         }
-        sprintf(buf, "%-47.47s | %-28.28s\r\n", left, right);
+        sprintf(buf, "\033[%d;2H%-43.43s\033[%d;47H%-33.33s", 5 + i, left, 5 + i, right);
         write_str(buf);
     }
 
-    /* Active Connections */
-    sprintf(buf, "\033[1mActive Connections (%d) | Bans: %d\033[0m\r\n",
+    /* Rows 11..16: Active Connections */
+    char conn_title[48];
+    sprintf(conn_title, "Active Connections (%d) | Bans: %d",
             node_->total_active_connections(), node_->ban_count());
+    draw_dec_box(11, 1, 6, 80, conn_title, 0);
+    sprintf(buf, "\033[12;2H%s %-4s %-10s %-8s %-8s %-43s\033[0m",
+            sgr_list_hdr(), "#", "Callsign", "Iface", "Since", "Service / Role");
     write_str(buf);
+
     int shown = 0;
-    for (int i = 0; i < node_->max_sessions() && shown < 5; ++i) {
+    for (int i = 0; i < node_->max_sessions() && shown < 3; ++i) {
         const OykSession& s = node_->session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
             char cs[12];
@@ -261,7 +451,8 @@ void TinyTmuxConsole::render_console() {
                                                 : (s.in_bbs ? "BBS"
                                                             : (s.in_chat ? "CHAT"
                                                                          : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
-            sprintf(buf, "#%-3lu %-10.10s %-8.8s %-8.8s %s\r\n",
+            sprintf(buf, "\033[%d;2H #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
+                    13 + shown,
                     static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? node_->iface(s.iface_idx).cfg.id : "local",
                     s.since_hms, role);
@@ -269,49 +460,55 @@ void TinyTmuxConsole::render_console() {
             ++shown;
         }
     }
-    if (shown == 0) {
-        write_str("(no active connections)\r\n");
-    }
-
-    /* Recent Activity Log */
-    write_str("\033[1mNode Activity Log:\033[0m\r\n");
-    int total_logs = node_->console_log_count();
-    int start = (total_logs > 5) ? (total_logs - 5) : 0;
-    for (int i = start; i < total_logs; ++i) {
-        sprintf(buf, "%.78s\r\n", node_->console_log_line(i));
+    for (int r = shown; r < 3; ++r) {
+        sprintf(buf, "\033[%d;2H%-78.78s",
+                13 + r, (r == 0 && shown == 0) ? " (no active connections)" : "");
         write_str(buf);
     }
 
-    /* Bottom Status Line */
-    sprintf(buf, "\033[7m %-78.78s \033[0m\r\n", status_line_);
+    /* Rows 17..23: Node Activity Log */
+    draw_dec_box(17, 1, 7, 80, "Node Activity Log", 0);
+    int total_logs = node_->console_log_count();
+    int start = (total_logs > 5) ? (total_logs - 5) : 0;
+    int lrow = 0;
+    for (int i = start; i < total_logs && lrow < 5; ++i, ++lrow) {
+        sprintf(buf, "\033[%d;2H %-77.77s", 18 + lrow, node_->console_log_line(i));
+        write_str(buf);
+    }
+    for (; lrow < 5; ++lrow) {
+        sprintf(buf, "\033[%d;2H%-78s", 18 + lrow, "");
+        write_str(buf);
+    }
+
+    /* Row 24: Bottom Status Line */
+    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m", sgr_warn(), status_line_);
     write_str(buf);
 }
 
 void TinyTmuxConsole::render_menu() {
     static const char* ITEMS[12] = {
-        " [A] Allow Incoming Connections ",
-        " [D] Deny Incoming Connections  ",
-        " [L] Local Terminal...          ",
-        " [F] Manage Files Area...       ",
-        " [R] Radio Control...           ",
-        " [S] Settings...                ",
-        " [T] Terminate Connection...    ",
-        " [B] Ban / Unban Callsign...    ",
-        " [P] PSRAM Diagnostics...       ",
-        " [G] Storage Manager...         ",
-        " [U] Enter HalfKay Bootloader   ",
-        " [X] Close Menu                 "
+        " [A] Allow Incoming Connections   ",
+        " [D] Deny Incoming Connections    ",
+        " [L] Local Terminal...            ",
+        " [F] Manage Files Area...         ",
+        " [R] Radio Control...             ",
+        " [S] Settings...                  ",
+        " [T] Terminate Connection...      ",
+        " [B] Ban / Unban Callsign...      ",
+        " [P] PSRAM Diagnostics...         ",
+        " [G] Storage Manager...           ",
+        " [U] Enter HalfKay Bootloader     ",
+        " [X] Close Menu                   "
     };
     static const int ITEM_ROWS[12] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16 };
 
-    write_str("\033[2;3H+--------------------------------+");
-    write_str("\033[5;3H+--------------------------------+");
-    write_str("\033[15;3H+--------------------------------+");
-    write_str("\033[17;3H+--------------------------------+");
+    draw_dec_box(2, 2, 16, 36, "Node Menu", 0);
+    draw_dec_hdiv(5, 2, 36);
+    draw_dec_hdiv(15, 2, 36);
     for (int i = 0; i < 12; ++i) {
         char row[80];
-        sprintf(row, "\033[%d;3H|%s%.32s\033[0m|",
-                ITEM_ROWS[i], (i == menu_sel_) ? "\033[7m" : "", ITEMS[i]);
+        sprintf(row, "\033[%d;3H%s%.34s\033[0m",
+                ITEM_ROWS[i], (i == menu_sel_) ? sgr_menusel() : "", ITEMS[i]);
         write_str(row);
     }
 }
@@ -319,8 +516,8 @@ void TinyTmuxConsole::render_menu() {
 void TinyTmuxConsole::render_local_terminal() {
     char buf[160];
     write_str("\033[H\033[2J");
-    sprintf(buf, "\033[7m OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc \033[0m\r\n",
-            lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    sprintf(buf, "%s OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc \033[0m\r\n",
+            sgr_header(), lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
     write_str(buf);
     for (int i = 0; i < lterm_line_count_; ++i) {
         write_str(lterm_lines_[i]);
@@ -338,89 +535,107 @@ void TinyTmuxConsole::refresh_files_lists() {
 }
 
 void TinyTmuxConsole::render_files() {
-    char buf[160];
+    char buf[192];
     write_str("\033[H\033[2J");
-    write_str("\033[7m FILES AREA MANAGER (TinyTMUX)                       Esc:Back  R:Refresh \033[0m\r\n");
-    sprintf(buf, " %s 1:Pending Incoming (%d) \033[0m  %s 2:Approved Files (%d) \033[0m\r\n",
-            (files_tab_ == 0) ? "\033[7m" : "", pending_count_,
-            (files_tab_ == 1) ? "\033[7m" : "", approved_count_);
+    sprintf(buf, "%s FILES AREA MANAGER (TinyTMUX)                       Esc:Back  R:Refresh \033[0m", sgr_header());
     write_str(buf);
-    write_str("------------------------------------------------------------------------------\r\n");
+    sprintf(buf, "\033[2;2H%s 1:Pending Incoming (%d) \033[0m  %s 2:Approved Files (%d) \033[0m",
+            (files_tab_ == 0) ? sgr_menusel() : sgr_menubar(), pending_count_,
+            (files_tab_ == 1) ? sgr_menusel() : sgr_menubar(), approved_count_);
+    write_str(buf);
+
+    draw_dec_box(3, 1, 19, 80, (files_tab_ == 0) ? "Pending Incoming" : "Approved Files", 0);
 
     if (files_tab_ == 0) {
-        write_str(" Uploader        Filename                         Size\r\n");
-        if (pending_count_ == 0) {
-            write_str(" (no pending uploads in incoming/)\r\n");
-        } else {
-            int max_show = (pending_count_ < 12) ? pending_count_ : 12;
-            for (int i = 0; i < max_show; ++i) {
-                sprintf(buf, "%s %-15.15s %-32.32s %lu \033[0m\r\n",
-                        (i == files_sel_[0]) ? "\033[7m" : "",
+        sprintf(buf, "\033[4;2H%s %-15s %-46s %-14s\033[0m",
+                sgr_list_hdr(), "Uploader", "Filename", "Size");
+        write_str(buf);
+        int max_show = 15;
+        for (int i = 0; i < max_show; ++i) {
+            if (pending_count_ == 0 && i == 0) {
+                sprintf(buf, "\033[%d;2H %-77s", 5 + i, "(no pending uploads in incoming/)");
+            } else if (i < pending_count_) {
+                sprintf(buf, "\033[%d;2H%s %-15.15s %-46.46s %-14lu\033[0m",
+                        5 + i, (i == files_sel_[0]) ? sgr_sel() : "",
                         pending_files_[i].uploader,
                         pending_files_[i].filename,
                         static_cast<unsigned long>(pending_files_[i].size));
-                write_str(buf);
+            } else {
+                sprintf(buf, "\033[%d;2H%-78s", 5 + i, "");
             }
+            write_str(buf);
         }
-        write_str("\r\n\033[7m Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close \033[0m\r\n");
+        sprintf(buf, "\033[22;1H%s Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close              \033[0m",
+                sgr_menubar());
+        write_str(buf);
     } else {
-        write_str(" Approved File Path                                           Size\r\n");
-        if (approved_count_ == 0) {
-            write_str(" (no approved files in BBS files area)\r\n");
-        } else {
-            int max_show = (approved_count_ < 12) ? approved_count_ : 12;
-            for (int i = 0; i < max_show; ++i) {
-                sprintf(buf, "%s %-60.60s %lu \033[0m\r\n",
-                        (i == files_sel_[1]) ? "\033[7m" : "",
+        sprintf(buf, "\033[4;2H%s %-62s %-14s\033[0m",
+                sgr_list_hdr(), "Approved File Path", "Size");
+        write_str(buf);
+        int max_show = 15;
+        for (int i = 0; i < max_show; ++i) {
+            if (approved_count_ == 0 && i == 0) {
+                sprintf(buf, "\033[%d;2H %-77s", 5 + i, "(no approved files in BBS files area)");
+            } else if (i < approved_count_) {
+                sprintf(buf, "\033[%d;2H%s %-62.62s %-14lu\033[0m",
+                        5 + i, (i == files_sel_[1]) ? sgr_sel() : "",
                         approved_files_[i].rel_path,
                         static_cast<unsigned long>(approved_files_[i].size));
-                write_str(buf);
+            } else {
+                sprintf(buf, "\033[%d;2H%-78s", 5 + i, "");
             }
+            write_str(buf);
         }
-        write_str("\r\n\033[7m Tab/1-2:Tabs  D:Remove Approved  R:Refresh  Esc:Close \033[0m\r\n");
+        sprintf(buf, "\033[22;1H%s Tab/1-2:Tabs  D:Remove Approved  R:Refresh  Esc:Close                      \033[0m",
+                sgr_menubar());
+        write_str(buf);
     }
-    sprintf(buf, " Status: %.70s\r\n", dialog_fb_[0] ? dialog_fb_ : "Ready.");
+    sprintf(buf, "\033[24;1H%s Status: %-70.70s \033[0m",
+            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Ready.");
     write_str(buf);
 }
 
 void TinyTmuxConsole::render_rig() {
-    char buf[160];
+    char buf[192];
     write_str("\033[H\033[2J");
-    write_str("\033[7m RADIO CONTROL (Hamlib rigctl / RadioFoundry UDP 4191)      Esc:Close \033[0m\r\n");
+    sprintf(buf, "%s RADIO CONTROL (Hamlib rigctl / RadioFoundry UDP 4191)         Esc:Close \033[0m", sgr_header());
+    write_str(buf);
+    draw_dec_box(2, 1, 20, 80, "Transceiver Control", 0);
 
     const OykConfig& cfg = node_->config();
     if (!cfg.rig_enabled) {
-        write_str("\r\n Rig control is DISABLED. Configure in Settings (S) -> Tab 5:Rig.\r\n");
+        write_str("\033[4;3HRig control is DISABLED. Configure in Settings (S) -> Tab 5:Rig.");
     } else {
         OykRigStatus st;
         oyk_rig_status_init(&st, oyk_rig_parse_protocol(cfg.rig_protocol));
         if (bridge_) st = *bridge_->rig_status();
 
-        sprintf(buf, " Protocol : %-14s  Target: %s:%u  Notify: %s\r\n",
+        sprintf(buf, "\033[4;3HProtocol : %-14s  Target: %s:%u  Notify: %s",
                 oyk_rig_protocol_name(st.protocol),
                 cfg.rig_host[0] ? cfg.rig_host : "(peer)",
                 static_cast<unsigned int>(cfg.rig_port ? cfg.rig_port : oyk_rig_default_port(st.protocol)),
                 cfg.rig_notify ? "ON" : "OFF");
         write_str(buf);
-        sprintf(buf, " Status   : %s\r\n", st.reachable ? "REACHABLE" : "NO RESPONSE / IDLE");
+        sprintf(buf, "\033[5;3HStatus   : %s", st.reachable ? "REACHABLE" : "NO RESPONSE / IDLE");
         write_str(buf);
 
         char summary[128];
         oyk_rig_format_summary(&st, summary, sizeof(summary));
-        sprintf(buf, " Radio    : %.66s\r\n\r\n", summary);
+        sprintf(buf, "\033[6;3HRadio    : %.64s", summary);
         write_str(buf);
 
         if (st.protocol == OYK_RIG_PROTO_RADIOFOUNDRY) {
-            write_str(" Commands (RadioFoundry / takRF UDP 4191):\r\n");
-            write_str("   [J/K] Step Channel -/+1    [H/L] Step Zone -/+1\r\n");
-            write_str("   [S]   Select Zone:Pos      [N]   Stop Notify     [R] Poll Now\r\n");
+            write_str("\033[8;3HCommands (RadioFoundry / takRF UDP 4191):");
+            write_str("\033[9;3H  [J/K] Step Channel -/+1    [H/L] Step Zone -/+1");
+            write_str("\033[10;3H  [S]   Select Zone:Pos      [N]   Stop Notify     [R] Poll Now");
         } else {
-            write_str(" Commands (Hamlib rigctld TCP 4532):\r\n");
-            write_str("   [F] Set Frequency (Hz)     [M] Set Mode          [P] Toggle PTT\r\n");
-            write_str("   [V] Set VFO (VFOA/VFOB)    [R] Poll Status\r\n");
+            write_str("\033[8;3HCommands (Hamlib rigctld TCP 4532):");
+            write_str("\033[9;3H  [F] Set Frequency (Hz)     [M] Set Mode          [P] Toggle PTT");
+            write_str("\033[10;3H  [V] Set VFO (VFOA/VFOB)    [R] Poll Status");
         }
     }
-    sprintf(buf, "\r\n Feedback: %.68s\r\n", dialog_fb_[0] ? dialog_fb_ : "Ready.");
+    sprintf(buf, "\033[24;1H%s Feedback: %-68.68s \033[0m",
+            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Ready.");
     write_str(buf);
 }
 
@@ -458,14 +673,16 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
         "Serial Baud Rate", "Printer Log Mask (0x..)", "Condensed 132-Col Mode"
     };
 
-    char buf[160];
+    char buf[192];
     write_str("\033[H\033[2J");
-    write_str("\033[7m OYK NODE SETTINGS (TinyTMUX)            F2/S:Save & Apply  Esc:Cancel \033[0m\r\n ");
+    sprintf(buf, "%s OYK NODE SETTINGS (TinyTMUX)            F2/S:Save & Apply  Esc:Cancel \033[0m", sgr_header());
+    write_str(buf);
+    write_str("\033[2;2H");
     for (int t = 0; t < 6; ++t) {
-        sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? "\033[7m" : "", TAB_NAMES[t]);
+        sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), TAB_NAMES[t]);
         write_str(buf);
     }
-    write_str("\r\n------------------------------------------------------------------------------\r\n");
+    draw_dec_box(3, 1, 19, 80, TAB_NAMES[settings_tab_], 0);
 
     int cnt = settings_tab_item_count(settings_tab_);
     if (settings_tab_ != 3) {
@@ -479,8 +696,8 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
             if (settings_tab_ == 0) {
                 if (i == 0) oyk_format_callsign(&draft_.callsign, val, sizeof(val));
                 else if (i == 1) { if (draft_.alias.base[0]) oyk_format_callsign(&draft_.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                else if (i == 2) { strncpy(val, draft_.welcome_text, 48); val[48] = '\0'; }
-                else if (i == 3) { strncpy(val, draft_.info_text, 48); val[48] = '\0'; }
+                else if (i == 2) { strncpy(val, draft_.welcome_text, 44); val[44] = '\0'; }
+                else if (i == 3) { strncpy(val, draft_.info_text, 44); val[44] = '\0'; }
                 else if (i == 4) strcpy(val, draft_.accept_incoming ? "[ON]" : "[OFF]");
                 else strcpy(val, draft_.allow_flash_logging ? "[ON]" : "[OFF]");
             } else if (settings_tab_ == 1) {
@@ -489,55 +706,62 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 2) { if (draft_.bbs_callsign.base[0]) oyk_format_callsign(&draft_.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                 else if (i == 3) { if (draft_.bbs_alias.base[0]) oyk_format_callsign(&draft_.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                 else if (i == 4) strcpy(val, draft_.bbs_files_enabled ? "[ON]" : "[OFF]");
-                else if (i == 5) { strncpy(val, draft_.bbs_files_path, 48); val[48] = '\0'; }
-                else if (i == 6) { strncpy(val, draft_.bbs_mail_path, 48); val[48] = '\0'; }
-                else { strncpy(val, draft_.bbs_welcome, 48); val[48] = '\0'; }
+                else if (i == 5) { strncpy(val, draft_.bbs_files_path, 44); val[44] = '\0'; }
+                else if (i == 6) { strncpy(val, draft_.bbs_mail_path, 44); val[44] = '\0'; }
+                else { strncpy(val, draft_.bbs_welcome, 44); val[44] = '\0'; }
             } else if (settings_tab_ == 2) {
                 if (i == 0) strcpy(val, draft_.chat_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft_, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft_.chat_ssid), cs); }
                 else if (i == 2) { if (draft_.chat_callsign.base[0]) oyk_format_callsign(&draft_.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                 else if (i == 3) { if (draft_.chat_alias.base[0]) oyk_format_callsign(&draft_.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                else if (i == 4) { strncpy(val, draft_.chat_topic, 48); val[48] = '\0'; }
-                else { strncpy(val, draft_.chat_welcome, 48); val[48] = '\0'; }
+                else if (i == 4) { strncpy(val, draft_.chat_topic, 44); val[44] = '\0'; }
+                else { strncpy(val, draft_.chat_welcome, 44); val[44] = '\0'; }
             } else if (settings_tab_ == 4) {
                 if (i == 0) strcpy(val, draft_.rig_enabled ? "[ON]" : "[OFF]");
-                else if (i == 1) { strncpy(val, draft_.rig_protocol[0] ? draft_.rig_protocol : "none", 48); val[48] = '\0'; }
-                else if (i == 2) { strncpy(val, draft_.rig_host, 48); val[48] = '\0'; }
+                else if (i == 1) { strncpy(val, draft_.rig_protocol[0] ? draft_.rig_protocol : "none", 44); val[44] = '\0'; }
+                else if (i == 2) { strncpy(val, draft_.rig_host, 44); val[44] = '\0'; }
                 else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft_.rig_port));
                 else if (i == 4) sprintf(val, "%u", static_cast<unsigned int>(draft_.rig_poll_sec));
                 else strcpy(val, draft_.rig_notify ? "[ON]" : "[OFF]");
             } else {
                 if (i == 0) strcpy(val, draft_.printer_enabled ? "[ON]" : "[OFF]");
-                else if (i == 1) { strncpy(val, draft_.printer_device[0] ? draft_.printer_device : "(none)", 48); val[48] = '\0'; }
-                else if (i == 2) { strncpy(val, draft_.printer_protocol[0] ? draft_.printer_protocol : "generic", 48); val[48] = '\0'; }
+                else if (i == 1) { strncpy(val, draft_.printer_device[0] ? draft_.printer_device : "(none)", 44); val[44] = '\0'; }
+                else if (i == 2) { strncpy(val, draft_.printer_protocol[0] ? draft_.printer_protocol : "generic", 44); val[44] = '\0'; }
                 else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft_.printer_baud ? draft_.printer_baud : 9600UL));
                 else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
-            sprintf(buf, "%s %-29.29s : %-44.44s \033[0m\r\n",
-                    (i == settings_sel_[settings_tab_]) ? "\033[7m" : "", labels[i], val);
+            sprintf(buf, "\033[%d;2H%s %-29.29s : %-44.44s\033[0m",
+                    4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
             write_str(buf);
         }
-        write_str("\r\n\033[7m Tab/1-6:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m\r\n");
+        sprintf(buf, "\033[22;1H%s Tab/1-6:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m",
+                sgr_menubar());
+        write_str(buf);
     } else {
-        write_str(" ID       Type            Dev/Host             Port/Baud\r\n");
+        sprintf(buf, "\033[4;2H%s %-8s %-15s %-25s %-25s\033[0m",
+                sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
+        write_str(buf);
         if (draft_.iface_count == 0) {
-            write_str(" (no interfaces configured; press N to add)\r\n");
+            write_str("\033[5;2H (no interfaces configured; press N to add)");
         } else {
-            for (int i = 0; i < draft_.iface_count && i < 8; ++i) {
+            for (int i = 0; i < draft_.iface_count && i < 14; ++i) {
                 const OykIfaceConfig& ic = draft_.ifaces[i];
                 const char* loc = ic.device[0] ? ic.device : ic.host;
-                sprintf(buf, "%s %-8.8s %-15.15s %-20.20s %u/%lu \033[0m\r\n",
-                        (i == settings_sel_[3]) ? "\033[7m" : "",
+                sprintf(buf, "\033[%d;2H%s %-8.8s %-15.15s %-25.25s %u/%-22lu\033[0m",
+                        5 + i, (i == settings_sel_[3]) ? sgr_sel() : "",
                         ic.id, ic.type, loc,
                         static_cast<unsigned int>(ic.port),
                         static_cast<unsigned long>(ic.baud));
                 write_str(buf);
             }
         }
-        write_str("\r\n\033[7m N:New  D:Delete  Enter:Cycle Type  H:Edit Host/Dev  S/F2:Save  Esc:Cancel \033[0m\r\n");
+        sprintf(buf, "\033[22;1H%s N:New  D:Delete  Enter:Cycle Type  H:Edit Host/Dev  S/F2:Save  Esc:Cancel \033[0m",
+                sgr_menubar());
+        write_str(buf);
     }
-    sprintf(buf, " %.78s\r\n", dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
+    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m",
+            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
     write_str(buf);
 }
 
@@ -560,18 +784,22 @@ OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
     const TinyTmuxMarchCStatus* mc = tinytmux_psram_marchc_status();
     tinytmux_psram_format_short(info, tag, sizeof(tag));
     write_str("\033[H\033[2J");
-    write_str("\033[7m TEENSY 4.1 FLEXSPI2 PSRAM DIAGNOSTICS   T:Quick  M:MarchC-  Esc:Back \033[0m\r\n");
-    sprintf(buf, " Status      : %-6s  Base: 0x%08lX  Quick test: %lu ms\r\n",
+    sprintf(buf, "%s TEENSY 4.1 FLEXSPI2 PSRAM DIAGNOSTICS   T:Quick  M:MarchC-  Esc:Back \033[0m", sgr_header());
+    write_str(buf);
+    draw_dec_box(2, 1, 21, 80, "FlexSPI2 Hardware & March C-", 0);
+
+    sprintf(buf, "\033[3;3HStatus      : %-6s  Base: 0x%08lX  Quick test: %lu ms",
             tag,
             static_cast<unsigned long>(info->base_addr),
             static_cast<unsigned long>(info->test_time_ms));
     write_str(buf);
-    sprintf(buf, " Capacity    : %lu MB usable / %lu MB detected (%d/%d chips passed)\r\n\r\n",
+    sprintf(buf, "\033[4;3HCapacity    : %lu MB usable / %lu MB detected (%d/%d chips passed)",
             static_cast<unsigned long>(info->usable_bytes / (1024UL * 1024UL)),
             static_cast<unsigned long>(info->detected_bytes / (1024UL * 1024UL)),
             info->usable_chip_count, info->chip_count);
     write_str(buf);
 
+    int r = 6;
     for (int i = 0; i < TINYTMUX_PSRAM_MAX_CHIPS; ++i) {
         const TinyTmuxPsramChipInfo& c = info->chips[i];
         const char* kind_str = "EMPTY";
@@ -579,8 +807,8 @@ OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
         else if (c.chip_kind == TMUX_FLEXSPI_FLASH_NOR) kind_str = "QSPI NOR";
         else if (c.chip_kind == TMUX_FLEXSPI_FLASH_NAND) kind_str = "QSPI NAND";
         else if (c.detected) kind_str = "DETECTED";
-        sprintf(buf, " Chip %d (CS%d @ 0x%08lX): %-9s  %s  %lu MB  JEDEC=%02X %02X %02X\r\n",
-                i, i,
+        sprintf(buf, "\033[%d;3HChip %d (CS%d @ 0x%08lX): %-9s  %s  %lu MB  JEDEC=%02X %02X %02X",
+                r++, i, i,
                 static_cast<unsigned long>(c.base_addr),
                 kind_str,
                 (c.chip_kind == TMUX_FLEXSPI_PSRAM) ? (c.passed ? "PASS" : "FAIL")
@@ -598,54 +826,69 @@ OYK_FLASHMEM void TinyTmuxConsole::render_psram() {
             if (mc->chip_result[i] == TMUX_MARCHC_CHIP_RUNNING) res_s = mc->pass_label;
             else if (mc->chip_result[i] == TMUX_MARCHC_CHIP_PASS) res_s = "PASS";
             else if (mc->chip_result[i] == TMUX_MARCHC_CHIP_FAIL) res_s = "FAIL";
-            sprintf(buf, "   March C-: %s %3u%%  %-16s\r\n",
-                    bar, static_cast<unsigned int>(mc->chip_percent[i]), res_s);
+            sprintf(buf, "\033[%d;5HMarch C-: %s %3u%%  %-16s",
+                    r++, bar, static_cast<unsigned int>(mc->chip_percent[i]), res_s);
             write_str(buf);
         }
         if (c.detected && c.chip_kind == TMUX_FLEXSPI_PSRAM && !c.passed) {
-            sprintf(buf, "   Fault @ 0x%08lX  Check footprint: %s\r\n",
-                    static_cast<unsigned long>(c.fail_addr),
+            sprintf(buf, "\033[%d;5HFault @ 0x%08lX  Check footprint: %s",
+                    r++, static_cast<unsigned long>(c.fail_addr),
                     tinytmux_psram_footprint_label(i));
             write_str(buf);
         }
     }
 
     if (info->misplaced_flash_cs0) {
-        write_str("\r\n \033[7m WARNING: QSPI FLASH ON WRONG PADS (CS0 / Pin 48 small footprint)! \033[0m\r\n");
-        write_str(" Teensy 4.1 LittleFS_QSPI only supports CS1 (large pads / Pin 51).\r\n");
-        write_str(" Startup CS0 probes PSRAM first; move flash to CS1 to use QSPI storage.\r\n");
+        sprintf(buf, "\033[%d;3H%s WARNING: QSPI FLASH ON WRONG PADS (CS0 / Pin 48 small footprint)! \033[0m",
+                r++, sgr_sel());
+        write_str(buf);
+        sprintf(buf, "\033[%d;3HTeensy 4.1 LittleFS_QSPI only supports CS1 (large pads / Pin 51).", r++);
+        write_str(buf);
+        sprintf(buf, "\033[%d;3HStartup CS0 probes PSRAM first; move flash to CS1 to use QSPI storage.", r++);
+        write_str(buf);
     }
 
-    write_str("\r\n");
+    ++r;
     if (mc->state == TMUX_MARCHC_RUNNING) {
-        sprintf(buf, " March C- RUNNING: Chip %d (%s)  Elapsed: %lu ms  (Esc: Cancel)\r\n",
-                mc->active_chip, mc->pass_label, static_cast<unsigned long>(mc->elapsed_ms));
+        sprintf(buf, "\033[%d;3HMarch C- RUNNING: Chip %d (%s)  Elapsed: %lu ms  (Esc: Cancel)",
+                r, mc->active_chip, mc->pass_label, static_cast<unsigned long>(mc->elapsed_ms));
         write_str(buf);
     } else if (mc->state == TMUX_MARCHC_PASSED) {
-        sprintf(buf, " March C- PASSED cleanly on all detected chips in %lu ms.\r\n",
-                static_cast<unsigned long>(mc->elapsed_ms));
+        sprintf(buf, "\033[%d;3HMarch C- PASSED cleanly on all detected chips in %lu ms.",
+                r, static_cast<unsigned long>(mc->elapsed_ms));
         write_str(buf);
     } else if (mc->state == TMUX_MARCHC_FAILED) {
-        sprintf(buf, " \033[7m MARCH C- FAIL: Chip %d @ 0x%08lX (exp %08lX got %08lX) \033[0m\r\n",
-                mc->fail_chip,
+        sprintf(buf, "\033[%d;3H%s MARCH C- FAIL: Chip %d @ 0x%08lX (exp %08lX got %08lX) \033[0m",
+                r++, sgr_sel(), mc->fail_chip,
                 static_cast<unsigned long>(mc->fail_addr),
                 static_cast<unsigned long>(mc->fail_expected),
                 static_cast<unsigned long>(mc->fail_actual));
         write_str(buf);
-        sprintf(buf, " Check/resolder footprint: %s\r\n", tinytmux_psram_footprint_label(mc->fail_chip));
+        sprintf(buf, "\033[%d;3HCheck/resolder footprint: %s", r, tinytmux_psram_footprint_label(mc->fail_chip));
         write_str(buf);
     } else if (mc->state == TMUX_MARCHC_CANCELLED) {
-        write_str(" March C- test cancelled by operator.\r\n");
+        sprintf(buf, "\033[%d;3HMarch C- test cancelled by operator.", r);
+        write_str(buf);
     } else {
-        write_str(" Press T for quick self-test, M for full March C- test, Esc to return.\r\n");
+        sprintf(buf, "\033[%d;3HPress T for quick self-test, M for full March C- test, Esc to return.", r);
+        write_str(buf);
     }
+    sprintf(buf, "\033[24;1H%s T:Quick Test  M:Full March C- Test  Esc:Return                             \033[0m",
+            sgr_menubar());
+    write_str(buf);
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_storage() {
     char buf[200];
     write_str("\033[H\033[2J");
-    write_str("\033[7m STORAGE MANAGER (Config, Files, Mail & Logs)   Up/Dn:Select  F:Format  R:Rescan  Esc:Back \033[0m\r\n\r\n");
-    write_str(" Search order: 1) microSD  2) QSPI Flash  3) Internal 4 MB Flash\r\n\r\n");
+    sprintf(buf, "%s STORAGE MANAGER (Config, Files, Mail & Logs)                 Esc:Back \033[0m", sgr_header());
+    write_str(buf);
+    draw_dec_box(2, 1, 20, 80, "Non-Volatile Storage Tiers", 0);
+    write_str("\033[3;3HSearch order: 1) microSD  2) QSPI Flash  3) Internal 4 MB Flash");
+    sprintf(buf, "\033[5;2H%s %-2s %-28s %-9s %-14s %-21s\033[0m",
+            sgr_list_hdr(), "#", "Storage Device", "Status", "Used / Total", "Log Policy");
+    write_str(buf);
+
     int active = tinytmux_fs_active_tier();
     for (int t = TMUX_STORAGE_SD; t <= TMUX_STORAGE_INTERNAL; ++t) {
         TinyTmuxStorageTierInfo ti;
@@ -661,15 +904,21 @@ OYK_FLASHMEM void TinyTmuxConsole::render_storage() {
         }
         const char* logs = (t == TMUX_STORAGE_SD)
                                ? "Logs: ALLOWED"
-                               : (node_ && node_->config().allow_flash_logging ? "Logs: ALLOWED (flash enabled)"
-                                                                               : "Logs: BLOCKED (SD only)");
-        sprintf(buf, "%s %d. %-28.28s %-9s %-16s %s \033[0m\r\n",
-                (t - 1 == storage_sel_) ? "\033[7m" : " ", t, ti.label, st, cap, logs);
+                               : (node_ && node_->config().allow_flash_logging ? "Logs: ALLOWED (flash)"
+                                                                               : "Logs: BLOCKED (SD)");
+        sprintf(buf, "\033[%d;2H%s %d. %-28.28s %-9s %-14s %-20s\033[0m",
+                5 + t, (t - 1 == storage_sel_) ? sgr_sel() : "",
+                t, ti.label, st, cap, logs);
         write_str(buf);
     }
-    sprintf(buf, "\r\n Active tier: %d (%s)\r\n", active, tinytmux_fs_status_label());
+    sprintf(buf, "\033[10;3HActive tier: %d (%s)", active, tinytmux_fs_status_label());
     write_str(buf);
-    sprintf(buf, " %.78s\r\n", dialog_fb_[0] ? dialog_fb_ : "Select a tier and press F to partition/format (ERASES ALL DATA).");
+    sprintf(buf, "\033[22;1H%s Up/Dn:Select  F:Partition/Format (ERASES ALL DATA)  R:Rescan  Esc:Back    \033[0m",
+            sgr_menubar());
+    write_str(buf);
+    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m",
+            sgr_warn(),
+            dialog_fb_[0] ? dialog_fb_ : "Select a tier and press F to partition/format (ERASES ALL DATA).");
     write_str(buf);
 }
 
@@ -695,10 +944,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_storage_key(int key) {
         sprintf(dialog_fb_, "Rescan complete: %s.", ok ? tinytmux_fs_status_label() : "NO STORAGE");
         render();
     } else if (key == 'f' || key == 'F') {
-        static const char* NAMES[3] = { "microSD card", "QSPI Flash", "Internal 4 MB Flash" };
-        char label[96];
-        sprintf(label, "ERASES ALL configs/mail/files/logs on %s! Type FORMAT:", NAMES[storage_sel_]);
-        begin_prompt(PROMPT_CONFIRM_FORMAT, label, "");
+        begin_prompt(PROMPT_CONFIRM_FORMAT, "Confirm Format", "");
     }
 }
 
@@ -707,31 +953,276 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     int active = node_ ? node_->total_active_connections() : 0;
     int disc_left = node_ ? node_->disconnecting_count() : 0;
     write_str("\033[H\033[2J");
-    write_str("\033[7m ENTER TEENSY 4.1 HALFKAY BOOTLOADER (FIRMWARE UPGRADE)       Esc:Cancel \033[0m\r\n\r\n");
+    sprintf(buf, "%s ENTER TEENSY 4.1 HALFKAY BOOTLOADER (FIRMWARE UPGRADE)       Esc:Cancel \033[0m",
+            sgr_header());
+    write_str(buf);
+    draw_dec_box(3, 6, 15, 68, "Confirm Bootloader Entry", 1);
+
     if (!bootloader_pending_) {
         if (active > 0) {
-            sprintf(buf, " Enter HalfKay bootloader? (%d active connection(s))\r\n\r\n", active);
+            sprintf(buf, "\033[5;8HEnter HalfKay bootloader? (%d active connection(s))", active);
             write_str(buf);
-            write_str(" Remote users will be notified that the node is going offline for a\r\n");
-            write_str(" firmware upgrade and gracefully disconnected before rebooting.\r\n\r\n");
+            write_str("\033[7;8HRemote users will be notified that the node is going offline for");
+            write_str("\033[8;8Ha firmware upgrade and gracefully disconnected before rebooting.");
         } else {
-            write_str(" Enter HalfKay bootloader? (no active connections)\r\n\r\n");
+            write_str("\033[5;8HEnter HalfKay bootloader? (no active connections)");
         }
-        write_str(" \033[7m WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m\r\n");
-        write_str(" until you flash new firmware or power-cycle the Teensy 4.1 board.\r\n\r\n");
-        write_str("   [Y] Enter HalfKay Bootloader     [N / Esc] Cancel\r\n");
+        sprintf(buf, "\033[10;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
+                sgr_sel());
+        write_str(buf);
+        write_str("\033[11;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
+        write_str("\033[14;14H[Y] Enter HalfKay Bootloader     [N / Esc] Cancel");
     } else {
         oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
-        sprintf(buf, " Notifying remote users & draining AX.25 disconnects (%d remaining, %lu/3000 ms)...\r\n",
+        sprintf(buf, "\033[6;8HNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
                 disc_left, static_cast<unsigned long>(elapsed));
         write_str(buf);
     }
 }
 
+int TinyTmuxConsole::wizard_step_field_count() const {
+    if (wiz_step_ == 1) return 2;
+    if (wiz_step_ == 2) {
+        return (wiz_drv_ == 0) ? 3 : 2;
+    }
+    return 0;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::wizard_apply_driver_defaults() {
+    const char* t = TINYTMUX_DRIVERS[wiz_drv_].type;
+    oyk_derive_default_iface_id(&draft_, t, wiz_id_, sizeof(wiz_id_));
+    wiz_desc_[0] = '\0';
+    wiz_peer_[0] = '\0';
+    if (strieq_ci(t, "usb-cdc-net")) {
+        strcpy(wiz_ep_, "192.168.7.2");
+        strcpy(wiz_port_, "10093");
+    } else if (strieq_ci(t, "usb-cdc-serial")) {
+        strcpy(wiz_ep_, "usbh0");
+        strcpy(wiz_port_, "115200");
+    } else if (strieq_ci(t, "ppp")) {
+        strcpy(wiz_ep_, "ser0");
+        strcpy(wiz_port_, "115200");
+    } else if (strieq_ci(t, "kiss-serial")) {
+        strcpy(wiz_ep_, "ser0");
+        strcpy(wiz_port_, "9600");
+    } else if (strieq_ci(t, "telnet")) {
+        strcpy(wiz_ep_, "0.0.0.0");
+        strcpy(wiz_port_, "8023");
+    } else {
+        strcpy(wiz_ep_, "0.0.0.0");
+        strcpy(wiz_port_, strieq_ci(t, "axudp") ? "10093" : "0");
+    }
+    wiz_last_drv_ = wiz_drv_;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::wizard_commit() {
+    if (draft_.iface_count >= OYK_MAX_INTERFACES) {
+        strcpy(dialog_fb_, "Maximum interface slots reached.");
+        return;
+    }
+    OykIfaceConfig& ic = draft_.ifaces[draft_.iface_count];
+    memset(&ic, 0, sizeof(ic));
+    con_str_copy(ic.id, sizeof(ic.id), wiz_id_);
+    con_str_copy(ic.type, sizeof(ic.type), TINYTMUX_DRIVERS[wiz_drv_].type);
+    con_str_copy(ic.description, sizeof(ic.description), wiz_desc_);
+
+    if (strieq_ci(ic.type, "usb-cdc-net")) {
+        strcpy(ic.device, "usbh0");
+        con_str_copy(ic.host, sizeof(ic.host), wiz_ep_[0] ? wiz_ep_ : "192.168.7.2");
+        long pv = strtol(wiz_port_, NULL, 10);
+        ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 10093U;
+        ic.baud = 115200UL;
+    } else if (strieq_ci(ic.type, "usb-cdc-serial")) {
+        con_str_copy(ic.device, sizeof(ic.device), wiz_ep_[0] ? wiz_ep_ : "usbh0");
+        strcpy(ic.host, "192.168.7.2");
+        long bv = strtol(wiz_port_, NULL, 10);
+        ic.baud = (bv >= 300L) ? static_cast<oyk_u32>(bv) : 115200UL;
+        ic.port = 10093U;
+    } else if (strieq_ci(ic.type, "ppp") || strieq_ci(ic.type, "kiss-serial")) {
+        con_str_copy(ic.device, sizeof(ic.device), wiz_ep_[0] ? wiz_ep_ : "ser0");
+        long bv = strtol(wiz_port_, NULL, 10);
+        ic.baud = (bv >= 300L) ? static_cast<oyk_u32>(bv)
+                               : (strieq_ci(ic.type, "ppp") ? 115200UL : 9600UL);
+        if (strieq_ci(ic.type, "ppp")) ic.port = 10093U;
+    } else {
+        con_str_copy(ic.host, sizeof(ic.host), wiz_ep_[0] ? wiz_ep_ : "0.0.0.0");
+        long pv = strtol(wiz_port_, NULL, 10);
+        if (strieq_ci(ic.type, "telnet")) {
+            ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 8023U;
+        } else if (strieq_ci(ic.type, "axudp")) {
+            ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 10093U;
+        }
+        if (wiz_peer_[0] && (strieq_ci(ic.type, "axudp") || strieq_ci(ic.type, "axip"))) {
+            OykPeerEntry pe;
+            memset(&pe, 0, sizeof(pe));
+            if (oyk_parse_peer_spec(wiz_peer_, pe.callsign, sizeof(pe.callsign),
+                                    &pe.ip, &pe.port, ic.port ? ic.port : 10093U)) {
+                ic.peers[0] = pe;
+                ic.peer_count = 1;
+            }
+        }
+    }
+    settings_sel_[3] = draft_.iface_count;
+    draft_.iface_count++;
+    sprintf(dialog_fb_, "Added %s (%s) to draft (press S/F2 to save).", ic.id, ic.type);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
+    static const char* PROG[4] = {
+        "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
+    };
+    char buf[192];
+    const int top = 4, left = 6, h = 16, w = 68;
+    draw_dec_box(top, left, h, w, "Add Interface", 1);
+
+    /* Top-right progress indicator on caption border */
+    sprintf(buf, "\033[%d;%dH%s %s \033[0m", top, left + w - 18, sgr_title(), PROG[wiz_step_]);
+    write_str(buf);
+
+    const char* drv = TINYTMUX_DRIVERS[wiz_drv_].type;
+    const char* prompt_txt = "Select the driver for the new interface:";
+    if (wiz_step_ == 1) {
+        prompt_txt = "Enter a unique interface ID and optional description:";
+    } else if (wiz_step_ == 2) {
+        if (wiz_drv_ == 0) prompt_txt = "Configure AXUDP bind host, UDP port, and optional peer:";
+        else if (wiz_drv_ == 1) prompt_txt = "Configure AXIP bind host IP and optional static peer:";
+        else if (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) prompt_txt = "Configure serial UART/USB device and baud rate:";
+        else if (wiz_drv_ == 4) prompt_txt = "Configure USB-CDC network host IP and UDP port:";
+        else prompt_txt = "Configure Telnet bind host IP and TCP port:";
+    } else if (wiz_step_ == 3) {
+        prompt_txt = "Review interface configuration before committing:";
+    }
+    sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 1, left + 2, sgr_title(), prompt_txt);
+    write_str(buf);
+
+    if (wiz_step_ == 0) {
+        sprintf(buf, "\033[%d;%dH%s %-2s %-15s %-44s \033[0m",
+                top + 2, left + 1, sgr_list_hdr(), "#", "Driver", "Description");
+        write_str(buf);
+        for (int i = 0; i < 7; ++i) {
+            sprintf(buf, "\033[%d;%dH%s %d. %-15.15s %-44.44s \033[0m",
+                    top + 3 + i, left + 1, (i == wiz_drv_) ? sgr_sel() : "",
+                    i + 1, TINYTMUX_DRIVERS[i].type, TINYTMUX_DRIVERS[i].desc);
+            write_str(buf);
+        }
+    } else if (wiz_step_ == 1) {
+        sprintf(buf, "\033[%d;%dHDriver       : %s", top + 3, left + 3, drv);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dHInterface ID : %s %-36.36s \033[0m",
+                top + 5, left + 3, (wiz_focus_ == 0) ? sgr_menubar() : "", wiz_id_);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dHDescription  : %s %-36.36s \033[0m",
+                top + 7, left + 3, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_desc_);
+        write_str(buf);
+    } else if (wiz_step_ == 2) {
+        const char* ep_lbl = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                                 ? "Serial Device"
+                                 : (wiz_drv_ == 4 ? "Host / IP    " : "Bind Host/IP ");
+        sprintf(buf, "\033[%d;%dHInterface    : %s (%s)", top + 3, left + 3, wiz_id_, drv);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
+                top + 5, left + 3, ep_lbl, (wiz_focus_ == 0) ? sgr_menubar() : "", wiz_ep_);
+        write_str(buf);
+        if (wiz_drv_ == 1) {
+            sprintf(buf, "\033[%d;%dHPeer (opt)   : %s %-36.36s \033[0m",
+                    top + 7, left + 3, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_peer_);
+            write_str(buf);
+        } else {
+            const char* p_lbl = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                                    ? "Baud Rate    "
+                                    : (wiz_drv_ == 6 ? "TCP Port     " : "UDP Port     ");
+            sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
+                    top + 7, left + 3, p_lbl, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_port_);
+            write_str(buf);
+            if (wiz_drv_ == 0) {
+                sprintf(buf, "\033[%d;%dHPeer (opt)   : %s %-36.36s \033[0m",
+                        top + 9, left + 3, (wiz_focus_ == 2) ? sgr_menubar() : "", wiz_peer_);
+                write_str(buf);
+            }
+        }
+    } else {
+        sprintf(buf, "\033[%d;%dHDriver       : %-46.46s", top + 3, left + 3, drv);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dHInterface ID : %-46.46s", top + 4, left + 3, wiz_id_);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dHDescription  : %-46.46s", top + 5, left + 3,
+                wiz_desc_[0] ? wiz_desc_ : "(none)");
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s: %-46.46s", top + 6, left + 3,
+                (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? "Device       " : "Host / IP    ",
+                wiz_ep_);
+        write_str(buf);
+        if (wiz_drv_ != 1) {
+            sprintf(buf, "\033[%d;%dH%s: %-46.46s", top + 7, left + 3,
+                    (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? "Baud Rate    " : "Port         ",
+                    wiz_port_);
+            write_str(buf);
+        }
+        if (wiz_drv_ == 0 || wiz_drv_ == 1) {
+            sprintf(buf, "\033[%d;%dHStatic Peer  : %-46.46s", top + 8, left + 3,
+                    wiz_peer_[0] ? wiz_peer_ : "(auto-learn)");
+            write_str(buf);
+        }
+        sprintf(buf, "\033[%d;%dH%sPress Finish to add this interface to your Settings draft.\033[0m",
+                top + 10, left + 3, sgr_title());
+        write_str(buf);
+    }
+
+    if (wiz_err_[0]) {
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 12, left + 2, sgr_warn(), wiz_err_);
+        write_str(buf);
+    }
+
+    draw_dec_hdiv(top + 13, left, w);
+
+    int fcnt = wizard_step_field_count();
+    int on_bar = (wiz_step_ == 0 || wiz_step_ == 3 || wiz_focus_ == fcnt);
+    const char* next_lbl = (wiz_step_ == 3) ? "[ Finish ]" : "[ Next > ]";
+    sprintf(buf, "\033[%d;%dH%s %s \033[0m  %s %s \033[0m  %s [ Cancel ] \033[0m  %s",
+            top + 14, left + 2,
+            (wiz_step_ == 0) ? "" : ((on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar()),
+            (wiz_step_ == 0) ? "          " : "[ < Back ]",
+            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar(),
+            next_lbl,
+            (on_bar && wiz_btn_ == 2) ? sgr_sel() : sgr_menubar(),
+            (wiz_step_ > 0) ? "Ctrl+B:Back" : "1-7:Pick");
+    write_str(buf);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_confirm_format_modal() {
+    static const char* NAMES[3] = {
+        "microSD Card (SDIO)", "QSPI Flash (FlexSPI2 CS1)", "Internal 4 MB Flash (LittleFS)"
+    };
+    const int top = 6, left = 6, h = 12, w = 68;
+    const char* target = (storage_sel_ >= 0 && storage_sel_ < 3) ? NAMES[storage_sel_] : "Storage";
+    char buf[160];
+    draw_dec_box(top, left, h, w, "CONFIRM DESTRUCTIVE FORMAT", 1);
+    sprintf(buf, "\033[%d;%dHTarget : %-56.56s", top + 2, left + 2, target);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%s WARNING: Partitioning/formatting ERASES ALL DATA on this tier, \033[0m",
+            top + 4, left + 2, sgr_sel());
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHincluding configs, mail, files, and logs!", top + 5, left + 2);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHType FORMAT (uppercase) and press Enter to confirm:", top + 7, left + 2);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%s > %-60.60s \033[0m", top + 8, left + 2, sgr_menubar(), prompt_buf_);
+    write_str(buf);
+    draw_dec_hdiv(top + 9, left, w);
+    sprintf(buf, "\033[%d;%dH%s [Enter] Confirm Format                 [Esc] Cancel          \033[0m",
+            top + 10, left + 1, sgr_menubar());
+    write_str(buf);
+}
+
 void TinyTmuxConsole::render_prompt_overlay() {
     char buf[192];
-    sprintf(buf, "\033[22;1H\033[7m %-78.78s \033[0m\r\n\033[7m > %-75.75s \033[0m",
-            prompt_label_, prompt_buf_);
+    const int top = 9, left = 6, h = 6, w = 68;
+    draw_dec_box(top, left, h, w, "Input", 1);
+    sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 1, left + 2, sgr_title(), prompt_label_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%s > %-60.60s \033[0m", top + 2, left + 2, sgr_menubar(), prompt_buf_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH[Enter] Accept                              [Esc] Cancel", top + 4, left + 2);
     write_str(buf);
 }
 
@@ -982,44 +1473,6 @@ void TinyTmuxConsole::commit_prompt() {
         return;
     }
 
-    if (pk == PROMPT_SETTINGS_NEW_IFACE_ID) {
-        if (!val[0]) { render(); return; }
-        con_str_copy(new_iface_id_tmp_, sizeof(new_iface_id_tmp_), val);
-        begin_prompt(PROMPT_SETTINGS_NEW_IFACE_TYPE,
-                     "Type (axudp/axip/ppp/kiss-serial/usb-cdc-net/usb-cdc-serial):",
-                     "usb-cdc-net");
-        return;
-    }
-
-    if (pk == PROMPT_SETTINGS_NEW_IFACE_TYPE) {
-        if (draft_.iface_count < OYK_MAX_INTERFACES) {
-            OykIfaceConfig& ic = draft_.ifaces[draft_.iface_count];
-            memset(&ic, 0, sizeof(ic));
-            con_str_copy(ic.id, sizeof(ic.id), new_iface_id_tmp_);
-            con_str_copy(ic.type, sizeof(ic.type), val[0] ? val : "axudp");
-            if (strieq_ci(ic.type, "usb-cdc-net") || strieq_ci(ic.type, "usb-cdc-serial")) {
-                strcpy(ic.device, "usbh0");
-                strcpy(ic.host, "192.168.7.2");
-                ic.port = 10093;
-                ic.baud = 115200UL;
-            } else if (strieq_ci(ic.type, "ppp") || strieq_ci(ic.type, "kiss-serial")) {
-                strcpy(ic.device, "ser0");
-                ic.baud = strieq_ci(ic.type, "ppp") ? 115200UL : 9600UL;
-                if (strieq_ci(ic.type, "ppp")) ic.port = 10093;
-            } else {
-                strcpy(ic.host, "0.0.0.0");
-                ic.port = strieq_ci(ic.type, "telnet") ? 8023U : 10093U;
-            }
-            settings_sel_[3] = draft_.iface_count;
-            draft_.iface_count++;
-            strcpy(dialog_fb_, "Interface added to draft.");
-        } else {
-            strcpy(dialog_fb_, "Maximum interface slots reached.");
-        }
-        render();
-        return;
-    }
-
     if (pk == PROMPT_RIG_FREQ && bridge_) {
         oyk_u32 hz = static_cast<oyk_u32>(strtoul(val, NULL, 10));
         strcpy(dialog_fb_, bridge_->rig_set_freq(hz) ? "Frequency updated." : bridge_->rig_status()->last_error);
@@ -1056,7 +1509,199 @@ void TinyTmuxConsole::commit_prompt() {
     }
 }
 
+OYK_FLASHMEM int TinyTmuxConsole::wizard_try_advance() {
+    wiz_err_[0] = '\0';
+    if (wiz_step_ == 0) {
+        if (wiz_drv_ != wiz_last_drv_) {
+            wizard_apply_driver_defaults();
+        }
+        wiz_step_ = 1;
+        wiz_focus_ = 0;
+        wiz_btn_ = 1;
+        return 0;
+    }
+    if (wiz_step_ == 1) {
+        if (!wiz_id_[0]) {
+            strcpy(wiz_err_, "Interface ID cannot be empty.");
+            wiz_focus_ = 0;
+            return 0;
+        }
+        for (int i = 0; i < draft_.iface_count; ++i) {
+            if (strieq_ci(draft_.ifaces[i].id, wiz_id_)) {
+                sprintf(wiz_err_, "Duplicate interface ID: %.24s", wiz_id_);
+                wiz_focus_ = 0;
+                return 0;
+            }
+        }
+        wiz_step_ = 2;
+        wiz_focus_ = 0;
+        wiz_btn_ = 1;
+        return 0;
+    }
+    if (wiz_step_ == 2) {
+        if (!wiz_ep_[0]) {
+            strcpy(wiz_err_, (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                                 ? "Serial device cannot be empty."
+                                 : "Host / IP cannot be empty.");
+            wiz_focus_ = 0;
+            return 0;
+        }
+        if (wiz_drv_ != 1 && !wiz_port_[0]) {
+            strcpy(wiz_err_, (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                                 ? "Baud rate cannot be empty."
+                                 : "Port cannot be empty.");
+            wiz_focus_ = 1;
+            return 0;
+        }
+        wiz_step_ = 3;
+        wiz_focus_ = 0;
+        wiz_btn_ = 1;
+        return 0;
+    }
+    if (wiz_step_ == 3) {
+        wizard_commit();
+        prompt_kind_ = PROMPT_NONE;
+        return 1;
+    }
+    return 0;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
+    if (key == 27) {
+        prompt_kind_ = PROMPT_NONE;
+        strcpy(dialog_fb_, "Add interface cancelled.");
+        render();
+        return;
+    }
+    if (key == 0x02 && wiz_step_ > 0) { /* Ctrl+B -> Back */
+        --wiz_step_;
+        wiz_focus_ = 0;
+        wiz_btn_ = 1;
+        wiz_err_[0] = '\0';
+        render();
+        return;
+    }
+
+    if (wiz_step_ == 0) {
+        if (key == TMUX_KEY_UP) wiz_drv_ = (wiz_drv_ + 6) % 7;
+        else if (key == TMUX_KEY_DOWN) wiz_drv_ = (wiz_drv_ + 1) % 7;
+        else if (key == TMUX_KEY_HOME) wiz_drv_ = 0;
+        else if (key == TMUX_KEY_END) wiz_drv_ = 6;
+        else if (key >= '1' && key <= '7') wiz_drv_ = key - '1';
+        else if (key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT || key == '\t') wiz_btn_ = (wiz_btn_ == 1) ? 2 : 1;
+        else if (key == '\r' || key == '\n') {
+            if (wiz_btn_ == 2) {
+                prompt_kind_ = PROMPT_NONE;
+                strcpy(dialog_fb_, "Add interface cancelled.");
+            } else {
+                wizard_try_advance();
+            }
+        } else {
+            return;
+        }
+        render();
+        return;
+    }
+
+    if (wiz_step_ == 3) {
+        if (key == TMUX_KEY_LEFT) wiz_btn_ = (wiz_btn_ + 2) % 3;
+        else if (key == TMUX_KEY_RIGHT || key == '\t') wiz_btn_ = (wiz_btn_ + 1) % 3;
+        else if (key == 'b' || key == 'B') {
+            wiz_step_ = 2;
+            wiz_focus_ = 0;
+            wiz_btn_ = 1;
+            wiz_err_[0] = '\0';
+        } else if (key == '\r' || key == '\n' || key == ' ') {
+            if (wiz_btn_ == 0) {
+                wiz_step_ = 2;
+                wiz_focus_ = 0;
+                wiz_btn_ = 1;
+                wiz_err_[0] = '\0';
+            } else if (wiz_btn_ == 2) {
+                prompt_kind_ = PROMPT_NONE;
+                strcpy(dialog_fb_, "Add interface cancelled.");
+            } else {
+                wizard_try_advance();
+            }
+        } else {
+            return;
+        }
+        render();
+        return;
+    }
+
+    int fcnt = wizard_step_field_count();
+    if (key == TMUX_KEY_UP) {
+        wiz_focus_ = (wiz_focus_ + fcnt) % (fcnt + 1);
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_DOWN || key == '\t') {
+        wiz_focus_ = (wiz_focus_ + 1) % (fcnt + 1);
+        render();
+        return;
+    }
+
+    if (wiz_focus_ == fcnt) {
+        if (key == TMUX_KEY_LEFT) wiz_btn_ = (wiz_btn_ + 2) % 3;
+        else if (key == TMUX_KEY_RIGHT) wiz_btn_ = (wiz_btn_ + 1) % 3;
+        else if (key == '\r' || key == '\n' || key == ' ') {
+            if (wiz_btn_ == 0) {
+                --wiz_step_;
+                wiz_focus_ = 0;
+                wiz_btn_ = 1;
+                wiz_err_[0] = '\0';
+            } else if (wiz_btn_ == 2) {
+                prompt_kind_ = PROMPT_NONE;
+                strcpy(dialog_fb_, "Add interface cancelled.");
+            } else {
+                wizard_try_advance();
+            }
+        } else {
+            return;
+        }
+        render();
+        return;
+    }
+
+    char* target = NULL;
+    size_t cap = 0;
+    if (wiz_step_ == 1) {
+        if (wiz_focus_ == 0) { target = wiz_id_; cap = sizeof(wiz_id_); }
+        else { target = wiz_desc_; cap = sizeof(wiz_desc_); }
+    } else {
+        if (wiz_focus_ == 0) { target = wiz_ep_; cap = sizeof(wiz_ep_); }
+        else if (wiz_focus_ == 1) {
+            if (wiz_drv_ == 1) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+            else { target = wiz_port_; cap = sizeof(wiz_port_); }
+        } else { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+    }
+
+    if (key == '\r' || key == '\n') {
+        wizard_try_advance();
+        render();
+    } else if (target && (key == 8 || key == 127)) {
+        size_t n = strlen(target);
+        if (n > 0) target[n - 1] = '\0';
+        wiz_err_[0] = '\0';
+        render();
+    } else if (target && key >= 0x20 && key < 0x7F) {
+        size_t n = strlen(target);
+        if (n + 1 < cap) {
+            target[n] = static_cast<char>(key);
+            target[n + 1] = '\0';
+        }
+        wiz_err_[0] = '\0';
+        render();
+    }
+}
+
 void TinyTmuxConsole::handle_prompt_key(int key) {
+    if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
+        handle_add_wizard_key(key);
+        return;
+    }
+
     if (key == 27) {
         prompt_kind_ = PROMPT_NONE;
         prompt_buf_[0] = '\0';
@@ -1317,8 +1962,25 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
             const char* cur = draft_.ifaces[idx].device[0] ? draft_.ifaces[idx].device : draft_.ifaces[idx].host;
             begin_prompt(PROMPT_SETTINGS_VALUE, "Interface Device (ser0/usbh0) or Host IP:", cur);
         }
-    } else if (settings_tab_ == 3 && (key == 'n' || key == 'N')) {
-        begin_prompt(PROMPT_SETTINGS_NEW_IFACE_ID, "New Interface ID (e.g. rfusb0):", "");
+    } else if (settings_tab_ == 3 && (key == 'n' || key == 'N' || key == 'a' || key == 'A')) {
+        if (draft_.iface_count >= OYK_MAX_INTERFACES) {
+            strcpy(dialog_fb_, "Maximum interface slots reached.");
+            render();
+        } else {
+            prompt_kind_ = PROMPT_SETTINGS_ADD_WIZARD;
+            wiz_step_ = 0;
+            wiz_drv_ = 0;
+            wiz_last_drv_ = -1;
+            wiz_focus_ = 0;
+            wiz_btn_ = 1;
+            wiz_id_[0] = '\0';
+            wiz_desc_[0] = '\0';
+            wiz_ep_[0] = '\0';
+            wiz_port_[0] = '\0';
+            wiz_peer_[0] = '\0';
+            wiz_err_[0] = '\0';
+            render();
+        }
     } else if (settings_tab_ == 3 && (key == 'd' || key == 'D' || key == 'x' || key == 'X')) {
         if (draft_.iface_count > 0) {
             int idx = settings_sel_[3];
@@ -1463,6 +2125,49 @@ void TinyTmuxConsole::dispatch_key(int key) {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::handle_da_csi() {
+    TinyTmuxTermType cand = term_type_;
+    if (esc_buf_[0] == '?') {
+        const char* p = esc_buf_ + 1;
+        int idx = 0;
+        while (*p) {
+            int v = atoi(p);
+            if (idx == 0) {
+                if (v == 62 && cand < TMUX_TERM_VT220) cand = TMUX_TERM_VT220;
+                else if (v >= 63 && v <= 65 && cand < TMUX_TERM_VT340) cand = TMUX_TERM_VT340;
+            } else if (v == 22 && cand < TMUX_TERM_VT340) {
+                cand = TMUX_TERM_VT340;
+            }
+            const char* semi = strchr(p, ';');
+            if (!semi) break;
+            p = semi + 1;
+            ++idx;
+        }
+    } else if (esc_buf_[0] == '>') {
+        int pp = -1, pv = 0;
+        const char* p = esc_buf_ + 1;
+        if (*p) pp = atoi(p);
+        const char* semi = strchr(p, ';');
+        if (semi) pv = atoi(semi + 1);
+        if ((pp == 0 && pv >= 95) ||
+            (pp == 1 && pv >= 200) ||
+            (pp == 41 && pv >= 200) ||
+            (pp == 65 && pv >= 5000) ||
+            pp == 83 || pp == 84 || pp == 85) {
+            cand = TMUX_TERM_XTERM256;
+        } else if (pp == 18 || pp == 19 || pp == 24 || pp == 41 ||
+                   pp == 61 || pp == 64 || pp == 65) {
+            if (cand < TMUX_TERM_VT340) cand = TMUX_TERM_VT340;
+        } else if (pp == 1) {
+            if (cand < TMUX_TERM_VT220) cand = TMUX_TERM_VT220;
+        }
+    }
+    if (cand > term_type_) {
+        term_type_ = cand;
+        render();
+    }
+}
+
 void TinyTmuxConsole::process_csi_final(char final_ch) {
     switch (final_ch) {
         case 'A': dispatch_key(TMUX_KEY_UP); break;
@@ -1472,6 +2177,11 @@ void TinyTmuxConsole::process_csi_final(char final_ch) {
         case 'Z': dispatch_key(TMUX_KEY_LEFT); break;
         case 'H': dispatch_key(TMUX_KEY_HOME); break;
         case 'F': dispatch_key(TMUX_KEY_END); break;
+        case 'c':
+            if (esc_buf_[0] == '?' || esc_buf_[0] == '>') {
+                handle_da_csi();
+            }
+            break;
         case '~': {
             int num = atoi(esc_buf_);
             if (num == 1 || num == 7) dispatch_key(TMUX_KEY_HOME);
@@ -1585,7 +2295,7 @@ void TinyTmuxConsole::feed_input(const oyk_u8* data, size_t len) {
                 } else if (esc_len_ == 0 && b == '[') {
                     esc_state_ = ESC_CSI_LINUX;
                 } else if (b >= 0x20U && b <= 0x3FU) {
-                    if (esc_len_ < 15) {
+                    if (esc_len_ < static_cast<int>(sizeof(esc_buf_) - 1)) {
                         esc_buf_[esc_len_++] = static_cast<char>(b);
                         esc_buf_[esc_len_] = '\0';
                     }

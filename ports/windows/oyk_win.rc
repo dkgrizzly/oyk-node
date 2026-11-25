@@ -224,23 +224,36 @@ BEGIN
     DEFPUSHBUTTON   "Close", IDCANCEL, 240, 154, 56, 15
 END
 
-IDD_ADD_IFACE DIALOG 24, 24, 248, 142
+IDD_ADD_IFACE DIALOG 24, 24, 276, 166
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Add Interface Mapping"
+CAPTION "Add Interface"
 FONT 8, "MS Sans Serif"
 BEGIN
-    LTEXT           "Interface ID:", -1, 8, 10, 56, 10
-    EDITTEXT        IDC_AIF_ID, 68, 8, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Type:", -1, 8, 28, 56, 10
-    COMBOBOX        IDC_AIF_TYPE, 68, 26, 172, 68, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Description:", -1, 8, 46, 56, 10
-    EDITTEXT        IDC_AIF_DESC, 68, 44, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Host / Device:", -1, 8, 64, 56, 10
-    EDITTEXT        IDC_AIF_HOST, 68, 62, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Port / Baud:", -1, 8, 82, 56, 10
-    EDITTEXT        IDC_AIF_PORT, 68, 80, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Peer (opt):", -1, 8, 100, 56, 10
-    EDITTEXT        IDC_AIF_PEER, 68, 98, 172, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    DEFPUSHBUTTON   "Add", IDOK, 124, 120, 54, 14
-    PUSHBUTTON      "Cancel", IDCANCEL, 186, 120, 54, 14
+    LTEXT           "Select the driver for the new interface:", IDC_AIF_PROMPT, 8, 8, 196, 10
+    RTEXT           "[##......] 1/4", IDC_AIF_PROG, 206, 8, 62, 10
+
+    /* Step 1: Driver selection */
+    LISTBOX         IDC_AIF_DRV_LIST, 8, 24, 260, 96, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+
+    /* Step 2: Interface Identity */
+    LTEXT           "Interface ID:", IDC_AIF_L_ID, 8, 34, 62, 10
+    EDITTEXT        IDC_AIF_ID, 74, 32, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Description (opt):", IDC_AIF_L_DESC, 8, 56, 62, 10
+    EDITTEXT        IDC_AIF_DESC, 74, 54, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    /* Step 3: Driver Settings */
+    LTEXT           "Host / Device:", IDC_AIF_L_HOST, 8, 34, 62, 10
+    EDITTEXT        IDC_AIF_HOST, 74, 32, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port / Baud:", IDC_AIF_L_PORT, 8, 56, 62, 10
+    EDITTEXT        IDC_AIF_PORT, 74, 54, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Peer (opt):", IDC_AIF_L_PEER, 8, 78, 62, 10
+    EDITTEXT        IDC_AIF_PEER, 74, 76, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+
+    /* Step 4: Summary */
+    EDITTEXT        IDC_AIF_SUMMARY, 8, 24, 260, 96, ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_BORDER
+
+    LTEXT           "", IDC_AIF_ERR, 8, 126, 260, 10
+    PUSHBUTTON      "< &Back", IDC_AIF_BACK, 92, 144, 56, 14
+    DEFPUSHBUTTON   "&Next >", IDC_AIF_NEXT, 152, 144, 56, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 212, 144, 56, 14
 END

@@ -694,7 +694,7 @@ static void test_usb_host_radiofoundry_cdc_net_and_acm() {
 }
 
 struct ConsoleCap {
-    char buf[4096];
+    char buf[32768];
     size_t len;
 };
 
@@ -860,11 +860,16 @@ static void test_vt100_console_full_parity() {
     /* Backspace K7TMP-7 over KR4OYK-7 (10 backspaces clears it) + Enter */
     const char* edit_call = "\r\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7fK7TMP-7\r";
     con->feed_input(reinterpret_cast<const oyk_u8*>(edit_call), strlen(edit_call));
-    /* Switch to tab 4:Interfaces, press N, add rfusb0 / usb-cdc-net */
+    /* Switch to tab 4:Interfaces, press N, step through 4-step Add Interface wizard (usb-cdc-net -> usbnet0), save via F2 */
     con->feed_input(reinterpret_cast<const oyk_u8*>("4"), 1);
     assert(con->settings_tab() == 3);
-    const char* add_usb = "nrfusb0\r\r";
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* add_usb = "n5\r\r\r\r";
     con->feed_input(reinterpret_cast<const oyk_u8*>(add_usb), strlen(add_usb));
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    assert(strstr(cap->buf, "[##......] 1/4") != NULL);
+    assert(strstr(cap->buf, "[########] 4/4") != NULL);
+    assert(strstr(cap->buf, "Review interface configuration") != NULL);
     /* Save & Apply with F2 (ESC O Q); read-only source_path should apply in-memory gracefully */
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOQ"), 3);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
@@ -872,6 +877,7 @@ static void test_vt100_console_full_parity() {
     oyk_format_callsign(&node->config().callsign, new_cs, sizeof(new_cs));
     assert(strcmp(new_cs, "K7TMP-7") == 0);
     assert(node->iface_count() == 2);
+    assert(strcmp(node->iface(1).cfg.id, "usbnet0") == 0);
     assert(strcmp(node->iface(1).cfg.type, "usb-cdc-net") == 0);
     assert(strstr(con->status_line(), "IN MEMORY ONLY") != NULL);
 
@@ -914,8 +920,12 @@ static void test_vt100_console_full_parity() {
     assert(strstr(cap->buf, "STORAGE MANAGER") != NULL);
     assert(strstr(cap->buf, "microSD Card (SDIO)") != NULL);
     assert(strstr(cap->buf, "ERASES ALL") != NULL || strstr(cap->buf, "ERASES ALL DATA") != NULL);
-    /* Wrong confirmation text does NOT format */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("fformat\r"), 8);
+    /* Wrong confirmation text does NOT format; modal instructs operator to type FORMAT */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+    assert(strstr(cap->buf, "CONFIRM DESTRUCTIVE FORMAT") != NULL);
+    assert(strstr(cap->buf, "Type FORMAT") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("format\r"), 7);
     assert(tinytmux_fs_sim_format_count(TMUX_STORAGE_SD) == 0);
     /* Exact FORMAT formats selected tier (microSD) */
     con->feed_input(reinterpret_cast<const oyk_u8*>("fFORMAT\r"), 8);
@@ -1112,6 +1122,98 @@ static void test_printer_usb_and_serial() {
     printf("[PASS] test_printer_usb_and_serial\n");
 }
 
+static void test_terminal_inquiry_and_ui_modals() {
+    OykConfig* cfg = new OykConfig();
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
+    strcpy(cfg->source_path, "/nonexistent_ro_dir/node.cfg");
+
+    OykPortableNode* node = new OykPortableNode();
+    TinyTmuxNetBridge* bridge = new TinyTmuxNetBridge();
+    char err[64];
+    assert(node->init(cfg, TinyTmuxNetBridge::node_tx_callback, bridge, err, sizeof(err)) == 1);
+    assert(bridge->init(node, 100UL) == 1);
+
+    TinyTmuxConsole* con = new TinyTmuxConsole();
+    ConsoleCap* cap = new ConsoleCap();
+    cap->len = 0; cap->buf[0] = '\0';
+    con->init(node, console_tx_cap, cap);
+    con->set_net_bridge(bridge);
+    con->set_now_ms(500UL);
+
+    /* 1. on_usb_connect emits DA1 + DA2 inquiry, starts in VT100 with DEC single-line boxes */
+    con->on_usb_connect();
+    assert(con->term_type() == TMUX_TERM_VT100);
+    assert(strstr(cap->buf, "\033[c\033[>c") != NULL);
+    assert(strstr(cap->buf, "\033(0") != NULL);
+    assert(strstr(cap->buf, "\033(B") != NULL);
+
+    /* 2. VT220 DA1 reply upgrades capability and enables cursor-hide sequence */
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* da_vt220 = "\033[?62;1;2;6c";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(da_vt220), strlen(da_vt220));
+    assert(con->term_type() == TMUX_TERM_VT220);
+    assert(strcmp(con->term_type_label(), "VT220") == 0);
+    assert(strstr(cap->buf, "\033[?25l") != NULL);
+    assert(strstr(cap->buf, "VT220") != NULL);
+
+    /* 3. VT340 DA1 reply with param 22 enables ANSI colors & dark-grey list headers */
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* da_vt340 = "\033[?64;1;2;22c";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(da_vt340), strlen(da_vt340));
+    assert(con->term_type() == TMUX_TERM_VT340);
+    assert(strstr(cap->buf, "\033[1;97;100m") != NULL);
+    assert(strstr(cap->buf, "\033[36m") != NULL);
+
+    /* 4. xterm-256color DA2 reply enables 256-color dark-grey list headers */
+    cap->len = 0; cap->buf[0] = '\0';
+    const char* da_x256 = "\033[>41;354;0c";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
+    assert(con->term_type() == TMUX_TERM_XTERM256);
+    assert(strcmp(con->term_type_label(), "xterm-256") == 0);
+    assert(strstr(cap->buf, "\033[1;97;48;5;238m") != NULL);
+
+    /* 5. Add Interface 4-step wizard: corner progress bar, Back navigation, driver switch, and Summary commit */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s4"), 2);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->settings_tab() == 3);
+
+    /* Open wizard, pick driver 4 (kiss-serial -> kiss0), advance to Step 4 Summary without committing */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n4\r\r\r"), 5);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    assert(strstr(cap->buf, "[##......] 1/4") != NULL);
+    assert(strstr(cap->buf, "[####....] 2/4") != NULL);
+    assert(strstr(cap->buf, "[######..] 3/4") != NULL);
+    assert(strstr(cap->buf, "[########] 4/4") != NULL);
+    assert(strstr(cap->buf, "kiss0") != NULL);
+    assert(node->iface_count() == 1); /* Not committed yet */
+
+    /* Navigate back Step 4 -> 3 -> 2 -> 1 ('b', Ctrl+B, Ctrl+B), switch driver to 1 (axudp), advance to Finish */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("b\x02\x02" "1\r\r\r"), 9);
+    assert(strstr(cap->buf, "axudp1") != NULL);
+    assert(strstr(cap->buf, "Review interface configuration") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+
+    /* Add usb-cdc-net twice via wizard -> usbnet0, then usbnet1 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n5\r\r\r\r"), 6);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n5\r\r\r\r"), 6);
+    /* Save in memory via F2 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOQ"), 3);
+    assert(node->iface_count() == 4);
+    assert(strcmp(node->iface(1).cfg.id, "axudp1") == 0);
+    assert(strcmp(node->iface(2).cfg.id, "usbnet0") == 0);
+    assert(strcmp(node->iface(3).cfg.id, "usbnet1") == 0);
+
+    delete cap;
+    delete con;
+    delete bridge;
+    delete node;
+    delete cfg;
+    printf("[PASS] test_terminal_inquiry_and_ui_modals\n");
+}
+
 int main() {
     test_board_pinout_and_mac();
     test_psram_detection_and_self_test();
@@ -1120,6 +1222,7 @@ int main() {
     test_usb_host_radiofoundry_cdc_net_and_acm();
     test_printer_usb_and_serial();
     test_vt100_console_full_parity();
+    test_terminal_inquiry_and_ui_modals();
     printf("All TinyTMUX (IMXRT1060 / Teensy 4.1) host tests passed!\n");
     return 0;
 }

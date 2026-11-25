@@ -1400,126 +1400,386 @@ void repopulate_gtk_ifaces(GtkSettingsCtx* ctx) {
 
 void on_settings_add_iface_clicked(GtkWidget*, gpointer user_data) {
     auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
-    GtkWidget* adlg = gtk_dialog_new_with_buttons(
-        "Add Interface Mapping",
-        GTK_WINDOW(ctx->dlg),
-        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
-        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-        GTK_STOCK_ADD, GTK_RESPONSE_ACCEPT,
-        static_cast<const char*>(nullptr));
-    gtk_window_set_default_size(GTK_WINDOW(adlg), 420, 280);
 
-    GtkWidget* tbl = gtk_table_new(8, 2, FALSE);
-    gtk_container_set_border_width(GTK_CONTAINER(tbl), 8);
-    gtk_table_set_row_spacings(GTK_TABLE(tbl), 5);
-    gtk_table_set_col_spacings(GTK_TABLE(tbl), 8);
-    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(adlg)->vbox), tbl, TRUE, TRUE, 4);
-
-    auto add_row = [&](int r, const char* lbl, GtkWidget* w) {
-        GtkWidget* l = gtk_label_new(lbl);
-        gtk_misc_set_alignment(GTK_MISC(l), 0.0f, 0.5f);
-        gtk_table_attach(GTK_TABLE(tbl), l, 0, 1, r, r + 1, GTK_FILL, GTK_FILL, 0, 0);
-        gtk_table_attach(GTK_TABLE(tbl), w, 1, 2, r, r + 1,
-                         static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    struct DriverOpt {
+        const char* type;
+        const char* desc;
+        const char* def_host;
+        const char* def_port;
+    };
+    static const DriverOpt DRIVERS[5] = {
+        { "axudp",       "AX.25 over UDP (BPQ / AXUDP)",     "0.0.0.0",      "10093" },
+        { "axip",        "AX.25 over IP (Protocol 93)",      "0.0.0.0",      "0" },
+        { "kiss-serial", "KISS TNC over Serial Port",        "/dev/ttyUSB0", "9600" },
+        { "kiss-tcp",    "KISS TNC over TCP (Direwolf)",     "127.0.0.1",    "8001" },
+        { "telnet",      "Plaintext Telnet User Port",       "0.0.0.0",      "8010" }
     };
 
+    enum { WIZ_RESP_BACK = 1, WIZ_RESP_NEXT = 2 };
+
+    GtkWidget* dlg = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(dlg), "Add Interface");
+    gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(ctx->dlg));
+    gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(dlg), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 470, 320);
+
+    gtk_dialog_add_button(GTK_DIALOG(dlg), GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
+    GtkWidget* btn_back = gtk_dialog_add_button(GTK_DIALOG(dlg), "< _Back", WIZ_RESP_BACK);
+    GtkWidget* btn_next = gtk_dialog_add_button(GTK_DIALOG(dlg), "_Next >", WIZ_RESP_NEXT);
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), WIZ_RESP_NEXT);
+
+    GtkWidget* outer = gtk_vbox_new(FALSE, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(outer), 10);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), outer, TRUE, TRUE, 0);
+
+    /* Top header: prompt label on left + compact progress bar in top-right corner */
+    GtkWidget* hdr_row = gtk_hbox_new(FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(outer), hdr_row, FALSE, FALSE, 0);
+
+    GtkWidget* lbl_prompt = gtk_label_new("");
+    gtk_misc_set_alignment(GTK_MISC(lbl_prompt), 0.0f, 0.5f);
+    gtk_label_set_line_wrap(GTK_LABEL(lbl_prompt), TRUE);
+    gtk_box_pack_start(GTK_BOX(hdr_row), lbl_prompt, TRUE, TRUE, 0);
+
+    GtkWidget* pbar = gtk_progress_bar_new();
+    gtk_widget_set_size_request(pbar, 118, 18);
+    gtk_box_pack_end(GTK_BOX(hdr_row), pbar, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(outer), gtk_hseparator_new(), FALSE, FALSE, 0);
+
+    GtkWidget* nb = gtk_notebook_new();
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(nb), FALSE);
+    gtk_notebook_set_show_border(GTK_NOTEBOOK(nb), FALSE);
+    gtk_box_pack_start(GTK_BOX(outer), nb, TRUE, TRUE, 0);
+
+    /* Page 0: Driver Selection List */
+    GtkListStore* pstore = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+    for (int i = 0; i < 5; ++i) {
+        GtkTreeIter it;
+        gtk_list_store_append(pstore, &it);
+        gtk_list_store_set(pstore, &it, 0, DRIVERS[i].type, 1, DRIVERS[i].desc, 2, i, -1);
+    }
+    GtkWidget* ptree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(pstore));
+    g_object_unref(pstore);
+    gtk_tree_view_insert_column_with_attributes(
+        GTK_TREE_VIEW(ptree), -1, "Driver", gtk_cell_renderer_text_new(), "text", 0, nullptr);
+    gtk_tree_view_insert_column_with_attributes(
+        GTK_TREE_VIEW(ptree), -1, "Description", gtk_cell_renderer_text_new(), "text", 1, nullptr);
+    GtkTreePath* p0 = gtk_tree_path_new_first();
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(ptree)), p0);
+    gtk_tree_path_free(p0);
+    g_signal_connect(ptree, "row-activated",
+                     G_CALLBACK(+[](GtkTreeView*, GtkTreePath*, GtkTreeViewColumn*, gpointer d) {
+                         gtk_dialog_response(GTK_DIALOG(d), WIZ_RESP_NEXT);
+                     }),
+                     dlg);
+    GtkWidget* psw = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(psw), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(psw), ptree);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), psw, nullptr);
+
+    /* Page 1: Interface ID & Description */
+    GtkWidget* tbl1 = gtk_table_new(3, 2, FALSE);
+    gtk_table_set_row_spacings(GTK_TABLE(tbl1), 8);
+    gtk_table_set_col_spacings(GTK_TABLE(tbl1), 10);
+    GtkWidget* lbl_id_drv = gtk_label_new("");
+    gtk_misc_set_alignment(GTK_MISC(lbl_id_drv), 0.0f, 0.5f);
+    gtk_table_attach(GTK_TABLE(tbl1), gtk_label_new("Selected Driver:"), 0, 1, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl1), lbl_id_drv, 1, 2, 0, 1,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
     GtkWidget* e_id = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(e_id), "axudp1");
-    add_row(0, "Interface ID:", e_id);
-
-    GtkWidget* cb_type = gtk_combo_box_new_text();
-    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "axudp");
-    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "axip");
-    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "kiss-serial");
-    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "kiss-tcp");
-    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_type), "telnet");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_type), 0);
-    add_row(1, "Type:", cb_type);
-
+    gtk_entry_set_activates_default(GTK_ENTRY(e_id), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl1), gtk_label_new("Interface ID:"), 0, 1, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl1), e_id, 1, 2, 1, 2,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
     GtkWidget* e_desc = gtk_entry_new();
-    add_row(2, "Description:", e_desc);
+    gtk_entry_set_activates_default(GTK_ENTRY(e_desc), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl1), gtk_label_new("Description (opt):"), 0, 1, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl1), e_desc, 1, 2, 2, 3,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl1, nullptr);
 
-    GtkWidget* e_host = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(e_host), "0.0.0.0");
-    add_row(3, "Host / Serial Device:", e_host);
-
-    GtkWidget* e_port = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(e_port), "10093");
-    add_row(4, "Port / Baud Rate:", e_port);
-
+    /* Page 2: Driver Settings */
+    GtkWidget* tbl2 = gtk_table_new(5, 2, FALSE);
+    gtk_table_set_row_spacings(GTK_TABLE(tbl2), 8);
+    gtk_table_set_col_spacings(GTK_TABLE(tbl2), 10);
+    GtkWidget* l_mode = gtk_label_new("KISS-TCP Mode:");
+    gtk_misc_set_alignment(GTK_MISC(l_mode), 0.0f, 0.5f);
     GtkWidget* cb_mode = gtk_combo_box_new_text();
     gtk_combo_box_append_text(GTK_COMBO_BOX(cb_mode), "client");
     gtk_combo_box_append_text(GTK_COMBO_BOX(cb_mode), "server");
     gtk_combo_box_set_active(GTK_COMBO_BOX(cb_mode), 0);
-    add_row(5, "KISS-TCP Mode:", cb_mode);
+    gtk_table_attach(GTK_TABLE(tbl2), l_mode, 0, 1, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), cb_mode, 1, 2, 0, 1,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
 
+    GtkWidget* l_host = gtk_label_new("Host / Device:");
+    gtk_misc_set_alignment(GTK_MISC(l_host), 0.0f, 0.5f);
+    GtkWidget* e_host = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(e_host), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), l_host, 0, 1, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_host, 1, 2, 1, 2,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
+    GtkWidget* l_port = gtk_label_new("Port / Baud:");
+    gtk_misc_set_alignment(GTK_MISC(l_port), 0.0f, 0.5f);
+    GtkWidget* e_port = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(e_port), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), l_port, 0, 1, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_port, 1, 2, 2, 3,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
+    GtkWidget* l_kport = gtk_label_new("KISS Port (0-15):");
+    gtk_misc_set_alignment(GTK_MISC(l_kport), 0.0f, 0.5f);
+    GtkWidget* e_kport = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_kport), "0");
+    gtk_entry_set_activates_default(GTK_ENTRY(e_kport), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), l_kport, 0, 1, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_kport, 1, 2, 3, 4,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
+    GtkWidget* l_peer = gtk_label_new("Static Peer (opt):");
+    gtk_misc_set_alignment(GTK_MISC(l_peer), 0.0f, 0.5f);
     GtkWidget* e_peer = gtk_entry_new();
-    add_row(6, "Peer (optional):", e_peer);
+    gtk_entry_set_activates_default(GTK_ENTRY(e_peer), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), l_peer, 0, 1, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_peer, 1, 2, 4, 5,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl2, nullptr);
 
-    gtk_widget_show_all(adlg);
-    while (gtk_dialog_run(GTK_DIALOG(adlg)) == GTK_RESPONSE_ACCEPT) {
-        std::string id = gtk_entry_get_text(GTK_ENTRY(e_id));
-        gchar* t_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_type));
-        std::string type_s = t_raw ? t_raw : "axudp";
-        if (t_raw) g_free(t_raw);
-        if (id.empty()) {
-            GtkWidget* err = gtk_message_dialog_new(
-                GTK_WINDOW(adlg), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                "Interface ID cannot be empty.");
-            gtk_dialog_run(GTK_DIALOG(err));
-            gtk_widget_destroy(err);
+    /* Page 3: Review Summary */
+    GtkWidget* sum_tv = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(sum_tv), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(sum_tv), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(sum_tv), GTK_WRAP_WORD_CHAR);
+    GtkWidget* sum_sw = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sum_sw), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(sum_sw), sum_tv);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), sum_sw, nullptr);
+
+    GtkWidget* lbl_err = gtk_label_new("");
+    gtk_misc_set_alignment(GTK_MISC(lbl_err), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(outer), lbl_err, FALSE, FALSE, 0);
+
+    gtk_widget_show_all(dlg);
+
+    int step = 0;
+    int drv_idx = 0;
+    int last_drv = -1;
+
+    auto set_err = [&](const std::string& msg) {
+        if (msg.empty()) {
+            gtk_label_set_text(GTK_LABEL(lbl_err), "");
+            gtk_widget_hide(lbl_err);
+        } else {
+            std::string mk = "<span foreground=\"#cc0000\"><b>" + escape_markup(msg) + "</b></span>";
+            gtk_label_set_markup(GTK_LABEL(lbl_err), mk.c_str());
+            gtk_widget_show(lbl_err);
+        }
+    };
+
+    auto ci_eq = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                std::tolower(static_cast<unsigned char>(b[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto sync_wizard_ui = [&]() {
+        std::string ptxt = "Step " + std::to_string(step + 1) + " of 4";
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(pbar), static_cast<gdouble>(step + 1) / 4.0);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(pbar), ptxt.c_str());
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), step);
+        gtk_widget_set_sensitive(btn_back, step > 0);
+        gtk_button_set_label(GTK_BUTTON(btn_next), (step == 3) ? "_Finish" : "_Next >");
+
+        const std::string t = DRIVERS[drv_idx].type;
+        if (step == 0) {
+            gtk_label_set_markup(GTK_LABEL(lbl_prompt),
+                                 "<b>Select the driver for the new interface:</b>");
+        } else if (step == 1) {
+            gtk_label_set_markup(GTK_LABEL(lbl_prompt),
+                                 "<b>Enter a unique interface ID and optional description:</b>");
+            gtk_label_set_text(GTK_LABEL(lbl_id_drv), (t + " - " + DRIVERS[drv_idx].desc).c_str());
+            gtk_widget_grab_focus(e_id);
+        } else if (step == 2) {
+            if (t == "axudp") {
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXUDP bind host, UDP port, and optional peer:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host:");
+                gtk_label_set_text(GTK_LABEL(l_port), "UDP Port:");
+            } else if (t == "axip") {
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXIP bind host and optional static peer:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host:");
+            } else if (t == "kiss-serial") {
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure serial device, baud rate, and KISS port:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Serial Device:");
+                gtk_label_set_text(GTK_LABEL(l_port), "Baud Rate:");
+            } else if (t == "kiss-tcp") {
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure KISS-TCP mode, host, TCP port, and KISS port:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Host:");
+                gtk_label_set_text(GTK_LABEL(l_port), "TCP Port:");
+            } else {
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure Telnet bind host and TCP port:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host:");
+                gtk_label_set_text(GTK_LABEL(l_port), "TCP Port:");
+            }
+            const bool is_ktcp = (t == "kiss-tcp");
+            const bool is_kser = (t == "kiss-serial");
+            const bool has_port = (t != "axip");
+            const bool has_peer = (t == "axudp" || t == "axip");
+            gtk_widget_set_visible(l_mode, is_ktcp);
+            gtk_widget_set_visible(cb_mode, is_ktcp);
+            gtk_widget_set_visible(l_port, has_port);
+            gtk_widget_set_visible(e_port, has_port);
+            gtk_widget_set_visible(l_kport, is_kser || is_ktcp);
+            gtk_widget_set_visible(e_kport, is_kser || is_ktcp);
+            gtk_widget_set_visible(l_peer, has_peer);
+            gtk_widget_set_visible(e_peer, has_peer);
+            gtk_widget_grab_focus(e_host);
+        } else {
+            gtk_label_set_markup(GTK_LABEL(lbl_prompt),
+                                 "<b>Review interface settings before committing:</b>");
+            std::ostringstream oss;
+            oss << "Driver:        " << t << "\n"
+                << "Interface ID:  " << gtk_entry_get_text(GTK_ENTRY(e_id)) << "\n";
+            std::string d_s = gtk_entry_get_text(GTK_ENTRY(e_desc));
+            oss << "Description:   " << (d_s.empty() ? "(none)" : d_s) << "\n";
+            std::string h_s = gtk_entry_get_text(GTK_ENTRY(e_host));
+            std::string p_s = gtk_entry_get_text(GTK_ENTRY(e_port));
+            if (t == "kiss-serial") {
+                oss << "Serial Device: " << h_s << "\n"
+                    << "Baud Rate:     " << p_s << "\n"
+                    << "KISS Port:     " << gtk_entry_get_text(GTK_ENTRY(e_kport)) << "\n";
+            } else if (t == "kiss-tcp") {
+                gchar* mr = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_mode));
+                oss << "Mode:          " << (mr ? mr : "client") << "\n"
+                    << "Endpoint:      " << h_s << ":" << p_s << "\n"
+                    << "KISS Port:     " << gtk_entry_get_text(GTK_ENTRY(e_kport)) << "\n";
+                if (mr) g_free(mr);
+            } else {
+                oss << "Bind Host:     " << h_s << "\n";
+                if (t != "axip") oss << "Port:          " << p_s << "\n";
+                if (t == "axudp" || t == "axip") {
+                    std::string pr = gtk_entry_get_text(GTK_ENTRY(e_peer));
+                    oss << "Static Peer:   " << (pr.empty() ? "(auto-learn)" : pr) << "\n";
+                }
+            }
+            gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(sum_tv)),
+                                     oss.str().c_str(), -1);
+        }
+    };
+
+    set_err("");
+    sync_wizard_ui();
+
+    while (true) {
+        gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp == GTK_RESPONSE_CANCEL || resp == GTK_RESPONSE_DELETE_EVENT) {
+            break;
+        }
+        if (resp == WIZ_RESP_BACK) {
+            if (step > 0) {
+                --step;
+                set_err("");
+                sync_wizard_ui();
+            }
             continue;
         }
-        bool dup = false;
-        for (const auto& ex : *ctx->ifaces) {
-            if (ex.id == id) { dup = true; break; }
-        }
-        if (dup) {
-            GtkWidget* err = gtk_message_dialog_new(
-                GTK_WINDOW(adlg), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                "An interface with ID '%s' already exists.", id.c_str());
-            gtk_dialog_run(GTK_DIALOG(err));
-            gtk_widget_destroy(err);
-            continue;
-        }
-        radio::RadioInterfaceConfig ic;
-        ic.id = id;
-        ic.type = type_s;
-        ic.description = gtk_entry_get_text(GTK_ENTRY(e_desc));
-        std::string host = gtk_entry_get_text(GTK_ENTRY(e_host));
-        std::string port = gtk_entry_get_text(GTK_ENTRY(e_port));
-        std::string peer = gtk_entry_get_text(GTK_ENTRY(e_peer));
-        gchar* m_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_mode));
-        std::string mode = m_raw ? m_raw : "client";
-        if (m_raw) g_free(m_raw);
+        if (resp != WIZ_RESP_NEXT) continue;
 
-        if (type_s == "axudp") {
-            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-            ic.params["bind_port"] = port.empty() ? "10093" : port;
-            ic.params["auto_learn"] = "true";
-            if (!peer.empty()) ic.peers.push_back(peer);
-        } else if (type_s == "axip") {
-            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-            ic.params["auto_learn"] = "true";
-            if (!peer.empty()) ic.peers.push_back(peer);
-        } else if (type_s == "kiss-serial") {
-            ic.params["device"] = host.empty() ? "/dev/ttyUSB0" : host;
-            ic.params["baud"] = port.empty() ? "9600" : port;
-            ic.params["kiss_port"] = "0";
-        } else if (type_s == "kiss-tcp") {
-            ic.params["mode"] = mode;
-            ic.params["host"] = host.empty() ? "127.0.0.1" : host;
-            ic.params["port"] = port.empty() ? "8001" : port;
-            ic.params["kiss_port"] = "0";
-        } else if (type_s == "telnet") {
-            ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
-            ic.params["bind_port"] = port.empty() ? "8010" : port;
+        set_err("");
+        if (step == 0) {
+            GtkTreeSelection* psel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ptree));
+            GtkTreeModel* pm = nullptr;
+            GtkTreeIter pit;
+            if (gtk_tree_selection_get_selected(psel, &pm, &pit)) {
+                gtk_tree_model_get(pm, &pit, 2, &drv_idx, -1);
+            }
+            if (drv_idx < 0 || drv_idx >= 5) drv_idx = 0;
+            if (drv_idx != last_drv) {
+                std::string auto_id = node::derive_default_iface_id(*ctx->ifaces, DRIVERS[drv_idx].type);
+                gtk_entry_set_text(GTK_ENTRY(e_id), auto_id.c_str());
+                gtk_entry_set_text(GTK_ENTRY(e_desc), "");
+                gtk_entry_set_text(GTK_ENTRY(e_host), DRIVERS[drv_idx].def_host);
+                gtk_entry_set_text(GTK_ENTRY(e_port), DRIVERS[drv_idx].def_port);
+                gtk_entry_set_text(GTK_ENTRY(e_kport), "0");
+                gtk_entry_set_text(GTK_ENTRY(e_peer), "");
+                gtk_combo_box_set_active(GTK_COMBO_BOX(cb_mode), 0);
+                last_drv = drv_idx;
+            }
+            step = 1;
+            sync_wizard_ui();
+        } else if (step == 1) {
+            std::string id = gtk_entry_get_text(GTK_ENTRY(e_id));
+            if (id.empty()) {
+                set_err("Interface ID cannot be empty.");
+                continue;
+            }
+            bool dup = false;
+            for (const auto& ex : *ctx->ifaces) {
+                if (ci_eq(ex.id, id)) { dup = true; break; }
+            }
+            if (dup) {
+                set_err("An interface with ID '" + id + "' already exists.");
+                continue;
+            }
+            step = 2;
+            sync_wizard_ui();
+        } else if (step == 2) {
+            std::string h_s = gtk_entry_get_text(GTK_ENTRY(e_host));
+            if (h_s.empty()) {
+                set_err("Host / Serial Device cannot be empty.");
+                continue;
+            }
+            step = 3;
+            sync_wizard_ui();
+        } else {
+            radio::RadioInterfaceConfig ic;
+            std::string type_s = DRIVERS[drv_idx].type;
+            ic.id = gtk_entry_get_text(GTK_ENTRY(e_id));
+            ic.type = type_s;
+            ic.description = gtk_entry_get_text(GTK_ENTRY(e_desc));
+            std::string host = gtk_entry_get_text(GTK_ENTRY(e_host));
+            std::string port = gtk_entry_get_text(GTK_ENTRY(e_port));
+            std::string kport = gtk_entry_get_text(GTK_ENTRY(e_kport));
+            std::string peer = gtk_entry_get_text(GTK_ENTRY(e_peer));
+            gchar* m_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_mode));
+            std::string mode = m_raw ? m_raw : "client";
+            if (m_raw) g_free(m_raw);
+
+            if (type_s == "axudp") {
+                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                ic.params["bind_port"] = port.empty() ? "10093" : port;
+                ic.params["auto_learn"] = "true";
+                if (!peer.empty()) ic.peers.push_back(peer);
+            } else if (type_s == "axip") {
+                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                ic.params["auto_learn"] = "true";
+                if (!peer.empty()) ic.peers.push_back(peer);
+            } else if (type_s == "kiss-serial") {
+                ic.params["device"] = host.empty() ? "/dev/ttyUSB0" : host;
+                ic.params["baud"] = port.empty() ? "9600" : port;
+                ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+            } else if (type_s == "kiss-tcp") {
+                ic.params["mode"] = mode;
+                ic.params["host"] = host.empty() ? "127.0.0.1" : host;
+                ic.params["port"] = port.empty() ? "8001" : port;
+                ic.params["kiss_port"] = kport.empty() ? "0" : kport;
+            } else if (type_s == "telnet") {
+                ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+                ic.params["bind_port"] = port.empty() ? "8010" : port;
+            }
+            ctx->ifaces->push_back(std::move(ic));
+            repopulate_gtk_ifaces(ctx);
+            break;
         }
-        ctx->ifaces->push_back(std::move(ic));
-        repopulate_gtk_ifaces(ctx);
-        break;
     }
-    gtk_widget_destroy(adlg);
+    gtk_widget_destroy(dlg);
 }
 
 void on_settings_rem_iface_clicked(GtkWidget*, gpointer user_data) {
