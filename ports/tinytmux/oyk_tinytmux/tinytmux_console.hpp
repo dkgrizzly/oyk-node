@@ -91,6 +91,7 @@ private:
         PROMPT_SETTINGS_VALUE,
         PROMPT_SETTINGS_ADD_WIZARD,
         PROMPT_SETTINGS_EDIT_IFACE,
+        PROMPT_SETTINGS_EDIT_PEER,
         PROMPT_RIG_FREQ,
         PROMPT_RIG_MODE,
         PROMPT_RIG_VFO,
@@ -136,16 +137,21 @@ private:
     void render_prompt_overlay();
     void render_add_iface_wizard();
     void render_edit_iface_dialog();
+    void render_edit_peer_dialog();
     void render_confirm_format_modal();
 
     void open_add_iface_wizard();
     void open_edit_iface_dialog(int edit_idx);
+    void open_edit_peer_dialog(int edit_idx);
     void handle_add_wizard_key(int key);
     void handle_edit_iface_key(int key);
+    void handle_edit_peer_key(int key);
     void wizard_apply_driver_defaults();
     int wizard_try_advance();
     int edit_iface_try_save();
+    int edit_peer_try_save();
     void commit_iface_fields(int slot);
+    void commit_peer_fields(int slot);
     int wizard_step_field_count() const;
     int edit_iface_field_count() const;
 
@@ -163,7 +169,7 @@ private:
     void begin_prompt(PromptKind kind, const char* label, const char* prefill);
     void commit_prompt();
     void refresh_files_lists();
-    void open_settings();
+    void open_settings(int initial_tab = 0);
     void save_and_apply_settings();
     void edit_current_settings_field();
     int settings_tab_item_count(int tab) const;
@@ -189,10 +195,10 @@ private:
     OykApprovedFile approved_files_[16];
     int approved_count_;
 
-    /* Settings draft & navigation (6 tabs: Node, BBS, CHAT, Interfaces, Rig, Printer) */
+    /* Settings draft & navigation (7 tabs: Node, BBS, CHAT, Ifaces, Peers, Rig, Printer) */
     OykConfig draft_;
     int settings_tab_;
-    int settings_sel_[6];
+    int settings_sel_[7];
     int settings_iface_field_;
 
     /* Line & modal prompt state */

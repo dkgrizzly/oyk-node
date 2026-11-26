@@ -143,6 +143,9 @@ public:
     // Query & live configuration APIs (thread-safe)
     NodeConfig config() const;
     ConfigApplyResult apply_config(NodeConfig new_cfg, bool save_to_disk = true);
+    std::size_t auto_learned_peer_count() const;
+    bool persist_auto_learned_peers(std::string* error_out = nullptr);
+    void discard_auto_learned_peers();
     NodeSnapshot snapshot() const;
     std::vector<MHeardRecord> mheard(std::size_t max_entries = 20) const;
     Logger& logger() noexcept { return logger_; }
@@ -257,9 +260,14 @@ private:
     bool is_own_callsign(const ax25::Callsign& call) const;
     bool is_banned_locked(const ax25::Callsign& call) const;
     std::string resolve_port_id_locked(const std::string& port_spec) const;
+    radio::LearnedPeerPolicy effective_learned_policy_locked(const std::string& iface_id) const;
+    radio::PeerConfig* find_peer_locked(const std::string& iface_id, const ax25::Callsign& call);
+    const radio::PeerConfig* find_peer_locked(const std::string& iface_id, const ax25::Callsign& call) const;
+    void migrate_legacy_interface_peers_locked(NodeConfig& cfg) const;
+    void sync_peers_to_interfaces_locked();
     std::chrono::system_clock::time_point current_time() const;
     void log_msg(LogLevel level, const std::string& msg);
-    std::string welcome_banner() const;
+    std::string welcome_banner(bool is_new_user = false) const;
     std::string prompt_string() const;
     static std::string build_ban_notice(const BanEntry& entry, bool can_appeal);
 
@@ -285,6 +293,7 @@ private:
 
     // Heard tracking
     std::set<std::string> seen_callsigns_;
+    std::set<std::string> welcomed_calls_;
     std::deque<NewCallsignRecord> last_new_callsigns_; // Most recent 5 new callsigns (newest first)
     std::map<std::string, MHeardRecord> mheard_;
 

@@ -892,6 +892,8 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->rotate_daily = 1;
     cfg->accept_incoming = 1;
     cfg->allow_flash_logging = 0;
+    cfg->learned_peer_policy = OYK_LEARN_INBOUND;
+    cfg->new_user_welcome[0] = '\0';
     cfg->line_ending = oyk_platform_default_eol();
     cfg->has_detected_eol = 0;
 
@@ -1011,6 +1013,160 @@ void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,
     safe_copy(out, out_sz, prefix);
 }
 
+void oyk_derive_default_peer_id(const OykConfig* cfg, const char* callsign,
+                                char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    char base[16];
+    size_t bl = 0;
+    if (callsign) {
+        for (size_t i = 0; callsign[i] && bl < 12; ++i) {
+            unsigned char ch = static_cast<unsigned char>(callsign[i]);
+            if (isalnum(ch) || ch == '-' || ch == '_') {
+                base[bl++] = static_cast<char>(tolower(ch));
+            }
+        }
+    }
+    if (bl == 0) {
+        strcpy(base, "peer");
+    } else {
+        base[bl] = '\0';
+    }
+    for (int n = 0; n < 1000; ++n) {
+        char cand[20];
+        if (n == 0) {
+            safe_copy(cand, sizeof(cand), base);
+        } else {
+            char trunc[12];
+            safe_copy(trunc, sizeof(trunc), base);
+            sprintf(cand, "%.10s-%d", trunc, n);
+        }
+        int used = 0;
+        if (cfg) {
+            for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+                if (stricmp_ascii(cfg->peers[i].id, cand) == 0) {
+                    used = 1;
+                    break;
+                }
+            }
+        }
+        if (!used) {
+            safe_copy(out, out_sz, cand);
+            return;
+        }
+    }
+    safe_copy(out, out_sz, base);
+}
+
+oyk_u8 oyk_parse_learned_policy(const char* text, oyk_u8 fallback) {
+    if (!text || !text[0]) return OYK_LEARN_INHERIT;
+    char buf[24];
+    safe_copy(buf, sizeof(buf), text);
+    trim_inplace(buf);
+    if (!buf[0] || stricmp_ascii(buf, "inherit") == 0 || stricmp_ascii(buf, "default") == 0) {
+        return OYK_LEARN_INHERIT;
+    }
+    if (stricmp_ascii(buf, "none") == 0 || stricmp_ascii(buf, "deny") == 0 || stricmp_ascii(buf, "off") == 0) {
+        return OYK_LEARN_NONE;
+    }
+    if (stricmp_ascii(buf, "inbound") == 0 || stricmp_ascii(buf, "in") == 0) {
+        return OYK_LEARN_INBOUND;
+    }
+    if (stricmp_ascii(buf, "outbound") == 0 || stricmp_ascii(buf, "out") == 0) {
+        return OYK_LEARN_OUTBOUND;
+    }
+    if (stricmp_ascii(buf, "both") == 0 || stricmp_ascii(buf, "all") == 0 || stricmp_ascii(buf, "in+out") == 0) {
+        return OYK_LEARN_BOTH;
+    }
+    return fallback;
+}
+
+const char* oyk_format_learned_policy(oyk_u8 policy) {
+    switch (policy) {
+        case OYK_LEARN_NONE:     return "none";
+        case OYK_LEARN_INBOUND:  return "inbound";
+        case OYK_LEARN_OUTBOUND: return "outbound";
+        case OYK_LEARN_BOTH:     return "both";
+        default:                 return "inherit";
+    }
+}
+
+int oyk_first_peer_for_iface(const OykConfig* cfg, const char* iface_id,
+                             oyk_u32* ip_out, oyk_u16* port_out) {
+    if (!cfg || !iface_id) return 0;
+    for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        const OykPeerConfig* p = &cfg->peers[i];
+        if (p->interface_id[0] && stricmp_ascii(p->interface_id, iface_id) != 0) continue;
+        oyk_u32 ip = p->resolved_ip;
+        if (ip == 0 && p->host[0]) {
+            (void)oyk_parse_ipv4(p->host, &ip);
+        }
+        if (ip != 0) {
+            if (ip_out) *ip_out = ip;
+            if (port_out) *port_out = p->port ? p->port : static_cast<oyk_u16>(10093);
+            return 1;
+        }
+    }
+    for (int i = 0; i < cfg->iface_count && i < OYK_MAX_INTERFACES; ++i) {
+        if (stricmp_ascii(cfg->ifaces[i].id, iface_id) == 0 && cfg->ifaces[i].peer_count > 0) {
+            if (ip_out) *ip_out = cfg->ifaces[i].peers[0].ip;
+            if (port_out) *port_out = cfg->ifaces[i].peers[0].port;
+            return (cfg->ifaces[i].peers[0].ip != 0) ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+static void format_ipv4_dotted(oyk_u32 net_ip, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    if (net_ip == 0) {
+        out[0] = '\0';
+        return;
+    }
+    const oyk_u8* b = reinterpret_cast<const oyk_u8*>(&net_ip);
+    char buf[20];
+    sprintf(buf, "%u.%u.%u.%u",
+            static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
+            static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]));
+    safe_copy(out, out_sz, buf);
+}
+
+static void append_migrated_iface_peers(OykConfig* cfg) {
+    if (!cfg) return;
+    for (int i = 0; i < cfg->iface_count && i < OYK_MAX_INTERFACES; ++i) {
+        OykIfaceConfig* ic = &cfg->ifaces[i];
+        for (int p = 0; p < ic->peer_count && p < OYK_MAX_PEERS; ++p) {
+            if (cfg->peer_count >= OYK_MAX_CONFIG_PEERS) break;
+            const OykPeerEntry* pe = &ic->peers[p];
+            char ip_s[20];
+            format_ipv4_dotted(pe->ip, ip_s, sizeof(ip_s));
+            int dup = 0;
+            for (int k = 0; k < cfg->peer_count; ++k) {
+                if (stricmp_ascii(cfg->peers[k].interface_id, ic->id) == 0 &&
+                    stricmp_ascii(cfg->peers[k].callsign, pe->callsign) == 0 &&
+                    cfg->peers[k].resolved_ip == pe->ip &&
+                    cfg->peers[k].port == pe->port) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (dup) continue;
+            OykPeerConfig* dst = &cfg->peers[cfg->peer_count++];
+            memset(dst, 0, sizeof(*dst));
+            oyk_derive_default_peer_id(cfg, pe->callsign[0] ? pe->callsign : ic->id,
+                                       dst->id, sizeof(dst->id));
+            safe_copy(dst->callsign, sizeof(dst->callsign), pe->callsign);
+            safe_copy(dst->interface_id, sizeof(dst->interface_id), ic->id);
+            safe_copy(dst->host, sizeof(dst->host), ip_s);
+            dst->resolved_ip = pe->ip;
+            dst->port = pe->port;
+            dst->allow_inbound = 1;
+            dst->allow_outbound = 1;
+            dst->auto_learned = 0;
+        }
+        ic->peer_count = 0;
+    }
+}
+
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz) {
     size_t raw_len = 0;
     char* raw = read_all_binary(path, &raw_len);
@@ -1028,8 +1184,9 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                                             &found_eol, &mixed_eol);
     cfg->has_detected_eol = found_eol;
 
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer */
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer, 7=peer */
     OykIfaceConfig* cur_if = NULL;
+    OykPeerConfig* cur_peer = NULL;
     int node_call_explicit_ssid = 0;
     int node_ssid_set = 0;
     oyk_u8 node_ssid_val = OYK_DEFAULT_NODE_SSID;
@@ -1054,21 +1211,27 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             if (stricmp_ascii(sec, "node") == 0) {
                 section = 0;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (stricmp_ascii(sec, "logfiles") == 0) {
                 section = 1;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (stricmp_ascii(sec, "bbs") == 0) {
                 section = 4;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (stricmp_ascii(sec, "chat") == 0) {
                 section = 3;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (stricmp_ascii(sec, "rig") == 0 || stricmp_ascii(sec, "radio") == 0) {
                 section = 5;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (stricmp_ascii(sec, "printer") == 0) {
                 section = 6;
                 cur_if = NULL;
+                cur_peer = NULL;
             } else if (strlen(sec) > 9 &&
                        (sec[0] == 'i' || sec[0] == 'I') &&
                        (sec[8] == 'e' || sec[8] == 'E')) {
@@ -1083,6 +1246,26 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     cur_if->port = 0;
                     cur_if->baud = 9600;
                     section = 2;
+                    cur_peer = NULL;
+                }
+            } else if (strlen(sec) > 4 &&
+                       (sec[0] == 'p' || sec[0] == 'P') &&
+                       (sec[1] == 'e' || sec[1] == 'E') &&
+                       (sec[2] == 'e' || sec[2] == 'E') &&
+                       (sec[3] == 'r' || sec[3] == 'R') &&
+                       (sec[4] == ' ' || sec[4] == '\t' || sec[4] == ':')) {
+                char* idp = sec + 4;
+                trim_inplace(idp);
+                if (*idp == ':') { ++idp; trim_inplace(idp); }
+                if (*idp && cfg->peer_count < OYK_MAX_CONFIG_PEERS) {
+                    cur_peer = &cfg->peers[cfg->peer_count++];
+                    memset(cur_peer, 0, sizeof(*cur_peer));
+                    safe_copy(cur_peer->id, sizeof(cur_peer->id), idp);
+                    cur_peer->allow_inbound = 1;
+                    cur_peer->allow_outbound = 1;
+                    cur_peer->auto_learned = 0;
+                    section = 7;
+                    cur_if = NULL;
                 }
             }
             continue;
@@ -1115,6 +1298,10 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 oyk_parse_callsign(v, &cfg->alias);
             } else if (stricmp_ascii(k, "welcome") == 0 || stricmp_ascii(k, "welcome_text") == 0) {
                 safe_copy(cfg->welcome_text, sizeof(cfg->welcome_text), v);
+            } else if (stricmp_ascii(k, "new_user_welcome") == 0 || stricmp_ascii(k, "newuserwelcome") == 0) {
+                safe_copy(cfg->new_user_welcome, sizeof(cfg->new_user_welcome), v);
+            } else if (stricmp_ascii(k, "learned_peer_policy") == 0) {
+                cfg->learned_peer_policy = oyk_parse_learned_policy(v, OYK_LEARN_INBOUND);
             } else if (stricmp_ascii(k, "info") == 0 || stricmp_ascii(k, "info_text") == 0) {
                 safe_copy(cfg->info_text, sizeof(cfg->info_text), v);
             } else if (stricmp_ascii(k, "logpath") == 0) {
@@ -1156,6 +1343,11 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if->kiss_port = static_cast<oyk_u8>(atoi(v) & 0x0F);
             } else if (stricmp_ascii(k, "mode") == 0) {
                 cur_if->server_mode = (stricmp_ascii(v, "server") == 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "auto_learn") == 0) {
+                cur_if->no_auto_learn = (stricmp_ascii(v, "false") == 0 || strcmp(v, "0") == 0 ||
+                                         stricmp_ascii(v, "no") == 0 || stricmp_ascii(v, "off") == 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "learned_peer_policy") == 0) {
+                cur_if->learned_peer_policy = oyk_parse_learned_policy(v, OYK_LEARN_INHERIT);
             } else if (stricmp_ascii(k, "peer") == 0) {
                 if (cur_if->peer_count < OYK_MAX_PEERS) {
                     OykPeerEntry pe;
@@ -1263,10 +1455,49 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             } else if (stricmp_ascii(k, "condensed") == 0) {
                 cfg->printer_condensed = (stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0) ? 1 : 0;
             }
+        } else if (section == 7 && cur_peer) {
+            if (stricmp_ascii(k, "callsign") == 0 || stricmp_ascii(k, "call") == 0) {
+                if (!v[0] || strcmp(v, "*") == 0) {
+                    cur_peer->callsign[0] = '\0';
+                } else {
+                    OykCallsign pc;
+                    if (oyk_parse_callsign(v, &pc)) {
+                        oyk_format_callsign(&pc, cur_peer->callsign, sizeof(cur_peer->callsign));
+                    } else {
+                        safe_copy(cur_peer->callsign, sizeof(cur_peer->callsign), v);
+                    }
+                }
+            } else if (stricmp_ascii(k, "description") == 0 || stricmp_ascii(k, "desc") == 0) {
+                safe_copy(cur_peer->description, sizeof(cur_peer->description), v);
+            } else if (stricmp_ascii(k, "interface") == 0 || stricmp_ascii(k, "interface_id") == 0 ||
+                       stricmp_ascii(k, "iface") == 0) {
+                safe_copy(cur_peer->interface_id, sizeof(cur_peer->interface_id), v);
+            } else if (stricmp_ascii(k, "host") == 0 || stricmp_ascii(k, "address") == 0) {
+                char hb[40];
+                safe_copy(hb, sizeof(hb), v);
+                char* colon = strrchr(hb, ':');
+                if (colon && strchr(hb, ':') == colon && colon > hb && colon[1]) {
+                    *colon = '\0';
+                    if (cur_peer->port == 0) {
+                        long pv = atol(colon + 1);
+                        if (pv > 0L && pv <= 65535L) cur_peer->port = static_cast<oyk_u16>(pv);
+                    }
+                }
+                safe_copy(cur_peer->host, sizeof(cur_peer->host), hb);
+                oyk_parse_ipv4(cur_peer->host, &cur_peer->resolved_ip);
+            } else if (stricmp_ascii(k, "port") == 0) {
+                long pv = atol(v);
+                if (pv >= 0L && pv <= 65535L) cur_peer->port = static_cast<oyk_u16>(pv);
+            } else if (stricmp_ascii(k, "allow_inbound") == 0 || stricmp_ascii(k, "inbound") == 0) {
+                cur_peer->allow_inbound = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "allow_outbound") == 0 || stricmp_ascii(k, "outbound") == 0) {
+                cur_peer->allow_outbound = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
+            }
         }
     }
 
     free(raw);
+    append_migrated_iface_peers(cfg);
 
     if (cfg->rig_port == 0) {
         if (stricmp_ascii(cfg->rig_protocol, "radiofoundry") == 0 ||
@@ -1319,6 +1550,9 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "info = %s%s", cfg->info_text, nl);
     fprintf(fp, "accept_incoming = %s%s", cfg->accept_incoming ? "true" : "false", nl);
     fprintf(fp, "allow_flash_logging = %s%s", cfg->allow_flash_logging ? "true" : "false", nl);
+    fprintf(fp, "learned_peer_policy = %s%s",
+            oyk_format_learned_policy(cfg->learned_peer_policy ? cfg->learned_peer_policy : static_cast<oyk_u8>(OYK_LEARN_INBOUND)), nl);
+    if (cfg->new_user_welcome[0]) fprintf(fp, "new_user_welcome = %s%s", cfg->new_user_welcome, nl);
     fprintf(fp, "logpath = %s%s", cfg->log_path, nl);
     fprintf(fp, "consolelevel = 0x%lx%s", static_cast<unsigned long>(cfg->console_level), nl);
     fprintf(fp, "log_rotate_daily = %s%s", cfg->rotate_daily ? "true" : "false", nl);
@@ -1403,29 +1637,26 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
             if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
             if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
         }
-        for (int p = 0; p < ic->peer_count; ++p) {
-            oyk_u32 ip = ic->peers[p].ip;
-            const oyk_u8* b = reinterpret_cast<const oyk_u8*>(&ip);
-            if (ic->peers[p].callsign[0]) {
-                if (ic->peers[p].port > 0) {
-                    fprintf(fp, "peer = %s@%u.%u.%u.%u:%u%s",
-                            ic->peers[p].callsign,
-                            static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
-                            static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]),
-                            static_cast<unsigned int>(ic->peers[p].port), nl);
-                } else {
-                    fprintf(fp, "peer = %s@%u.%u.%u.%u%s",
-                            ic->peers[p].callsign,
-                            static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
-                            static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]), nl);
-                }
-            } else {
-                fprintf(fp, "peer = %u.%u.%u.%u:%u%s",
-                        static_cast<unsigned int>(b[0]), static_cast<unsigned int>(b[1]),
-                        static_cast<unsigned int>(b[2]), static_cast<unsigned int>(b[3]),
-                        static_cast<unsigned int>(ic->peers[p].port), nl);
-            }
+        if (ic->no_auto_learn) {
+            fprintf(fp, "auto_learn = false%s", nl);
         }
+        if (ic->learned_peer_policy != OYK_LEARN_INHERIT) {
+            fprintf(fp, "learned_peer_policy = %s%s",
+                    oyk_format_learned_policy(ic->learned_peer_policy), nl);
+        }
+    }
+
+    for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        const OykPeerConfig* pc = &cfg->peers[i];
+        if (pc->auto_learned) continue;
+        fprintf(fp, "%s[peer %s]%s", nl, pc->id, nl);
+        if (pc->callsign[0]) fprintf(fp, "callsign = %s%s", pc->callsign, nl);
+        if (pc->description[0]) fprintf(fp, "description = %s%s", pc->description, nl);
+        if (pc->interface_id[0]) fprintf(fp, "interface = %s%s", pc->interface_id, nl);
+        if (pc->host[0]) fprintf(fp, "host = %s%s", pc->host, nl);
+        if (pc->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(pc->port), nl);
+        fprintf(fp, "allow_inbound = %s%s", pc->allow_inbound ? "true" : "false", nl);
+        fprintf(fp, "allow_outbound = %s%s", pc->allow_outbound ? "true" : "false", nl);
     }
 
     fclose(fp);
@@ -1442,7 +1673,7 @@ OykPortableNode::OykPortableNode()
       mheard_count_(0), new_heard_count_(0),
       banlist_eol_(oyk_platform_default_eol()),
       banlist_has_eol_(0), banlist_mixed_eol_(0),
-      ban_count_(0), console_log_count_(0),
+      ban_count_(0), welcomed_count_(0), console_log_count_(0),
       bbs_next_id_(1), bbs_msg_count_(0),
       bbs_yapp_(NULL), bbs_yapp_sid_(0), bbs_yapp_tx_sess_(NULL) {
     oyk_config_init_default(&cfg_);
@@ -1451,6 +1682,7 @@ OykPortableNode::OykPortableNode()
     memset(mheard_, 0, sizeof(mheard_));
     memset(new_heard_, 0, sizeof(new_heard_));
     memset(bans_, 0, sizeof(bans_));
+    memset(welcomed_calls_, 0, sizeof(welcomed_calls_));
     memset(console_logs_, 0, sizeof(console_logs_));
     memset(bbs_msgs_, 0, sizeof(bbs_msgs_));
     banlist_path_[0] = '\0';
@@ -1475,6 +1707,14 @@ time_t OykPortableNode::now_time() const {
 int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ctx,
                           char* err_out, size_t err_sz) {
     cfg_ = *cfg;
+    migrate_iface_peers(&cfg_);
+    welcomed_count_ = 0;
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        if (!cfg_.peers[i].auto_learned && cfg_.peers[i].callsign[0] &&
+            strcmp(cfg_.peers[i].callsign, "*") != 0) {
+            mark_welcomed_call(cfg_.peers[i].callsign);
+        }
+    }
     tx_cb_ = tx_cb;
     tx_ctx_ = tx_ctx;
     started_at_ = now_time();
@@ -1590,6 +1830,51 @@ void OykPortableNode::set_printer_callback(OykPrinterWriteCallback cb, void* ctx
     printer_ctx_ = ctx;
 }
 
+oyk_u8 OykPortableNode::resolve_learned_policy(int iface_idx) const {
+    if (iface_idx >= 0 && iface_idx < iface_count_) {
+        oyk_u8 pol = ifaces_[iface_idx].cfg.learned_peer_policy;
+        if (pol != OYK_LEARN_INHERIT) return pol;
+    }
+    return cfg_.learned_peer_policy ? cfg_.learned_peer_policy : static_cast<oyk_u8>(OYK_LEARN_INBOUND);
+}
+
+const OykPeerConfig* OykPortableNode::find_config_peer(int iface_idx, const OykCallsign* call) const {
+    if (iface_idx < 0 || iface_idx >= iface_count_ || !call) return NULL;
+    const char* if_id = ifaces_[iface_idx].cfg.id;
+    char full[12];
+    oyk_format_callsign(call, full, sizeof(full));
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        const OykPeerConfig* p = &cfg_.peers[i];
+        if (!p->callsign[0] || strcmp(p->callsign, "*") == 0) continue;
+        if (p->interface_id[0] && stricmp_ascii(p->interface_id, if_id) != 0) continue;
+        if (stricmp_ascii(p->callsign, full) == 0) return p;
+        if (call->ssid == 0 && strchr(p->callsign, '-') == NULL &&
+            stricmp_ascii(p->callsign, call->base) == 0) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+void OykPortableNode::migrate_iface_peers(OykConfig* cfg) const {
+    append_migrated_iface_peers(cfg);
+}
+
+int OykPortableNode::is_welcomed_call(const char* call_str) const {
+    if (!call_str || !call_str[0]) return 0;
+    for (int i = 0; i < welcomed_count_; ++i) {
+        if (stricmp_ascii(welcomed_calls_[i], call_str) == 0) return 1;
+    }
+    return 0;
+}
+
+void OykPortableNode::mark_welcomed_call(const char* call_str) {
+    if (!call_str || !call_str[0] || is_welcomed_call(call_str)) return;
+    if (welcomed_count_ < OYK_MAX_CONFIG_PEERS) {
+        safe_copy(welcomed_calls_[welcomed_count_++], sizeof(welcomed_calls_[0]), call_str);
+    }
+}
+
 int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
                                         oyk_u32* ip_out, oyk_u16* port_out) const {
     if (iface_idx < 0 || iface_idx >= iface_count_ || !call || !ip_out || !port_out) return 0;
@@ -1598,18 +1883,43 @@ int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
     oyk_format_callsign(call, full, sizeof(full));
 
     int wildcard = -1;
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        const OykPeerConfig* p = &cfg_.peers[i];
+        if (p->interface_id[0] && stricmp_ascii(p->interface_id, ic.id) != 0) continue;
+        oyk_u32 ip = p->resolved_ip;
+        if (ip == 0 && p->host[0]) (void)oyk_parse_ipv4(p->host, &ip);
+        if (ip == 0) continue;
+        if (!p->callsign[0] || strcmp(p->callsign, "*") == 0) {
+            if (wildcard < 0) wildcard = i;
+        } else if (stricmp_ascii(p->callsign, full) == 0 ||
+                   (call->ssid == 0 && strchr(p->callsign, '-') == NULL &&
+                    stricmp_ascii(p->callsign, call->base) == 0)) {
+            *ip_out = ip;
+            *port_out = p->port ? p->port : (ic.port ? ic.port : static_cast<oyk_u16>(10093));
+            return 1;
+        }
+    }
+    if (wildcard >= 0) {
+        oyk_u32 ip = cfg_.peers[wildcard].resolved_ip;
+        if (ip == 0 && cfg_.peers[wildcard].host[0]) (void)oyk_parse_ipv4(cfg_.peers[wildcard].host, &ip);
+        *ip_out = ip;
+        *port_out = cfg_.peers[wildcard].port ? cfg_.peers[wildcard].port : (ic.port ? ic.port : static_cast<oyk_u16>(10093));
+        return (ip != 0) ? 1 : 0;
+    }
+
+    int ic_wild = -1;
     for (int i = 0; i < ic.peer_count; ++i) {
         if (ic.peers[i].callsign[0] == '\0') {
-            if (wildcard < 0) wildcard = i;
+            if (ic_wild < 0) ic_wild = i;
         } else if (stricmp_ascii(ic.peers[i].callsign, full) == 0) {
             *ip_out = ic.peers[i].ip;
             *port_out = ic.peers[i].port;
             return 1;
         }
     }
-    if (wildcard >= 0) {
-        *ip_out = ic.peers[wildcard].ip;
-        *port_out = ic.peers[wildcard].port;
+    if (ic_wild >= 0) {
+        *ip_out = ic.peers[ic_wild].ip;
+        *port_out = ic.peers[ic_wild].port;
         return 1;
     }
     return 0;
@@ -1741,9 +2051,18 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
             safe_copy(err_out, err_sz, "Invalid target callsign");
             return 0;
         }
-        if (!find_peer_for_call(iface_idx, &target, &peer_ip, &peer_port)) {
-            safe_copy(err_out, err_sz, "No peer IP for callsign (use CALL@ip:port)");
+        const OykPeerConfig* cpeer = find_config_peer(iface_idx, &target);
+        if (cpeer && !cpeer->allow_outbound) {
+            safe_copy(err_out, err_sz, "Outbound connections to this peer are disabled");
             return 0;
+        }
+        if (!find_peer_for_call(iface_idx, &target, &peer_ip, &peer_port)) {
+            if (stricmp_ascii(ifaces_[iface_idx].cfg.type, "axudp") == 0 ||
+                stricmp_ascii(ifaces_[iface_idx].cfg.type, "axip") == 0 ||
+                stricmp_ascii(ifaces_[iface_idx].cfg.type, "usb-cdc-net") == 0) {
+                safe_copy(err_out, err_sz, "No peer IP for callsign (use CALL@ip:port)");
+                return 0;
+            }
         }
     }
 
@@ -3935,6 +4254,21 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
         }
 
         if (!sess) {
+            const OykPeerConfig* existing_peer = find_config_peer(iface_idx, &frame->src);
+            if (existing_peer && !existing_peer->allow_inbound) {
+                OykFrame dm;
+                memset(&dm, 0, sizeof(dm));
+                dm.dst = frame->src;
+                dm.src = frame->dst;
+                dm.is_response = 1;
+                dm.control = 0x1FU;
+                if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
+                char msg[72];
+                sprintf(msg, "Denied incoming %s on %s (peer disabled)", src_s, ifaces_[iface_idx].cfg.id);
+                log_message(OYK_LOG_WARNING, msg);
+                return;
+            }
+
             int ban_idx = find_ban_index(&frame->src, now_compact);
             int restricted = 0;
             int appeal_ok = 0;
@@ -4003,6 +4337,45 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                 if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
                 return;
             }
+
+            const OykIfaceConfig& ifc = ifaces_[iface_idx].cfg;
+            int is_telnet = (stricmp_ascii(ifc.type, "telnet") == 0) ? 1 : 0;
+            if (!existing_peer && !is_telnet && !ifc.no_auto_learn &&
+                !is_for_node(&frame->src) && !is_for_bbs(&frame->src) && !is_for_chat(&frame->src)) {
+                oyk_u8 pol = resolve_learned_policy(iface_idx);
+                oyk_u8 allow_in = (pol == OYK_LEARN_INBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
+                oyk_u8 allow_out = (pol == OYK_LEARN_OUTBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
+                if (cfg_.peer_count < OYK_MAX_CONFIG_PEERS) {
+                    OykPeerConfig* lp = &cfg_.peers[cfg_.peer_count++];
+                    memset(lp, 0, sizeof(*lp));
+                    oyk_derive_default_peer_id(&cfg_, src_s, lp->id, sizeof(lp->id));
+                    safe_copy(lp->callsign, sizeof(lp->callsign), src_s);
+                    safe_copy(lp->interface_id, sizeof(lp->interface_id), ifc.id);
+                    format_ipv4_dotted(peer_ip, lp->host, sizeof(lp->host));
+                    lp->resolved_ip = peer_ip;
+                    lp->port = peer_port;
+                    lp->allow_inbound = allow_in;
+                    lp->allow_outbound = allow_out;
+                    lp->auto_learned = 1;
+                    char lmsg[96];
+                    sprintf(lmsg, "Auto-learned peer %s (%s) on %s", lp->id, lp->callsign, lp->interface_id);
+                    log_message(OYK_LOG_INFO, lmsg);
+                }
+                if (!allow_in) {
+                    OykFrame dm;
+                    memset(&dm, 0, sizeof(dm));
+                    dm.dst = frame->src;
+                    dm.src = frame->dst;
+                    dm.is_response = 1;
+                    dm.control = 0x1FU;
+                    if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
+                    log_message(OYK_LOG_WARNING, "Denied auto-learned peer inbound (policy)");
+                    return;
+                }
+            }
+            int is_first_time = !is_welcomed_call(src_s);
+            mark_welcomed_call(src_s);
+
             memset(sess, 0, sizeof(*sess));
             sess->id = next_session_id_++;
             sess->iface_idx = iface_idx;
@@ -4062,11 +4435,14 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                         static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
                 log_message(OYK_LOG_INFO, msg);
             } else {
-                char node_s[16], banner[200];
+                char node_s[16], banner[220];
                 oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
-                if (cfg_.welcome_text[0]) {
+                const char* wmsg = (is_first_time && cfg_.new_user_welcome[0])
+                                       ? cfg_.new_user_welcome
+                                       : cfg_.welcome_text;
+                if (wmsg[0]) {
                     sprintf(banner, "*** Connected to %s Packet Node\r%s\r%s> ",
-                            node_s, cfg_.welcome_text, node_s);
+                            node_s, wmsg, node_s);
                 } else {
                     sprintf(banner, "*** Connected to %s Packet Node\r%s> ",
                             node_s, node_s);
@@ -4404,6 +4780,7 @@ int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
     }
 
     OykConfig next_cfg = *new_cfg;
+    migrate_iface_peers(&next_cfg);
     next_cfg.bbs_ssid = static_cast<oyk_u8>(next_cfg.bbs_ssid & 0x0FU);
     next_cfg.chat_ssid = static_cast<oyk_u8>(next_cfg.chat_ssid & 0x0FU);
     if (!next_cfg.source_path[0] && cfg_.source_path[0]) {
@@ -4589,6 +4966,37 @@ int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
 
     res->applied = 1;
     return 1;
+}
+
+int OykPortableNode::auto_learned_peer_count() const {
+    int cnt = 0;
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        if (cfg_.peers[i].auto_learned) ++cnt;
+    }
+    return cnt;
+}
+
+int OykPortableNode::persist_auto_learned_peers(char* err_out, size_t err_sz) {
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        cfg_.peers[i].auto_learned = 0;
+    }
+    const char* target = cfg_.source_path[0] ? cfg_.source_path : "node.cfg";
+    if (!oyk_config_save(&cfg_, target)) {
+        if (err_out && err_sz > 0) safe_copy(err_out, err_sz, "Unable to save config");
+        return 0;
+    }
+    return 1;
+}
+
+void OykPortableNode::discard_auto_learned_peers() {
+    int keep = 0;
+    for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        if (!cfg_.peers[i].auto_learned) {
+            if (keep != i) cfg_.peers[keep] = cfg_.peers[i];
+            ++keep;
+        }
+    }
+    cfg_.peer_count = keep;
 }
 
 int OykPortableNode::terminate_session(oyk_u32 session_id, char* msg_out, size_t msg_sz) {

@@ -1956,6 +1956,179 @@ static int g_wiz_drv = 0;
 static int g_wiz_last_drv = -1;
 static int g_edit_if_idx = -1;
 static int g_edit_if_drv = 0;
+static int g_settings_initial_tab = 0;
+static int g_edit_peer_idx = -1;
+static OykPeerConfig g_edit_peer_out;
+static int g_edit_peer_ok = 0;
+
+static void populate_settings_peers(HWND hdlg) {
+    HWND hlist = GetDlgItem(hdlg, IDC_SET_PEER_LIST);
+    SendMessage(hlist, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < g_set_draft.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        const OykPeerConfig& p = g_set_draft.peers[i];
+        char ep[48];
+        if (p.host[0] && p.port > 0) sprintf(ep, "%s:%u", p.host, static_cast<unsigned int>(p.port));
+        else if (p.host[0]) sprintf(ep, "%s", p.host);
+        else strcpy(ep, "(any)");
+        char row[144];
+        sprintf(row, "%-10.10s %-9.9s %-8.8s %-18.18s %s/%s%s",
+                p.id, p.callsign, p.interface_id, ep,
+                p.allow_inbound ? "IN" : "--",
+                p.allow_outbound ? "OUT" : "---",
+                p.auto_learned ? " [AUTO]" : "");
+        SendMessage(hlist, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+    }
+}
+
+OYK_DLG_RET EditPeerDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            g_edit_peer_ok = 0;
+            OykPeerConfig src;
+            if (g_edit_peer_idx >= 0 && g_edit_peer_idx < g_set_draft.peer_count) {
+                src = g_set_draft.peers[g_edit_peer_idx];
+                SetWindowText(hdlg, "Edit Peer");
+            } else {
+                memset(&src, 0, sizeof(src));
+                src.allow_inbound = 1;
+                src.allow_outbound = 1;
+                src.auto_learned = 0;
+                for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                    if (!win_strieq(g_set_draft.ifaces[i].type, "telnet") &&
+                        !win_strieq(g_set_draft.ifaces[i].type, "local")) {
+                        strncpy(src.interface_id, g_set_draft.ifaces[i].id, sizeof(src.interface_id) - 1);
+                        break;
+                    }
+                }
+                SetWindowText(hdlg, "Add Peer");
+            }
+            SetDlgItemText(hdlg, IDC_EP_ID, src.id);
+            SetDlgItemText(hdlg, IDC_EP_CALL, src.callsign);
+            SetDlgItemText(hdlg, IDC_EP_DESC, src.description);
+            HWND icb = GetDlgItem(hdlg, IDC_EP_IFACE);
+            int cur_sel = 0;
+            int opt_cnt = 0;
+            int found = 0;
+            for (int i = 0; i < g_set_draft.iface_count; ++i) {
+                if (win_strieq(g_set_draft.ifaces[i].type, "telnet") ||
+                    win_strieq(g_set_draft.ifaces[i].type, "local")) continue;
+                SendMessage(icb, CB_ADDSTRING, 0, OYK_LPARAM_STR(g_set_draft.ifaces[i].id));
+                if (src.interface_id[0] && win_strieq(g_set_draft.ifaces[i].id, src.interface_id)) {
+                    cur_sel = opt_cnt;
+                    found = 1;
+                }
+                ++opt_cnt;
+            }
+            if (!found && src.interface_id[0]) {
+                SendMessage(icb, CB_ADDSTRING, 0, OYK_LPARAM_STR(src.interface_id));
+                cur_sel = opt_cnt;
+                ++opt_cnt;
+            }
+            if (opt_cnt > 0) SendMessage(icb, CB_SETCURSEL, cur_sel, 0);
+            SetDlgItemText(hdlg, IDC_EP_HOST, src.host);
+            if (src.port > 0) {
+                char pb[16];
+                sprintf(pb, "%u", static_cast<unsigned int>(src.port));
+                SetDlgItemText(hdlg, IDC_EP_PORT, pb);
+            } else {
+                SetDlgItemText(hdlg, IDC_EP_PORT, "");
+            }
+            CheckDlgButton(hdlg, IDC_EP_IN, src.allow_inbound ? 1 : 0);
+            CheckDlgButton(hdlg, IDC_EP_OUT, src.allow_outbound ? 1 : 0);
+            SetDlgItemText(hdlg, IDC_EP_ERR, "");
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDOK) {
+                char call_b[24], id_b[24], desc_b[64], iface_b[16], host_b[48], port_b[16];
+                GetDlgItemText(hdlg, IDC_EP_CALL, call_b, sizeof(call_b));
+                OykCallsign cs;
+                if (!oyk_parse_callsign(call_b, &cs)) {
+                    SetDlgItemText(hdlg, IDC_EP_ERR, "Invalid AX.25 callsign.");
+                    return TRUE;
+                }
+                char call_fmt[16];
+                oyk_format_callsign(&cs, call_fmt, sizeof(call_fmt));
+                GetDlgItemText(hdlg, IDC_EP_ID, id_b, sizeof(id_b));
+                if (!id_b[0]) {
+                    oyk_derive_default_peer_id(&g_set_draft, call_fmt, id_b, sizeof(id_b));
+                }
+                for (int i = 0; i < g_set_draft.peer_count; ++i) {
+                    if (i == g_edit_peer_idx) continue;
+                    if (win_strieq(g_set_draft.peers[i].id, id_b)) {
+                        SetDlgItemText(hdlg, IDC_EP_ERR, "Duplicate peer ID.");
+                        return TRUE;
+                    }
+                }
+                GetDlgItemText(hdlg, IDC_EP_PORT, port_b, sizeof(port_b));
+                oyk_u16 pnum = 0;
+                if (port_b[0]) {
+                    long pv = atol(port_b);
+                    if (pv < 0L || pv > 65535L) {
+                        SetDlgItemText(hdlg, IDC_EP_ERR, "Port must be 0..65535.");
+                        return TRUE;
+                    }
+                    pnum = static_cast<oyk_u16>(pv);
+                }
+                GetDlgItemText(hdlg, IDC_EP_DESC, desc_b, sizeof(desc_b));
+                iface_b[0] = '\0';
+                HWND icb = GetDlgItem(hdlg, IDC_EP_IFACE);
+                int isel = static_cast<int>(SendMessage(icb, CB_GETCURSEL, 0, 0));
+                if (isel >= 0) {
+                    SendMessage(icb, CB_GETLBTEXT, static_cast<WPARAM>(isel),
+                                reinterpret_cast<LPARAM>(iface_b));
+                }
+                GetDlgItemText(hdlg, IDC_EP_HOST, host_b, sizeof(host_b));
+
+                memset(&g_edit_peer_out, 0, sizeof(g_edit_peer_out));
+                strncpy(g_edit_peer_out.id, id_b, sizeof(g_edit_peer_out.id) - 1);
+                strncpy(g_edit_peer_out.callsign, call_fmt, sizeof(g_edit_peer_out.callsign) - 1);
+                strncpy(g_edit_peer_out.description, desc_b, sizeof(g_edit_peer_out.description) - 1);
+                strncpy(g_edit_peer_out.interface_id, iface_b, sizeof(g_edit_peer_out.interface_id) - 1);
+                strncpy(g_edit_peer_out.host, host_b, sizeof(g_edit_peer_out.host) - 1);
+                g_edit_peer_out.port = pnum;
+                g_edit_peer_out.allow_inbound = (IsDlgButtonChecked(hdlg, IDC_EP_IN) != 0) ? 1 : 0;
+                g_edit_peer_out.allow_outbound = (IsDlgButtonChecked(hdlg, IDC_EP_OUT) != 0) ? 1 : 0;
+                g_edit_peer_out.auto_learned = 0;
+                g_edit_peer_ok = 1;
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            }
+            if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
+OYK_DLG_RET ExitPeersDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            char msg_b[160];
+            sprintf(msg_b,
+                    "%d auto-learned peer(s) were added during this session.\n"
+                    "Save them to configuration, discard them, or review in Peers?",
+                    g_node.auto_learned_peer_count());
+            SetDlgItemText(hdlg, IDC_XPR_MSG, msg_b);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            if (id == IDOK || id == IDC_XPR_DISCARD || id == IDC_XPR_REVIEW || id == IDCANCEL) {
+                EndDialog(hdlg, id);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
 
 static void win_build_iface_config(int drv,
                                    const char* id_b,
@@ -2314,7 +2487,9 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 static void switch_settings_tab(HWND hdlg, int tab) {
     static const int NODE_IDS[] = {
         IDC_SET_L_CALL, IDC_SET_CALL, IDC_SET_L_ALIAS, IDC_SET_ALIAS,
-        IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO, IDC_SET_ACCEPT
+        IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO,
+        IDC_SET_L_LPOL, IDC_SET_LEARN_POL, IDC_SET_L_NWELC, IDC_SET_NEW_WELC,
+        IDC_SET_ACCEPT
     };
     static const int BBS_IDS[] = {
         IDC_SET_BBS_EN, IDC_SET_L_BSSID, IDC_SET_BBS_SSID, IDC_SET_L_BCALL, IDC_SET_BBS_CALL,
@@ -2328,6 +2503,10 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     };
     static const int IF_IDS[] = {
         IDC_SET_L_IF, IDC_SET_IF_LIST, IDC_SET_IF_ADD, IDC_SET_IF_EDIT, IDC_SET_IF_REM
+    };
+    static const int PEER_IDS[] = {
+        IDC_SET_L_PEER, IDC_SET_PEER_LIST, IDC_SET_PEER_ADD, IDC_SET_PEER_EDIT,
+        IDC_SET_PEER_REM, IDC_SET_PEER_KEEP
     };
     static const int RIG_IDS[] = {
         IDC_SET_RIG_EN, IDC_SET_L_RPROTO, IDC_SET_RIG_PROTO,
@@ -2348,8 +2527,11 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     for (i = 0; i < static_cast<int>(sizeof(IF_IDS) / sizeof(IF_IDS[0])); ++i) {
         ShowWindow(GetDlgItem(hdlg, IF_IDS[i]), (tab == 3) ? SW_SHOW : SW_HIDE);
     }
+    for (i = 0; i < static_cast<int>(sizeof(PEER_IDS) / sizeof(PEER_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, PEER_IDS[i]), (tab == 4) ? SW_SHOW : SW_HIDE);
+    }
     for (i = 0; i < static_cast<int>(sizeof(RIG_IDS) / sizeof(RIG_IDS[0])); ++i) {
-        ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 4) ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 5) ? SW_SHOW : SW_HIDE);
     }
     static const int PRN_IDS[] = {
         IDC_SET_PRN_EN, IDC_SET_L_PDEV, IDC_SET_PRN_DEV,
@@ -2357,21 +2539,23 @@ static void switch_settings_tab(HWND hdlg, int tab) {
         IDC_SET_L_PLVL, IDC_SET_PRN_LVL, IDC_SET_PRN_COND
     };
     for (i = 0; i < static_cast<int>(sizeof(PRN_IDS) / sizeof(PRN_IDS[0])); ++i) {
-        ShowWindow(GetDlgItem(hdlg, PRN_IDS[i]), (tab == 5) ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(hdlg, PRN_IDS[i]), (tab == 6) ? SW_SHOW : SW_HIDE);
     }
 
-    SetDlgItemText(hdlg, IDC_SET_TAB_NODE, (tab == 0) ? "[ Node ]" : "Node");
-    SetDlgItemText(hdlg, IDC_SET_TAB_BBS,  (tab == 1) ? "[ BBS ]" : "BBS");
-    SetDlgItemText(hdlg, IDC_SET_TAB_CHAT, (tab == 2) ? "[ CHAT ]" : "CHAT");
-    SetDlgItemText(hdlg, IDC_SET_TAB_IF,   (tab == 3) ? "[ Interfaces ]" : "Interfaces");
-    SetDlgItemText(hdlg, IDC_SET_TAB_RIG,  (tab == 4) ? "[ Rig ]" : "Rig");
-    SetDlgItemText(hdlg, IDC_SET_TAB_PRN,  (tab == 5) ? "[ Printer ]" : "Printer");
+    SetDlgItemText(hdlg, IDC_SET_TAB_NODE,  (tab == 0) ? "[ Node ]" : "Node");
+    SetDlgItemText(hdlg, IDC_SET_TAB_BBS,   (tab == 1) ? "[ BBS ]" : "BBS");
+    SetDlgItemText(hdlg, IDC_SET_TAB_CHAT,  (tab == 2) ? "[ CHAT ]" : "CHAT");
+    SetDlgItemText(hdlg, IDC_SET_TAB_IF,    (tab == 3) ? "[ Interfaces ]" : "Interfaces");
+    SetDlgItemText(hdlg, IDC_SET_TAB_PEERS, (tab == 4) ? "[ Peers ]" : "Peers");
+    SetDlgItemText(hdlg, IDC_SET_TAB_RIG,   (tab == 5) ? "[ Rig ]" : "Rig");
+    SetDlgItemText(hdlg, IDC_SET_TAB_PRN,   (tab == 6) ? "[ Printer ]" : "Printer");
 
-    static const char* BOX_TITLES[6] = {
+    static const char* BOX_TITLES[7] = {
         "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings",
-        "Interface Mappings", "Radio / Rig Control Settings", "Line Printer Logging Settings"
+        "Interface Mappings", "Peer Routes & Policies", "Radio / Rig Control Settings",
+        "Line Printer Logging Settings"
     };
-    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 6) ? tab : 0]);
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 7) ? tab : 0]);
 }
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -2510,6 +2694,19 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             CheckDlgButton(hdlg, IDC_SET_ACCEPT, g_set_draft.accept_incoming ? 1 : 0);
             SetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text);
             SetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text);
+            {
+                HWND lcb = GetDlgItem(hdlg, IDC_SET_LEARN_POL);
+                SendMessage(lcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("none"));
+                SendMessage(lcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("inbound"));
+                SendMessage(lcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("outbound"));
+                SendMessage(lcb, CB_ADDSTRING, 0, OYK_LPARAM_STR("both"));
+                int lps = 1;
+                if (g_set_draft.learned_peer_policy == OYK_LEARN_NONE) lps = 0;
+                else if (g_set_draft.learned_peer_policy == OYK_LEARN_OUTBOUND) lps = 2;
+                else if (g_set_draft.learned_peer_policy == OYK_LEARN_BOTH) lps = 3;
+                SendMessage(lcb, CB_SETCURSEL, lps, 0);
+            }
+            SetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome);
 
             CheckDlgButton(hdlg, IDC_SET_BBS_EN, g_set_draft.bbs_enabled ? 1 : 0);
             sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.bbs_ssid));
@@ -2568,17 +2765,20 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             CheckDlgButton(hdlg, IDC_SET_PRN_COND, g_set_draft.printer_condensed ? 1 : 0);
 
             populate_settings_ifaces(hdlg);
-            switch_settings_tab(hdlg, 0);
+            populate_settings_peers(hdlg);
+            switch_settings_tab(hdlg, (g_settings_initial_tab >= 0 && g_settings_initial_tab < 7)
+                                          ? g_settings_initial_tab : 0);
             return TRUE;
         }
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
-            if (id == IDC_SET_TAB_NODE) { switch_settings_tab(hdlg, 0); return TRUE; }
-            if (id == IDC_SET_TAB_BBS)  { switch_settings_tab(hdlg, 1); return TRUE; }
-            if (id == IDC_SET_TAB_CHAT) { switch_settings_tab(hdlg, 2); return TRUE; }
-            if (id == IDC_SET_TAB_IF)   { switch_settings_tab(hdlg, 3); return TRUE; }
-            if (id == IDC_SET_TAB_RIG)  { switch_settings_tab(hdlg, 4); return TRUE; }
-            if (id == IDC_SET_TAB_PRN)  { switch_settings_tab(hdlg, 5); return TRUE; }
+            if (id == IDC_SET_TAB_NODE)  { switch_settings_tab(hdlg, 0); return TRUE; }
+            if (id == IDC_SET_TAB_BBS)   { switch_settings_tab(hdlg, 1); return TRUE; }
+            if (id == IDC_SET_TAB_CHAT)  { switch_settings_tab(hdlg, 2); return TRUE; }
+            if (id == IDC_SET_TAB_IF)    { switch_settings_tab(hdlg, 3); return TRUE; }
+            if (id == IDC_SET_TAB_PEERS) { switch_settings_tab(hdlg, 4); return TRUE; }
+            if (id == IDC_SET_TAB_RIG)   { switch_settings_tab(hdlg, 5); return TRUE; }
+            if (id == IDC_SET_TAB_PRN)   { switch_settings_tab(hdlg, 6); return TRUE; }
             if (id == IDC_SET_IF_ADD) {
                 if (g_set_draft.iface_count >= OYK_MAX_INTERFACES) {
                     MessageBox(hdlg, "Maximum interface count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
@@ -2629,6 +2829,51 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     populate_settings_ifaces(hdlg);
                 }
                 return TRUE;
+            } else if (id == IDC_SET_PEER_ADD) {
+                if (g_set_draft.peer_count >= OYK_MAX_CONFIG_PEERS) {
+                    MessageBox(hdlg, "Maximum peer count reached.", "Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                g_edit_peer_idx = -1;
+                if (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EDIT_PEER), hdlg, (DLGPROC)EditPeerDlgProc) == IDOK && g_edit_peer_ok) {
+                    g_set_draft.peers[g_set_draft.peer_count++] = g_edit_peer_out;
+                    populate_settings_peers(hdlg);
+                    SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_SETCURSEL,
+                                       static_cast<WPARAM>(g_set_draft.peer_count - 1), 0);
+                }
+                return TRUE;
+            } else if (id == IDC_SET_PEER_EDIT || (id == IDC_SET_PEER_LIST && OYK_CMD_NOTIFY(wp, lp) == LBN_DBLCLK)) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_GETCURSEL, 0, 0));
+                if (sel < 0 || sel >= g_set_draft.peer_count) {
+                    if (id == IDC_SET_PEER_EDIT) {
+                        MessageBox(hdlg, "Select a peer to edit.", "Settings", MB_OK | MB_ICONINFORMATION);
+                    }
+                    return TRUE;
+                }
+                g_edit_peer_idx = sel;
+                if (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EDIT_PEER), hdlg, (DLGPROC)EditPeerDlgProc) == IDOK && g_edit_peer_ok) {
+                    g_set_draft.peers[sel] = g_edit_peer_out;
+                    populate_settings_peers(hdlg);
+                    SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_SETCURSEL, static_cast<WPARAM>(sel), 0);
+                }
+                g_edit_peer_idx = -1;
+                return TRUE;
+            } else if (id == IDC_SET_PEER_REM) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < g_set_draft.peer_count) {
+                    for (int i = sel + 1; i < g_set_draft.peer_count; ++i) {
+                        g_set_draft.peers[i - 1] = g_set_draft.peers[i];
+                    }
+                    g_set_draft.peer_count--;
+                    populate_settings_peers(hdlg);
+                }
+                return TRUE;
+            } else if (id == IDC_SET_PEER_KEEP) {
+                for (int i = 0; i < g_set_draft.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+                    g_set_draft.peers[i].auto_learned = 0;
+                }
+                populate_settings_peers(hdlg);
+                return TRUE;
             } else if (id == IDOK) {
                 char buf[32];
                 GetDlgItemText(hdlg, IDC_SET_CALL, buf, sizeof(buf));
@@ -2645,6 +2890,14 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 g_set_draft.accept_incoming = (IsDlgButtonChecked(hdlg, IDC_SET_ACCEPT) != 0) ? 1 : 0;
                 GetDlgItemText(hdlg, IDC_SET_WELCOME, g_set_draft.welcome_text, sizeof(g_set_draft.welcome_text));
                 GetDlgItemText(hdlg, IDC_SET_INFO, g_set_draft.info_text, sizeof(g_set_draft.info_text));
+                {
+                    int lps = static_cast<int>(SendDlgItemMessage(hdlg, IDC_SET_LEARN_POL, CB_GETCURSEL, 0, 0));
+                    g_set_draft.learned_peer_policy =
+                        (lps == 0) ? OYK_LEARN_NONE :
+                        (lps == 2) ? OYK_LEARN_OUTBOUND :
+                        (lps == 3) ? OYK_LEARN_BOTH : OYK_LEARN_INBOUND;
+                }
+                GetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome, sizeof(g_set_draft.new_user_welcome));
 
                 g_set_draft.bbs_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_BBS_EN) != 0) ? 1 : 0;
                 GetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf, sizeof(buf));
@@ -2911,6 +3164,11 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_RIG_CONTROL), hwnd, (DLGPROC)RigControlDlgProc);
                 refresh_gui();
             } else if (id == IDM_SETTINGS) {
+                g_settings_initial_tab = 0;
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                refresh_gui();
+            } else if (id == IDM_PEERS) {
+                g_settings_initial_tab = 4;
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
@@ -2929,6 +3187,28 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CLOSE: {
+            if (g_node.auto_learned_peer_count() > 0) {
+                int act = static_cast<int>(DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EXIT_PEERS),
+                                                     hwnd, (DLGPROC)ExitPeersDlgProc));
+                if (act == IDC_XPR_REVIEW) {
+                    g_settings_initial_tab = 4;
+                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                    refresh_gui();
+                    return 0;
+                }
+                if (act == IDOK) {
+                    char err[64];
+                    g_node.persist_auto_learned_peers(err, sizeof(err));
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                if (act == IDC_XPR_DISCARD) {
+                    g_node.discard_auto_learned_peers();
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                return 0;
+            }
             char msg_buf[128];
             int active = g_node.total_active_connections();
             if (active > 0) {

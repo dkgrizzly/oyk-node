@@ -47,6 +47,7 @@ public:
     bool add_peer(const std::string& callsign_or_empty,
                   const std::string& host,
                   uint16_t port);
+    void sync_peers(const std::vector<PeerConfig>& peers) override;
 
 private:
     struct Endpoint {
@@ -76,9 +77,16 @@ private:
 
     FrameCallback on_frame_;
 
+    bool add_peer_locked(const std::string& callsign_or_empty,
+                         const std::string& host,
+                         uint16_t port,
+                         bool record_manual);
+
     mutable std::mutex peer_mutex_;
     std::map<std::string, Endpoint> callsign_peers_; // canonical callsign / base -> endpoint
     std::vector<Endpoint> broadcast_peers_;
+    std::map<std::string, Endpoint> manual_callsign_peers_;
+    std::vector<Endpoint> manual_broadcast_peers_;
 
     mutable std::mutex stats_mutex_;
     RadioInterfaceStats stats_{};

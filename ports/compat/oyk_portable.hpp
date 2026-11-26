@@ -59,6 +59,20 @@ typedef unsigned long  oyk_u32;
 #ifndef OYK_MAX_PEERS
 #define OYK_MAX_PEERS        8
 #endif
+#ifndef OYK_MAX_CONFIG_PEERS
+#if defined(__DOS__) || (defined(__WINDOWS__) && !defined(__NT__))
+#define OYK_MAX_CONFIG_PEERS 12
+#else
+#define OYK_MAX_CONFIG_PEERS 32
+#endif
+#endif
+
+/* Learned peer admission policies */
+#define OYK_LEARN_INHERIT    0x00U
+#define OYK_LEARN_NONE       0x01U
+#define OYK_LEARN_INBOUND    0x02U
+#define OYK_LEARN_OUTBOUND   0x03U
+#define OYK_LEARN_BOTH       0x04U
 #ifndef OYK_MAX_FRAME_INFO
 #define OYK_MAX_FRAME_INFO   256
 #endif
@@ -142,6 +156,19 @@ struct OykPeerEntry {
     oyk_u16 port;
 };
 
+struct OykPeerConfig {
+    char id[16];
+    char callsign[12];
+    char description[40];
+    char interface_id[16];
+    char host[32];
+    oyk_u32 resolved_ip; /* Network byte order IPv4 (0 if unresolved/serial) */
+    oyk_u16 port;
+    oyk_u8 allow_inbound;
+    oyk_u8 allow_outbound;
+    oyk_u8 auto_learned;
+};
+
 struct OykIfaceConfig {
     char id[16];
     char type[16];       /* "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" */
@@ -152,6 +179,8 @@ struct OykIfaceConfig {
     oyk_u32 baud;
     oyk_u8 kiss_port;
     int server_mode;
+    oyk_u8 no_auto_learn;       /* 0 = auto-learn enabled on non-telnet, 1 = disabled */
+    oyk_u8 learned_peer_policy; /* OYK_LEARN_INHERIT .. OYK_LEARN_BOTH */
     int peer_count;
     OykPeerEntry peers[OYK_MAX_PEERS];
 };
@@ -174,6 +203,8 @@ struct OykConfig {
     int rotate_daily;
     int accept_incoming;
     int allow_flash_logging;
+    oyk_u8 learned_peer_policy;
+    char new_user_welcome[96];
     OykLineEnding line_ending;
     int has_detected_eol;
 
@@ -214,6 +245,9 @@ struct OykConfig {
 
     int iface_count;
     OykIfaceConfig ifaces[OYK_MAX_INTERFACES];
+
+    int peer_count;
+    OykPeerConfig peers[OYK_MAX_CONFIG_PEERS];
 };
 
 struct OykBanEntry {
@@ -409,6 +443,12 @@ void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,
                                  char* out, size_t out_sz);
+void oyk_derive_default_peer_id(const OykConfig* cfg, const char* callsign,
+                                char* out, size_t out_sz);
+oyk_u8 oyk_parse_learned_policy(const char* text, oyk_u8 fallback);
+const char* oyk_format_learned_policy(oyk_u8 policy);
+int oyk_first_peer_for_iface(const OykConfig* cfg, const char* iface_id,
+                             oyk_u32* ip_out, oyk_u16* port_out);
 
 /* BBS Files Area path validation & Sysop incoming file approval helpers */
 int oyk_bbs_resolve_safe_path(const char* files_root,
@@ -468,6 +508,9 @@ public:
     int accept_incoming() const { return accept_incoming_; }
     int manual_deny_incoming() const { return manual_deny_incoming_; }
     int apply_config(const OykConfig* new_cfg, int save_to_disk, OykConfigApplyResult* res_out);
+    int auto_learned_peer_count() const;
+    int persist_auto_learned_peers(char* err_out, size_t err_sz);
+    void discard_auto_learned_peers();
     int terminate_session(oyk_u32 session_id, char* msg_out, size_t msg_sz);
     int ban_callsign(const char* call_spec, oyk_u32 flags, const char* reason,
                      const char* lift_spec, char* msg_out, size_t msg_sz);
@@ -520,6 +563,11 @@ private:
     int is_for_node(const OykCallsign* dst) const;
     int is_for_bbs(const OykCallsign* dst) const;
     int is_for_chat(const OykCallsign* dst) const;
+    oyk_u8 resolve_learned_policy(int iface_idx) const;
+    const OykPeerConfig* find_config_peer(int iface_idx, const OykCallsign* call) const;
+    void migrate_iface_peers(OykConfig* cfg) const;
+    int is_welcomed_call(const char* call_str) const;
+    void mark_welcomed_call(const char* call_str);
     void record_heard(const OykCallsign* src, int iface_idx);
     void send_text(OykSession* sess, const char* text);
     void send_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len);
@@ -577,6 +625,9 @@ private:
     int banlist_mixed_eol_;
     int ban_count_;
     OykBanEntry bans_[OYK_MAX_BANS];
+
+    int welcomed_count_;
+    char welcomed_calls_[OYK_MAX_CONFIG_PEERS][12];
 
     int console_log_count_;
     char console_logs_[OYK_MAX_CONSOLE_LOGS][112];

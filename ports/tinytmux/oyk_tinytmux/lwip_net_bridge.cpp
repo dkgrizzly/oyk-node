@@ -214,7 +214,9 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
             bindings_[i].kind = TMUX_IF_USB_NET_AXUDP;
             bindings_[i].usb_slot = target_slot;
             oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-            oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
+            oyk_u32 peer_ip = 0;
+            oyk_u16 peer_port = 0;
+            oyk_first_peer_for_iface(&node_->config(), ic.id, &peer_ip, &peer_port);
             usb_host_.configure_slot_ips(target_slot, loc_ip, peer_ip);
             const TinyTmuxUsbRadioSlot* us = usb_host_.slot_info(target_slot);
             int up = (us && us->in_use &&
@@ -222,12 +224,14 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
             node_->set_iface_status(i, up, up ? "USB NET UP" : "USB NET WAIT");
         } else if (strieq_local(ic.type, "usb-cdc-serial")) {
             int target_slot = (usb_idx >= 0) ? usb_idx : 0;
-            if ((ic.port > 0 || ic.peer_count > 0) && next_ppp < TINYTMUX_MAX_PPP_LINKS) {
+            oyk_u32 peer_ip = 0;
+            oyk_u16 peer_port = 0;
+            int has_peer = oyk_first_peer_for_iface(&node_->config(), ic.id, &peer_ip, &peer_port);
+            if ((ic.port > 0 || has_peer) && next_ppp < TINYTMUX_MAX_PPP_LINKS) {
                 bindings_[i].kind = TMUX_IF_PPP_AXUDP;
                 bindings_[i].ppp_slot = next_ppp;
                 bindings_[i].usb_slot = target_slot;
                 oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-                oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
                 configure_usb_ppp_slot(next_ppp, target_slot, i, i, loc_ip, peer_ip,
                                        ic.port ? ic.port : static_cast<oyk_u16>(10093),
                                        now_ms);
@@ -240,11 +244,13 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
                 node_->set_iface_status(i, up, up ? "USB KISS UP" : "USB SER WAIT");
             }
         } else if (strieq_local(ic.type, "axudp")) {
+            oyk_u32 peer_ip = 0;
+            oyk_u16 peer_port = 0;
+            oyk_first_peer_for_iface(&node_->config(), ic.id, &peer_ip, &peer_port);
             if (usb_idx >= 0) {
                 bindings_[i].kind = TMUX_IF_USB_NET_AXUDP;
                 bindings_[i].usb_slot = usb_idx;
                 oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-                oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
                 usb_host_.configure_slot_ips(usb_idx, loc_ip, peer_ip);
                 const TinyTmuxUsbRadioSlot* us = usb_host_.slot_info(usb_idx);
                 int up = (us && us->in_use &&
@@ -255,7 +261,6 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
                 bindings_[i].ppp_slot = next_ppp;
                 bindings_[i].logical_uart = ser_idx;
                 oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-                oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
                 configure_ppp_slot(next_ppp, ser_idx, i, -1, loc_ip, peer_ip,
                                    ic.port ? ic.port : static_cast<oyk_u16>(10093),
                                    NULL, NULL, now_ms);
@@ -290,7 +295,9 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
                     bindings_[i].ppp_slot = next_ppp;
                     bindings_[i].logical_uart = ser_idx;
                     oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-                    oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
+                    oyk_u32 peer_ip = 0;
+                    oyk_u16 peer_port = 0;
+                    oyk_first_peer_for_iface(&node_->config(), ic.id, &peer_ip, &peer_port);
                     configure_ppp_slot(next_ppp, ser_idx, -1, i, loc_ip, peer_ip, 10093,
                                        NULL, NULL, now_ms);
                     ++next_ppp;
@@ -303,7 +310,9 @@ int TinyTmuxNetBridge::rebind_interfaces(oyk_u32 now_ms) {
             bindings_[i].kind = TMUX_IF_PPP_AXUDP;
             bindings_[i].ppp_slot = next_ppp;
             oyk_u32 loc_ip = bridge_parse_ip(ic.host);
-            oyk_u32 peer_ip = (ic.peer_count > 0) ? ic.peers[0].ip : 0;
+            oyk_u32 peer_ip = 0;
+            oyk_u16 peer_port = 0;
+            oyk_first_peer_for_iface(&node_->config(), ic.id, &peer_ip, &peer_port);
             oyk_u16 port = ic.port ? ic.port : static_cast<oyk_u16>(10093);
             if (usb_idx >= 0) {
                 bindings_[i].usb_slot = usb_idx;

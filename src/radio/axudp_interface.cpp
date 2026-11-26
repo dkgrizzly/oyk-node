@@ -148,12 +148,13 @@ void AxudpInterface::parse_peer_spec(const std::string& raw) {
     if (!parse_host_port(hp_str, host, port)) {
         return;
     }
-    add_peer(call_str, host, port);
+    add_peer_locked(call_str, host, port, false);
 }
 
-bool AxudpInterface::add_peer(const std::string& callsign_or_empty,
-                              const std::string& host,
-                              uint16_t port) {
+bool AxudpInterface::add_peer_locked(const std::string& callsign_or_empty,
+                                     const std::string& host,
+                                     uint16_t port,
+                                     bool record_manual) {
     Endpoint ep;
     if (!resolve_endpoint(host, port, ep)) {
         return false;
@@ -162,6 +163,7 @@ bool AxudpInterface::add_peer(const std::string& callsign_or_empty,
     std::lock_guard<std::mutex> lock(peer_mutex_);
     if (callsign_or_empty.empty() || callsign_or_empty == "*") {
         broadcast_peers_.push_back(ep);
+        if (record_manual) manual_broadcast_peers_.push_back(ep);
         return true;
     }
     auto parsed = ax25::Callsign::parse(callsign_or_empty);
@@ -169,11 +171,33 @@ bool AxudpInterface::add_peer(const std::string& callsign_or_empty,
         return false;
     }
     callsign_peers_[parsed->str()] = ep;
+    if (record_manual) manual_callsign_peers_[parsed->str()] = ep;
     // Also add base callsign fallback if SSID was 0 and not already explicitly mapped
     if (parsed->ssid() == 0) {
         callsign_peers_[parsed->base()] = ep;
+        if (record_manual) manual_callsign_peers_[parsed->base()] = ep;
     }
     return true;
+}
+
+bool AxudpInterface::add_peer(const std::string& callsign_or_empty,
+                              const std::string& host,
+                              uint16_t port) {
+    return add_peer_locked(callsign_or_empty, host, port, true);
+}
+
+void AxudpInterface::sync_peers(const std::vector<PeerConfig>& peers) {
+    {
+        std::lock_guard<std::mutex> lock(peer_mutex_);
+        callsign_peers_ = manual_callsign_peers_;
+        broadcast_peers_ = manual_broadcast_peers_;
+    }
+    for (const auto& p : peers) {
+        if (!p.interface_id.empty() && p.interface_id != id_) continue;
+        if (p.host.empty()) continue;
+        uint16_t port = p.port ? p.port : (configured_port_ ? configured_port_ : static_cast<uint16_t>(10093));
+        (void)add_peer_locked(p.callsign, p.host, port, false);
+    }
 }
 
 bool AxudpInterface::start(FrameCallback on_frame, std::string& error_out) {

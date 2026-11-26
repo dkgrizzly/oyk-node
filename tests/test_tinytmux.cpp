@@ -833,7 +833,7 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[1;2B"), 6);
     assert(con->current_settings_sel() == 2);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
-    assert(con->current_settings_sel() == 5);
+    assert(con->current_settings_sel() == 7);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H"), 3);
     assert(con->current_settings_sel() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOC"), 3);
@@ -841,11 +841,13 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOD"), 3);
     assert(con->settings_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[Z"), 3);
-    assert(con->settings_tab() == 5);
+    assert(con->settings_tab() == 6);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->settings_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
     assert(con->settings_tab() == 5);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
+    assert(con->settings_tab() == 6);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[99~"), 5);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
 
@@ -963,6 +965,8 @@ static void test_vt100_console_full_parity() {
     sabm.control = 0x3FU;
     node->on_rx_frame(0, &sabm, 0x0A000002UL, 10093U, 0);
     assert(node->total_active_connections() >= 1);
+    /* Verify unchanged standard bootloader prompt when no auto-learned peers are pending */
+    node->discard_auto_learned_peers();
 
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
@@ -1247,6 +1251,41 @@ static void test_terminal_inquiry_and_ui_modals() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(550UL);
     assert(strstr(cap->buf, "Edit interface cancelled.") != NULL);
+
+    /* 7. Open Peers tab via 'e' shortcut, add peer via Edit Peer modal, and test Bootloader auto-peer Review flow */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); /* back to console */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->settings_tab() == 4);
+    assert(strstr(cap->buf, "5:Peers") != NULL);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("a"), 1);
+    assert(strstr(cap->buf, "Add Peer") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("W1AW-2\tDesc\t\t10.0.0.5\t10095\r\x1bOQ"), 33);
+    assert(node->config().peer_count >= 1);
+    assert(strcmp(node->config().peers[node->config().peer_count - 1].callsign, "W1AW-2") == 0);
+
+    /* Trigger an auto-learned peer and open Bootloader prompt -> should offer Save/Discard/Review */
+    OykFrame sabm_al;
+    memset(&sabm_al, 0, sizeof(sabm_al));
+    sabm_al.dst = node->config().callsign;
+    assert(oyk_parse_callsign("N4AUTO", &sabm_al.src));
+    sabm_al.is_command = 1;
+    sabm_al.control = 0x3FU;
+    node->on_rx_frame(0, &sabm_al, 0x7F000001UL, 10099, 0);
+    assert(node->auto_learned_peer_count() == 1);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
+    assert(strstr(cap->buf, "auto-learned peer") != NULL);
+    assert(strstr(cap->buf, "[R] Review Peers") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("r"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(con->settings_tab() == 4);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("k\x1bOQ"), 4);
+    assert(node->auto_learned_peer_count() == 0);
 
     delete cap;
     delete con;

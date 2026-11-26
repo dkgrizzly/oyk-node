@@ -205,6 +205,7 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
 
     std::string current_section;
     radio::RadioInterfaceConfig* current_iface = nullptr;
+    radio::PeerConfig* current_peer = nullptr;
     bool node_call_explicit_ssid = false;
     bool node_ssid_set = false;
     uint8_t node_ssid_val = DEFAULT_NODE_SSID;
@@ -234,21 +235,27 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             if (lower_sec == "node") {
                 current_section = "node";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec == "logfiles") {
                 current_section = "logfiles";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec == "bbs") {
                 current_section = "bbs";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec == "chat") {
                 current_section = "chat";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec == "rig" || lower_sec == "radio") {
                 current_section = "rig";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec == "printer") {
                 current_section = "printer";
                 current_iface = nullptr;
+                current_peer = nullptr;
             } else if (lower_sec.rfind("interface", 0) == 0) {
                 std::string rest = trim(sec.substr(9));
                 // Allow "[interface axudp0]" or "[interface:axudp0]"
@@ -265,6 +272,25 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 iface.id = rest;
                 cfg.interfaces.push_back(std::move(iface));
                 current_iface = &cfg.interfaces.back();
+                current_peer = nullptr;
+            } else if (lower_sec.rfind("peer", 0) == 0 &&
+                       (lower_sec.size() == 4 || lower_sec[4] == ':' ||
+                        std::isspace(static_cast<unsigned char>(lower_sec[4])))) {
+                std::string rest = trim(sec.substr(4));
+                if (!rest.empty() && rest.front() == ':') {
+                    rest = trim(rest.substr(1));
+                }
+                if (rest.empty()) {
+                    error_out = "Config line " + std::to_string(line_num) +
+                                ": peer section requires an ID (e.g. [peer remote0])";
+                    return false;
+                }
+                current_section = "peer";
+                radio::PeerConfig peer;
+                peer.id = rest;
+                cfg.peers.push_back(std::move(peer));
+                current_peer = &cfg.peers.back();
+                current_iface = nullptr;
             } else {
                 error_out = "Config line " + std::to_string(line_num) +
                             ": unknown section [" + sec + "]";
@@ -313,6 +339,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 }
             } else if (key == "welcome" || key == "welcome_text") {
                 cfg.welcome_text = val;
+            } else if (key == "new_user_welcome" || key == "newuserwelcome") {
+                cfg.new_user_welcome = val;
+            } else if (key == "learned_peer_policy") {
+                cfg.learned_peer_policy = parse_learned_peer_policy(val, radio::LearnedPeerPolicy::Inbound);
             } else if (key == "info" || key == "info_text") {
                 cfg.info_text = val;
             } else if (key == "logpath") {
@@ -491,6 +521,47 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else {
                 current_iface->params[key] = val;
             }
+        } else if (current_section == "peer" && current_peer != nullptr) {
+            if (key == "callsign" || key == "call") {
+                if (val.empty() || val == "*") {
+                    current_peer->callsign.clear();
+                } else if (auto parsed = ax25::Callsign::parse(val)) {
+                    current_peer->callsign = parsed->str();
+                } else {
+                    std::string up = val;
+                    std::transform(up.begin(), up.end(), up.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                    current_peer->callsign = up;
+                }
+            } else if (key == "description" || key == "desc") {
+                current_peer->description = val;
+            } else if (key == "interface" || key == "interface_id" || key == "iface") {
+                current_peer->interface_id = val;
+            } else if (key == "host" || key == "address") {
+                auto colon = val.rfind(':');
+                if (colon != std::string::npos && val.find(':') == colon && colon > 0 && colon + 1 < val.size()) {
+                    current_peer->host = val.substr(0, colon);
+                    if (current_peer->port == 0) {
+                        try {
+                            int pv = std::clamp(std::stoi(val.substr(colon + 1)), 0, 65535);
+                            current_peer->port = static_cast<uint16_t>(pv);
+                        } catch (...) {
+                        }
+                    }
+                } else {
+                    current_peer->host = val;
+                }
+            } else if (key == "port") {
+                try {
+                    int pv = std::clamp(std::stoi(val), 0, 65535);
+                    current_peer->port = static_cast<uint16_t>(pv);
+                } catch (...) {
+                }
+            } else if (key == "allow_inbound" || key == "inbound") {
+                current_peer->allow_inbound = parse_bool(val, true);
+            } else if (key == "allow_outbound" || key == "outbound") {
+                current_peer->allow_outbound = parse_bool(val, true);
+            }
         }
     }
 
@@ -500,6 +571,39 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
 
     if (cfg.interfaces.empty()) {
         cfg.interfaces = make_default().interfaces;
+    }
+
+    // Migrate legacy inline peer = lines inside [interface <id>] into [peer <id>] entries
+    for (auto& ic : cfg.interfaces) {
+        uint16_t def_port = 0;
+        auto pit = ic.params.find("bind_port");
+        if (pit == ic.params.end()) pit = ic.params.find("port");
+        if (pit != ic.params.end() && !pit->second.empty()) {
+            try {
+                int pv = std::clamp(std::stoi(pit->second), 0, 65535);
+                def_port = static_cast<uint16_t>(pv);
+            } catch (...) {
+            }
+        }
+        if (def_port == 0 && ic.type == "axudp") def_port = 10093;
+        for (const auto& raw_peer : ic.peers) {
+            radio::PeerConfig migrated;
+            if (parse_legacy_peer_spec(raw_peer, ic.id, def_port, cfg.peers, migrated)) {
+                bool dup = false;
+                for (const auto& ex : cfg.peers) {
+                    if (to_lower(ex.interface_id) == to_lower(migrated.interface_id) &&
+                        to_lower(ex.callsign) == to_lower(migrated.callsign) &&
+                        ex.host == migrated.host && ex.port == migrated.port) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    cfg.peers.push_back(std::move(migrated));
+                }
+            }
+        }
+        ic.peers.clear();
     }
 
     out = std::move(cfg);
@@ -520,6 +624,10 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     lines.push_back("info = " + info_text);
     lines.push_back("accept_incoming = " + std::string(accept_incoming_default ? "true" : "false"));
     lines.push_back("allow_flash_logging = " + std::string(allow_flash_logging ? "true" : "false"));
+    lines.push_back("learned_peer_policy = " + learned_peer_policy_to_string(learned_peer_policy));
+    if (!new_user_welcome.empty()) {
+        lines.push_back("new_user_welcome = " + new_user_welcome);
+    }
     lines.push_back("paclen = " + std::to_string(paclen));
     lines.push_back("maxframe = " + std::to_string(static_cast<int>(maxframe)));
     lines.push_back("t1_ms = " + std::to_string(t1_ms));
@@ -609,9 +717,29 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         for (const auto& [k, v] : iface.params) {
             lines.push_back(k + " = " + v);
         }
-        for (const auto& peer : iface.peers) {
-            lines.push_back("peer = " + peer);
+    }
+
+    for (const auto& peer : peers) {
+        if (peer.auto_learned) continue;
+        lines.push_back("");
+        lines.push_back("[peer " + peer.id + "]");
+        if (!peer.callsign.empty()) {
+            lines.push_back("callsign = " + peer.callsign);
         }
+        if (!peer.description.empty()) {
+            lines.push_back("description = " + peer.description);
+        }
+        if (!peer.interface_id.empty()) {
+            lines.push_back("interface = " + peer.interface_id);
+        }
+        if (!peer.host.empty()) {
+            lines.push_back("host = " + peer.host);
+        }
+        if (peer.port > 0) {
+            lines.push_back("port = " + std::to_string(peer.port));
+        }
+        lines.push_back("allow_inbound = " + std::string(peer.allow_inbound ? "true" : "false"));
+        lines.push_back("allow_outbound = " + std::string(peer.allow_outbound ? "true" : "false"));
     }
 
     namespace fs = std::filesystem;
@@ -655,6 +783,114 @@ std::string derive_default_iface_id(const std::vector<radio::RadioInterfaceConfi
         }
     }
     return prefix;
+}
+
+std::string derive_default_peer_id(const std::vector<radio::PeerConfig>& existing,
+                                   const std::string& callsign) {
+    std::string base;
+    for (unsigned char ch : callsign) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_') {
+            base.push_back(static_cast<char>(std::tolower(ch)));
+        }
+    }
+    if (base.empty()) base = "peer";
+    if (base.size() > 12) base.resize(12);
+
+    auto id_used = [&](const std::string& cand) {
+        const std::string cl = to_lower(cand);
+        for (const auto& p : existing) {
+            if (to_lower(p.id) == cl) return true;
+        }
+        return false;
+    };
+
+    if (!id_used(base)) return base;
+    for (int n = 1; n < 1000; ++n) {
+        std::string suf = "-" + std::to_string(n);
+        std::string cand = base;
+        if (cand.size() + suf.size() > 15) {
+            cand.resize(15 - suf.size());
+        }
+        cand += suf;
+        if (!id_used(cand)) return cand;
+    }
+    return base;
+}
+
+radio::LearnedPeerPolicy parse_learned_peer_policy(
+    std::string_view text,
+    radio::LearnedPeerPolicy fallback) {
+    const std::string s = to_lower(trim(text));
+    if (s.empty() || s == "inherit" || s == "default") return radio::LearnedPeerPolicy::Inherit;
+    if (s == "none" || s == "deny" || s == "off") return radio::LearnedPeerPolicy::None;
+    if (s == "inbound" || s == "in") return radio::LearnedPeerPolicy::Inbound;
+    if (s == "outbound" || s == "out") return radio::LearnedPeerPolicy::Outbound;
+    if (s == "both" || s == "all" || s == "in+out") return radio::LearnedPeerPolicy::Both;
+    return fallback;
+}
+
+std::string learned_peer_policy_to_string(radio::LearnedPeerPolicy policy) {
+    switch (policy) {
+        case radio::LearnedPeerPolicy::Inherit:  return "inherit";
+        case radio::LearnedPeerPolicy::None:     return "none";
+        case radio::LearnedPeerPolicy::Inbound:  return "inbound";
+        case radio::LearnedPeerPolicy::Outbound: return "outbound";
+        case radio::LearnedPeerPolicy::Both:     return "both";
+    }
+    return "inbound";
+}
+
+bool parse_legacy_peer_spec(const std::string& raw,
+                            const std::string& iface_id,
+                            uint16_t default_port,
+                            const std::vector<radio::PeerConfig>& existing,
+                            radio::PeerConfig& out) {
+    const std::string spec = trim(raw);
+    if (spec.empty()) return false;
+
+    std::string call_s;
+    std::string hp_s;
+    auto at = spec.find('@');
+    auto space = spec.find_first_of(" \t");
+    if (at != std::string::npos) {
+        call_s = trim(spec.substr(0, at));
+        hp_s = trim(spec.substr(at + 1));
+    } else if (space != std::string::npos) {
+        call_s = trim(spec.substr(0, space));
+        hp_s = trim(spec.substr(space + 1));
+    } else {
+        hp_s = spec;
+    }
+
+    std::string host_s = hp_s;
+    uint16_t port = default_port;
+    auto colon = hp_s.rfind(':');
+    if (colon != std::string::npos && colon > 0 && colon + 1 < hp_s.size()) {
+        host_s = hp_s.substr(0, colon);
+        try {
+            int pv = std::clamp(std::stoi(hp_s.substr(colon + 1)), 0, 65535);
+            if (pv > 0) port = static_cast<uint16_t>(pv);
+        } catch (...) {
+        }
+    }
+    if (host_s.empty()) return false;
+
+    out = radio::PeerConfig{};
+    if (!call_s.empty() && call_s != "*") {
+        if (auto parsed = ax25::Callsign::parse(call_s)) {
+            out.callsign = parsed->str();
+        } else {
+            out.callsign = call_s;
+        }
+    }
+    out.interface_id = iface_id;
+    out.host = host_s;
+    out.port = port;
+    out.allow_inbound = true;
+    out.allow_outbound = true;
+    out.auto_learned = false;
+    out.id = derive_default_peer_id(existing, out.callsign.empty() ? iface_id : out.callsign);
+    return true;
 }
 
 } // namespace oyk::node

@@ -350,6 +350,8 @@ void TinyTmuxConsole::render() {
         render_add_iface_wizard();
     } else if (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE) {
         render_edit_iface_dialog();
+    } else if (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER) {
+        render_edit_peer_dialog();
     } else if (prompt_kind_ == PROMPT_CONFIRM_FORMAT) {
         render_confirm_format_modal();
     } else if (prompt_kind_ != PROMPT_NONE) {
@@ -362,9 +364,12 @@ void TinyTmuxConsole::render() {
           wiz_focus_ < wizard_step_field_count()) ||
          (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE &&
           wiz_focus_ >= 1 && wiz_focus_ < edit_iface_field_count()) ||
+         (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER &&
+          (wiz_focus_ == 0 || wiz_focus_ == 1 || wiz_focus_ == 2 || wiz_focus_ == 4 || wiz_focus_ == 5)) ||
          (prompt_kind_ != PROMPT_NONE &&
           prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD &&
-          prompt_kind_ != PROMPT_SETTINGS_EDIT_IFACE))) {
+          prompt_kind_ != PROMPT_SETTINGS_EDIT_IFACE &&
+          prompt_kind_ != PROMPT_SETTINGS_EDIT_PEER))) {
         write_str("\033[?25h");
     }
 }
@@ -484,13 +489,14 @@ void TinyTmuxConsole::render_console() {
 }
 
 void TinyTmuxConsole::render_menu() {
-    static const char* ITEMS[12] = {
+    static const char* ITEMS[13] = {
         " [A] Allow Incoming Connections   ",
         " [D] Deny Incoming Connections    ",
         " [L] Local Terminal...            ",
         " [F] Manage Files Area...         ",
         " [R] Radio Control...             ",
         " [S] Settings...                  ",
+        " [E] Peers...                     ",
         " [T] Terminate Connection...      ",
         " [B] Ban / Unban Callsign...      ",
         " [P] PSRAM Diagnostics...         ",
@@ -498,12 +504,12 @@ void TinyTmuxConsole::render_menu() {
         " [U] Enter HalfKay Bootloader     ",
         " [X] Close Menu                   "
     };
-    static const int ITEM_ROWS[12] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16 };
+    static const int ITEM_ROWS[13] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 };
 
-    draw_dec_box(2, 2, 16, 36, "Node Menu", 0);
+    draw_dec_box(2, 2, 17, 36, "Node Menu", 0);
     draw_dec_hdiv(5, 2, 36);
-    draw_dec_hdiv(15, 2, 36);
-    for (int i = 0; i < 12; ++i) {
+    draw_dec_hdiv(16, 2, 36);
+    for (int i = 0; i < 13; ++i) {
         char row[80];
         sprintf(row, "\033[%d;3H%s%.34s\033[0m",
                 ITEM_ROWS[i], (i == menu_sel_) ? sgr_menusel() : "", ITEMS[i]);
@@ -638,21 +644,23 @@ void TinyTmuxConsole::render_rig() {
 }
 
 int TinyTmuxConsole::settings_tab_item_count(int tab) const {
-    if (tab == 0) return 6;
+    if (tab == 0) return 8;
     if (tab == 1) return 8;
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
-    if (tab == 4) return 6;
+    if (tab == 4) return draft_.peer_count;
+    if (tab == 5) return 6;
     return 6;
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
-    static const char* TAB_NAMES[6] = {
-        "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig", "6:Printer"
+    static const char* TAB_NAMES[7] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
-    static const char* NODE_LABELS[6] = {
+    static const char* NODE_LABELS[8] = {
         "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
-        "Allow Incoming (Default)", "Allow Logging to Flash"
+        "Allow Incoming (Default)", "Allow Logging to Flash",
+        "Learned Peer Policy", "New User Welcome"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS", "BBS SSID (0-15)", "Callsign Override", "BBS Alias",
@@ -676,18 +684,18 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     sprintf(buf, "%s OYK NODE SETTINGS (TinyTMUX)            F2/S:Save & Apply  Esc:Cancel \033[0m", sgr_header());
     write_str(buf);
     write_str("\033[2;2H");
-    for (int t = 0; t < 6; ++t) {
+    for (int t = 0; t < 7; ++t) {
         sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), TAB_NAMES[t]);
         write_str(buf);
     }
     draw_dec_box(3, 1, 19, 80, TAB_NAMES[settings_tab_], 0);
 
     int cnt = settings_tab_item_count(settings_tab_);
-    if (settings_tab_ != 3) {
+    if (settings_tab_ != 3 && settings_tab_ != 4) {
         const char** labels = (settings_tab_ == 0) ? NODE_LABELS
                             : ((settings_tab_ == 1) ? BBS_LABELS
                                                     : ((settings_tab_ == 2) ? CHAT_LABELS
-                                                                            : ((settings_tab_ == 4) ? RIG_LABELS : PRN_LABELS)));
+                                                                            : ((settings_tab_ == 5) ? RIG_LABELS : PRN_LABELS)));
         for (int i = 0; i < cnt; ++i) {
             char val[56], cs[16];
             val[0] = '\0';
@@ -697,7 +705,9 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 2) { strncpy(val, draft_.welcome_text, 44); val[44] = '\0'; }
                 else if (i == 3) { strncpy(val, draft_.info_text, 44); val[44] = '\0'; }
                 else if (i == 4) strcpy(val, draft_.accept_incoming ? "[ON]" : "[OFF]");
-                else strcpy(val, draft_.allow_flash_logging ? "[ON]" : "[OFF]");
+                else if (i == 5) strcpy(val, draft_.allow_flash_logging ? "[ON]" : "[OFF]");
+                else if (i == 6) strcpy(val, oyk_format_learned_policy(draft_.learned_peer_policy));
+                else { if (draft_.new_user_welcome[0]) { strncpy(val, draft_.new_user_welcome, 44); val[44] = '\0'; } else strcpy(val, "(use default)"); }
             } else if (settings_tab_ == 1) {
                 if (i == 0) strcpy(val, draft_.bbs_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft_, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft_.bbs_ssid), cs); }
@@ -714,7 +724,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 3) { if (draft_.chat_alias.base[0]) oyk_format_callsign(&draft_.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                 else if (i == 4) { strncpy(val, draft_.chat_topic, 44); val[44] = '\0'; }
                 else { strncpy(val, draft_.chat_welcome, 44); val[44] = '\0'; }
-            } else if (settings_tab_ == 4) {
+            } else if (settings_tab_ == 5) {
                 if (i == 0) strcpy(val, draft_.rig_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { strncpy(val, draft_.rig_protocol[0] ? draft_.rig_protocol : "none", 44); val[44] = '\0'; }
                 else if (i == 2) { strncpy(val, draft_.rig_host, 44); val[44] = '\0'; }
@@ -733,10 +743,10 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                     4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
             write_str(buf);
         }
-        sprintf(buf, "\033[22;1H%s Tab/1-6:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m",
+        sprintf(buf, "\033[22;1H%s Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m",
                 sgr_menubar());
         write_str(buf);
-    } else {
+    } else if (settings_tab_ == 3) {
         sprintf(buf, "\033[4;2H%s %-8s %-15s %-25s %-25s\033[0m",
                 sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
         write_str(buf);
@@ -755,6 +765,30 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
             }
         }
         sprintf(buf, "\033[22;1H%s N/A:New  Enter/E:Edit  D:Delete  H:Host/Dev  S/F2:Save  Esc:Cancel     \033[0m",
+                sgr_menubar());
+        write_str(buf);
+    } else {
+        sprintf(buf, "\033[4;2H%s %-10s %-9s %-8s %-22s %-7s %-14s\033[0m",
+                sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
+        write_str(buf);
+        if (draft_.peer_count == 0) {
+            write_str("\033[5;2H (no peers configured; press N/A to add)");
+        } else {
+            for (int i = 0; i < draft_.peer_count && i < 14; ++i) {
+                const OykPeerConfig& pc = draft_.peers[i];
+                char ep[26], acl[10];
+                if (pc.host[0] && pc.port > 0) sprintf(ep, "%.15s:%u", pc.host, static_cast<unsigned int>(pc.port));
+                else if (pc.host[0]) sprintf(ep, "%.21s", pc.host);
+                else strcpy(ep, "(any)");
+                sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
+                sprintf(buf, "\033[%d;2H%s %-10.10s %-9.9s %-8.8s %-22.22s %-7.7s %-14s\033[0m",
+                        5 + i, (i == settings_sel_[4]) ? sgr_sel() : "",
+                        pc.id, pc.callsign, pc.interface_id, ep, acl,
+                        pc.auto_learned ? "[AUTO]" : "");
+                write_str(buf);
+            }
+        }
+        sprintf(buf, "\033[22;1H%s 1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc:Back \033[0m",
                 sgr_menubar());
         write_str(buf);
     }
@@ -950,6 +984,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     char buf[160];
     int active = node_ ? node_->total_active_connections() : 0;
     int disc_left = node_ ? node_->disconnecting_count() : 0;
+    int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
     write_str("\033[H\033[2J");
     sprintf(buf, "%s ENTER TEENSY 4.1 HALFKAY BOOTLOADER (FIRMWARE UPGRADE)       Esc:Cancel \033[0m",
             sgr_header());
@@ -957,19 +992,27 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     draw_dec_box(3, 6, 15, 68, "Confirm Bootloader Entry", 1);
 
     if (!bootloader_pending_) {
-        if (active > 0) {
-            sprintf(buf, "\033[5;8HEnter HalfKay bootloader? (%d active connection(s))", active);
+        if (auto_cnt > 0) {
+            sprintf(buf, "\033[5;8H%d auto-learned peer(s) were added this session.", auto_cnt);
             write_str(buf);
-            write_str("\033[7;8HRemote users will be notified that the node is going offline for");
-            write_str("\033[8;8Ha firmware upgrade and gracefully disconnected before rebooting.");
+            write_str("\033[7;8HSave them to config, discard them, or review in Peers before reboot?");
+            write_str("\033[9;8H[S] Save & Bootloader        [D] Discard & Bootloader");
+            write_str("\033[11;8H[R] Review Peers             [N / Esc] Cancel");
         } else {
-            write_str("\033[5;8HEnter HalfKay bootloader? (no active connections)");
+            if (active > 0) {
+                sprintf(buf, "\033[5;8HEnter HalfKay bootloader? (%d active connection(s))", active);
+                write_str(buf);
+                write_str("\033[7;8HRemote users will be notified that the node is going offline for");
+                write_str("\033[8;8Ha firmware upgrade and gracefully disconnected before rebooting.");
+            } else {
+                write_str("\033[5;8HEnter HalfKay bootloader? (no active connections)");
+            }
+            sprintf(buf, "\033[10;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
+                    sgr_sel());
+            write_str(buf);
+            write_str("\033[11;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
+            write_str("\033[14;14H[Y] Enter HalfKay Bootloader     [N / Esc] Cancel");
         }
-        sprintf(buf, "\033[10;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
-                sgr_sel());
-        write_str(buf);
-        write_str("\033[11;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
-        write_str("\033[14;14H[Y] Enter HalfKay Bootloader     [N / Esc] Cancel");
     } else {
         oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
         sprintf(buf, "\033[6;8HNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
@@ -1359,6 +1402,252 @@ OYK_FLASHMEM void TinyTmuxConsole::render_confirm_format_modal() {
     write_str(buf);
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::open_edit_peer_dialog(int edit_idx) {
+    prompt_kind_ = PROMPT_SETTINGS_EDIT_PEER;
+    wiz_edit_idx_ = edit_idx;
+    wiz_focus_ = (edit_idx >= 0) ? 0 : 1;
+    wiz_btn_ = 0; /* Save */
+    wiz_err_[0] = '\0';
+    if (edit_idx >= 0 && edit_idx < draft_.peer_count) {
+        const OykPeerConfig& pc = draft_.peers[edit_idx];
+        con_str_copy(wiz_id_, sizeof(wiz_id_), pc.id);
+        con_str_copy(ban_call_tmp_, sizeof(ban_call_tmp_), pc.callsign);
+        con_str_copy(wiz_desc_, sizeof(wiz_desc_), pc.description);
+        con_str_copy(ban_action_tmp_, sizeof(ban_action_tmp_), pc.interface_id);
+        con_str_copy(wiz_ep_, sizeof(wiz_ep_), pc.host);
+        if (pc.port > 0) sprintf(wiz_port_, "%u", static_cast<unsigned int>(pc.port));
+        else wiz_port_[0] = '\0';
+        wiz_step_ = (pc.allow_inbound ? 1 : 0) | (pc.allow_outbound ? 2 : 0);
+        wiz_last_drv_ = 1; /* id_custom */
+    } else {
+        wiz_id_[0] = '\0';
+        ban_call_tmp_[0] = '\0';
+        wiz_desc_[0] = '\0';
+        ban_action_tmp_[0] = '\0';
+        for (int i = 0; i < draft_.iface_count; ++i) {
+            if (!strieq_ci(draft_.ifaces[i].type, "telnet") &&
+                !strieq_ci(draft_.ifaces[i].type, "local")) {
+                con_str_copy(ban_action_tmp_, sizeof(ban_action_tmp_), draft_.ifaces[i].id);
+                break;
+            }
+        }
+        wiz_ep_[0] = '\0';
+        wiz_port_[0] = '\0';
+        wiz_step_ = 3; /* allow_in | allow_out */
+        wiz_last_drv_ = 0;
+    }
+    render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_edit_peer_dialog() {
+    char buf[192];
+    const int top = 4, left = 6, h = 16, w = 68;
+    draw_dec_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1);
+
+    char if_lbl[32], in_lbl[8], out_lbl[8];
+    sprintf(if_lbl, "< %s >", ban_action_tmp_[0] ? ban_action_tmp_ : "(any)");
+    strcpy(in_lbl, (wiz_step_ & 1) ? "[ON]" : "[OFF]");
+    strcpy(out_lbl, (wiz_step_ & 2) ? "[ON]" : "[OFF]");
+
+    sprintf(buf, "\033[%d;%dHPeer ID        : %s %-36.36s \033[0m", top + 2, left + 3, (wiz_focus_ == 0) ? sgr_menubar() : "", wiz_id_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHCallsign       : %s %-36.36s \033[0m", top + 3, left + 3, (wiz_focus_ == 1) ? sgr_menubar() : "", ban_call_tmp_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHDescription    : %s %-36.36s \033[0m", top + 4, left + 3, (wiz_focus_ == 2) ? sgr_menubar() : "", wiz_desc_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHInterface      : %s %-36.36s \033[0m", top + 5, left + 3, (wiz_focus_ == 3) ? sgr_menubar() : "", if_lbl);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHHost / DMR ID  : %s %-36.36s \033[0m", top + 6, left + 3, (wiz_focus_ == 4) ? sgr_menubar() : "", wiz_ep_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHPort (0=def)   : %s %-36.36s \033[0m", top + 7, left + 3, (wiz_focus_ == 5) ? sgr_menubar() : "", wiz_port_[0] ? wiz_port_ : "(default)");
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHAllow Inbound  : %s %-10.10s \033[0m", top + 8, left + 3, (wiz_focus_ == 6) ? sgr_menubar() : "", in_lbl);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHAllow Outbound : %s %-10.10s \033[0m", top + 9, left + 3, (wiz_focus_ == 7) ? sgr_menubar() : "", out_lbl);
+    write_str(buf);
+
+    if (wiz_err_[0]) {
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 11, left + 2, sgr_warn(), wiz_err_);
+        write_str(buf);
+    }
+
+    draw_dec_hdiv(top + 13, left, w);
+    int on_bar = (wiz_focus_ == 8);
+    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Lt/Rt/Spc:Toggle",
+            top + 14, left + 2,
+            (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
+            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
+    write_str(buf);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::commit_peer_fields(int slot) {
+    if (slot < 0 || slot >= OYK_MAX_CONFIG_PEERS) return;
+    int is_new = (slot >= draft_.peer_count) ? 1 : 0;
+    if (is_new && draft_.peer_count >= OYK_MAX_CONFIG_PEERS) {
+        strcpy(dialog_fb_, "Maximum peer slots reached.");
+        return;
+    }
+    OykCallsign cs;
+    oyk_parse_callsign(ban_call_tmp_, &cs);
+    char cfmt[16];
+    oyk_format_callsign(&cs, cfmt, sizeof(cfmt));
+    OykPeerConfig& pc = draft_.peers[slot];
+    memset(&pc, 0, sizeof(pc));
+    con_str_copy(pc.id, sizeof(pc.id), wiz_id_);
+    con_str_copy(pc.callsign, sizeof(pc.callsign), cfmt);
+    con_str_copy(pc.description, sizeof(pc.description), wiz_desc_);
+    con_str_copy(pc.interface_id, sizeof(pc.interface_id), ban_action_tmp_);
+    con_str_copy(pc.host, sizeof(pc.host), wiz_ep_);
+    pc.port = wiz_port_[0] ? static_cast<oyk_u16>(strtoul(wiz_port_, NULL, 10)) : 0;
+    pc.allow_inbound = (wiz_step_ & 1) ? 1 : 0;
+    pc.allow_outbound = (wiz_step_ & 2) ? 1 : 0;
+    pc.auto_learned = 0;
+    if (is_new) {
+        draft_.peer_count++;
+        settings_sel_[4] = slot;
+        sprintf(dialog_fb_, "Added peer %s in draft (press S/F2 to save).", pc.id);
+    } else {
+        sprintf(dialog_fb_, "Updated peer %s in draft (press S/F2 to save).", pc.id);
+    }
+}
+
+OYK_FLASHMEM int TinyTmuxConsole::edit_peer_try_save() {
+    wiz_err_[0] = '\0';
+    OykCallsign cs;
+    if (!oyk_parse_callsign(ban_call_tmp_, &cs)) {
+        strcpy(wiz_err_, "Invalid AX.25 callsign.");
+        wiz_focus_ = 1;
+        return 0;
+    }
+    char cfmt[16];
+    oyk_format_callsign(&cs, cfmt, sizeof(cfmt));
+    if (!wiz_id_[0]) {
+        oyk_derive_default_peer_id(&draft_, cfmt, wiz_id_, sizeof(wiz_id_));
+    }
+    for (int i = 0; i < draft_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        if (i == wiz_edit_idx_) continue;
+        if (strieq_ci(draft_.peers[i].id, wiz_id_)) {
+            sprintf(wiz_err_, "Duplicate peer ID: %.24s", wiz_id_);
+            wiz_focus_ = 0;
+            return 0;
+        }
+    }
+    if (wiz_port_[0]) {
+        long p = strtol(wiz_port_, NULL, 10);
+        if (p < 0L || p > 65535L) {
+            strcpy(wiz_err_, "Port must be 0..65535.");
+            wiz_focus_ = 5;
+            return 0;
+        }
+    }
+    int slot = (wiz_edit_idx_ >= 0) ? wiz_edit_idx_ : draft_.peer_count;
+    commit_peer_fields(slot);
+    prompt_kind_ = PROMPT_NONE;
+    return 1;
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_edit_peer_key(int key) {
+    if (key == 27) {
+        prompt_kind_ = PROMPT_NONE;
+        strcpy(dialog_fb_, "Edit peer cancelled.");
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_UP) {
+        wiz_focus_ = (wiz_focus_ + 8) % 9;
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_DOWN || key == '\t') {
+        wiz_focus_ = (wiz_focus_ + 1) % 9;
+        render();
+        return;
+    }
+    if (wiz_focus_ == 8) {
+        if (key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+            wiz_btn_ = 1 - wiz_btn_;
+        } else if (key == '\r' || key == '\n' || key == ' ') {
+            if (wiz_btn_ == 1) {
+                prompt_kind_ = PROMPT_NONE;
+                strcpy(dialog_fb_, "Edit peer cancelled.");
+            } else {
+                edit_peer_try_save();
+            }
+        }
+        render();
+        return;
+    }
+    if (wiz_focus_ == 3) {
+        if (key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT || key == ' ') {
+            const char* opts[OYK_MAX_INTERFACES];
+            int oc = 0;
+            for (int i = 0; i < draft_.iface_count && oc < OYK_MAX_INTERFACES; ++i) {
+                if (!strieq_ci(draft_.ifaces[i].type, "telnet") &&
+                    !strieq_ci(draft_.ifaces[i].type, "local")) {
+                    opts[oc++] = draft_.ifaces[i].id;
+                }
+            }
+            if (oc > 0) {
+                int idx = 0;
+                for (int i = 0; i < oc; ++i) {
+                    if (strieq_ci(opts[i], ban_action_tmp_)) { idx = i; break; }
+                }
+                idx = (key == TMUX_KEY_LEFT) ? (idx + oc - 1) % oc : (idx + 1) % oc;
+                con_str_copy(ban_action_tmp_, sizeof(ban_action_tmp_), opts[idx]);
+            }
+            render();
+        } else if (key == '\r' || key == '\n') {
+            edit_peer_try_save();
+            render();
+        }
+        return;
+    }
+    if (wiz_focus_ == 6 || wiz_focus_ == 7) {
+        if (key == ' ' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+            wiz_step_ ^= (wiz_focus_ == 6) ? 1 : 2;
+            render();
+        } else if (key == '\r' || key == '\n') {
+            edit_peer_try_save();
+            render();
+        }
+        return;
+    }
+    char* target = NULL;
+    size_t cap = 0;
+    if (wiz_focus_ == 0) { target = wiz_id_; cap = sizeof(wiz_id_); }
+    else if (wiz_focus_ == 1) { target = ban_call_tmp_; cap = sizeof(ban_call_tmp_); }
+    else if (wiz_focus_ == 2) { target = wiz_desc_; cap = sizeof(wiz_desc_); }
+    else if (wiz_focus_ == 4) { target = wiz_ep_; cap = sizeof(wiz_ep_); }
+    else if (wiz_focus_ == 5) { target = wiz_port_; cap = sizeof(wiz_port_); }
+
+    if (key == '\r' || key == '\n') {
+        edit_peer_try_save();
+        render();
+    } else if (target && (key == 8 || key == 127)) {
+        size_t n = strlen(target);
+        if (n > 0) target[n - 1] = '\0';
+        if (wiz_focus_ == 0) wiz_last_drv_ = (wiz_id_[0] != '\0');
+        if (wiz_focus_ == 1 && !wiz_last_drv_) {
+            if (ban_call_tmp_[0]) oyk_derive_default_peer_id(&draft_, ban_call_tmp_, wiz_id_, sizeof(wiz_id_));
+            else wiz_id_[0] = '\0';
+        }
+        wiz_err_[0] = '\0';
+        render();
+    } else if (target && key >= 0x20 && key < 0x7F) {
+        size_t n = strlen(target);
+        if (n + 1 < cap) {
+            target[n] = static_cast<char>(key);
+            target[n + 1] = '\0';
+        }
+        if (wiz_focus_ == 0) wiz_last_drv_ = 1;
+        if (wiz_focus_ == 1 && !wiz_last_drv_) {
+            oyk_derive_default_peer_id(&draft_, ban_call_tmp_, wiz_id_, sizeof(wiz_id_));
+        }
+        wiz_err_[0] = '\0';
+        render();
+    }
+}
+
 void TinyTmuxConsole::render_prompt_overlay() {
     char buf[192];
     const int top = 9, left = 6, h = 6, w = 68;
@@ -1371,9 +1660,9 @@ void TinyTmuxConsole::render_prompt_overlay() {
     write_str(buf);
 }
 
-OYK_FLASHMEM void TinyTmuxConsole::open_settings() {
+OYK_FLASHMEM void TinyTmuxConsole::open_settings(int initial_tab) {
     if (node_) draft_ = node_->config();
-    settings_tab_ = 0;
+    settings_tab_ = (initial_tab >= 0 && initial_tab < 7) ? initial_tab : 0;
     dialog_fb_[0] = '\0';
     view_ = TMUX_VIEW_SETTINGS;
     render();
@@ -1430,9 +1719,17 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
         } else if (idx == 4) {
             draft_.accept_incoming = draft_.accept_incoming ? 0 : 1;
             render();
-        } else {
+        } else if (idx == 5) {
             draft_.allow_flash_logging = draft_.allow_flash_logging ? 0 : 1;
             render();
+        } else if (idx == 6) {
+            if (draft_.learned_peer_policy == OYK_LEARN_NONE) draft_.learned_peer_policy = OYK_LEARN_INBOUND;
+            else if (draft_.learned_peer_policy == OYK_LEARN_INBOUND) draft_.learned_peer_policy = OYK_LEARN_OUTBOUND;
+            else if (draft_.learned_peer_policy == OYK_LEARN_OUTBOUND) draft_.learned_peer_policy = OYK_LEARN_BOTH;
+            else draft_.learned_peer_policy = OYK_LEARN_NONE;
+            render();
+        } else {
+            begin_prompt(PROMPT_SETTINGS_VALUE, "New User Welcome:", draft_.new_user_welcome);
         }
     } else if (settings_tab_ == 1) {
         if (idx == 0) { draft_.bbs_enabled = draft_.bbs_enabled ? 0 : 1; render(); }
@@ -1455,6 +1752,10 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
             open_edit_iface_dialog(idx);
         }
     } else if (settings_tab_ == 4) {
+        if (idx >= 0 && idx < draft_.peer_count) {
+            open_edit_peer_dialog(idx);
+        }
+    } else if (settings_tab_ == 5) {
         if (idx == 0) { draft_.rig_enabled = draft_.rig_enabled ? 0 : 1; render(); }
         else if (idx == 1) {
             if (strieq_ci(draft_.rig_protocol, "radiofoundry")) {
@@ -1582,6 +1883,7 @@ void TinyTmuxConsole::commit_prompt() {
                 else oyk_parse_callsign(val, &draft_.alias);
             } else if (idx == 2) con_str_copy(draft_.welcome_text, sizeof(draft_.welcome_text), val);
             else if (idx == 3) con_str_copy(draft_.info_text, sizeof(draft_.info_text), val);
+            else if (idx == 7) con_str_copy(draft_.new_user_welcome, sizeof(draft_.new_user_welcome), val);
         } else if (settings_tab_ == 1) {
             if (idx == 1) { long v = strtol(val, NULL, 10); if (v >= 0 && v <= 15) draft_.bbs_ssid = static_cast<oyk_u8>(v); }
             else if (idx == 2) { if (!val[0]) memset(&draft_.bbs_callsign, 0, sizeof(draft_.bbs_callsign)); else oyk_parse_callsign(val, &draft_.bbs_callsign); }
@@ -1603,11 +1905,11 @@ void TinyTmuxConsole::commit_prompt() {
                     con_str_copy(draft_.ifaces[idx].host, sizeof(draft_.ifaces[idx].host), val);
                 }
             }
-        } else if (settings_tab_ == 4) {
+        } else if (settings_tab_ == 5) {
             if (idx == 2) con_str_copy(draft_.rig_host, sizeof(draft_.rig_host), val);
             else if (idx == 3) { long p = strtol(val, NULL, 10); if (p > 0 && p <= 65535L) draft_.rig_port = static_cast<oyk_u16>(p); }
             else if (idx == 4) { long p = strtol(val, NULL, 10); if (p >= 0 && p <= 3600L) draft_.rig_poll_sec = static_cast<oyk_u16>(p); }
-        } else if (settings_tab_ == 5) {
+        } else if (settings_tab_ == 6) {
             if (idx == 1) con_str_copy(draft_.printer_device, sizeof(draft_.printer_device), val);
             else if (idx == 3) { long b = strtol(val, NULL, 10); if (b >= 300L) draft_.printer_baud = static_cast<oyk_u32>(b); }
             else if (idx == 4) { oyk_parse_log_mask(val, &draft_.printer_level); }
@@ -1971,6 +2273,10 @@ void TinyTmuxConsole::handle_prompt_key(int key) {
         handle_edit_iface_key(key);
         return;
     }
+    if (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER) {
+        handle_edit_peer_key(key);
+        return;
+    }
 
     if (key == 27) {
         prompt_kind_ = PROMPT_NONE;
@@ -2017,7 +2323,9 @@ void TinyTmuxConsole::handle_console_key(int key) {
         view_ = TMUX_VIEW_RIG;
         render();
     } else if (key == 's' || key == 'S') {
-        open_settings();
+        open_settings(0);
+    } else if (key == 'e' || key == 'E') {
+        open_settings(4);
     } else if (key == 't' || key == 'T') {
         begin_prompt(PROMPT_TERMINATE_SID, "Terminate session ID (Esc=cancel):", "");
     } else if (key == 'b' || key == 'B') {
@@ -2044,19 +2352,19 @@ void TinyTmuxConsole::handle_menu_key(int key) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
     } else if (key == TMUX_KEY_UP) {
-        menu_sel_ = (menu_sel_ + 11) % 12;
+        menu_sel_ = (menu_sel_ + 12) % 13;
         render();
     } else if (key == TMUX_KEY_DOWN) {
-        menu_sel_ = (menu_sel_ + 1) % 12;
+        menu_sel_ = (menu_sel_ + 1) % 13;
         render();
     } else if (key == TMUX_KEY_HOME) {
         menu_sel_ = 0;
         render();
     } else if (key == TMUX_KEY_END) {
-        menu_sel_ = 11;
+        menu_sel_ = 12;
         render();
     } else if (key == '\r' || key == '\n') {
-        static const int KEYS[12] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', 'p', 'g', 'u', 'x' };
+        static const int KEYS[13] = { 'a', 'd', 'l', 'f', 'r', 's', 'e', 't', 'b', 'p', 'g', 'u', 'x' };
         int k = KEYS[menu_sel_];
         view_ = TMUX_VIEW_CONSOLE;
         if (k == 'x') render();
@@ -2064,6 +2372,7 @@ void TinyTmuxConsole::handle_menu_key(int key) {
     } else if (key == 'a' || key == 'A' || key == 'd' || key == 'D' ||
                key == 'l' || key == 'L' || key == 'f' || key == 'F' ||
                key == 'r' || key == 'R' || key == 's' || key == 'S' ||
+               key == 'e' || key == 'E' ||
                key == 't' || key == 'T' || key == 'b' || key == 'B' ||
                key == 'p' || key == 'P' || key == 'u' || key == 'U' ||
                key == 'g' || key == 'G') {
@@ -2200,12 +2509,12 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
         strcpy(status_line_, "Settings cancelled (no changes applied).");
         render();
     } else if (key == '\t' || key == TMUX_KEY_RIGHT) {
-        settings_tab_ = (settings_tab_ + 1) % 6;
+        settings_tab_ = (settings_tab_ + 1) % 7;
         render();
     } else if (key == TMUX_KEY_LEFT) {
-        settings_tab_ = (settings_tab_ + 5) % 6;
+        settings_tab_ = (settings_tab_ + 6) % 7;
         render();
-    } else if (key >= '1' && key <= '6') {
+    } else if (key >= '1' && key <= '7') {
         settings_tab_ = key - '1';
         render();
     } else if (key == TMUX_KEY_UP && cnt > 0) {
@@ -2247,6 +2556,43 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
             strcpy(dialog_fb_, "Interface removed from draft.");
             render();
         }
+    } else if (settings_tab_ == 4 && (key == 'n' || key == 'N' || key == 'a' || key == 'A')) {
+        open_edit_peer_dialog(-1);
+    } else if (settings_tab_ == 4 && (key == 'd' || key == 'D' || key == 'x' || key == 'X')) {
+        if (draft_.peer_count > 0) {
+            int idx = settings_sel_[4];
+            for (int k = idx + 1; k < draft_.peer_count; ++k) {
+                draft_.peers[k - 1] = draft_.peers[k];
+            }
+            draft_.peer_count--;
+            if (settings_sel_[4] >= draft_.peer_count && draft_.peer_count > 0) {
+                settings_sel_[4] = draft_.peer_count - 1;
+            }
+            strcpy(dialog_fb_, "Peer removed from draft.");
+            render();
+        }
+    } else if (settings_tab_ == 4 && (key == 'i' || key == 'I') && cnt > 0) {
+        OykPeerConfig& pc = draft_.peers[settings_sel_[4]];
+        pc.allow_inbound = pc.allow_inbound ? 0 : 1;
+        pc.auto_learned = 0;
+        sprintf(dialog_fb_, "Peer %s allow_inbound=%s", pc.id, pc.allow_inbound ? "true" : "false");
+        render();
+    } else if (settings_tab_ == 4 && (key == 'o' || key == 'O') && cnt > 0) {
+        OykPeerConfig& pc = draft_.peers[settings_sel_[4]];
+        pc.allow_outbound = pc.allow_outbound ? 0 : 1;
+        pc.auto_learned = 0;
+        sprintf(dialog_fb_, "Peer %s allow_outbound=%s", pc.id, pc.allow_outbound ? "true" : "false");
+        render();
+    } else if (settings_tab_ == 4 && (key == 'k' || key == 'K')) {
+        int kept = 0;
+        for (int i = 0; i < draft_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+            if (draft_.peers[i].auto_learned) {
+                draft_.peers[i].auto_learned = 0;
+                ++kept;
+            }
+        }
+        sprintf(dialog_fb_, "Marked %d auto-learned peer(s) persistent.", kept);
+        render();
     }
 }
 
@@ -2276,18 +2622,35 @@ void TinyTmuxConsole::handle_psram_key(int key) {
 
 OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
     if (bootloader_pending_) return;
+    int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
     if (key == 27 || key == 'n' || key == 'N') {
         view_ = TMUX_VIEW_CONSOLE;
         render();
-    } else if (key == 'y' || key == 'Y') {
-        char call_s[16], notice[128];
-        oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
-        sprintf(notice, "\r*** Node %s going offline for firmware upgrade. Expect a delay before reconnect.\r", call_s);
-        node_->begin_shutdown_with_notice(notice);
-        bootloader_pending_ = 1;
-        bootloader_start_ms_ = now_ms_;
-        render();
+        return;
     }
+    if (auto_cnt > 0) {
+        if (key == 'r' || key == 'R') {
+            open_settings(4);
+            return;
+        }
+        if (key == 's' || key == 'S') {
+            char err[64];
+            node_->persist_auto_learned_peers(err, sizeof(err));
+        } else if (key == 'd' || key == 'D') {
+            node_->discard_auto_learned_peers();
+        } else {
+            return;
+        }
+    } else if (key != 'y' && key != 'Y') {
+        return;
+    }
+    char call_s[16], notice[128];
+    oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
+    sprintf(notice, "\r*** Node %s going offline for firmware upgrade. Expect a delay before reconnect.\r", call_s);
+    node_->begin_shutdown_with_notice(notice);
+    bootloader_pending_ = 1;
+    bootloader_start_ms_ = now_ms_;
+    render();
 }
 
 void TinyTmuxConsole::handle_lterm_key(int key) {
