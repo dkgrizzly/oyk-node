@@ -1573,6 +1573,7 @@ void NcursesUI::modal_terminate_connection() {
     NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
+    if (has_colors_) wbkgd(win, COLOR_PAIR(CP_BASE));
 
     int sel = 0;
     while (true) {
@@ -1588,23 +1589,54 @@ void NcursesUI::modal_terminate_connection() {
         }
 
         werase(win);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
         box(win, 0, 0);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+        wattron(win, A_BOLD);
         mvwprintw(win, 0, 2, " Terminate Active Connection ");
+        wattroff(win, A_BOLD);
 
-        int list_h = h - 5;
+        const int inner_w = w - 4;
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+        else wattron(win, A_REVERSE | A_BOLD);
+        std::ostringstream hdr;
+        hdr << " " << std::left << std::setw(6) << "ID"
+            << std::setw(12) << "Callsign"
+            << std::setw(11) << "Port"
+            << "State";
+        std::string hdr_s = hdr.str();
+        if (static_cast<int>(hdr_s.size()) < inner_w) {
+            hdr_s.append(static_cast<std::size_t>(inner_w) - hdr_s.size(), ' ');
+        }
+        mvwaddnstr(win, 2, 2, hdr_s.c_str(), inner_w);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+        else wattroff(win, A_REVERSE | A_BOLD);
+
+        int list_h = std::max(1, h - 7);
         int offset = (sel >= list_h) ? (sel - list_h + 1) : 0;
         for (int i = 0; i < list_h && (offset + i) < static_cast<int>(snap.active_sessions.size()); ++i) {
             const auto& s = snap.active_sessions[static_cast<std::size_t>(offset + i)];
+            std::ostringstream id_s;
+            id_s << "#" << s.id;
             std::ostringstream line;
-            line << " #" << s.id << "  " << std::left << std::setw(10) << s.remote_call
-                 << " on " << std::setw(8) << s.interface_id
-                 << " [" << node::Session::state_name(s.state) << "] ";
-            if (offset + i == sel) wattron(win, A_REVERSE | A_BOLD);
-            mvwaddnstr(win, 2 + i, 2, clip(line.str(), w - 4).c_str(), w - 4);
-            if (offset + i == sel) wattroff(win, A_REVERSE | A_BOLD);
+            line << " " << std::left << std::setw(6) << id_s.str()
+                 << std::setw(12) << s.remote_call
+                 << std::setw(11) << s.interface_id
+                 << "[" << node::Session::state_name(s.state) << "]";
+            std::string row_s = line.str();
+            if (static_cast<int>(row_s.size()) < inner_w) {
+                row_s.append(static_cast<std::size_t>(inner_w) - row_s.size(), ' ');
+            }
+            const bool is_sel = (offset + i == sel);
+            if (is_sel) wattron(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            mvwaddnstr(win, 3 + i, 2, clip(row_s, inner_w).c_str(), inner_w);
+            if (is_sel) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
         }
 
-        mvwaddnstr(win, h - 2, 2, "Up/Down: select | Enter: terminate | Esc: cancel", w - 4);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+        mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+        mvwaddnstr(win, h - 2, 2, "Up/Down: select | Enter: terminate | Esc: cancel", inner_w);
         shadow.noutrefresh();
         wnoutrefresh(win);
         doupdate();

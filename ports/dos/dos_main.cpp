@@ -2871,7 +2871,7 @@ static void run_dos_settings(int initial_tab) {
     draft = g_node.config();
 
     static const char* TAB_NAMES[7] = {
-        " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Printer "
+        " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Prn "
     };
     static const char* NODE_LABELS[10] = {
         "Node Callsign",

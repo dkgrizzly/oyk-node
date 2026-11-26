@@ -1395,6 +1395,9 @@ static void test_tinytmux_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS && con->settings_tab() == 0);
+    assert(strstr(cap->buf, "Node Settings") != NULL);
+    assert(strstr(cap->buf, " Node ") != NULL);
+    assert(strstr(cap->buf, "\033[0;90;40m") != NULL);
     assert(strstr(cap->buf, "1:Node") != NULL);
     tmux_save_capture("settings", con, cap);
 

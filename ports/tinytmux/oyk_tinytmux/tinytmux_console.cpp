@@ -399,12 +399,14 @@ void TinyTmuxConsole::render() {
             render_rig();
             break;
         case TMUX_VIEW_SETTINGS:
+            render_console();
             render_settings();
             break;
         case TMUX_VIEW_PSRAM:
             render_psram();
             break;
         case TMUX_VIEW_BOOTLOADER:
+            render_console();
             render_bootloader();
             break;
         case TMUX_VIEW_STORAGE:
@@ -770,15 +772,14 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     };
 
     char buf[192];
-    write_str("\033[H\033[2J");
-    sprintf(buf, "%s OYK NODE SETTINGS (TinyTMUX)            F2/S:Save & Apply  Esc:Cancel \033[0m", sgr_header());
-    write_str(buf);
-    write_str("\033[2;2H");
+    draw_dec_box(2, 3, 21, 74, "Node Settings", 1);
+    draw_dec_shadow(2, 3, 21, 74);
+    write_str("\033[3;5H");
     for (int t = 0; t < 7; ++t) {
         sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), TAB_NAMES[t]);
         write_str(buf);
     }
-    draw_dec_box(3, 1, 19, 80, TAB_NAMES[settings_tab_], 0);
+    draw_dec_hdiv(4, 3, 74);
 
     int cnt = settings_tab_item_count(settings_tab_);
     if (settings_tab_ != 3 && settings_tab_ != 4) {
@@ -833,66 +834,67 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
             if (settings_tab_ == 0 && (i == 8 || i == 9 || i == 10) && val[0] == '\0' && term_type_ >= TMUX_TERM_VT340) {
-                sprintf(buf, "\033[%d;2H%s %-29.29s : \033[2m<inline>\033[22m                                    \033[0m",
-                        4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
+                sprintf(buf, "\033[%d;5H%s %-26.26s : \033[2m<inline>\033[22m                                \033[0m",
+                        5 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
             } else {
-                sprintf(buf, "\033[%d;2H%s %-29.29s : %-44.44s\033[0m",
-                        4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
+                sprintf(buf, "\033[%d;5H%s %-26.26s : %-40.40s\033[0m",
+                        5 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
             }
             write_str(buf);
         }
-        sprintf(buf, "\033[22;1H%s Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m",
-                sgr_menubar());
+        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+                sgr_menubar(), "Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else if (settings_tab_ == 3) {
-        sprintf(buf, "\033[4;2H%s %-8s %-15s %-25s %-25s\033[0m",
+        sprintf(buf, "\033[5;5H%s %-8s %-13s %-21s %-23s\033[0m",
                 sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
         write_str(buf);
         if (draft_.iface_count == 0) {
-            write_str("\033[5;2H (no interfaces configured; press N to add)");
+            write_str("\033[6;5H (no interfaces configured; press N to add)");
         } else {
-            for (int i = 0; i < draft_.iface_count && i < 14; ++i) {
+            for (int i = 0; i < draft_.iface_count && i < 12; ++i) {
                 const OykIfaceConfig& ic = draft_.ifaces[i];
                 const char* loc = ic.device[0] ? ic.device : ic.host;
-                sprintf(buf, "\033[%d;2H%s %-8.8s %-15.15s %-25.25s %u/%-22lu\033[0m",
-                        5 + i, (i == settings_sel_[3]) ? sgr_sel() : "",
-                        ic.id, ic.type, loc,
-                        static_cast<unsigned int>(ic.port),
-                        static_cast<unsigned long>(ic.baud));
+                char pb[28];
+                sprintf(pb, "%u/%lu", static_cast<unsigned int>(ic.port), static_cast<unsigned long>(ic.baud));
+                sprintf(buf, "\033[%d;5H%s %-8.8s %-13.13s %-21.21s %-23.23s\033[0m",
+                        6 + i, (i == settings_sel_[3]) ? sgr_sel() : "",
+                        ic.id, ic.type, loc, pb);
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[22;1H%s N/A:New  Enter/E:Edit  D:Delete  H:Host/Dev  S/F2:Save  Esc:Cancel     \033[0m",
-                sgr_menubar());
+        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+                sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  H:Host/Dev  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else {
-        sprintf(buf, "\033[4;2H%s %-10s %-9s %-8s %-22s %-7s %-14s\033[0m",
+        sprintf(buf, "\033[5;5H%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
                 sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
         write_str(buf);
         if (draft_.peer_count == 0) {
-            write_str("\033[5;2H (no peers configured; press N/A to add)");
+            write_str("\033[6;5H (no peers configured; press A to add)");
         } else {
-            for (int i = 0; i < draft_.peer_count && i < 14; ++i) {
+            for (int i = 0; i < draft_.peer_count && i < 12; ++i) {
                 const OykPeerConfig& pc = draft_.peers[i];
                 char ep[26], acl[10];
-                if (pc.host[0] && pc.port > 0) sprintf(ep, "%.15s:%u", pc.host, static_cast<unsigned int>(pc.port));
-                else if (pc.host[0]) sprintf(ep, "%.21s", pc.host);
+                if (pc.host[0] && pc.port > 0) sprintf(ep, "%.14s:%u", pc.host, static_cast<unsigned int>(pc.port));
+                else if (pc.host[0]) sprintf(ep, "%.19s", pc.host);
                 else strcpy(ep, "(any)");
                 sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
-                sprintf(buf, "\033[%d;2H%s %-10.10s %-9.9s %-8.8s %-22.22s %-7.7s %-14s\033[0m",
-                        5 + i, (i == settings_sel_[4]) ? sgr_sel() : "",
+                sprintf(buf, "\033[%d;5H%s %-9.9s %-9.9s %-7.7s %-20.20s %-7.7s %-11.11s\033[0m",
+                        6 + i, (i == settings_sel_[4]) ? sgr_sel() : "",
                         pc.id, pc.callsign, pc.interface_id, ep, acl,
                         pc.auto_learned ? "[AUTO]" : "");
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[22;1H%s 1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc:Back \033[0m",
-                sgr_menubar());
+        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+                sgr_menubar(), "A:Add  E:Edit  D:Del  I:In  O:Out  K:KeepAuto  S/F2:Save  Esc:Back");
         write_str(buf);
     }
-    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m",
+    sprintf(buf, "\033[19;5H%s%-70.70s\033[0m",
             sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
     write_str(buf);
+    draw_dec_hdiv(20, 3, 74);
 }
 
 static void format_progress_bar(oyk_u8 pct, char* out, size_t out_sz) {
@@ -1083,39 +1085,45 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     int active = node_ ? node_->total_active_connections() : 0;
     int disc_left = node_ ? node_->disconnecting_count() : 0;
     int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
-    write_str("\033[H\033[2J");
-    sprintf(buf, "%s ENTER TEENSY 4.1 HALFKAY BOOTLOADER (FIRMWARE UPGRADE)       Esc:Cancel \033[0m",
-            sgr_header());
-    write_str(buf);
-    draw_dec_box(3, 6, 15, 68, "Confirm Bootloader Entry", 1);
-    draw_dec_shadow(3, 6, 15, 68);
+    const char* title = (auto_cnt > 0 && !bootloader_pending_)
+                            ? "Auto-Learned Peers - BOOTSEL"
+                            : "Confirm Bootloader Entry";
+    draw_dec_box(5, 6, 13, 68, title, 1);
+    draw_dec_shadow(5, 6, 13, 68);
 
     if (!bootloader_pending_) {
         if (auto_cnt > 0) {
-            sprintf(buf, "\033[5;8H%d auto-learned peer(s) were added this session.", auto_cnt);
+            sprintf(buf, "\033[7;8H%d auto-learned peer(s) were added this session.", auto_cnt);
             write_str(buf);
-            write_str("\033[7;8HSave them to config, discard them, or review in Peers");
-            write_str("\033[8;8Hbefore entering HalfKay bootloader?");
-            write_str("\033[10;8H[S] Save & Bootloader        [D] Discard & Bootloader");
-            write_str("\033[12;8H[R] Review Peers             [N / Esc] Cancel");
+            write_str("\033[9;8HSave them to config, discard them, or review in Peers");
+            write_str("\033[10;8Hbefore entering HalfKay bootloader?");
+            write_str("\033[12;8H[S] Save & Bootloader        [D] Discard & Bootloader");
+            write_str("\033[13;8H[R] Review Peers             [N / Esc] Cancel");
+            draw_dec_hdiv(15, 6, 68);
+            sprintf(buf, "\033[16;7H%s %-64.64s \033[0m",
+                    sgr_menubar(), "S:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel");
+            write_str(buf);
         } else {
             if (active > 0) {
-                sprintf(buf, "\033[5;8HEnter HalfKay bootloader? (%d active connection(s))", active);
+                sprintf(buf, "\033[7;8HEnter HalfKay bootloader? (%d active connection(s))", active);
                 write_str(buf);
-                write_str("\033[7;8HRemote users will be notified that the node is going offline for");
-                write_str("\033[8;8Ha firmware upgrade and gracefully disconnected before rebooting.");
+                write_str("\033[9;8HRemote users will be notified that the node is going offline for");
+                write_str("\033[10;8Ha firmware upgrade and gracefully disconnected before rebooting.");
             } else {
-                write_str("\033[5;8HEnter HalfKay bootloader? (no active connections)");
+                write_str("\033[7;8HEnter HalfKay bootloader? (no active connections)");
             }
-            sprintf(buf, "\033[10;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
+            sprintf(buf, "\033[12;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
                     sgr_sel());
             write_str(buf);
-            write_str("\033[11;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
-            write_str("\033[14;14H[Y] Enter HalfKay Bootloader     [N / Esc] Cancel");
+            write_str("\033[13;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
+            draw_dec_hdiv(15, 6, 68);
+            sprintf(buf, "\033[16;7H%s %-64.64s \033[0m",
+                    sgr_menubar(), "Y:Enter HalfKay Bootloader   N/Esc:Cancel");
+            write_str(buf);
         }
     } else {
         oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
-        sprintf(buf, "\033[6;8HNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
+        sprintf(buf, "\033[8;8HNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
                 disc_left, static_cast<unsigned long>(elapsed));
         write_str(buf);
     }

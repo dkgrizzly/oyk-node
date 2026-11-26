@@ -136,6 +136,9 @@ else
     echo "Warning: Android Gradle wrapper, Java, or Android SDK unavailable; skipping Android capture." >&2
 fi
 
+echo "Validating cross-TUI layout parity..."
+python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
+
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 

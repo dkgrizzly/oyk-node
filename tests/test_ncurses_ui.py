@@ -395,6 +395,9 @@ def main() -> int:
             os.write(master_fd, b"t")
             drain_and_wait(master_fd, scr, "Terminate Active Connection")
             drain_quiet(master_fd, scr, 0.15)
+            term_txt = scr.text()
+            for col_hdr in ("ID", "Callsign", "Port", "State"):
+                assert col_hdr in term_txt, f"Missing column {col_hdr!r} in Terminate modal:\n{term_txt}"
             save_cap(cap_dir, "terminate", scr)
             os.write(master_fd, b"\x1b")
             drain_quiet(master_fd, scr, 0.15)

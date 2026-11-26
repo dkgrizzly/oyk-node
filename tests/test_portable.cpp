@@ -1763,7 +1763,7 @@ static void test_dos_ui_screen_flows() {
     dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
     dos_vid_shadow(v, 2, 4, 21, 72);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
-    dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Interfaces  5:Peers  6:Rig  7:Print", 70);
+    dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", 70);
     dos_vid_puts(v, 5, 7, fill, "Callsign       : ", 17); dos_vid_puts(v, 5, 24, sel, "KR4OYK-7", 32);
     dos_vid_puts(v, 6, 7, fill, "Alias          : ", 17); dos_vid_puts(v, 6, 24, inp, "OYKNOD", 32);
     dos_vid_puts(v, 7, 7, fill, "Learn Policy   : < accept >", 40);
@@ -1823,7 +1823,7 @@ static void test_dos_ui_screen_flows() {
     dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
     dos_vid_shadow(v, 2, 4, 21, 72);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
-    dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Interfaces  [5:Peers]  6:Rig  7:Print", 70);
+    dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  [5:Peers]  6:Rig  7:Prn", 70);
     dos_vid_puts(v, 5, 5, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", 70);
     dos_vid_puts(v, 6, 5, sel,  "remote0   R3MOT-7    axudp0  12.34.56.78:10093 ON/ON ", 70);
     dos_vid_hdiv(v, 20, 4, 72, bdr);
