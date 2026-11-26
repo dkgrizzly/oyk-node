@@ -23,11 +23,11 @@ LD  = wlink
 WIN_INC = -I$(WATCOM_DIR)/h -I$(WATCOM_DIR)/h/win
 CFLAGS  = -2 -ml -zm -zt=512 -zw -os -bt=windows -wx -zq $(WIN_INC) -I../compat
 
-OBJS = win_main.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_term.obj
+OBJS = win_main.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_term.obj oyk_gui.obj oyk_gui_theme.obj
 
 all: oykw16.exe
 
-win_main.obj: win_main.cpp resource.h ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
+win_main.obj: win_main.cpp resource.h ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp ../compat/oyk_term.hpp ../compat/oyk_gui.hpp
     $(CC) $(CFLAGS) -fo=win_main.obj win_main.cpp
 
 oyk_portable.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
@@ -44,6 +44,12 @@ oyk_printer.obj: ../compat/oyk_printer.cpp ../compat/oyk_printer.hpp
 
 oyk_term.obj: ../compat/oyk_term.cpp ../compat/oyk_term.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS) -fo=oyk_term.obj ../compat/oyk_term.cpp
+
+oyk_gui.obj: ../compat/oyk_gui.cpp ../compat/oyk_gui.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS) -fo=oyk_gui.obj ../compat/oyk_gui.cpp
+
+oyk_gui_theme.obj: ../compat/oyk_gui_theme.cpp ../compat/oyk_gui.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS) -fo=oyk_gui_theme.obj ../compat/oyk_gui_theme.cpp
 
 oyk_win.res: oyk_win.rc resource.h
     $(RC) -bt=windows -q -r -i=$(WATCOM_DIR)/h/win -fo=oyk_win.res oyk_win.rc

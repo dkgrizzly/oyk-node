@@ -6,6 +6,7 @@
 #include "oyk/ax25/crc.hpp"
 #include "oyk/protocol/yapp.hpp"
 #include "oyk_term.hpp"
+#include "oyk_gui.hpp"
 
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
@@ -177,14 +178,15 @@ void refresh_ui(GtkAppState* st) {
         << "   |   Active Connections: <b>" << snap.total_active_connections << "</b>";
     gtk_label_set_markup(GTK_LABEL(st->header_info_label), hdr.str().c_str());
 
+    std::string pill = "  ";
+    pill += oyk_gui_format_incoming_pill(snap.accept_incoming ? 1 : 0, 0) + 1;
+    if (!pill.empty() && pill.back() == ']') pill.pop_back();
     if (snap.accept_incoming) {
-        gtk_label_set_markup(
-            GTK_LABEL(st->incoming_badge_label),
-            "<span background=\"#1e7e34\" foreground=\"#ffffff\" weight=\"bold\">  INCOMING: ALLOW  </span>");
+        std::string mk = "<span background=\"#1e7e34\" foreground=\"#ffffff\" weight=\"bold\">" + pill + "  </span>";
+        gtk_label_set_markup(GTK_LABEL(st->incoming_badge_label), mk.c_str());
     } else {
-        gtk_label_set_markup(
-            GTK_LABEL(st->incoming_badge_label),
-            "<span background=\"#b71c1c\" foreground=\"#ffffff\" weight=\"bold\">  INCOMING: DENY  </span>");
+        std::string mk = "<span background=\"#b71c1c\" foreground=\"#ffffff\" weight=\"bold\">" + pill + "  </span>";
+        gtk_label_set_markup(GTK_LABEL(st->incoming_badge_label), mk.c_str());
     }
 
     // Radio Interfaces table
@@ -940,7 +942,7 @@ void on_terminate_clicked(GtkWidget*, gpointer user_data) {
     }
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Terminate Active Connection",
+        oyk_gui_screen_title(OYK_SCR_TERMINATE),
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         "Terminate", GTK_RESPONSE_ACCEPT,
@@ -970,10 +972,12 @@ void on_terminate_clicked(GtkWidget*, gpointer user_data) {
     }
 
     GtkWidget* tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
-    add_text_column(GTK_TREE_VIEW(tv), "ID", 0, 55);
-    add_text_column(GTK_TREE_VIEW(tv), "Callsign", 1, 110);
-    add_text_column(GTK_TREE_VIEW(tv), "Port", 2, 100);
-    add_text_column(GTK_TREE_VIEW(tv), "State", 3, 120);
+    const char* tcols[4];
+    const int tc = oyk_gui_terminate_columns(tcols, 4);
+    const int twidths[4] = { 55, 110, 100, 120 };
+    for (int ci = 0; ci < tc; ++ci) {
+        add_text_column(GTK_TREE_VIEW(tv), tcols[ci], ci, twidths[ci]);
+    }
     g_signal_connect(tv, "row-activated",
                      G_CALLBACK(+[](GtkTreeView*, GtkTreePath*, GtkTreeViewColumn*, gpointer d) {
                          gtk_dialog_response(GTK_DIALOG(d), GTK_RESPONSE_ACCEPT);
@@ -1234,7 +1238,7 @@ void on_approve_files_clicked(GtkWidget*, gpointer user_data) {
     auto* st = static_cast<GtkAppState*>(user_data);
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Manage BBS Files Area",
+        oyk_gui_screen_title(OYK_SCR_FILES),
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         "Refresh", 3,
@@ -2146,7 +2150,7 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     enum { WIZ_RESP_BACK = 1, WIZ_RESP_NEXT = 2 };
 
     GtkWidget* dlg = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(dlg), "Add Interface");
+    gtk_window_set_title(GTK_WINDOW(dlg), oyk_gui_screen_title(OYK_SCR_ADD_IFACE));
     gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(ctx->dlg));
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dlg), TRUE);
@@ -2183,10 +2187,14 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
 
     /* Page 0: Driver Selection List */
     GtkListStore* pstore = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
-    for (int i = 0; i < 5; ++i) {
+    const int n_drv = oyk_gui_wiz_driver_count(OYK_DRV_ALL);
+    for (int i = 0; i < n_drv; ++i) {
         GtkTreeIter it;
         gtk_list_store_append(pstore, &it);
-        gtk_list_store_set(pstore, &it, 0, GTK_IFACE_DRIVERS[i].type, 1, GTK_IFACE_DRIVERS[i].desc, 2, i, -1);
+        gtk_list_store_set(pstore, &it,
+                           0, oyk_gui_wiz_driver_type(OYK_DRV_ALL, i),
+                           1, oyk_gui_wiz_driver_desc(OYK_DRV_ALL, i),
+                           2, i, -1);
     }
     GtkWidget* ptree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(pstore));
     g_object_unref(pstore);
@@ -2972,7 +2980,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     node::NodeConfig draft = st->engine->config();
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Node Settings",
+        oyk_gui_screen_title(OYK_SCR_SETTINGS),
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
@@ -3047,7 +3055,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     GtkWidget* chk_accept = gtk_check_button_new_with_label("Allow incoming connections by default");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_accept), draft.accept_incoming_default ? TRUE : FALSE);
     gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 9, 10, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new("Node"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new(oyk_gui_settings_tab_title(0)));
 
     // Tab 2: BBS
     GtkWidget* t_bbs = make_table(9);
@@ -3088,7 +3096,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     GtkWidget* e_bbs_welcome = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_bbs_welcome), draft.bbs.welcome.c_str());
     attach_row(t_bbs, 8, "BBS Welcome Message:", e_bbs_welcome);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_bbs, gtk_label_new("BBS"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_bbs, gtk_label_new(oyk_gui_settings_tab_title(1)));
 
     // Tab 3: CHAT
     GtkWidget* t_chat = make_table(6);
@@ -3115,7 +3123,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     GtkWidget* e_chat_welcome = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_chat_welcome), draft.chat.welcome.c_str());
     attach_row(t_chat, 5, "CHAT Welcome Message:", e_chat_welcome);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_chat, gtk_label_new("CHAT"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_chat, gtk_label_new(oyk_gui_settings_tab_title(2)));
 
     // Tab 4: Interfaces
     GtkWidget* if_vbox = gtk_vbox_new(FALSE, 6);
@@ -3140,7 +3148,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     gtk_box_pack_start(GTK_BOX(if_btns), btn_edit_if, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(if_btns), btn_rem_if, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(if_vbox), if_btns, FALSE, FALSE, 0);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), if_vbox, gtk_label_new("Interfaces"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), if_vbox, gtk_label_new(oyk_gui_settings_tab_title(3)));
 
     // Tab 5: Peers
     GtkWidget* peer_vbox = gtk_vbox_new(FALSE, 6);
@@ -3169,7 +3177,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     gtk_box_pack_start(GTK_BOX(peer_btns), btn_rem_peer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(peer_btns), btn_keep_peer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(peer_vbox), peer_btns, FALSE, FALSE, 0);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), peer_vbox, gtk_label_new("Peers"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), peer_vbox, gtk_label_new(oyk_gui_settings_tab_title(4)));
 
     // Tab 6: Rig Control
     GtkWidget* t_rig = make_table(6);
@@ -3199,7 +3207,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     GtkWidget* chk_rig_notify = gtk_check_button_new_with_label("Receive RadioFoundry UDP 4191 change notifications");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_rig_notify), draft.rig.notify ? TRUE : FALSE);
     gtk_table_attach(GTK_TABLE(t_rig), chk_rig_notify, 0, 2, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_rig, gtk_label_new("Rig"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_rig, gtk_label_new(oyk_gui_settings_tab_title(5)));
 
     // Tab 6: Line Printer
     GtkWidget* t_prn = make_table(6);
@@ -3236,7 +3244,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     GtkWidget* chk_prn_cond = gtk_check_button_new_with_label("Use 132-column condensed mode (MX-80 / ESC/P2)");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_prn_cond), draft.logging.printer.condensed ? TRUE : FALSE);
     gtk_table_attach(GTK_TABLE(t_prn), chk_prn_cond, 0, 2, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_prn, gtk_label_new("Printer"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_prn, gtk_label_new(oyk_gui_settings_tab_title(6)));
 
     GtkSettingsCtx sctx;
     sctx.dlg = dlg;
@@ -3613,7 +3621,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
     const bool os_dark = gtk_os_prefers_dark();
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Theme Settings",
+        oyk_gui_screen_title(OYK_SCR_THEME),
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
@@ -3638,13 +3646,13 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
 
     GtkListStore* store = gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
     GtkWidget* tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
-    add_text_column(GTK_TREE_VIEW(tv), "Role", 0, 145);
-    add_text_column(GTK_TREE_VIEW(tv), "Key", 1, 115);
+    add_text_column(GTK_TREE_VIEW(tv), oyk_gui_table_column(OYK_TBL_THEME, 0), 0, 145);
+    add_text_column(GTK_TREE_VIEW(tv), oyk_gui_table_column(OYK_TBL_THEME, 1), 1, 115);
     add_text_column(GTK_TREE_VIEW(tv), "#RRGGBB", 2, 95);
     {
         GtkCellRenderer* rend = gtk_cell_renderer_text_new();
         GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes(
-            "Preview", rend, "cell-background", 3, nullptr);
+            oyk_gui_table_column(OYK_TBL_THEME, 3), rend, "cell-background", 3, nullptr);
         gtk_tree_view_column_set_min_width(col, 80);
         gtk_tree_view_append_column(GTK_TREE_VIEW(tv), col);
     }
@@ -3922,11 +3930,14 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
 }
 
 bool confirm_and_exit(GtkAppState* st) {
-    const std::size_t auto_cnt = st->engine->auto_learned_peer_count();
-    if (auto_cnt > 0) {
+    const int auto_cnt = static_cast<int>(st->engine->auto_learned_peer_count());
+    auto snap = st->engine->snapshot();
+    OykGuiExitPrompt ep;
+    oyk_gui_build_exit_prompt(auto_cnt, static_cast<int>(snap.total_active_connections), &ep);
+    if (ep.has_auto_learned) {
         enum { RESP_SAVE = 10, RESP_DISCARD = 11, RESP_REVIEW = 12 };
         GtkWidget* dlg = gtk_dialog_new_with_buttons(
-            "Auto-Learned Peers",
+            ep.title,
             GTK_WINDOW(st->window),
             static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
             "Save & Exit", RESP_SAVE,
@@ -3934,10 +3945,7 @@ bool confirm_and_exit(GtkAppState* st) {
             "Review Peers", RESP_REVIEW,
             GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
             static_cast<const char*>(nullptr));
-        std::string msg = std::to_string(auto_cnt) +
-                          " auto-learned peer(s) were added during this session.\n"
-                          "Save them to configuration, discard them, or review in Peers?";
-        GtkWidget* lbl = gtk_label_new(msg.c_str());
+        GtkWidget* lbl = gtk_label_new(ep.body);
         gtk_misc_set_padding(GTK_MISC(lbl), 14, 12);
         gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
         gtk_widget_show_all(dlg);
@@ -3963,17 +3971,13 @@ bool confirm_and_exit(GtkAppState* st) {
         return false;
     }
 
-    auto snap = st->engine->snapshot();
-    std::string msg = (snap.total_active_connections > 0)
-                          ? ("Exit node? (" + std::to_string(snap.total_active_connections) + " active)")
-                          : "Exit node?";
     GtkWidget* dlg = gtk_message_dialog_new(
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_MESSAGE_QUESTION,
         GTK_BUTTONS_YES_NO,
-        "%s", msg.c_str());
-    gtk_window_set_title(GTK_WINDOW(dlg), "Exit");
+        "%s", ep.body);
+    gtk_window_set_title(GTK_WINDOW(dlg), ep.title);
     gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
     if (resp == GTK_RESPONSE_YES) {
@@ -4011,7 +4015,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     st.stop_flag = external_stop_flag_;
 
     st.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(st.window), "OYK Amateur Radio Packet Node");
+    gtk_window_set_title(GTK_WINDOW(st.window), oyk_gui_screen_title(OYK_SCR_MAIN));
 
     int init_w = 920;
     int init_h = 640;
@@ -4027,51 +4031,37 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* root_vbox = gtk_vbox_new(FALSE, 4);
     gtk_container_add(GTK_CONTAINER(st.window), root_vbox);
 
-    // Menu bar (matching Windows, ncurses, and DOS menus)
+    // Menu bar built from shared oyk_gui Node menu schema
     GtkWidget* menubar = gtk_menu_bar_new();
     GtkWidget* node_menu = gtk_menu_new();
     GtkWidget* node_root = gtk_menu_item_new_with_mnemonic("_Node");
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(node_root), node_menu);
 
-    GtkWidget* mi_allow = gtk_menu_item_new_with_mnemonic("_Allow Incoming Connections");
-    GtkWidget* mi_deny  = gtk_menu_item_new_with_mnemonic("_Deny Incoming Connections");
-    GtkWidget* mi_sep1  = gtk_separator_menu_item_new();
-    GtkWidget* mi_lterm = gtk_menu_item_new_with_mnemonic("_Local Terminal...");
-    GtkWidget* mi_files = gtk_menu_item_new_with_mnemonic("Manage _Files Area...");
-    GtkWidget* mi_rig   = gtk_menu_item_new_with_mnemonic("_Radio Control...");
-    GtkWidget* mi_sett  = gtk_menu_item_new_with_mnemonic("_Settings...");
-    GtkWidget* mi_peers = gtk_menu_item_new_with_mnemonic("_Peers...");
-    GtkWidget* mi_theme = gtk_menu_item_new_with_mnemonic("T_heme...");
-    GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
-    GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
-    GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
-    GtkWidget* mi_exit  = gtk_menu_item_new_with_mnemonic("E_xit");
-
-    g_signal_connect(mi_allow, "activate", G_CALLBACK(on_allow_incoming_clicked), &st);
-    g_signal_connect(mi_deny,  "activate", G_CALLBACK(on_deny_incoming_clicked), &st);
-    g_signal_connect(mi_lterm, "activate", G_CALLBACK(on_local_terminal_clicked), &st);
-    g_signal_connect(mi_files, "activate", G_CALLBACK(on_approve_files_clicked), &st);
-    g_signal_connect(mi_rig,   "activate", G_CALLBACK(on_rig_control_clicked), &st);
-    g_signal_connect(mi_sett,  "activate", G_CALLBACK(on_settings_clicked), &st);
-    g_signal_connect(mi_peers, "activate", G_CALLBACK(on_peers_clicked), &st);
-    g_signal_connect(mi_theme, "activate", G_CALLBACK(on_theme_clicked), &st);
-    g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
-    g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
-    g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
-
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_allow);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_deny);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep1);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_lterm);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_files);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_rig);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sett);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_peers);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_theme);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);
-    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_exit);
+    const int n_menu = oyk_gui_node_menu_count();
+    for (int mi = 0; mi < n_menu; ++mi) {
+        const OykGuiMenuItem* item = oyk_gui_node_menu_item(mi);
+        if (!item) continue;
+        if (item->is_separator) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), gtk_separator_menu_item_new());
+            continue;
+        }
+        GtkWidget* w = gtk_menu_item_new_with_mnemonic(item->gtk_label ? item->gtk_label : item->label);
+        switch (item->action) {
+            case OYK_ACT_ALLOW_INCOMING: g_signal_connect(w, "activate", G_CALLBACK(on_allow_incoming_clicked), &st); break;
+            case OYK_ACT_DENY_INCOMING:  g_signal_connect(w, "activate", G_CALLBACK(on_deny_incoming_clicked), &st); break;
+            case OYK_ACT_LOCAL_TERM:     g_signal_connect(w, "activate", G_CALLBACK(on_local_terminal_clicked), &st); break;
+            case OYK_ACT_FILES:          g_signal_connect(w, "activate", G_CALLBACK(on_approve_files_clicked), &st); break;
+            case OYK_ACT_RIG:            g_signal_connect(w, "activate", G_CALLBACK(on_rig_control_clicked), &st); break;
+            case OYK_ACT_SETTINGS:       g_signal_connect(w, "activate", G_CALLBACK(on_settings_clicked), &st); break;
+            case OYK_ACT_PEERS:          g_signal_connect(w, "activate", G_CALLBACK(on_peers_clicked), &st); break;
+            case OYK_ACT_THEME:          g_signal_connect(w, "activate", G_CALLBACK(on_theme_clicked), &st); break;
+            case OYK_ACT_TERMINATE:      g_signal_connect(w, "activate", G_CALLBACK(on_terminate_clicked), &st); break;
+            case OYK_ACT_BAN:            g_signal_connect(w, "activate", G_CALLBACK(on_ban_clicked), &st); break;
+            case OYK_ACT_EXIT:           g_signal_connect(w, "activate", G_CALLBACK(on_exit_clicked), &st); break;
+            default: break;
+        }
+        gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), w);
+    }
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), node_root);
     gtk_box_pack_start(GTK_BOX(root_vbox), menubar, FALSE, FALSE, 0);
 
@@ -4094,11 +4084,10 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     st.iface_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
                                         G_TYPE_STRING, G_TYPE_STRING);
     GtkWidget* iface_tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(st.iface_store));
-    add_text_column(GTK_TREE_VIEW(iface_tv), "Port", 0, 80);
-    add_text_column(GTK_TREE_VIEW(iface_tv), "Type", 1, 75);
-    add_text_column(GTK_TREE_VIEW(iface_tv), "Conn", 2, 55);
-    add_text_column(GTK_TREE_VIEW(iface_tv), "Status", 3, 170);
-    add_text_column(GTK_TREE_VIEW(iface_tv), "RX/TX", 4, 80);
+    const int if_widths[5] = { 80, 75, 55, 170, 80 };
+    for (int ci = 0; ci < oyk_gui_table_column_count(OYK_TBL_IFACES) && ci < 5; ++ci) {
+        add_text_column(GTK_TREE_VIEW(iface_tv), oyk_gui_table_column(OYK_TBL_IFACES, ci), ci, if_widths[ci]);
+    }
     GtkWidget* iface_sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(iface_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(iface_sc), iface_tv);
@@ -4109,10 +4098,10 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* heard_frame = gtk_frame_new("Last 5 New Callsigns Heard");
     st.heard_store = gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
     GtkWidget* heard_tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(st.heard_store));
-    add_text_column(GTK_TREE_VIEW(heard_tv), "#", 0, 32);
-    add_text_column(GTK_TREE_VIEW(heard_tv), "Callsign", 1, 95);
-    add_text_column(GTK_TREE_VIEW(heard_tv), "Port", 2, 85);
-    add_text_column(GTK_TREE_VIEW(heard_tv), "Heard", 3, 80);
+    const int hd_widths[4] = { 32, 95, 85, 80 };
+    for (int ci = 0; ci < oyk_gui_table_column_count(OYK_TBL_HEARD) && ci < 4; ++ci) {
+        add_text_column(GTK_TREE_VIEW(heard_tv), oyk_gui_table_column(OYK_TBL_HEARD, ci), ci, hd_widths[ci]);
+    }
     GtkWidget* heard_sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(heard_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(heard_sc), heard_tv);
@@ -4128,13 +4117,10 @@ bool Gtk2UI::run(int& argc, char**& argv) {
                                           G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
                                           G_TYPE_STRING, G_TYPE_UINT64);
     st.session_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(st.session_store));
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "ID", 0, 55);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "Callsign", 1, 100);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "Port", 2, 90);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "Dir", 3, 85);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "State", 4, 105);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "Since", 5, 85);
-    add_text_column(GTK_TREE_VIEW(st.session_tree), "Role / Bridge", 6, 130);
+    const int sess_widths[7] = { 55, 100, 90, 85, 105, 85, 130 };
+    for (int ci = 0; ci < oyk_gui_table_column_count(OYK_TBL_CONNECTIONS) && ci < 7; ++ci) {
+        add_text_column(GTK_TREE_VIEW(st.session_tree), oyk_gui_table_column(OYK_TBL_CONNECTIONS, ci), ci, sess_widths[ci]);
+    }
     GtkWidget* sess_sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sess_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(sess_sc), st.session_tree);

@@ -27,6 +27,7 @@
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
 #include "../compat/oyk_term.hpp"
+#include "../compat/oyk_gui.hpp"
 #include "resource.h"
 #include "win_service.hpp"
 
@@ -850,7 +851,7 @@ static void refresh_gui() {
     update_static_text(g_ctl_header, g_last_header, sizeof(g_last_header), buf);
 
     update_static_text(g_ctl_badge, g_last_badge, sizeof(g_last_badge),
-                       g_node.accept_incoming() ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]");
+                       oyk_gui_format_incoming_pill(g_node.accept_incoming(), 0));
 
     /* Radio Interfaces (active connections per interface) */
     int n = 0;
@@ -2594,12 +2595,11 @@ OYK_DLG_RET ExitPeersDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
         case WM_INITDIALOG: {
-            char msg_b[160];
-            sprintf(msg_b,
-                    "%d auto-learned peer(s) were added during this session.\n"
-                    "Save them to configuration, discard them, or review in Peers?",
-                    g_node.auto_learned_peer_count());
-            SetDlgItemText(hdlg, IDC_XPR_MSG, msg_b);
+            OykGuiExitPrompt ep;
+            oyk_gui_build_exit_prompt(g_node.auto_learned_peer_count(),
+                                      g_node.total_active_connections(), &ep);
+            SetWindowText(hdlg, ep.title);
+            SetDlgItemText(hdlg, IDC_XPR_MSG, ep.body);
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
 #endif
@@ -2813,16 +2813,19 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_INITDIALOG: {
             HWND hlist = GetDlgItem(hdlg, IDC_AIF_DRV_LIST);
-            for (int i = 0; i < 5; ++i) {
+            const int n_drv = oyk_gui_wiz_driver_count(OYK_DRV_ALL);
+            for (int i = 0; i < n_drv; ++i) {
                 char row[80];
-                sprintf(row, "%-12s %s", WIN_DRIVERS[i].type, WIN_DRIVERS[i].desc);
+                sprintf(row, "%-12s %s",
+                        oyk_gui_wiz_driver_type(OYK_DRV_ALL, i),
+                        oyk_gui_wiz_driver_desc(OYK_DRV_ALL, i));
                 SendMessage(hlist, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
             }
             win_fill_lpol_combo(GetDlgItem(hdlg, IDC_AIF_LPOL), 0);
             CheckDlgButton(hdlg, IDC_AIF_IN, BST_CHECKED);
             CheckDlgButton(hdlg, IDC_AIF_OUT, BST_CHECKED);
             CheckDlgButton(hdlg, IDC_AIF_SAME, 0);
-            SetWindowText(hdlg, "Add Interface");
+            SetWindowText(hdlg, oyk_gui_screen_title(OYK_SCR_ADD_IFACE));
             g_wiz_step = 0;
             g_wiz_drv = 0;
             g_wiz_last_drv = -1;
@@ -3787,7 +3790,7 @@ static void populate_theme_dialog_combo(HWND hdlg, const OykConfig* draft, const
 OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static OykConfig* s_draft = NULL;
-    static char s_active[24];
+    static OykGuiThemeCtrl s_th_ctrl;
     static char s_names[OYK_MAX_THEMES + 3][24];
     static int s_n_names = 0;
     static COLORREF s_cust_colors[16];
@@ -3795,17 +3798,13 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
     switch (msg) {
         case WM_INITDIALOG: {
+            SetWindowText(hdlg, oyk_gui_screen_title(OYK_SCR_THEME));
             if (!s_draft) s_draft = new OykConfig;
             *s_draft = g_node.config();
-            if (s_draft->theme_name[0]) {
-                strncpy(s_active, s_draft->theme_name, sizeof(s_active) - 1);
-                s_active[sizeof(s_active) - 1] = '\0';
-            } else {
-                strcpy(s_active, "native");
-            }
+            oyk_gui_theme_init(&s_th_ctrl, s_draft, 1, win_os_prefers_dark());
             SendDlgItemMessage(hdlg, IDC_TH_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
-            populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
-            populate_theme_dialog_list(hdlg, s_draft, s_active);
+            populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
+            populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) {
                 SetTimer(hdlg, 99, 150, NULL);
@@ -3847,10 +3846,9 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_TH_COMBO && ntf == CBN_SELCHANGE) {
                 int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_COMBO, CB_GETCURSEL, 0, 0));
                 if (sel >= 0 && sel < s_n_names) {
-                    strncpy(s_active, s_names[sel], sizeof(s_active) - 1);
-                    s_active[sizeof(s_active) - 1] = '\0';
-                    populate_theme_dialog_list(hdlg, s_draft, s_active);
-                    preview_win_draft_theme(s_draft, s_active);
+                    oyk_gui_theme_select(&s_th_ctrl, s_names[sel]);
+                    populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
+                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
                     InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 }
                 return TRUE;
@@ -3858,9 +3856,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
                 if (r >= 0 && r < OYK_THEME_COLOR_COUNT) {
                     OykThemeConfig pal;
-                    OykConfig tmp = *s_draft;
-                    strncpy(tmp.theme_name, s_active, sizeof(tmp.theme_name) - 1);
-                    oyk_theme_resolve_effective(&tmp, 1, win_os_prefers_dark(), &pal);
+                    oyk_gui_theme_resolve(&s_th_ctrl, &pal);
                     char hx[12];
                     oyk_theme_format_hex(pal.colors[r], hx, sizeof(hx));
                     SetDlgItemText(hdlg, IDC_TH_HEX, hx);
@@ -3890,75 +3886,41 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (id == IDC_TH_APPLY_COLOR) {
                 int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
                 if (r < 0 || r >= OYK_THEME_COLOR_COUNT) r = 0;
-                char hx[16];
+                char hx[16], err[96];
                 GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
-                oyk_u32 new_rgb = 0;
-                if (!oyk_theme_parse_hex(hx, &new_rgb)) {
-                    MessageBox(hdlg, "Enter a valid #RRGGBB hex color.", "Theme Settings", MB_OK | MB_ICONEXCLAMATION);
+                int was_builtin = oyk_theme_is_builtin(s_th_ctrl.active_name);
+                if (!oyk_gui_theme_set_role_hex(&s_th_ctrl, r, hx, err, sizeof(err))) {
+                    MessageBox(hdlg, err, oyk_gui_screen_title(OYK_SCR_THEME), MB_OK | MB_ICONEXCLAMATION);
                     return TRUE;
                 }
-                if (oyk_theme_is_builtin(s_active)) {
-                    if (s_draft->theme_count >= OYK_MAX_THEMES) {
-                        MessageBox(hdlg, "Maximum custom theme count reached.", "Theme Settings", MB_OK | MB_ICONEXCLAMATION);
-                        return TRUE;
-                    }
-                    OykThemeConfig pal;
-                    OykConfig tmp = *s_draft;
-                    strncpy(tmp.theme_name, s_active, sizeof(tmp.theme_name) - 1);
-                    const int os_d = win_os_prefers_dark();
-                    oyk_theme_resolve_effective(&tmp, 1, os_d, &pal);
-                    int dark_b = win_strieq(s_active, "light") ? 0 : (win_strieq(s_active, "native") ? os_d : 1);
-                    char cname[24];
-                    oyk_theme_make_clone_name(s_draft, dark_b, cname, sizeof(cname));
-                    OykThemeConfig* nt = &s_draft->themes[s_draft->theme_count++];
-                    *nt = pal;
-                    nt->is_dark_base = dark_b ? 1 : 0;
-                    strncpy(nt->name, cname, sizeof(nt->name) - 1);
-                    nt->name[sizeof(nt->name) - 1] = '\0';
-                    strcpy(s_active, nt->name);
-                    populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
+                if (was_builtin) {
+                    populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
                 }
-                for (int ti = 0; ti < s_draft->theme_count; ++ti) {
-                    if (win_strieq(s_draft->themes[ti].name, s_active)) {
-                        s_draft->themes[ti].colors[r] = new_rgb;
-                        break;
-                    }
-                }
-                populate_theme_dialog_list(hdlg, s_draft, s_active);
-                preview_win_draft_theme(s_draft, s_active);
+                populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
+                preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
                 InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 return TRUE;
             } else if (id == IDC_TH_DEL) {
-                if (!oyk_theme_is_builtin(s_active)) {
-                    for (int ti = 0; ti < s_draft->theme_count; ++ti) {
-                        if (win_strieq(s_draft->themes[ti].name, s_active)) {
-                            for (int k = ti; k + 1 < s_draft->theme_count; ++k) {
-                                s_draft->themes[k] = s_draft->themes[k + 1];
-                            }
-                            --s_draft->theme_count;
-                            break;
-                        }
-                    }
-                    strcpy(s_active, "native");
-                    populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
-                    populate_theme_dialog_list(hdlg, s_draft, s_active);
-                    preview_win_draft_theme(s_draft, s_active);
+                if (oyk_gui_theme_delete_custom(&s_th_ctrl)) {
+                    populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
+                    populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
+                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
                 }
                 return TRUE;
             } else if (id == IDOK) {
-                strncpy(s_draft->theme_name, s_active, sizeof(s_draft->theme_name) - 1);
+                strncpy(s_draft->theme_name, s_th_ctrl.active_name, sizeof(s_draft->theme_name) - 1);
                 s_draft->theme_name[sizeof(s_draft->theme_name) - 1] = '\0';
                 static OykConfigApplyResult tres;
                 if (g_node.apply_config(s_draft, 1, &tres)) {
                     apply_win_theme();
                     char st[128];
-                    sprintf(st, "Theme '%s' %s.", s_active,
+                    sprintf(st, "Theme '%s' %s.", s_th_ctrl.active_name,
                             tres.saved_to_disk ? "saved & applied" : "applied (memory only)");
                     set_status(st);
                     EndDialog(hdlg, IDOK);
                 } else {
                     MessageBox(hdlg, tres.error[0] ? tres.error : "Failed to save theme.",
-                               "Theme Settings", MB_OK | MB_ICONSTOP);
+                               oyk_gui_screen_title(OYK_SCR_THEME), MB_OK | MB_ICONSTOP);
                 }
                 return TRUE;
             } else if (id == IDCANCEL) {

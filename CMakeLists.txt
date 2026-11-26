@@ -50,6 +50,7 @@ if(NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
         ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
     )
 
     target_include_directories(oyknode_core
@@ -218,6 +219,8 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui_theme.cpp"
                         "${_win64_res}"
                         -o "${_win64_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
@@ -236,6 +239,9 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui_theme.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.hpp"
                     "${_win64_res}"
                 COMMENT "Building 64-bit Windows GUI executable (oykw64.exe)"
             )
@@ -273,6 +279,8 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui_theme.cpp"
                         "${_win32_res}"
                         -o "${_win32_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
@@ -291,6 +299,9 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui_theme.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_gui.hpp"
                     "${_win32_res}"
                 COMMENT "Building 32-bit Windows GUI executable (oykw32.exe)"
             )
@@ -419,6 +430,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
         ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
         ports/dos/dos_mouse.cpp
@@ -441,6 +453,28 @@ if(BUILD_TESTS AND NOT WIN32)
     target_compile_options(oyk_portable_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_portable_tests COMMAND oyk_portable_tests)
 
+    # Strict C++98 tests for the shared GUI controller & schema layer (oyk_gui)
+    add_executable(oyk_gui_tests
+        tests/test_gui_middleware.cpp
+        ports/compat/oyk_gui.cpp
+        ports/compat/oyk_gui_theme.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_term.cpp
+    )
+    target_include_directories(oyk_gui_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+    )
+    set_target_properties(oyk_gui_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_gui_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_gui_tests COMMAND oyk_gui_tests)
+
     # Strict C++98 host verification of Teensy 4.1 / IMXRT1060 (TinyTMUX) PSRAM, FS hooks, USB Host, PPP, Ethernet bridge & VT100 console
     add_executable(oyk_tinytmux_tests
         tests/test_tinytmux.cpp
@@ -458,6 +492,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
         ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
     )
     target_include_directories(oyk_tinytmux_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
@@ -487,6 +522,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
         ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
     )
     target_include_directories(oyk_pico_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
