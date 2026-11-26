@@ -20,7 +20,7 @@ Options:
   --targets <csv>    Comma-separated subset of targets to build:
                      linux-ncurses,linux-gtk,win64,win32,win16,dos,dos-gfx,teensy41,
                      pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
-                     macclassic,gsos,android-playstore,android-sideload
+                     macclassic,gsos,amiga,android-playstore,android-sideload
   --skip-src         Do not generate source release archives
   -h, --help         Show this help
 EOF
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic gsos android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic gsos amiga android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -609,6 +609,23 @@ if target_requested "gsos"; then
         PACKAGED+=("oyknode-${VER}-gsos.zip")
     else
         SKIPPED+=("gsos (vbcc 65816 toolchain not found in ${VBCC_DIR})")
+    fi
+fi
+
+# 4e. Amiga Workbench (m68k OS 3.1/2.04/1.3 + AROS via amiga-gcc)
+AMIGA_GCC_DIR="${AMIGA_GCC_PREFIX:-${HOME}/opt/amiga-gcc}"
+if target_requested "amiga"; then
+    if [[ -x "${AMIGA_GCC_DIR}/bin/m68k-amigaos-g++" ]]; then
+        echo "Building Amiga Workbench 68k binary..."
+        BUILD_AM="${TMP_WORK}/build-amiga"
+        make -C "${ROOT_DIR}/ports/amiga" AMIGA_GCC_PREFIX="${AMIGA_GCC_DIR}" BUILD_DIR="${BUILD_AM}" all >/dev/null
+        st="$(stage_binary_tree "amiga" "amiga")"
+        cp "${ROOT_DIR}/ports/amiga/README.md" "${st}/AMIGA-README.md"
+        cp "${BUILD_AM}/OYKNode" "${BUILD_AM}/OYKTest" "${st}/"
+        package_zip "amiga"
+        PACKAGED+=("oyknode-${VER}-amiga.zip")
+    else
+        SKIPPED+=("amiga (m68k-amigaos-g++ toolchain not found in ${AMIGA_GCC_DIR})")
     fi
 fi
 

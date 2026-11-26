@@ -5,7 +5,7 @@
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, and **Apple IIGS GS/OS**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, and **Amiga Workbench**.
 
 ## Port Contact Sheets
 
@@ -53,6 +53,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — Contact Sheet](images/ui-gallery/gsos_contact_sheet.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — Contact Sheet](images/ui-gallery/amiga_contact_sheet.png)
+
 ## 1. Operator Console (Main View)
 
 ### POSIX ncurses
@@ -98,6 +102,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 1. Operator Console (Main View)](images/ui-gallery/gsos_main.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 1. Operator Console (Main View)](images/ui-gallery/amiga_main.png)
 
 ## 2. Settings — Node Tab
 
@@ -145,6 +153,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 2. Settings — Node Tab](images/ui-gallery/gsos_settings.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 2. Settings — Node Tab](images/ui-gallery/amiga_settings.png)
+
 ## 3. Add Interface Wizard
 
 ### POSIX ncurses
@@ -190,6 +202,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 3. Add Interface Wizard](images/ui-gallery/gsos_add_iface.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 3. Add Interface Wizard](images/ui-gallery/amiga_add_iface.png)
 
 ## 4. Edit Interface (Single-View Dialog)
 
@@ -237,6 +253,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/gsos_edit_iface.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/amiga_edit_iface.png)
+
 ## 5. Settings — Peers Tab
 
 ### POSIX ncurses
@@ -282,6 +302,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 5. Settings — Peers Tab](images/ui-gallery/gsos_peers.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 5. Settings — Peers Tab](images/ui-gallery/amiga_peers.png)
 
 ## 6. Edit / Add Peer Dialog
 
@@ -329,6 +353,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 6. Edit / Add Peer Dialog](images/ui-gallery/gsos_edit_peer.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 6. Edit / Add Peer Dialog](images/ui-gallery/amiga_edit_peer.png)
+
 ## 7. Terminate Connection Modal
 
 ### POSIX ncurses
@@ -374,6 +402,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 7. Terminate Connection Modal](images/ui-gallery/gsos_terminate.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 7. Terminate Connection Modal](images/ui-gallery/amiga_terminate.png)
 
 ## 8. Ban / Unban Callsign Dialog
 
@@ -421,6 +453,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/gsos_ban.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/amiga_ban.png)
+
 ## 9. Auto-Learned Peers Exit / Bootloader Prompt
 
 ### POSIX ncurses
@@ -466,6 +502,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/gsos_exit.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/amiga_exit.png)
 
 ## 10. Theme Settings Dialog
 
@@ -513,6 +553,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 10. Theme Settings Dialog](images/ui-gallery/gsos_theme.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 10. Theme Settings Dialog](images/ui-gallery/amiga_theme.png)
+
 ## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
 
 ### POSIX ncurses
@@ -559,6 +603,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/gsos_terminal.png)
 
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/amiga_terminal.png)
+
 ## 12. File Manager / Pending & Approved BBS Files
 
 ### POSIX ncurses
@@ -604,4 +652,8 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Apple IIGS GS/OS (QuickDraw II 640x200)
 
 ![Apple IIGS GS/OS (QuickDraw II 640x200) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/gsos_files.png)
+
+### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/amiga_files.png)
 

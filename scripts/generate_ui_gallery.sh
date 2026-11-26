@@ -195,6 +195,18 @@ else
     echo "Warning: vbcc or GSplus unavailable; skipping Apple IIGS GS/OS capture." >&2
 fi
 
+echo "[10/10] Capturing Amiga Workbench screens under FS-UAE + AROS m68k..."
+AMIGA_GCC_DIR="${AMIGA_GCC_PREFIX:-${HOME}/opt/amiga-gcc}"
+AMIGA_RUNNER="${ROOT_DIR}/ports/amiga/run_fsuae_test.sh"
+if [[ -x "${AMIGA_GCC_DIR}/bin/m68k-amigaos-g++" && -x "${AMIGA_RUNNER}" ]] && command -v fs-uae >/dev/null 2>&1; then
+    if [[ ! -f "${ROOT_DIR}/ports/amiga/build_amiga/OYKNode" ]]; then
+        make -C "${ROOT_DIR}/ports/amiga" AMIGA_GCC_PREFIX="${AMIGA_GCC_DIR}" all >/dev/null
+    fi
+    "${AMIGA_RUNNER}" --capture "${TMP_CAP}" || echo "Warning: Amiga capture failed." >&2
+else
+    echo "Warning: amiga-gcc or fs-uae unavailable; skipping Amiga Workbench capture." >&2
+fi
+
 echo "Validating cross-TUI layout parity..."
 PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
 
@@ -202,7 +214,7 @@ echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
-PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos gsos)
+PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos gsos amiga)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -255,6 +267,7 @@ port_label() {
         macclassic_color) echo "Classic Macintosh (Color QuickDraw 640x480)" ;;
         macos)            echo "macOS (Cocoa / Universal ARM64 + Intel + PowerPC)" ;;
         gsos)             echo "Apple IIGS GS/OS (QuickDraw II 640x200)" ;;
+        amiga)            echo "Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)" ;;
     esac
 }
 
@@ -318,7 +331,7 @@ done
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, and **Apple IIGS GS/OS**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, and **Amiga Workbench**.
 
 ## Port Contact Sheets
 

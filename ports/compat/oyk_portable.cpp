@@ -960,6 +960,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->rotate_daily = 1;
     cfg->accept_incoming = 1;
     cfg->allow_flash_logging = 0;
+    cfg->amiga_private_screen = 0;
     cfg->learned_peer_policy = OYK_LEARN_INBOUND;
     cfg->new_user_welcome[0] = '\0';
     cfg->line_ending = oyk_platform_default_eol();
@@ -1783,6 +1784,8 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
             } else if (stricmp_ascii(k, "allow_flash_logging") == 0 ||
                        stricmp_ascii(k, "allow_logging_to_flash") == 0) {
                 cfg->allow_flash_logging = (stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "amiga_private_screen") == 0) {
+                cfg->amiga_private_screen = (stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0) ? 1 : 0;
             }
         } else if (section == 1) {
             oyk_u32 mask = 0;
@@ -2203,6 +2206,9 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "info = %s%s", cfg->info_text, nl);
     fprintf(fp, "accept_incoming = %s%s", cfg->accept_incoming ? "true" : "false", nl);
     fprintf(fp, "allow_flash_logging = %s%s", cfg->allow_flash_logging ? "true" : "false", nl);
+    if (cfg->amiga_private_screen) {
+        fprintf(fp, "amiga_private_screen = 1%s", nl);
+    }
     fprintf(fp, "learned_peer_policy = %s%s",
             oyk_format_learned_policy(cfg->learned_peer_policy ? cfg->learned_peer_policy : static_cast<oyk_u8>(OYK_LEARN_INBOUND)), nl);
     if (cfg->new_user_welcome[0]) fprintf(fp, "new_user_welcome = %s%s", cfg->new_user_welcome, nl);

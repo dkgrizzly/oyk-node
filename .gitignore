@@ -43,3 +43,4 @@ google-services.json
 secrets.*
 *credentials*
 *.secret
+__pycache__/

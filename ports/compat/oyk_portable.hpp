@@ -245,6 +245,7 @@ struct OykConfig {
     int rotate_daily;
     int accept_incoming;
     int allow_flash_logging;
+    int amiga_private_screen;
     oyk_u8 learned_peer_policy;
     char new_user_welcome[96];
     OykLineEnding line_ending;
