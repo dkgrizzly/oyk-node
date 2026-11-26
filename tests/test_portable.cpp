@@ -1850,19 +1850,21 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
 
 #ifndef __DOS__
 static void dos_save_capture_prefixed(const char* prefix, const char* name,
-                                      const oyk_u16* vram, const OykDosGfx* gfx) {
+                                      const OykDosVideo* v, const OykDosGfx* gfx) {
     const char* dir = getenv("OYK_UI_CAPTURE_DIR");
-    if (!dir || !dir[0]) return;
+    if (!dir || !dir[0] || !v || !v->back || v->cells <= 0) return;
     char path[512];
     sprintf(path, "%s/%s_%s.dosbuf", dir, prefix, name);
     FILE* f = fopen(path, "wb");
     if (f) {
-        unsigned char raw[OYK_DOS_VID_CELLS * 2];
-        for (int i = 0; i < OYK_DOS_VID_CELLS; ++i) {
-            raw[i * 2]     = static_cast<unsigned char>(vram[i] & 0xFFU);
-            raw[i * 2 + 1] = static_cast<unsigned char>((vram[i] >> 8) & 0xFFU);
+        size_t nbytes = static_cast<size_t>(v->cells) * 2U;
+        unsigned char* raw = new unsigned char[nbytes];
+        for (int i = 0; i < v->cells; ++i) {
+            raw[i * 2]     = static_cast<unsigned char>(v->back[i] & 0xFFU);
+            raw[i * 2 + 1] = static_cast<unsigned char>((v->back[i] >> 8) & 0xFFU);
         }
-        fwrite(raw, 1, sizeof(raw), f);
+        fwrite(raw, 1, nbytes, f);
+        delete[] raw;
         fclose(f);
     }
     if (gfx && gfx->active) {
@@ -1881,197 +1883,225 @@ static void dos_render_mock_main_pal(OykDosVideo* v, OykDosGfx* g, const DosMock
         dos_gfx_clear_shadows(g);
         dos_gfx_clear_cell_rgb(g);
     }
+    OykTuiConsoleLayout lay;
+    oyk_tui_compute_console_layout(v->rows, v->cols, &lay);
+    const int ncols = lay.cols;
+
     dos_vid_clear(v, p.bg);
-    dos_vid_hline(v, 0, 0, 80, p.mbar, ' ');
-    dos_vid_puts(v, 0, 1, p.msel, " Node ", 6);
-    dos_vid_puts(v, 0, 52, p.mbar, "Tab/F9:Term  F10/M:Menu ", 28);
-    dos_vid_puts(v, 1, 1, p.hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", 56);
-    dos_vid_puts(v, 1, 61, p.ok, "[INCOMING: ALLOW]", 18);
+    dos_vid_hline(v, lay.menu_row, 0, ncols, p.mbar, ' ');
+    dos_vid_puts(v, lay.menu_row, 1, p.msel, " Node ", 6);
+    dos_vid_puts(v, lay.menu_row, ncols - 28, p.mbar, "Tab/F9:Term  F10/M:Menu ", 27);
+    dos_vid_hline(v, lay.banner_row, 0, ncols, p.hdr, ' ');
+    dos_vid_puts(v, lay.banner_row, 1, p.hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", ncols - 22);
+    dos_vid_puts(v, lay.banner_row, ncols - 19, p.ok, " [INCOMING: ALLOW] ", 19);
 
-    dos_vid_box(v, 2, 0, 6, 48, p.hdr, p.bg, 1);
-    dos_vid_title(v, 2, 2, 24, p.hdr, "Radio Interfaces");
-    dos_vid_puts(v, 3, 1, p.lhdr, "Port     Type      Conn Status              RX/TX", 46);
-    dos_vid_puts(v, 4, 1, p.bg,   "axudp0   axudp        1 UP 0.0.0.0:10093    12/8", 46);
-    dos_vid_puts(v, 5, 1, p.bg,   "kiss0    kiss-ser     0 UP ser0:9600         0/0", 46);
+    dos_vid_box(v, lay.iface_box.top, lay.iface_box.left, lay.iface_box.h, lay.iface_box.w, p.hdr, p.bg, 1);
+    dos_vid_box(v, lay.heard_box.top, lay.heard_box.left, lay.heard_box.h, lay.heard_box.w, p.hdr, p.bg, 1);
+    dos_vid_putc(v, lay.heard_box.top, lay.heard_box.left, p.hdr, OYK_BOX_TT);
+    dos_vid_title(v, lay.iface_box.top, lay.iface_box.left + 2, 24, p.hdr, "Radio Interfaces");
+    dos_vid_puts(v, lay.iface_box.top + 1, lay.iface_box.left + 1, p.lhdr,
+                 "Port     Type     Conn Status          RX/TX", lay.iface_box.w - 2);
+    dos_vid_puts(v, lay.iface_box.top + 2, lay.iface_box.left + 1, p.bg,
+                 "axudp0   axudp       1 UP 0.0.0.0:10093 12/8", lay.iface_box.w - 2);
+    dos_vid_puts(v, lay.iface_box.top + 3, lay.iface_box.left + 1, p.bg,
+                 "kiss0    kiss-ser    0 UP ser0:9600      0/0", lay.iface_box.w - 2);
 
-    dos_vid_box(v, 2, 48, 6, 32, p.hdr, p.bg, 1);
-    dos_vid_title(v, 2, 50, 26, p.hdr, "Last 5 New Callsigns Heard");
-    dos_vid_puts(v, 3, 49, p.lhdr, "#  Callsign  Port   Heard", 30);
-    dos_vid_puts(v, 4, 49, p.bg,   "1  W3TRM-1   axudp0 20:40:01", 30);
+    dos_vid_title(v, lay.heard_box.top, lay.heard_box.left + 2, 26, p.hdr, "Last 5 New Callsigns Heard");
+    dos_vid_puts(v, lay.heard_box.top + 1, lay.heard_box.left + 1, p.lhdr,
+                 "#  Callsign  Port   Heard", lay.heard_box.w - 2);
+    dos_vid_puts(v, lay.heard_box.top + 2, lay.heard_box.left + 1, p.bg,
+                 "1  W3TRM-1   axudp0 20:40:01", lay.heard_box.w - 2);
 
-    dos_vid_box(v, 8, 0, 7, 80, p.hdr, p.bg, 1);
-    dos_vid_title(v, 8, 2, 34, p.hdr, "Active Connections (1) | Banned: 0");
-    dos_vid_puts(v, 9, 1, p.lhdr, "ID   Callsign  Port     Dir      State      Role / Bridge", 78);
-    dos_vid_puts(v, 10, 1, p.bg,  "#1   W3TRM-1   axudp0   INBOUND  CONNECTED  NODE SHELL", 78);
+    dos_vid_box(v, lay.conn_box.top, lay.conn_box.left, lay.conn_box.h, lay.conn_box.w, p.hdr, p.bg, 1);
+    dos_vid_title(v, lay.conn_box.top, lay.conn_box.left + 2, 34, p.hdr, "Active Connections (1) | Banned: 0");
+    dos_vid_puts(v, lay.conn_box.top + 1, lay.conn_box.left + 1, p.lhdr,
+                 "ID   Callsign  Port     Dir      State      Role / Bridge", lay.conn_box.w - 2);
+    dos_vid_puts(v, lay.conn_box.top + 2, lay.conn_box.left + 1, p.bg,
+                 "#1   W3TRM-1   axudp0   INBOUND  CONNECTED  NODE SHELL", lay.conn_box.w - 2);
 
-    dos_vid_box(v, 15, 0, 9, 80, p.hdr, p.bg, 1);
-    dos_vid_title(v, 15, 2, 20, p.hdr, "Node Activity Log");
-    dos_vid_puts(v, 16, 2, p.bg, "[20:40:01] [INFO] Interface axudp0 (axudp) started: UP 0.0.0.0:10093", 76);
-    dos_vid_puts(v, 17, 2, p.bg, "[20:40:02] [INFO] Inbound connection #1 from W3TRM-1 on axudp0", 76);
+    dos_vid_box(v, lay.log_box.top, lay.log_box.left, lay.log_box.h, lay.log_box.w, p.hdr, p.bg, 1);
+    dos_vid_title(v, lay.log_box.top, lay.log_box.left + 2, 20, p.hdr, "Node Activity Log");
+    dos_vid_puts(v, lay.log_box.top + 1, lay.log_box.left + 2, p.bg,
+                 "[20:40:01] [INFO] Interface axudp0 (axudp) started: UP 0.0.0.0:10093", lay.log_box.w - 4);
+    dos_vid_puts(v, lay.log_box.top + 2, lay.log_box.left + 2, p.bg,
+                 "[20:40:02] [INFO] Inbound connection #1 from W3TRM-1 on axudp0", lay.log_box.w - 4);
 
-    dos_vid_hline(v, 24, 0, 80, p.stat, ' ');
-    dos_vid_puts(v, 24, 1, p.stat, "Ready. Press M/F10 for Node menu.", 78);
+    dos_vid_hline(v, lay.status_row, 0, ncols, p.stat, ' ');
+    dos_vid_puts(v, lay.status_row, 1, p.stat, "Ready. Press M/F10 for Node menu.", ncols - 2);
 }
 
-static void dos_box_with_shadow(OykDosVideo* v, OykDosGfx* g, int top, int left,
-                                int h, int w, oyk_u8 bdr, oyk_u8 fill) {
-    dos_vid_box(v, top, left, h, w, bdr, fill, 1);
-    dos_vid_shadow(v, top, left, h, w);
-    if (g) dos_gfx_add_shadow(g, top, left, h, w);
+static void dos_modal_frame(OykDosVideo* v, OykDosGfx* g, const OykTuiRect& mr,
+                            const char* title, oyk_u8 bdr, oyk_u8 fill) {
+    dos_vid_box(v, mr.top, mr.left, mr.h, mr.w, bdr, fill, 1);
+    dos_vid_shadow(v, mr.top, mr.left, mr.h, mr.w);
+    if (g) dos_gfx_add_shadow(g, mr.top, mr.left, mr.h, mr.w);
+    int cc = oyk_tui_close_btn_col(&mr);
+    if (title && title[0] && cc > mr.left + 4) {
+        dos_vid_title(v, mr.top, mr.left + 2, cc - (mr.left + 3), bdr, title);
+    }
+    if (cc >= 0) {
+        dos_vid_puts(v, mr.top, cc, 0x4FU, "[X]", 3);
+        if (g) dos_gfx_set_cell_rgb(g, mr.top, cc, 3, 0xFFFFFFUL, 0xCC2222UL);
+    }
 }
 
 static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosMockPalette& p) {
-    oyk_u16* sim_vram = new oyk_u16[OYK_DOS_VID_CELLS];
+    const int rows = g ? g->rows : 25;
+    const int cols = g ? g->cols : 80;
+    oyk_u16* sim_vram = new oyk_u16[static_cast<size_t>(rows) * static_cast<size_t>(cols)];
     OykDosVideo* v = new OykDosVideo();
-    dos_vid_init_sim(v, g ? 0 : 1, sim_vram);
+    dos_vid_init_sim_sized(v, g ? 0 : 1, cols, rows, sim_vram);
 
     const oyk_u8 bdr = p.bdr, fill = p.fill, sel = p.sel, inp = p.inp, bar = p.bar, lhdr = p.lhdr;
+    OykTuiRect mr;
 
     /* 1. Main screen */
     dos_render_mock_main_pal(v, g, p);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "main", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "main", v, g);
 
     /* 2. Settings (Node tab) */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 2, 4, 21, 72, bdr, fill);
-    dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
-    dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", 70);
-    dos_vid_puts(v, 5, 7, fill, "Callsign       : ", 17); dos_vid_puts(v, 5, 24, sel, "KR4OYK-7", 32);
-    dos_vid_puts(v, 6, 7, fill, "Alias          : ", 17); dos_vid_puts(v, 6, 24, inp, "OYKNOD", 32);
-    dos_vid_puts(v, 7, 7, fill, "Learn Policy   : < accept >", 40);
-    dos_vid_puts(v, 8, 7, fill, "Interfaces File: interfaces.cfg", 40);
-    dos_vid_puts(v, 9, 7, fill, "Peers File     : peers.cfg", 40);
-    dos_vid_puts(v, 10, 7, fill, "Themes File    : themes.cfg", 40);
-    dos_vid_hdiv(v, 20, 4, 72, bdr);
-    dos_vid_puts(v, 21, 6, bar, "[ S/F2 Save ]  [ Esc Cancel ]  1-7:Tab  Enter:Edit", 66);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " [1:Node]  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Callsign       : ", 17); dos_vid_puts(v, mr.top + 3, mr.left + 20, sel, "KR4OYK-7", 32);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Alias          : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, inp, "OYKNOD", 32);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Learn Policy   : < accept >", 40);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "Interfaces File: interfaces.cfg", 40);
+    dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "Peers File     : peers.cfg", 40);
+    dos_vid_puts(v, mr.top + 8, mr.left + 3, fill, "Themes File    : themes.cfg", 40);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "settings", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "settings", v, g);
 
     /* 3. Add Interface Wizard */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 3, 6, 19, 68, bdr, fill);
-    dos_vid_title(v, 3, 8, 20, bdr, "Add Interface");
-    dos_vid_title(v, 3, 56, 16, bdr, "[######..] 3/4");
-    dos_vid_puts(v, 4, 8, bdr,  "Configure AXUDP bind host/DMR, port, netmask, and policy:", 62);
-    dos_vid_puts(v, 5, 9, fill, "Interface    : axudp1 (axudp)", 50);
-    dos_vid_puts(v, 7, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 7, 26, sel, "0.0.0.0", 30);
-    dos_vid_puts(v, 8, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 8, 26, inp, "10093", 30);
-    dos_vid_puts(v, 9, 9, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, 9, 26, inp, "255.0.0.0", 30);
-    dos_vid_puts(v, 10, 9, fill, "Peer (opt)     : ", 17); dos_vid_puts(v, 10, 26, inp, "", 30);
-    dos_vid_puts(v, 11, 9, fill, "Allow Inbound  : [ON]", 30);
-    dos_vid_puts(v, 12, 9, fill, "Allow Outbound : [ON]", 30);
-    dos_vid_puts(v, 13, 9, fill, "Same-Iface Fwd : [OFF]", 30);
-    dos_vid_puts(v, 14, 9, fill, "Learned Policy : < inherit >", 40);
-    dos_vid_hdiv(v, 19, 6, 68, bdr);
-    dos_vid_puts(v, 20, 8, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
+    oyk_tui_center_modal(rows, cols, 19, 68, &mr);
+    dos_modal_frame(v, g, mr, "Add Interface", bdr, fill);
+    dos_vid_title(v, mr.top, oyk_tui_close_btn_col(&mr) - 15, 14, bdr, "[######..] 3/4");
+    dos_vid_puts(v, mr.top + 1, mr.left + 2, bdr,  "Configure AXUDP bind host/DMR, port, netmask, and policy:", 62);
+    dos_vid_puts(v, mr.top + 2, mr.left + 3, fill, "Interface    : axudp1 (axudp)", 50);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, sel, "0.0.0.0", 30);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "UDP Port       : ", 17); dos_vid_puts(v, mr.top + 5, mr.left + 20, inp, "10093", 30);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, mr.top + 6, mr.left + 20, inp, "255.0.0.0", 30);
+    dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "Peer (opt)     : ", 17); dos_vid_puts(v, mr.top + 7, mr.left + 20, inp, "", 30);
+    dos_vid_puts(v, mr.top + 8, mr.left + 3, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, mr.top + 9, mr.left + 3, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_puts(v, mr.top + 10, mr.left + 3, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_puts(v, mr.top + 11, mr.left + 3, fill, "Learned Policy : < inherit >", 40);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "add_iface", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "add_iface", v, g);
 
     /* 4. Edit Interface Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 3, 6, 19, 68, bdr, fill);
-    dos_vid_title(v, 3, 8, 20, bdr, "Edit Interface");
-    dos_vid_puts(v, 4, 8, bdr,  "Edit interface settings and select Save to update draft:", 62);
-    dos_vid_puts(v, 6, 9, fill, "Driver (Lt/Rt) : ", 17); dos_vid_puts(v, 6, 26, sel, "< axudp >", 30);
-    dos_vid_puts(v, 7, 9, fill, "Interface ID   : ", 17); dos_vid_puts(v, 7, 26, inp, "axudp0", 30);
-    dos_vid_puts(v, 8, 9, fill, "Description    : ", 17); dos_vid_puts(v, 8, 26, inp, "Primary AXUDP Link", 30);
-    dos_vid_puts(v, 9, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 9, 26, inp, "0.0.0.0", 30);
-    dos_vid_puts(v, 10, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 10, 26, inp, "10093", 30);
-    dos_vid_puts(v, 11, 9, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, 11, 26, inp, "", 30);
-    dos_vid_puts(v, 12, 9, fill, "Static Peer    : ", 17); dos_vid_puts(v, 12, 26, inp, "", 30);
-    dos_vid_puts(v, 13, 9, fill, "Allow Inbound  : [ON]", 30);
-    dos_vid_puts(v, 14, 9, fill, "Allow Outbound : [ON]", 30);
-    dos_vid_puts(v, 15, 9, fill, "Same-Iface Fwd : [OFF]", 30);
-    dos_vid_puts(v, 16, 9, fill, "Learned Policy : < inherit >", 40);
-    dos_vid_hdiv(v, 19, 6, 68, bdr);
-    dos_vid_puts(v, 20, 8, bar, "[  Save  ]  [ Cancel ]", 30);
+    oyk_tui_center_modal(rows, cols, 19, 68, &mr);
+    dos_modal_frame(v, g, mr, "Edit Interface", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 2, bdr,  "Edit interface settings and select Save to update draft:", 62);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Driver (Lt/Rt) : ", 17); dos_vid_puts(v, mr.top + 3, mr.left + 20, sel, "< axudp >", 30);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Interface ID   : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, inp, "axudp0", 30);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Description    : ", 17); dos_vid_puts(v, mr.top + 5, mr.left + 20, inp, "Primary AXUDP Link", 30);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, mr.top + 6, mr.left + 20, inp, "0.0.0.0", 30);
+    dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "UDP Port       : ", 17); dos_vid_puts(v, mr.top + 7, mr.left + 20, inp, "10093", 30);
+    dos_vid_puts(v, mr.top + 8, mr.left + 3, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, mr.top + 8, mr.left + 20, inp, "", 30);
+    dos_vid_puts(v, mr.top + 9, mr.left + 3, fill, "Static Peer    : ", 17); dos_vid_puts(v, mr.top + 9, mr.left + 20, inp, "", 30);
+    dos_vid_puts(v, mr.top + 10, mr.left + 3, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, mr.top + 11, mr.left + 3, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_puts(v, mr.top + 12, mr.left + 3, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_puts(v, mr.top + 13, mr.left + 3, fill, "Learned Policy : < inherit >", 40);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[  Save  ]  [ Cancel ]", 30);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "edit_iface", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "edit_iface", v, g);
 
     /* 5. Settings (Peers Tab) */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 2, 4, 21, 72, bdr, fill);
-    dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
-    dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  [5:Peers]  6:Rig  7:Prn", 70);
-    dos_vid_puts(v, 5, 5, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", 70);
-    dos_vid_puts(v, 6, 5, sel,  "remote0   R3MOT-7    axudp0  12.34.56.78:10093 ON/ON ", 70);
-    dos_vid_hdiv(v, 20, 4, 72, bdr);
-    dos_vid_puts(v, 21, 6, bar, "A:Add  E/Enter:Edit  K:Del  S/F2:Save  Esc:Close", 66);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  [5:Peers]  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 1, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", mr.w - 2);
+    dos_vid_puts(v, mr.top + 4, mr.left + 1, sel,  "remote0   R3MOT-7    axudp0  12.34.56.78:10093 ON/ON ", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "A:Add  E/Enter:Edit  K:Del  S/F2:Save  Esc:Close", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "peers", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "peers", v, g);
 
     /* 6. Edit Peer Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 4, 10, 17, 60, bdr, fill);
-    dos_vid_title(v, 4, 12, 20, bdr, "Edit Peer");
-    dos_vid_puts(v, 6, 12, fill, "Peer ID        : ", 17); dos_vid_puts(v, 6, 29, sel, "remote0", 28);
-    dos_vid_puts(v, 7, 12, fill, "Callsign       : ", 17); dos_vid_puts(v, 7, 29, inp, "R3MOT-7", 28);
-    dos_vid_puts(v, 9, 12, fill, "Interface      : < axudp0 >", 38);
-    dos_vid_puts(v, 10, 12, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 10, 29, inp, "12.34.56.78", 28);
-    dos_vid_puts(v, 12, 12, fill, "Allow Inbound  : [ON]", 30);
-    dos_vid_puts(v, 13, 12, fill, "Allow Outbound : [ON]", 30);
-    dos_vid_hdiv(v, 18, 10, 60, bdr);
-    dos_vid_puts(v, 19, 12, bar, "[  Save  ]  [ Cancel ]", 30);
+    oyk_tui_center_modal(rows, cols, 17, 60, &mr);
+    dos_modal_frame(v, g, mr, "Edit Peer", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "Peer ID        : ", 17); dos_vid_puts(v, mr.top + 2, mr.left + 19, sel, "remote0", 28);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Callsign       : ", 17); dos_vid_puts(v, mr.top + 3, mr.left + 19, inp, "R3MOT-7", 28);
+    dos_vid_puts(v, mr.top + 5, mr.left + 2, fill, "Interface      : < axudp0 >", 38);
+    dos_vid_puts(v, mr.top + 6, mr.left + 2, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, mr.top + 6, mr.left + 19, inp, "12.34.56.78", 28);
+    dos_vid_puts(v, mr.top + 8, mr.left + 2, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, mr.top + 9, mr.left + 2, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[  Save  ]  [ Cancel ]", 30);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "edit_peer", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "edit_peer", v, g);
 
     /* 7. Terminate Active Connection Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 4, 8, 16, 64, bdr, fill);
-    dos_vid_title(v, 4, 10, 32, bdr, "Terminate Active Connection");
-    dos_vid_puts(v, 6, 10, lhdr, "ID    Callsign    Port       State", 60);
-    dos_vid_puts(v, 7, 10, sel,  "#1    W3TRM-1     axudp0     [CONNECTED]", 60);
-    dos_vid_hdiv(v, 17, 8, 64, bdr);
-    dos_vid_puts(v, 18, 10, bar, "Up/Down: select | Enter: terminate | Esc: cancel", 60);
+    oyk_tui_center_modal(rows, cols, 16, 64, &mr);
+    dos_modal_frame(v, g, mr, "Terminate Active Connection", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 2, lhdr, "ID    Callsign    Port       State", mr.w - 4);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, sel,  "#1    W3TRM-1     axudp0     [CONNECTED]", mr.w - 4);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Up/Down: select | Enter: terminate | Esc: cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "terminate", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "terminate", v, g);
 
     /* 8. Ban / Unban Callsign Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 2, 3, 21, 74, bdr, fill);
-    dos_vid_title(v, 2, 5, 38, bdr, "Ban / Unban Callsign (banlist.cfg)");
-    dos_vid_puts(v, 4, 5, fill, "Callsign: ", 10); dos_vid_puts(v, 4, 15, sel, "B4NTST", 12);
-    dos_vid_puts(v, 5, 5, fill, "Lift At : ", 10); dos_vid_puts(v, 5, 15, inp, "permanent", 16);
-    dos_vid_puts(v, 5, 33, fill, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
-    dos_vid_puts(v, 6, 5, fill, "Reason  : ", 10); dos_vid_puts(v, 6, 15, inp, "Banned by sysop.", 56);
-    dos_vid_puts(v, 7, 5, fill, "Options : [ ] Hard Ban (H)   [X] Appeal Allowed (A)", 66);
-    dos_vid_puts(v, 9, 5, fill, "Active Bans (1):", 30);
-    dos_vid_puts(v, 10, 5, lhdr, "Callsign   Type  Lift At          Reason", 70);
-    dos_vid_puts(v, 11, 5, fill, "B4NTST     SOFT  permanent        Banned by sysop.", 70);
-    dos_vid_hdiv(v, 21, 3, 74, bdr);
-    dos_vid_puts(v, 22, 5, bar, "Enter: BAN | Tab: next field | Esc: close", 68);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Ban / Unban Callsign (banlist.cfg)", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "Callsign: ", 10); dos_vid_puts(v, mr.top + 2, mr.left + 12, sel, "B4NTST", 12);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Lift At : ", 10); dos_vid_puts(v, mr.top + 3, mr.left + 12, inp, "permanent", 16);
+    dos_vid_puts(v, mr.top + 3, mr.left + 30, fill, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
+    dos_vid_puts(v, mr.top + 4, mr.left + 2, fill, "Reason  : ", 10); dos_vid_puts(v, mr.top + 4, mr.left + 12, inp, "Banned by sysop.", 56);
+    dos_vid_puts(v, mr.top + 5, mr.left + 2, fill, "Options : [ ] Hard Ban (H)   [X] Appeal Allowed (A)", 66);
+    dos_vid_puts(v, mr.top + 7, mr.left + 2, fill, "Active Bans (1):", 30);
+    dos_vid_puts(v, mr.top + 8, mr.left + 2, lhdr, "Callsign   Type  Lift At          Reason", mr.w - 4);
+    dos_vid_puts(v, mr.top + 9, mr.left + 2, fill, "B4NTST     SOFT  permanent        Banned by sysop.", mr.w - 4);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Enter: BAN | Tab: next field | Esc: close", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "ban", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "ban", v, g);
 
     /* 9. Auto-Learned Peers 3-Way Exit Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 7, 6, 11, 68, bdr, fill);
-    dos_vid_title(v, 7, 8, 24, bdr, "Auto-Learned Peers");
-    dos_vid_puts(v, 9, 8, fill, "1 auto-learned peer(s) added during this session.", 60);
-    dos_vid_puts(v, 10, 8, fill, "Save to config, discard, or review in Peers?", 60);
-    dos_vid_hdiv(v, 15, 6, 68, bdr);
-    dos_vid_puts(v, 16, 8, sel, "[ Save & Exit ]", 15);
-    dos_vid_puts(v, 16, 25, bar, "[ Discard ]  [ Review Peers ]  [ Cancel ]", 42);
+    oyk_tui_center_modal(rows, cols, 11, 68, &mr);
+    dos_modal_frame(v, g, mr, "Auto-Learned Peers", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "1 auto-learned peer(s) added during this session.", mr.w - 4);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Save to config, discard, or review in Peers?", mr.w - 4);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, sel, "[ Save & Exit ]", 15);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 19, bar, "[ Discard ]  [ Review Peers ]  [ Cancel ]", 42);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "exit", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "exit", v, g);
 
     /* 10. Theme Settings Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 2, 3, 21, 74, bdr, fill);
-    dos_vid_title(v, 2, 5, 18, bdr, "Theme Settings");
-    dos_vid_puts(v, 4, 5, fill, "Theme  : < dark               > (Built-in (not saved))", 68);
-    dos_vid_puts(v, 5, 5, fill, "Editing built-in clones custom-dark or custom-light.", 68);
-    dos_vid_puts(v, 7, 5, lhdr, "Role              Key            Color     Preview", 68);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Theme Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "Theme  : < dark               > (Built-in (not saved))", mr.w - 4);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Editing built-in clones custom-dark or custom-light.", mr.w - 4);
+    dos_vid_puts(v, mr.top + 5, mr.left + 2, lhdr, "Role              Key            Color     Preview", mr.w - 4);
     {
         OykThemeConfig dt;
         oyk_theme_init_builtin(&dt, 0);
@@ -2080,59 +2110,62 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
             oyk_theme_format_hex(dt.colors[r], hx, sizeof(hx));
             sprintf(row_s, "%-16.16s  %-13.13s  %-8.8s",
                     oyk_theme_role_label(r), oyk_theme_role_key(r), hx);
-            dos_vid_puts(v, 8 + r, 5, (r == 0) ? sel : fill, row_s, 44);
+            dos_vid_puts(v, mr.top + 6 + r, mr.left + 2, (r == 0) ? sel : fill, row_s, 44);
             oyk_u8 sw = static_cast<oyk_u8>((oyk_rgb_to_vga16(dt.colors[r]) << 4) | oyk_rgb_to_vga16(dt.colors[r]));
-            dos_vid_puts(v, 8 + r, 50, sw, "    ", 4);
-            if (g) dos_gfx_set_cell_rgb(g, 8 + r, 50, 4, dt.colors[r], dt.colors[r]);
+            dos_vid_puts(v, mr.top + 6 + r, mr.left + 47, sw, "    ", 4);
+            if (g) dos_gfx_set_cell_rgb(g, mr.top + 6 + r, mr.left + 47, 4, dt.colors[r], dt.colors[r]);
         }
     }
-    dos_vid_hdiv(v, 19, 3, 74, bdr);
-    dos_vid_puts(v, 20, 5, fill, "Live preview active (unsaved). Press S/F2 to save or Esc to revert.", 68);
-    dos_vid_puts(v, 21, 5, bar,  "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", 68);
+    dos_vid_puts(v, mr.top + mr.h - 4, mr.left + 2, fill, "Live preview active (unsaved). Press S/F2 to save or Esc to revert.", mr.w - 4);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "theme", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "theme", v, g);
 
-    /* 11. Local Terminal (/bbs example session) */
+    /* 11. Local Terminal (/bbs example session, full display) */
     if (g) {
         dos_gfx_clear_shadows(g);
         dos_gfx_clear_cell_rgb(g);
     }
+    OykTuiTermLayout tlay;
+    oyk_tui_compute_term_layout(v->rows, v->cols, &tlay);
     dos_vid_clear(v, p.bg);
-    dos_vid_puts(v, 0, 0, p.hdr, " LOCAL TERMINAL | CONNECTED: KR4OYK-1 (LOCAL - YAPP disabled)", 80);
-    dos_vid_box(v, 1, 0, 21, 80, bdr, p.bg, 1);
-    dos_vid_title(v, 1, 2, 76, p.hdr, "Terminal Output");
-    dos_vid_puts(v, 2, 2, p.bg, "*** OYK Local Terminal (/local, /bbs, /chat, /disc)", 76);
-    dos_vid_puts(v, 3, 2, p.bg, "> /bbs", 76);
-    dos_vid_puts(v, 4, 2, p.ok, "*** Connected locally to KR4OYK-1 (BBS)", 76);
-    dos_vid_puts(v, 5, 2, p.bg, "Welcome to KR4OYK-1 Packet BBS (OYKNOD)", 76);
-    dos_vid_puts(v, 6, 2, p.bg, "Type L to list messages, R # to read, B to bye.", 76);
-    dos_vid_puts(v, 7, 2, p.bg, "KR4OYK-1> L", 76);
-    dos_vid_puts(v, 8, 2, p.lhdr, "Msg#  Size  From     To       Subject", 76);
-    dos_vid_puts(v, 9, 2, p.bg, "1     248   W3TRM-1  ALL      Welcome to OYK Packet Node", 76);
-    dos_vid_puts(v, 10, 2, p.bg, "KR4OYK-1> _", 76);
-    dos_vid_hline(v, 22, 0, 80, bar, ' ');
-    dos_vid_puts(v, 22, 0, bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console", 80);
-    dos_vid_puts(v, 23, 0, fill, "> ", 80);
-    dos_vid_puts(v, 24, 0, p.stat, "F9/Esc switches to Console without closing active terminal session.", 80);
+    dos_vid_hline(v, tlay.header_row, 0, tlay.cols, p.hdr, ' ');
+    dos_vid_puts(v, tlay.header_row, 0, p.hdr, " LOCAL TERMINAL | CONNECTED: KR4OYK-1 (LOCAL - YAPP disabled)", tlay.cols);
+    dos_vid_box(v, tlay.body_top, 0, tlay.body_rows, tlay.cols, bdr, p.bg, 1);
+    dos_vid_title(v, tlay.body_top, 2, tlay.cols - 4, p.hdr, "Terminal Output");
+    dos_vid_puts(v, tlay.body_top + 1, 2, p.bg, "*** OYK Local Terminal (/local, /bbs, /chat, /disc)", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 2, 2, p.bg, "> /bbs", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 3, 2, p.ok, "*** Connected locally to KR4OYK-1 (BBS)", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 4, 2, p.bg, "Welcome to KR4OYK-1 Packet BBS (OYKNOD)", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 5, 2, p.bg, "Type L to list messages, R # to read, B to bye.", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 6, 2, p.bg, "KR4OYK-1> L", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 7, 2, p.lhdr, "Msg#  Size  From     To       Subject", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 8, 2, p.bg, "1     248   W3TRM-1  ALL      Welcome to OYK Packet Node", tlay.cols - 4);
+    dos_vid_puts(v, tlay.body_top + 9, 2, p.bg, "KR4OYK-1> _", tlay.cols - 4);
+    dos_vid_hline(v, tlay.hotkey_row, 0, tlay.cols, bar, ' ');
+    dos_vid_puts(v, tlay.hotkey_row, 0, bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console", tlay.cols);
+    dos_vid_hline(v, tlay.input_row, 0, tlay.cols, fill, ' ');
+    dos_vid_puts(v, tlay.input_row, 0, fill, "> ", tlay.cols);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "terminal", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "terminal", v, g);
 
     /* 12. Manage BBS Files Area Modal */
     dos_render_mock_main_pal(v, g, p);
-    dos_box_with_shadow(v, g, 2, 8, 17, 64, bdr, fill);
-    dos_vid_title(v, 2, 10, 60, bdr, "Manage BBS Files Area");
-    dos_vid_puts(v, 3, 9, sel, "[1:Pending Incoming (2)]", 24);
-    dos_vid_puts(v, 3, 35, bar, " 2:Approved Files (2) ", 22);
-    dos_vid_puts(v, 4, 9, lhdr, "Uploader     Filename                      Size", 62);
-    dos_vid_puts(v, 5, 9, sel,  "W3TRM-1      fieldday.txt                  1420 B", 62);
-    dos_vid_puts(v, 6, 9, fill, "N0CALL-7     aprs.cfg                       612 B", 62);
-    dos_vid_hdiv(v, 16, 8, 64, bdr);
-    dos_vid_puts(v, 17, 10, bar, "A:Approve  D:Del  Tab:Switch  R:Refresh  Esc:Close", 60);
+    oyk_tui_center_modal(rows, cols, 17, 68, &mr);
+    dos_modal_frame(v, g, mr, "Manage BBS Files Area", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, sel, "[1:Pending Incoming (2)]", 24);
+    dos_vid_puts(v, mr.top + 1, mr.left + 27, bar, " 2:Approved Files (2) ", 22);
+    dos_vid_puts(v, mr.top + 2, mr.left + 1, lhdr, "Uploader     Filename                      Size", mr.w - 2);
+    dos_vid_puts(v, mr.top + 3, mr.left + 1, sel,  "W3TRM-1      fieldday.txt                  1420 B", mr.w - 2);
+    dos_vid_puts(v, mr.top + 4, mr.left + 1, fill, "N0CALL-7     aprs.cfg                       612 B", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "A:Approve  D:Del  Tab:Switch  R:Refresh  Esc:Close", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "files", sim_vram, g);
+    dos_save_capture_prefixed(prefix, "files", v, g);
 
     delete v;
     delete[] sim_vram;
@@ -2149,7 +2182,8 @@ static void test_dos_ui_screen_flows() {
 
 static void test_dos_gfx_ui_screen_flows() {
     OykDosGfx* g = new OykDosGfx;
-    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE24) == 1);
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE8) == 1);
+    assert(g->cols == 80 && g->rows == 30);
     OykThemeConfig dt;
     oyk_theme_init_builtin(&dt, 0);
     dos_gfx_set_theme(g, &dt, 0);

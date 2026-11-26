@@ -23,9 +23,11 @@ def ansi_to_lines(path: str) -> list:
 def dosbuf_to_lines(path: str) -> list:
     with open(path, "rb") as f:
         raw = f.read()
+    row_bytes = rup.COLS * 2
+    rows = len(raw) // row_bytes
     lines = []
     idx = 0
-    for _ in range(rup.ROWS):
+    for _ in range(rows):
         chars = []
         for _ in range(rup.COLS):
             code = raw[idx]
@@ -72,6 +74,13 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
     def need(sub: str, desc: str = "") -> None:
         if sub not in text:
             errors.append(f"[{port}/{flow}] missing {desc or repr(sub)}")
+
+    if flow in ("settings", "add_iface", "edit_iface", "peers", "edit_peer",
+                "terminate", "ban", "exit", "theme"):
+        need("[X]", "modal close button [X]")
+    elif flow in ("main", "terminal"):
+        if "[X]" in text:
+            errors.append(f"[{port}/{flow}] unexpected '[X]' close button outside modal")
 
     if flow == "main":
         if "Node" not in row0:

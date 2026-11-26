@@ -231,17 +231,19 @@ def write_png(out_path: str, width: int, height: int, rgb_rows: list) -> None:
 
 
 def render_cells_to_png(grid, out_path: str) -> None:
-    """Render ROWS x COLS cells [(ch, fg_rgb, bg_rgb), ...] to a 640x400 PNG."""
-    width = COLS * GLYPH_W
-    height = ROWS * GLYPH_H
+    """Render rows x cols cells [(ch, fg_rgb, bg_rgb), ...] to a PNG."""
+    rows = len(grid)
+    cols = len(grid[0]) if rows > 0 else COLS
+    width = cols * GLYPH_W
+    height = rows * GLYPH_H
     blank_bmp = FONT_MAP.get(" ", b"\x00" * GLYPH_H)
     rgb_rows = []
-    for r in range(ROWS):
+    for r in range(rows):
         row_cells = grid[r]
         for gy in range(GLYPH_H):
             scan = bytearray(width * 3)
             pos = 0
-            for c in range(COLS):
+            for c in range(cols):
                 ch, fg, bg = row_cells[c]
                 bmp = FONT_MAP.get(ch, blank_bmp)
                 bits = bmp[gy] if gy < len(bmp) else 0
@@ -419,11 +421,13 @@ def render_ansi_to_png(in_path: str, out_path: str) -> None:
 def render_dosbuf_to_png(in_path: str, out_path: str) -> None:
     with open(in_path, "rb") as f:
         raw = f.read()
-    if len(raw) < COLS * ROWS * 2:
-        raise ValueError(f"Expected >= {COLS * ROWS * 2} bytes in {in_path}, got {len(raw)}")
+    row_bytes = COLS * 2
+    if len(raw) < row_bytes or (len(raw) % row_bytes) != 0:
+        raise ValueError(f"Expected multiple of {row_bytes} bytes in {in_path}, got {len(raw)}")
+    rows = len(raw) // row_bytes
     grid = []
     idx = 0
-    for _ in range(ROWS):
+    for _ in range(rows):
         row_out = []
         for _ in range(COLS):
             code = raw[idx]
