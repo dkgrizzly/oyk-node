@@ -578,42 +578,55 @@ for pico_board in pico_w pico2_w waveshare_core2350b pimoroni_pga2350; do
     fi
 done
 
-# 5. Android (Play Store & Sideload flavors, packaged when ports/android is present)
-if target_requested "android-playstore"; then
-    if [[ "${HAS_ANDROID}" -eq 1 ]]; then
-        echo "Building Android Play Store release APK..."
-        (cd "${ROOT_DIR}/ports/android" && ANDROID_HOME="${ANDROID_SDK}" ./gradlew :app:assemblePlayStoreRelease --no-daemon)
-        apk_path="$(find "${ROOT_DIR}/ports/android/app/build/outputs/apk/playStore/release" -maxdepth 1 -name '*.apk' | head -n 1 || true)"
-        if [[ -n "${apk_path}" && -f "${apk_path}" ]]; then
-            st="$(stage_binary_tree "android-playstore" "android")"
-            cp "${apk_path}" "${st}/oyknode-${VER}-playstore.apk"
-            package_zip "android-playstore"
-            PACKAGED+=("oyknode-${VER}-android-playstore.zip")
-        else
-            SKIPPED+=("android-playstore (APK output not produced)")
+# 5. Android (Play Store & Sideload flavors, packaged when ports/android is present and signed)
+APKSIGNER_BIN=""
+if [[ "${HAS_ANDROID}" -eq 1 ]]; then
+    for cand in $(printf '%s\n' "${ANDROID_SDK}"/build-tools/*/apksigner 2>/dev/null | sort -V); do
+        if [[ -x "${cand}" ]]; then
+            APKSIGNER_BIN="${cand}"
         fi
-    else
-        SKIPPED+=("android-playstore (ports/android or Android SDK not available)")
-    fi
+    done
 fi
 
-if target_requested "android-sideload"; then
-    if [[ "${HAS_ANDROID}" -eq 1 ]]; then
-        echo "Building Android Sideload release APK..."
-        (cd "${ROOT_DIR}/ports/android" && ANDROID_HOME="${ANDROID_SDK}" ./gradlew :app:assembleSideloadRelease --no-daemon)
-        apk_path="$(find "${ROOT_DIR}/ports/android/app/build/outputs/apk/sideload/release" -maxdepth 1 -name '*.apk' | head -n 1 || true)"
-        if [[ -n "${apk_path}" && -f "${apk_path}" ]]; then
-            st="$(stage_binary_tree "android-sideload" "android")"
-            cp "${apk_path}" "${st}/oyknode-${VER}-sideload.apk"
-            package_zip "android-sideload"
-            PACKAGED+=("oyknode-${VER}-android-sideload.zip")
-        else
-            SKIPPED+=("android-sideload (APK output not produced)")
-        fi
-    else
-        SKIPPED+=("android-sideload (ports/android or Android SDK not available)")
+build_android_release_target() {
+    local target_name="$1"
+    local gradle_flavor="$2"
+    local output_flavor="$3"
+    local apk_suffix="$4"
+
+    target_requested "${target_name}" || return 0
+    if [[ "${HAS_ANDROID}" -ne 1 ]]; then
+        SKIPPED+=("${target_name} (ports/android or Android SDK not available)")
+        return 0
     fi
-fi
+    if [[ -z "${OYK_ANDROID_KEYSTORE:-}" || ! -f "${OYK_ANDROID_KEYSTORE}" ]]; then
+        SKIPPED+=("${target_name} (OYK_ANDROID_KEYSTORE not set; refusing to package unsigned APK)")
+        return 0
+    fi
+
+    local apk_dir="${ROOT_DIR}/ports/android/app/build/outputs/apk/${output_flavor}/release"
+    local apk_path="${apk_dir}/app-${output_flavor}-release.apk"
+    rm -f "${apk_dir}"/*.apk
+
+    echo "Building signed Android ${gradle_flavor} release APK..."
+    (cd "${ROOT_DIR}/ports/android" && ANDROID_HOME="${ANDROID_SDK}" ./gradlew ":app:assemble${gradle_flavor}Release" --no-daemon)
+    if [[ ! -f "${apk_path}" ]]; then
+        echo "ERROR: Expected signed APK not found at ${apk_path} (check OYK_ANDROID_KEYSTORE* env vars)." >&2
+        return 1
+    fi
+    if [[ -x "${APKSIGNER_BIN}" ]]; then
+        "${APKSIGNER_BIN}" verify --min-sdk-version 26 "${apk_path}"
+    fi
+
+    local st
+    st="$(stage_binary_tree "${target_name}" "android")"
+    cp "${apk_path}" "${st}/oyknode-${VER}-${apk_suffix}.apk"
+    package_zip "${target_name}"
+    PACKAGED+=("oyknode-${VER}-${target_name}.zip")
+}
+
+build_android_release_target "android-playstore" "PlayStore" "playStore" "playstore"
+build_android_release_target "android-sideload"  "Sideload"  "sideload"  "sideload"
 
 # 6. Source release archives matching GitHub tagged release layout (oyk-node-<ver>/)
 if [[ "${SKIP_SRC}" -eq 0 ]]; then
