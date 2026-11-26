@@ -54,6 +54,7 @@
 #define IDC_LTERM_SEND      430
 #define IDC_LTERM_LBL_PORT  431
 #define IDC_LTERM_LBL_TGT   432
+#define IDC_LTERM_HELP      433
 
 #define IDD_APPROVE           440
 #define IDC_APP_TAB_INC       441

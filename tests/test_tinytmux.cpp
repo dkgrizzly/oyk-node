@@ -883,9 +883,9 @@ static void test_vt100_console_full_parity() {
     assert(strcmp(node->iface(1).cfg.type, "usb-cdc-net") == 0);
     assert(strstr(con->status_line(), "IN MEMORY ONLY") != NULL);
 
-    /* Switch to Local Terminal via Tab, connect to /bbs, switch back via Esc keeping session active */
+    /* Switch to Local Terminal via Tab, connect to BBS via Ctrl+A B, switch back via Esc keeping session active */
     cap->len = 0; cap->buf[0] = '\0';
-    const char* seq = "\t/bbs\r\x1b";
+    const char* seq = "\t\x01" "b\x1b";
     con->feed_input(reinterpret_cast<const oyk_u8*>(seq), strlen(seq));
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
@@ -1452,9 +1452,9 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->tick(800UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* 8c2. Local Terminal with example /bbs session (banner, live prompt, [EOL:CR], word-wrap, /eol) */
+    /* 8c2. Local Terminal: Ctrl+A B BBS, Help overlay, EOL cycle, and CHAT / passthrough */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\t/bbs\r"), 6);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\t\x01" "b"), 3);
     assert(con->view_mode() == TMUX_VIEW_LOCAL_TERM);
     assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
     assert(strstr(cap->buf, "[EOL:CR]") != NULL);
@@ -1465,10 +1465,24 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(strstr(cap->buf, "[EOL:CR]") != NULL);
     tmux_save_capture("terminal", con, cap);
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol lf\r"), 8);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
+    assert(strstr(cap->buf, "Terminal Hotkey Help") != NULL);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "[EOL:CR*]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "e"), 2);
     assert(strstr(cap->buf, "[EOL:LF*]") != NULL);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol auto\r"), 10);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "e"), 2);
+    assert(strstr(cap->buf, "[EOL:CRLF*]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "e"), 2);
     assert(strstr(cap->buf, "[EOL:CR]") != NULL);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "t"), 2);
+    assert(strstr(cap->buf, "Chat") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/h\r"), 3);
+    assert(strstr(cap->buf, "Chat Commands:") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/u\r"), 3);
+    assert(strstr(cap->buf, "Chat Users:") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(900UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);

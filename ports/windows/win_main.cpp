@@ -47,6 +47,9 @@
       SendMessage((h), EM_SETSEL, (WPARAM)(a), (LPARAM)(b)); \
       SendMessage((h), EM_SCROLLCARET, 0, 0); \
   } while (0)
+  #define OYK_GET_WNDPROC(h)     ((WNDPROC)GetWindowLongPtr((h), GWLP_WNDPROC))
+  #define OYK_SET_WNDPROC(h, p)  ((WNDPROC)SetWindowLongPtr((h), GWLP_WNDPROC, (LONG_PTR)(p)))
+  typedef WNDPROC OykWndProcPtr;
 #else
   /* 16-bit Windows 3.1 */
   #define OYK_DLG_RET            BOOL FAR PASCAL __export
@@ -62,6 +65,9 @@
   #define OYK_RET_BRUSH_DLG(br) ((BOOL)(br))
   #define OYK_RET_BRUSH_WND(br) ((LRESULT)(br))
   #define OYK_EDIT_SETSEL(h, a, b) SendMessage((h), EM_SETSEL, 0, MAKELONG((WORD)(a), (WORD)(b)))
+  #define OYK_GET_WNDPROC(h)     ((FARPROC)GetWindowLong((h), GWL_WNDPROC))
+  #define OYK_SET_WNDPROC(h, p)  ((FARPROC)SetWindowLong((h), GWL_WNDPROC, (LONG)(FARPROC)(p)))
+  typedef FARPROC OykWndProcPtr;
   #ifndef INVALID_SOCKET
     #define INVALID_SOCKET    ((SOCKET)(~0))
   #endif
@@ -203,6 +209,8 @@ static OykCallsign g_lterm_remote;
 static OykYappSession g_lterm_yapp;
 static OykTermEolParser g_lterm_eol;
 static char g_lterm_last_yapp_st[128];
+static int g_lterm_ctrl_a = 0;
+static OykWndProcPtr g_lterm_orig_in_proc = NULL;
 
 static int win_strieq(const char* a, const char* b) {
     if (!a || !b) return 0;
@@ -1192,13 +1200,15 @@ static void layout_lterm_controls(HWND hdlg, int cw, int ch) {
 
     /* Bottom input row */
     int bot_y = ch - pad - bot_h;
-    const int close_w = 68;
-    const int send_w = 64;
-    int in_w = cw - pad * 4 - send_w - close_w;
+    const int close_w = 64;
+    const int help_w = 54;
+    const int send_w = 60;
+    int in_w = cw - pad * 5 - send_w - help_w - close_w;
     if (in_w < 80) in_w = 80;
     MoveWindow(GetDlgItem(hdlg, IDC_LTERM_INPUT), pad, bot_y, in_w, bot_h, TRUE);
     MoveWindow(GetDlgItem(hdlg, IDC_LTERM_SEND), pad * 2 + in_w, bot_y, send_w, bot_h, TRUE);
-    MoveWindow(GetDlgItem(hdlg, IDCANCEL), pad * 3 + in_w + send_w, bot_y, close_w, bot_h, TRUE);
+    MoveWindow(GetDlgItem(hdlg, IDC_LTERM_HELP), pad * 3 + in_w + send_w, bot_y, help_w, bot_h, TRUE);
+    MoveWindow(GetDlgItem(hdlg, IDCANCEL), pad * 4 + in_w + send_w + help_w, bot_y, close_w, bot_h, TRUE);
 
     /* Status + Abort YAPP row */
     int st_y = bot_y - pad - st_h;
@@ -1221,7 +1231,9 @@ static void lterm_update_status() {
     if (!g_lterm_hwnd) return;
     char st[180];
     const char* eol_lbl = oyk_term_eol_label(&g_lterm_eol);
-    if (!g_lterm_is_local && g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
+    if (g_lterm_ctrl_a) {
+        strcpy(st, "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Close");
+    } else if (!g_lterm_is_local && g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
         sprintf(st, "%.100s (%lu/%lu B) [EOL:%s]", g_lterm_yapp.status,
                 static_cast<unsigned long>(g_lterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_lterm_yapp.total_bytes),
@@ -1236,7 +1248,7 @@ static void lterm_update_status() {
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
         sprintf(st, "Connecting to %s... [EOL:%s]", cs, eol_lbl);
     } else {
-        sprintf(st, "Disconnected [EOL:%s] (YAPP saves to incoming\\<CALL-SSID>\\)", eol_lbl);
+        sprintf(st, "Disconnected [EOL:%s] | Ctrl+A Z:Help (incoming\\<CALL-SSID>\\)", eol_lbl);
     }
     SetDlgItemText(g_lterm_hwnd, IDC_LTERM_STATUS, st);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_CONNECT), (!g_lterm_connected && !g_lterm_connecting) ? TRUE : FALSE);
@@ -1336,6 +1348,140 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
     }
 }
 
+static int lterm_show_help(HWND parent) {
+    static char help_txt[1024];
+    strcpy(help_txt, "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)\r\n\r\n");
+    const int cnt = oyk_term_help_count();
+    for (int i = 0; i < cnt; ++i) {
+        const OykTermHelpEntry* e = oyk_term_help_entry(i);
+        if (!e) continue;
+        char row[96];
+        sprintf(row, "%-9s  %-34s  %s\r\n", e->key_label, e->action, e->alt_key);
+        if (strlen(help_txt) + strlen(row) + 1 < sizeof(help_txt)) {
+            strcat(help_txt, row);
+        }
+    }
+    MessageBox(parent, help_txt, "Terminal Hotkey Help", MB_OK | MB_ICONINFORMATION);
+    return OYK_TCMD_NONE;
+}
+
+static void lterm_exec_cmd(HWND hdlg, int cmd) {
+    if (!hdlg) return;
+    switch (cmd) {
+        case OYK_TCMD_CONNECT: {
+            char tgt[64];
+            GetDlgItemText(hdlg, IDC_LTERM_TARGET, tgt, sizeof(tgt));
+            if (tgt[0]) SendMessage(hdlg, WM_COMMAND, IDC_LTERM_CONNECT, 0);
+            else SetFocus(GetDlgItem(hdlg, IDC_LTERM_TARGET));
+            break;
+        }
+        case OYK_TCMD_LOCAL:
+            SendDlgItemMessage(hdlg, IDC_LTERM_PORT, CB_SETCURSEL, 0, 0);
+            SetDlgItemText(hdlg, IDC_LTERM_TARGET, "LOCAL");
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_CONNECT, 0);
+            break;
+        case OYK_TCMD_BBS:
+            SendDlgItemMessage(hdlg, IDC_LTERM_PORT, CB_SETCURSEL, 0, 0);
+            SetDlgItemText(hdlg, IDC_LTERM_TARGET, "BBS");
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_CONNECT, 0);
+            break;
+        case OYK_TCMD_CHAT:
+            SendDlgItemMessage(hdlg, IDC_LTERM_PORT, CB_SETCURSEL, 0, 0);
+            SetDlgItemText(hdlg, IDC_LTERM_TARGET, "CHAT");
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_CONNECT, 0);
+            break;
+        case OYK_TCMD_DISCONNECT:
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_DISC, 0);
+            break;
+        case OYK_TCMD_YAPP_SEND:
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_UPLOAD, 0);
+            break;
+        case OYK_TCMD_YAPP_ABORT:
+            SendMessage(hdlg, WM_COMMAND, IDC_LTERM_ABORT, 0);
+            break;
+        case OYK_TCMD_CYCLE_EOL: {
+            oyk_term_eol_cycle_mode(&g_lterm_eol);
+            char msg[80];
+            sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&g_lterm_eol));
+            lterm_append_line(msg);
+            lterm_update_status();
+            break;
+        }
+        case OYK_TCMD_PORTS:
+            lterm_append_line("*** Configured Interfaces:");
+            for (int pi = 0; pi < g_node.iface_count(); ++pi) {
+                char pline[120];
+                const OykIfaceRuntime& ir = g_node.iface(pi);
+                sprintf(pline, "  %-10s [%-8s] %s", ir.cfg.id, ir.cfg.type, ir.status);
+                lterm_append_line(pline);
+            }
+            lterm_update_status();
+            break;
+        case OYK_TCMD_CLEAR:
+            SetDlgItemText(hdlg, IDC_LTERM_OUTPUT, "");
+            break;
+        case OYK_TCMD_REDRAW:
+            InvalidateRect(hdlg, NULL, TRUE);
+            break;
+        case OYK_TCMD_CONSOLE:
+            DestroyWindow(hdlg);
+            break;
+        case OYK_TCMD_SEND_CTRL_A:
+            if (g_lterm_connected && g_lterm_sid != 0) {
+                oyk_u8 b = 0x01U;
+                g_node.send_local_bytes(g_lterm_sid, &b, 1);
+            } else {
+                lterm_append_line("*** Not connected. Press Ctrl+A Z for help.");
+            }
+            lterm_update_status();
+            break;
+        default:
+            lterm_update_status();
+            break;
+    }
+}
+
+OYK_WND_RET LtermInputSubProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    HWND hdlg = GetParent(hwnd);
+    if (msg == WM_CHAR) {
+        int ch = static_cast<int>(wp & 0xFF);
+        if (g_lterm_ctrl_a) {
+            g_lterm_ctrl_a = 0;
+            int cmd = oyk_term_decode_ctrl_a_cmd(ch);
+            if (cmd == OYK_TCMD_HELP) cmd = lterm_show_help(hdlg);
+            if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_CANCEL) {
+                lterm_exec_cmd(hdlg, cmd);
+            } else {
+                lterm_update_status();
+            }
+            return 0;
+        }
+        if (ch == 0x01) {
+            g_lterm_ctrl_a = 1;
+            lterm_update_status();
+            return 0;
+        }
+        if (ch == 0x0C) {
+            lterm_exec_cmd(hdlg, OYK_TCMD_REDRAW);
+            return 0;
+        }
+    } else if (msg == WM_KEYDOWN) {
+        if (g_lterm_ctrl_a && wp == VK_ESCAPE) {
+            g_lterm_ctrl_a = 0;
+            lterm_update_status();
+            return 0;
+        }
+        if (wp == VK_F2) { lterm_exec_cmd(hdlg, OYK_TCMD_CONNECT); return 0; }
+        if (wp == VK_F3) { lterm_exec_cmd(hdlg, OYK_TCMD_YAPP_SEND); return 0; }
+        if (wp == VK_F4) { lterm_exec_cmd(hdlg, OYK_TCMD_DISCONNECT); return 0; }
+        if (wp == VK_F6) { lterm_exec_cmd(hdlg, OYK_TCMD_YAPP_ABORT); return 0; }
+    }
+    if (g_lterm_orig_in_proc) {
+        return CallWindowProc(g_lterm_orig_in_proc, hwnd, msg, wp, lp);
+    }
+    return DefWindowProc(hwnd, msg, wp, lp);
+}
+
 OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static int s_iface_map[OYK_MAX_INTERFACES + 1];
@@ -1377,11 +1523,17 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (s_iface_cnt > 0) SendMessage(cb, CB_SETCURSEL, 0, 0);
 
             lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
-            lterm_append_line("*** Select 'local' for local node/BBS/CHAT, or a radio port for remote nodes.");
+            lterm_append_line("*** Select 'local' or port to connect; press Ctrl+A Z (or Help) for hotkeys.");
+            {
+                HWND hIn = GetDlgItem(hdlg, IDC_LTERM_INPUT);
+                g_lterm_ctrl_a = 0;
+                if (hIn) {
+                    g_lterm_orig_in_proc = OYK_SET_WNDPROC(hIn, LtermInputSubProc);
+                }
+            }
             lterm_update_status();
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) {
-                lterm_append_line("> /bbs");
                 lterm_append_line("*** Connected locally to KR4OYK-1 (YAPP disabled)");
                 lterm_append_line("Welcome to KR4OYK-1 Packet BBS (OYKNOD)");
                 lterm_append_line("Type L to list messages, R # to read, B to bye.");
@@ -1524,32 +1676,14 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 lterm_update_status();
                 return TRUE;
             }
+            if (id == IDC_LTERM_HELP) {
+                lterm_show_help(hdlg);
+                return TRUE;
+            }
             if (id == IDC_LTERM_SEND || id == IDOK) {
                 static char in_buf[228];
                 GetDlgItemText(hdlg, IDC_LTERM_INPUT, in_buf, sizeof(in_buf) - 4);
                 SetDlgItemText(hdlg, IDC_LTERM_INPUT, "");
-                if (strncmp(in_buf, "/eol", 4) == 0 && (in_buf[4] == '\0' || in_buf[4] == ' ')) {
-                    const char* arg = in_buf + 4;
-                    while (*arg == ' ') ++arg;
-                    if (!arg[0]) {
-                        char msg[80];
-                        sprintf(msg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
-                                oyk_term_eol_label(&g_lterm_eol));
-                        lterm_append_line(msg);
-                    } else {
-                        int m = OYK_TERM_EOL_AUTO;
-                        if (oyk_term_eol_parse_mode(arg, &m)) {
-                            g_lterm_eol.override_mode = m;
-                            char msg[80];
-                            sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&g_lterm_eol));
-                            lterm_append_line(msg);
-                            lterm_update_status();
-                        } else {
-                            lterm_append_line("*** Usage: /eol [auto|cr|lf|crlf]");
-                        }
-                    }
-                    return TRUE;
-                }
                 char echo[240];
                 sprintf(echo, "> %s", in_buf);
                 lterm_append_line(echo);
@@ -1576,6 +1710,14 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             DestroyWindow(hdlg);
             return TRUE;
         case WM_DESTROY:
+            {
+                HWND hIn = GetDlgItem(hdlg, IDC_LTERM_INPUT);
+                if (hIn && g_lterm_orig_in_proc) {
+                    (void)OYK_SET_WNDPROC(hIn, g_lterm_orig_in_proc);
+                }
+                g_lterm_orig_in_proc = NULL;
+                g_lterm_ctrl_a = 0;
+            }
             if (g_lterm_sid != 0) {
                 oyk_yapp_reset(&g_lterm_yapp);
                 g_node.close_local_terminal(g_lterm_sid);

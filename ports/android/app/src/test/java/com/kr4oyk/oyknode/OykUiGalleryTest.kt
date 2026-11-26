@@ -271,7 +271,6 @@ class OykUiGalleryTest {
                     remoteLabel = "KR4OYK-1 BBS (LOCAL)",
                     lines = listOf(
                         "*** Local Packet Terminal (YAPP ready)",
-                        "> /bbs",
                         "*** Connected to KR4OYK-1 BBS",
                         "Welcome to KR4OYK-1 Packet BBS (OYKNOD)",
                         "KR4OYK-1> LIST",

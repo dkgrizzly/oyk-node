@@ -2094,7 +2094,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "theme", v, g);
 
-    /* 11. Local Terminal (/bbs example session, full display with word-wrap & [EOL:CR]) */
+    /* 11. Local Terminal (Ctrl+A B example session, full display with word-wrap & [EOL:CR]) */
     if (g) {
         dos_gfx_clear_shadows(g);
         dos_gfx_clear_cell_rgb(g);
@@ -2108,9 +2108,8 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_box(v, tlay.body_top, 0, tlay.body_rows, tlay.cols, bdr, p.bg, 1);
     dos_vid_title(v, tlay.body_top, 2, tlay.cols - 4, p.hdr, "Terminal Output");
     int row_cur = tlay.body_top + 1;
-    const char* sample_lines[9] = {
-        "*** OYK Local Terminal (/local, /bbs, /chat, /eol, /disc)",
-        "> /bbs",
+    const char* sample_lines[8] = {
+        "*** OYK Local Terminal (Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT)",
         "*** Connected locally to KR4OYK-1 (BBS)",
         "Welcome to KR4OYK-1 Packet BBS - automatic word wrapping handles long bulletin lines cleanly across narrow and wide screens.",
         "Type L to list messages, R # to read, B to bye.",
@@ -2119,11 +2118,11 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
         "1     248   W3TRM-1  ALL      Welcome to OYK Packet Node",
         "KR4OYK-1> "
     };
-    for (int li = 0; li < 9; ++li) {
+    for (int li = 0; li < 8; ++li) {
         const char* ln = sample_lines[li];
         oyk_u8 attr = p.bg;
-        if (li == 2) attr = p.ok;
-        else if (li == 6) attr = p.lhdr;
+        if (li == 1) attr = p.ok;
+        else if (li == 5) attr = p.lhdr;
         OykTermWrapSpan spans[8];
         int sc = oyk_term_wrap_line(ln, strlen(ln), tlay.cols - 2, spans, 8);
         for (int si = 0; si < sc && row_cur < tlay.body_top + tlay.body_rows - 1; ++si) {
@@ -2136,7 +2135,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
         }
     }
     dos_vid_hline(v, tlay.hotkey_row, 0, tlay.cols, bar, ' ');
-    dos_vid_puts(v, tlay.hotkey_row, 0, bar, " F2:Connect  F3:YAPP  F4:Disc  F6:Abort  PgUp/Dn:Scroll  F9/Tab:Console", tlay.cols);
+    dos_vid_puts(v, tlay.hotkey_row, 0, bar, " Ctrl+A Z:Help  F2:Conn  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Tab:Console", tlay.cols);
     dos_vid_hline(v, tlay.input_row, 0, tlay.cols, fill, ' ');
     dos_vid_puts(v, tlay.input_row, 0, fill, "> ", tlay.cols);
     dos_vid_putc(v, tlay.input_row, 2, p.sel, ' ');

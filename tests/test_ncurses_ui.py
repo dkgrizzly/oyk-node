@@ -466,20 +466,32 @@ def main() -> int:
             drain_and_wait(master_fd, scr, "Radio Interfaces")
             assert "Theme Settings" not in scr.text(), f"Theme modal did not close on [X] click:\n{scr.text()}"
 
-            # 8d. Local Packet Terminal with example /bbs session
+            # 8d. Local Packet Terminal: Ctrl+A B BBS, Ctrl+A Z Help Overlay, EOL cycle, CHAT / passthrough
             os.write(master_fd, b"\t")
             drain_and_wait(master_fd, scr, "LOCAL TERMINAL")
             assert "[EOL:CR]" in scr.text(), f"Missing [EOL:CR] indicator:\n{scr.text()}"
-            os.write(master_fd, b"/connect local BBS\r")
+            os.write(master_fd, b"\x01b")
             drain_and_wait(master_fd, scr, "Packet BBS")
             os.write(master_fd, b"HELP\r")
             drain_and_wait(master_fd, scr, "BBS")
             drain_quiet(master_fd, scr, 0.2)
             save_cap(cap_dir, "terminal", scr)
-            os.write(master_fd, b"/eol crlf\r")
+            os.write(master_fd, b"\x01z")
+            drain_and_wait(master_fd, scr, "Terminal Hotkey Help")
+            os.write(master_fd, b"e")
+            drain_and_wait(master_fd, scr, "[EOL:CR*]")
+            os.write(master_fd, b"\x01e")
+            drain_and_wait(master_fd, scr, "[EOL:LF*]")
+            os.write(master_fd, b"\x01e")
             drain_and_wait(master_fd, scr, "[EOL:CRLF*]")
-            os.write(master_fd, b"/eol auto\r")
+            os.write(master_fd, b"\x01e")
             drain_and_wait(master_fd, scr, "[EOL:CR]")
+            os.write(master_fd, b"\x01t")
+            drain_and_wait(master_fd, scr, "Packet Chat")
+            os.write(master_fd, b"/h\r")
+            drain_and_wait(master_fd, scr, "/q")
+            os.write(master_fd, b"/u\r")
+            drain_quiet(master_fd, scr, 0.15)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 

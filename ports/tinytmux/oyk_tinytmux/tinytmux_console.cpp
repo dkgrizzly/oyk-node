@@ -67,6 +67,7 @@ TinyTmuxConsole::TinyTmuxConsole()
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
       wiz_edit_idx_(-1), wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
       lterm_sid_(0), lterm_is_local_(0), lterm_opening_(0), lterm_scroll_(0),
+      lterm_ctrl_a_(0), lterm_help_open_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_start_ms_(0),
       last_marchc_redraw_ms_(0),
@@ -134,7 +135,7 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     bootloader_start_ms_ = 0;
     reset_escape();
     if (node_) draft_ = node_->config();
-    push_lterm_line("*** OYK TinyTMUX Local Terminal (Esc:Console, /local, /bbs, /chat, /eol, /disc)");
+    push_lterm_line("*** OYK TinyTMUX Local Terminal (Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:Chat)");
 }
 
 void TinyTmuxConsole::set_net_bridge(TinyTmuxNetBridge* bridge) {
@@ -495,9 +496,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render() {
         render_theme_dialog();
     } else if (prompt_kind_ != PROMPT_NONE) {
         render_prompt_overlay();
+    } else if (view_ == TMUX_VIEW_LOCAL_TERM && lterm_help_open_) {
+        render_lterm_help_modal();
     }
     if (term_type_ >= TMUX_TERM_VT220 &&
-        (view_ == TMUX_VIEW_LOCAL_TERM ||
+        ((view_ == TMUX_VIEW_LOCAL_TERM && !lterm_help_open_) ||
          (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD &&
           (wiz_step_ == 1 ||
            (wiz_step_ == 2 &&
@@ -732,11 +735,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
     write_str("\033[H\033[2J");
     char hdr[180];
     if (lterm_scroll_ > 0) {
-        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] [UP %d] | Esc:Console",
+        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] [UP %d] | Tab:Console",
                 lterm_sid_ ? "CONNECTED" : "DISCONNECTED",
                 oyk_term_eol_label(&lterm_eol_), lterm_scroll_);
     } else {
-        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] | Esc:Console /local /bbs /chat /eol",
+        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] | Ctrl+A Z:Help  Tab:Console",
                 lterm_sid_ ? "CONNECTED" : "DISCONNECTED",
                 oyk_term_eol_label(&lterm_eol_));
     }
@@ -764,9 +767,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
             ++vis_idx;
         }
     }
+    const char* hk_bar = lterm_ctrl_a_
+        ? "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc E:EOL P:Prt W:Clr R:Size X:Exit"
+        : "Ctrl+A Z:Help  F2:Conn  Ctrl+A B/T:BBS/Chat  Ctrl+A E:EOL  Tab/Esc:Console";
     sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
-            tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2,
-            "Esc/Tab:Console  /local /bbs /chat /eol /disc  PgUp/Dn:Scroll  Ctrl-L:Size");
+            tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2, hk_bar);
     write_str(buf);
     int in_avail = (ncols > 3) ? (ncols - 3) : 1;
     size_t in_start = 0;
@@ -775,6 +780,34 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
     sprintf(buf, "\033[%d;1H> %-*.*s\033[%d;%dH",
             tlay.input_row + 1, in_avail, in_avail, lterm_input_ + in_start,
             tlay.input_row + 1, 3 + cur_col);
+    write_str(buf);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_lterm_help_modal() {
+    char buf[192];
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Terminal Hotkey Help", 1, 1);
+    draw_dec_shadow(top, left, h, w);
+    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
+            top + 1, left + 2, sgr_title(), w - 6, w - 6,
+            "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)");
+    write_str(buf);
+    draw_dec_hdiv(top + 2, left, w);
+    const int cnt = oyk_term_help_count();
+    for (int i = 0; i < cnt && (3 + i) < (h - 3); ++i) {
+        const OykTermHelpEntry* e = oyk_term_help_entry(i);
+        if (!e) continue;
+        char row_buf[80];
+        sprintf(row_buf, "%-9s %-38s %-14s", e->key_label, e->action, e->alt_key);
+        sprintf(buf, "\033[%d;%dH%-*.*s", top + 3 + i, left + 2, w - 4, w - 4, row_buf);
+        write_str(buf);
+    }
+    draw_dec_hdiv(top + h - 3, left, w);
+    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
+            top + h - 2, left + 1, sgr_menubar(), w - 4, w - 4,
+            "Press a key above to run it, or Esc / Enter / [X] to close");
     write_str(buf);
 }
 
@@ -2712,6 +2745,12 @@ void TinyTmuxConsole::commit_prompt() {
     prompt_buf_[0] = '\0';
     prompt_len_ = 0;
 
+    if (pk == PROMPT_LTERM_CONNECT) {
+        if (val[0]) open_lterm_target(val);
+        else render();
+        return;
+    }
+
     if (pk == PROMPT_CONFIRM_FORMAT) {
         if (strcmp(val, "FORMAT") == 0) {
             char msg[96];
@@ -3247,6 +3286,8 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_console_key(int key) {
         menu_sel_ = 0;
         render();
     } else if (key == '\t' || key == 'l' || key == 'L') {
+        lterm_ctrl_a_ = 0;
+        lterm_help_open_ = 0;
         view_ = TMUX_VIEW_LOCAL_TERM;
         render();
     } else if (key == 'a' || key == 'A') {
@@ -3603,13 +3644,149 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
     render();
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::open_lterm_target(const char* target) {
+    if (!node_ || !target || !target[0]) return;
+    if (lterm_sid_ != 0) node_->close_local_terminal(lterm_sid_);
+    lterm_sid_ = 0;
+    lterm_curline_len_ = 0;
+    lterm_curline_[0] = '\0';
+    lterm_scroll_ = 0;
+    oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
+    char err[64];
+    lterm_opening_ = 1;
+    int ok = node_->open_local_terminal(-1, target, &lterm_sid_, NULL, &lterm_is_local_, err, sizeof(err));
+    lterm_opening_ = 0;
+    if (!ok) {
+        push_lterm_line(err);
+    }
+    render();
+}
+
+OYK_FLASHMEM int TinyTmuxConsole::exec_lterm_cmd(int cmd) {
+    switch (cmd) {
+        case OYK_TCMD_CONNECT:
+            begin_prompt(PROMPT_LTERM_CONNECT, "Target (LOCAL, BBS, CHAT, or CALL@ip:port):", "");
+            return 0;
+        case OYK_TCMD_LOCAL:
+            open_lterm_target("LOCAL");
+            return 0;
+        case OYK_TCMD_BBS:
+            open_lterm_target("BBS");
+            return 0;
+        case OYK_TCMD_CHAT:
+            open_lterm_target("CHAT");
+            return 0;
+        case OYK_TCMD_DISCONNECT:
+            if (lterm_sid_ != 0) {
+                node_->close_local_terminal(lterm_sid_);
+                lterm_sid_ = 0;
+            }
+            render();
+            return 0;
+        case OYK_TCMD_YAPP_SEND:
+            push_lterm_line("*** YAPP upload via serial console is unsupported (receive works).");
+            render();
+            return 0;
+        case OYK_TCMD_YAPP_ABORT:
+            push_lterm_line("*** No interactive YAPP upload active.");
+            render();
+            return 0;
+        case OYK_TCMD_CYCLE_EOL: {
+            oyk_term_eol_cycle_mode(&lterm_eol_);
+            char msg[80];
+            sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&lterm_eol_));
+            push_lterm_line(msg);
+            render();
+            return 0;
+        }
+        case OYK_TCMD_PORTS:
+            push_lterm_line("*** Configured Interfaces:");
+            for (int pi = 0; pi < node_->iface_count(); ++pi) {
+                char pline[120];
+                const OykIfaceRuntime& ir = node_->iface(pi);
+                sprintf(pline, "  %-10s [%-8s] %s", ir.cfg.id, ir.cfg.type, ir.status);
+                push_lterm_line(pline);
+            }
+            render();
+            return 0;
+        case OYK_TCMD_CLEAR:
+            lterm_line_count_ = 0;
+            lterm_curline_len_ = 0;
+            lterm_curline_[0] = '\0';
+            lterm_scroll_ = 0;
+            render();
+            return 0;
+        case OYK_TCMD_REDRAW:
+            send_size_probe();
+            render();
+            return 0;
+        case OYK_TCMD_CONSOLE:
+            lterm_ctrl_a_ = 0;
+            lterm_help_open_ = 0;
+            view_ = TMUX_VIEW_CONSOLE;
+            strcpy(status_line_, lterm_sid_
+                                     ? "Console (Local Terminal active; press Tab to return)"
+                                     : "Returned to Operator Console.");
+            render();
+            return 1;
+        case OYK_TCMD_SEND_CTRL_A:
+            if (lterm_sid_ != 0) {
+                oyk_u8 b = 0x01U;
+                node_->send_local_bytes(lterm_sid_, &b, 1);
+            } else {
+                push_lterm_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
+            }
+            render();
+            return 0;
+        default:
+            return 0;
+    }
+}
+
 OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
-    if (key == 27 || key == '\t') {
-        view_ = TMUX_VIEW_CONSOLE;
-        strcpy(status_line_, lterm_sid_
-                                 ? "Console (Local Terminal active; press Tab to return)"
-                                 : "Returned to Operator Console.");
+    if (lterm_help_open_) {
+        if (key == 27 || key == '\r' || key == '\n' || key == ' ') {
+            lterm_help_open_ = 0;
+            render();
+            return;
+        }
+        int cmd = oyk_term_decode_ctrl_a_cmd(key);
+        if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_HELP && cmd != OYK_TCMD_CANCEL) {
+            lterm_help_open_ = 0;
+            exec_lterm_cmd(cmd);
+        }
+        return;
+    }
+    if (lterm_ctrl_a_) {
+        lterm_ctrl_a_ = 0;
+        int cmd = oyk_term_decode_ctrl_a_cmd(key);
+        if (cmd == OYK_TCMD_CANCEL) {
+            render();
+            return;
+        }
+        if (cmd == OYK_TCMD_HELP) {
+            lterm_help_open_ = 1;
+            render();
+            return;
+        }
+        if (cmd != OYK_TCMD_NONE) {
+            exec_lterm_cmd(cmd);
+        } else {
+            render();
+        }
+        return;
+    }
+    if (key == 0x01) {
+        lterm_ctrl_a_ = 1;
         render();
+        return;
+    }
+    if (key == 27 || key == '\t') {
+        exec_lterm_cmd(OYK_TCMD_CONSOLE);
+        return;
+    }
+    if (key == TMUX_KEY_F2) {
+        exec_lterm_cmd(OYK_TCMD_CONNECT);
         return;
     }
     if (key == TMUX_KEY_PGUP) {
@@ -3639,60 +3816,6 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
         lterm_input_len_ = 0;
         lterm_input_[0] = '\0';
 
-        if (strieq_ci(line, "/console") || strieq_ci(line, "/bg")) {
-            handle_lterm_key(27);
-            return;
-        }
-        if (strieq_ci(line, "/local") || strieq_ci(line, "/bbs") || strieq_ci(line, "/chat")) {
-            const char* target = (line[1] == 'b' || line[1] == 'B') ? "BBS"
-                                 : ((line[1] == 'c' || line[1] == 'C') ? "CHAT" : "LOCAL");
-            if (lterm_sid_ != 0) node_->close_local_terminal(lterm_sid_);
-            lterm_sid_ = 0;
-            lterm_curline_len_ = 0;
-            lterm_curline_[0] = '\0';
-            lterm_scroll_ = 0;
-            oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
-            char err[64];
-            lterm_opening_ = 1;
-            int ok = node_->open_local_terminal(-1, target, &lterm_sid_, NULL, &lterm_is_local_, err, sizeof(err));
-            lterm_opening_ = 0;
-            if (!ok) {
-                push_lterm_line(err);
-            }
-            render();
-            return;
-        }
-        if (strieq_ci(line, "/disc") || strieq_ci(line, "/d")) {
-            if (lterm_sid_ != 0) {
-                node_->close_local_terminal(lterm_sid_);
-                lterm_sid_ = 0;
-            }
-            render();
-            return;
-        }
-        if (strncmp(line, "/eol", 4) == 0 && (line[4] == '\0' || line[4] == ' ')) {
-            const char* arg = line + 4;
-            while (*arg == ' ') ++arg;
-            if (!arg[0]) {
-                char msg[80];
-                sprintf(msg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
-                        oyk_term_eol_label(&lterm_eol_));
-                push_lterm_line(msg);
-            } else {
-                int m = OYK_TERM_EOL_AUTO;
-                if (oyk_term_eol_parse_mode(arg, &m)) {
-                    lterm_eol_.override_mode = m;
-                    char msg[80];
-                    sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&lterm_eol_));
-                    push_lterm_line(msg);
-                } else {
-                    push_lterm_line("*** Usage: /eol [auto|cr|lf|crlf]");
-                }
-            }
-            render();
-            return;
-        }
-
         char echo[200];
         sprintf(echo, "> %.190s", line);
         push_lterm_line(echo);
@@ -3705,14 +3828,13 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
             line[n] = '\0';
             node_->send_local_bytes(lterm_sid_, reinterpret_cast<const oyk_u8*>(line), n);
         } else {
-            push_lterm_line("*** Not connected. Type /local, /bbs, or /chat.");
+            push_lterm_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
         }
         render();
         return;
     }
     if (key == 0x0C) {
-        send_size_probe();
-        render();
+        exec_lterm_cmd(OYK_TCMD_REDRAW);
         return;
     }
     if ((key == 8 || key == 127) && lterm_input_len_ > 0) {
@@ -3853,6 +3975,23 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
         return;
     }
 
+    if (view_ == TMUX_VIEW_LOCAL_TERM && lterm_help_open_) {
+        if (kind == 2) {
+            lterm_help_open_ = 0;
+            render();
+            return;
+        }
+        if (kind == 0) {
+            OykTuiRect mr;
+            oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+            if (oyk_tui_hit_close_btn(&mr, r0, c0) || !oyk_tui_point_in_rect(&mr, r0, c0)) {
+                lterm_help_open_ = 0;
+                render();
+            }
+        }
+        return;
+    }
+
     if (kind == 2) {
         if (view_ == TMUX_VIEW_CONSOLE) dispatch_key(TMUX_KEY_F10);
         else dispatch_key(27);
@@ -3860,6 +3999,19 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
     }
 
     if (kind != 0) return;
+
+    if (view_ == TMUX_VIEW_LOCAL_TERM) {
+        OykTuiTermLayout tlay;
+        oyk_tui_compute_term_layout(term_rows_, term_cols_, &tlay);
+        if (r0 == tlay.hotkey_row) {
+            if (c0 >= 1 && c0 <= 14) { lterm_ctrl_a_ = 0; lterm_help_open_ = 1; render(); }
+            else if (c0 >= 16 && c0 <= 23) exec_lterm_cmd(OYK_TCMD_CONNECT);
+            else if (c0 >= 25 && c0 <= 44) exec_lterm_cmd(OYK_TCMD_BBS);
+            else if (c0 >= 46 && c0 <= 58) exec_lterm_cmd(OYK_TCMD_CYCLE_EOL);
+            else if (c0 >= 60) exec_lterm_cmd(OYK_TCMD_CONSOLE);
+        }
+        return;
+    }
 
     if (view_ == TMUX_VIEW_CONSOLE) {
         if (row1 == 1) {

@@ -98,7 +98,8 @@ private:
         PROMPT_RIG_MODE,
         PROMPT_RIG_VFO,
         PROMPT_RIG_RF_SELECT,
-        PROMPT_CONFIRM_FORMAT
+        PROMPT_CONFIRM_FORMAT,
+        PROMPT_LTERM_CONNECT
     };
 
     enum EscState {
@@ -136,6 +137,7 @@ private:
     void render_console();
     void render_menu();
     void render_local_terminal();
+    void render_lterm_help_modal();
     void render_files();
     void render_rig();
     void render_settings();
@@ -182,6 +184,8 @@ private:
     void handle_bootloader_key(int key);
     void handle_storage_key(int key);
     void handle_prompt_key(int key);
+    void open_lterm_target(const char* target);
+    int  exec_lterm_cmd(int cmd);
 
     void begin_prompt(PromptKind kind, const char* label, const char* prefill);
     void commit_prompt();
@@ -247,6 +251,8 @@ private:
     int lterm_is_local_;
     int lterm_opening_;
     int lterm_scroll_;
+    int lterm_ctrl_a_;
+    int lterm_help_open_;
     OykTermEolParser lterm_eol_;
     char lterm_lines_[32][200];
     int lterm_line_count_;

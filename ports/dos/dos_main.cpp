@@ -1172,6 +1172,7 @@ static char g_dterm_last_yapp[128];
 static char g_dterm_in_buf[256];
 static int g_dterm_in_len = 0;
 static int g_dterm_scroll = 0;
+static int g_dterm_ctrl_a = 0;
 static int g_dterm_dirty = 1;
 
 static int dos_local_term_is_active() {
@@ -1548,7 +1549,7 @@ static void dos_term_connect(const char* target) {
     g_dterm_dirty = 1;
 }
 
-static void render_dos_terminal(const char* input_buf) {
+static void render_dos_terminal_body(const char* input_buf) {
     if (!g_vid) return;
     DosTuiCtx dc;
     OykTuiBackend tb;
@@ -1593,7 +1594,7 @@ static void render_dos_terminal(const char* input_buf) {
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
         sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s... [EOL:%s]", cs, eol_lbl);
     } else {
-        sprintf(hdr, " LOCAL TERMINAL | DISCONNECTED [EOL:%s] (F2:Connect | /bbs /local | F9:Console)",
+        sprintf(hdr, " LOCAL TERMINAL | DISCONNECTED [EOL:%s] (Ctrl+A Z:Help | F2:Conn | F9:Cons)",
                 eol_lbl);
     }
     vid_puts(tlay.header_row, 0, ta.top_hdr, hdr, tlay.cols);
@@ -1624,12 +1625,14 @@ static void render_dos_terminal(const char* input_buf) {
     }
 
     char bar[140];
-    if (g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
+    if (g_dterm_ctrl_a) {
+        strcpy(bar, " CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Exit");
+    } else if (g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
         sprintf(bar, " %.56s (%lu/%lu B)", g_dterm_yapp.status,
                 static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_dterm_yapp.total_bytes));
     } else {
-        strcpy(bar, " F2:Connect  F3:YAPP  F4:Disc  F6:Abort  PgUp/Dn:Scroll  F9/Tab:Console");
+        strcpy(bar, " Ctrl+A Z:Help  F2:Conn  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Tab:Console");
     }
     vid_puts(tlay.hotkey_row, 0, ta.menu_bg, bar, tlay.cols);
 
@@ -1645,7 +1648,187 @@ static void render_dos_terminal(const char* input_buf) {
     vid_puts(tlay.input_row, 0, ta.norm, in_row, tlay.cols);
     char cur_ch = input_buf[in_start + cur_col] ? input_buf[in_start + cur_col] : ' ';
     dos_vid_putc(g_vid, tlay.input_row, 2 + cur_col, ta.dlg_sel, static_cast<oyk_u8>(cur_ch));
+}
+
+static void render_dos_terminal(const char* input_buf) {
+    render_dos_terminal_body(input_buf);
     vid_flush();
+}
+
+static int dos_show_term_help_modal() {
+    if (!g_vid) return OYK_TCMD_NONE;
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    OykTuiRect mr;
+    oyk_tui_center_modal(g_vid->rows, g_vid->cols, 19, 68, &mr);
+
+    int dirty = 1;
+    int picked = OYK_TCMD_NONE;
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        if (dirty) {
+            dirty = 0;
+            render_dos_terminal_body(g_dterm_in_buf);
+            oyk_tui_draw_modal(&tb, &mr, "Terminal Hotkey Help", 1);
+            vid_puts(mr.top + 1, mr.left + 2, ta.ttl,
+                     "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)", mr.w - 4);
+            dos_vid_hdiv(g_vid, mr.top + 2, mr.left, mr.w, ta.bdr);
+            const int cnt = oyk_term_help_count();
+            for (int i = 0; i < cnt && (3 + i) < (mr.h - 3); ++i) {
+                const OykTermHelpEntry* e = oyk_term_help_entry(i);
+                if (!e) continue;
+                char row_buf[76];
+                sprintf(row_buf, "%-9s %-38s %-14s", e->key_label, e->action, e->alt_key);
+                vid_puts(mr.top + 3 + i, mr.left + 2, ta.dlg_fill, row_buf, mr.w - 4);
+            }
+            oyk_tui_draw_modal_footer(&tb, &mr, NULL,
+                                      "Press a key above to run it, or Esc / Enter / [X] to close");
+            vid_flush();
+        }
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                picked = OYK_TCMD_NONE;
+                break;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) {
+                    picked = OYK_TCMD_NONE;
+                    break;
+                }
+            }
+            continue;
+        }
+        if (ch == 0 || ch == 0xE0) {
+            (void)getch();
+            continue;
+        }
+        if (ch == 27 || ch == '\r' || ch == '\n' || ch == ' ') {
+            picked = OYK_TCMD_NONE;
+            break;
+        }
+        int cmd = oyk_term_decode_ctrl_a_cmd(ch);
+        if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_HELP && cmd != OYK_TCMD_CANCEL) {
+            picked = cmd;
+            break;
+        }
+    }
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        dos_gfx_clear_shadows(g_gfx);
+        dos_gfx_clear_cell_rgb(g_gfx);
+    }
+#endif
+    g_dterm_dirty = 1;
+    return picked;
+}
+
+static int dos_exec_term_cmd(int cmd) {
+    switch (cmd) {
+        case OYK_TCMD_CONNECT: {
+            char target[64];
+            prompt_line("Target (LOCAL, BBS, CHAT, or CALL@ip:port): ", target, sizeof(target));
+            if (target[0]) dos_term_connect(target);
+            g_dterm_dirty = 1;
+            return 0;
+        }
+        case OYK_TCMD_LOCAL:
+            dos_term_connect("LOCAL");
+            return 0;
+        case OYK_TCMD_BBS:
+            dos_term_connect("BBS");
+            return 0;
+        case OYK_TCMD_CHAT:
+            dos_term_connect("CHAT");
+            return 0;
+        case OYK_TCMD_DISCONNECT:
+            if (g_dterm_sid != 0) {
+                oyk_yapp_cancel(&g_dterm_yapp, "Disconnected");
+                g_node.close_local_terminal(g_dterm_sid);
+            }
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_YAPP_SEND:
+            if (!g_dterm_connected || g_dterm_sid == 0) {
+                dterm_push_line("*** Connect to a remote node first (F2).");
+            } else if (g_dterm_is_local) {
+                dterm_push_line("*** YAPP is disallowed when both sides are local.");
+            } else {
+                static char chosen[160];
+                if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
+                    char err[64];
+                    if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
+                        char msg[96];
+                        sprintf(msg, "*** YAPP error: %.72s", err);
+                        dterm_push_line(msg);
+                    } else {
+                        char msg[96];
+                        sprintf(msg, "*** %.86s", g_dterm_yapp.status);
+                        dterm_push_line(msg);
+                    }
+                }
+            }
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_YAPP_ABORT:
+            oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
+            dterm_push_line("*** YAPP transfer aborted.");
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_CYCLE_EOL: {
+            oyk_term_eol_cycle_mode(&g_dterm_eol);
+            char emsg[80];
+            sprintf(emsg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&g_dterm_eol));
+            dterm_push_line(emsg);
+            g_dterm_dirty = 1;
+            return 0;
+        }
+        case OYK_TCMD_PORTS:
+            dterm_push_line("*** Configured Interfaces:");
+            for (int pi = 0; pi < g_node.iface_count(); ++pi) {
+                char pline[120];
+                const OykIfaceRuntime& ir = g_node.iface(pi);
+                sprintf(pline, "  %-10s [%-8s] %s", ir.cfg.id, ir.cfg.type, ir.status);
+                dterm_push_line(pline);
+            }
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_CLEAR:
+            g_dterm_line_count = 0;
+            g_dterm_curline_len = 0;
+            g_dterm_curline[0] = '\0';
+            g_dterm_scroll = 0;
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_REDRAW:
+#ifdef OYK_DOS_GFX_BUILD
+            if (g_gfx) {
+                dos_gfx_clear_shadows(g_gfx);
+                dos_gfx_clear_cell_rgb(g_gfx);
+            }
+#endif
+            g_dterm_dirty = 1;
+            return 0;
+        case OYK_TCMD_CONSOLE:
+            return 1;
+        case OYK_TCMD_SEND_CTRL_A:
+            if (g_dterm_connected && g_dterm_sid != 0) {
+                oyk_u8 b = 0x01U;
+                g_node.send_local_bytes(g_dterm_sid, &b, 1);
+            } else {
+                dterm_push_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
+            }
+            g_dterm_dirty = 1;
+            return 0;
+        default:
+            return 0;
+    }
 }
 
 static void run_dos_local_terminal() {
@@ -1670,7 +1853,7 @@ static void run_dos_local_terminal() {
         g_node.set_local_event_callback(dos_local_term_event_cb, NULL);
 
         dterm_push_line("*** OYK MS-DOS Local Packet Terminal (YAPP / YAPP-C enabled)");
-        dterm_push_line("*** F2 or /local, /bbs, /chat, /connect, /eol [auto|cr|lf|crlf] | F9/Tab:Console");
+        dterm_push_line("*** Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT  F2:Connect  F9/Tab:Console");
     }
 
 #ifdef OYK_DOS_GFX_BUILD
@@ -1679,6 +1862,7 @@ static void run_dos_local_terminal() {
         dos_gfx_clear_cell_rgb(g_gfx);
     }
 #endif
+    g_dterm_ctrl_a = 0;
     g_dterm_dirty = 1;
     oyk_u32 last_yapp_bytes = g_dterm_yapp.bytes_transferred;
     int prev_yapp_state = g_dterm_yapp.state;
@@ -1721,11 +1905,16 @@ static void run_dos_local_terminal() {
                 OykTuiTermLayout tlay;
                 oyk_tui_compute_term_layout(g_vid ? g_vid->rows : 25, g_vid ? g_vid->cols : 80, &tlay);
                 if (mev.row == tlay.hotkey_row) {
-                    if (mev.col >= 1 && mev.col <= 11) sim_ext = 60;
-                    else if (mev.col >= 13 && mev.col <= 20) sim_ext = 61;
-                    else if (mev.col >= 22 && mev.col <= 29) sim_ext = 62;
-                    else if (mev.col >= 31 && mev.col <= 39) sim_ext = 64;
-                    else if (mev.col >= 55) break;
+                    if (mev.col >= 1 && mev.col <= 14) {
+                        int hcmd = dos_show_term_help_modal();
+                        if (hcmd != OYK_TCMD_NONE && dos_exec_term_cmd(hcmd)) break;
+                        continue;
+                    }
+                    else if (mev.col >= 16 && mev.col <= 23) sim_ext = 60;
+                    else if (mev.col >= 25 && mev.col <= 32) sim_ext = 61;
+                    else if (mev.col >= 34 && mev.col <= 41) sim_ext = 62;
+                    else if (mev.col >= 43 && mev.col <= 55) { dos_exec_term_cmd(OYK_TCMD_CYCLE_EOL); continue; }
+                    else if (mev.col >= 57) break;
                 }
             }
             if (sim_ext == 0) continue;
@@ -1733,42 +1922,17 @@ static void run_dos_local_terminal() {
 
         if (sim_ext != 0 || ch == 0 || ch == 0xE0) {
             int ext = sim_ext ? sim_ext : getch();
+            g_dterm_ctrl_a = 0;
             if (ext == 67) { /* F9: Return to Operator Console without closing session */
                 break;
             } else if (ext == 60) { /* F2: Connect */
-                char target[64];
-                prompt_line("Target (LOCAL, BBS, CHAT, or CALL@ip:port): ", target, sizeof(target));
-                if (target[0]) {
-                    dos_term_connect(target);
-                }
+                dos_exec_term_cmd(OYK_TCMD_CONNECT);
             } else if (ext == 61) { /* F3: YAPP Upload */
-                if (!g_dterm_connected || g_dterm_sid == 0) {
-                    dterm_push_line("*** Connect to a remote node first (F2).");
-                } else if (g_dterm_is_local) {
-                    dterm_push_line("*** YAPP is disallowed when both sides are local.");
-                } else {
-                    static char chosen[160];
-                    if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
-                        char err[64];
-                        if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
-                            char msg[96];
-                            sprintf(msg, "*** YAPP error: %.72s", err);
-                            dterm_push_line(msg);
-                        } else {
-                            char msg[96];
-                            sprintf(msg, "*** %.86s", g_dterm_yapp.status);
-                            dterm_push_line(msg);
-                        }
-                    }
-                }
+                dos_exec_term_cmd(OYK_TCMD_YAPP_SEND);
             } else if (ext == 62) { /* F4: Disconnect */
-                if (g_dterm_sid != 0) {
-                    oyk_yapp_cancel(&g_dterm_yapp, "Disconnected");
-                    g_node.close_local_terminal(g_dterm_sid);
-                }
+                dos_exec_term_cmd(OYK_TCMD_DISCONNECT);
             } else if (ext == 64) { /* F6: Abort YAPP */
-                oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
-                dterm_push_line("*** YAPP transfer aborted.");
+                dos_exec_term_cmd(OYK_TCMD_YAPP_ABORT);
             } else if (ext == 73) { /* PgUp */
                 g_dterm_scroll += 6;
             } else if (ext == 81) { /* PgDn */
@@ -1779,102 +1943,22 @@ static void run_dos_local_terminal() {
                 g_dterm_scroll = 0;
             }
             g_dterm_dirty = 1;
+        } else if (g_dterm_ctrl_a) {
+            g_dterm_ctrl_a = 0;
+            g_dterm_dirty = 1;
+            int cmd = oyk_term_decode_ctrl_a_cmd(ch);
+            if (cmd == OYK_TCMD_CANCEL) continue;
+            if (cmd == OYK_TCMD_HELP) cmd = dos_show_term_help_modal();
+            if (cmd != OYK_TCMD_NONE && dos_exec_term_cmd(cmd)) break;
+        } else if (ch == 0x01) {
+            g_dterm_ctrl_a = 1;
+            g_dterm_dirty = 1;
+        } else if (ch == 0x0C) {
+            dos_exec_term_cmd(OYK_TCMD_REDRAW);
         } else if (ch == 27 || ch == '\t') {
             break;
         } else if (ch == '\r' || ch == '\n') {
             g_dterm_in_buf[g_dterm_in_len] = '\0';
-            char cmd[64];
-            size_t ci = 0;
-            while (g_dterm_in_buf[ci] == ' ' || g_dterm_in_buf[ci] == '\t') ++ci;
-            if (g_dterm_in_buf[ci] == '/') {
-                size_t wi = 0;
-                while (g_dterm_in_buf[ci] && g_dterm_in_buf[ci] != ' ' &&
-                       g_dterm_in_buf[ci] != '\t' && wi < sizeof(cmd) - 1) {
-                    cmd[wi++] = g_dterm_in_buf[ci++];
-                }
-                cmd[wi] = '\0';
-                while (g_dterm_in_buf[ci] == ' ' || g_dterm_in_buf[ci] == '\t') ++ci;
-                const char* arg = g_dterm_in_buf + ci;
-                int handled = 1;
-                if (dos_str_ieq(cmd, "/console") || dos_str_ieq(cmd, "/bg")) {
-                    g_dterm_in_len = 0;
-                    g_dterm_in_buf[0] = '\0';
-                    break;
-                } else if (dos_str_ieq(cmd, "/local")) {
-                    dos_term_connect("LOCAL");
-                } else if (dos_str_ieq(cmd, "/bbs")) {
-                    dos_term_connect("BBS");
-                } else if (dos_str_ieq(cmd, "/chat")) {
-                    dos_term_connect("CHAT");
-                } else if (dos_str_ieq(cmd, "/connect") || dos_str_ieq(cmd, "/c")) {
-                    if (!arg[0]) {
-                        dterm_push_line("*** Usage: /connect <LOCAL|BBS|CHAT|CALL[@ip:port]>");
-                    } else {
-                        dos_term_connect(arg);
-                    }
-                } else if (dos_str_ieq(cmd, "/disc") || dos_str_ieq(cmd, "/d")) {
-                    if (g_dterm_sid != 0) {
-                        oyk_yapp_cancel(&g_dterm_yapp, "Disconnected");
-                        g_node.close_local_terminal(g_dterm_sid);
-                    }
-                } else if (dos_str_ieq(cmd, "/ports")) {
-                    dterm_push_line("*** Configured Interfaces:");
-                    for (int pi = 0; pi < g_node.iface_count(); ++pi) {
-                        char pline[120];
-                        const OykIfaceRuntime& ir = g_node.iface(pi);
-                        sprintf(pline, "  %-10s [%-8s] %s", ir.cfg.id, ir.cfg.type, ir.status);
-                        dterm_push_line(pline);
-                    }
-                } else if (dos_str_ieq(cmd, "/send")) {
-                    if (!g_dterm_connected || g_dterm_sid == 0) {
-                        dterm_push_line("*** Not connected.");
-                    } else if (g_dterm_is_local) {
-                        dterm_push_line("*** YAPP is disallowed when both sides are local.");
-                    } else {
-                        static char chosen[160];
-                        if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
-                            char err[64];
-                            if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
-                                char msg[96];
-                                sprintf(msg, "*** YAPP error: %.72s", err);
-                                dterm_push_line(msg);
-                            } else {
-                                char msg[96];
-                                sprintf(msg, "*** %.86s", g_dterm_yapp.status);
-                                dterm_push_line(msg);
-                            }
-                        }
-                    }
-                } else if (dos_str_ieq(cmd, "/eol")) {
-                    if (!arg[0]) {
-                        char emsg[80];
-                        sprintf(emsg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
-                                oyk_term_eol_label(&g_dterm_eol));
-                        dterm_push_line(emsg);
-                    } else {
-                        int new_mode = OYK_TERM_EOL_AUTO;
-                        if (oyk_term_eol_parse_mode(arg, &new_mode)) {
-                            g_dterm_eol.override_mode = new_mode;
-                            char emsg[80];
-                            sprintf(emsg, "*** Terminal EOL set to %s.",
-                                    oyk_term_eol_label(&g_dterm_eol));
-                            dterm_push_line(emsg);
-                        } else {
-                            dterm_push_line("*** Usage: /eol [auto|cr|lf|crlf]");
-                        }
-                    }
-                } else {
-                    handled = 0;
-                }
-                if (handled) {
-                    g_dterm_in_len = 0;
-                    g_dterm_in_buf[0] = '\0';
-                    g_dterm_scroll = 0;
-                    g_dterm_dirty = 1;
-                    continue;
-                }
-            }
-
             char echo[DOS_TERM_LINE_CAP];
             sprintf(echo, "> %.250s", g_dterm_in_buf);
             dterm_push_line(echo);
@@ -1889,7 +1973,7 @@ static void run_dos_local_terminal() {
                 g_node.send_local_bytes(g_dterm_sid, reinterpret_cast<const oyk_u8*>(g_dterm_in_buf),
                                         static_cast<size_t>(g_dterm_in_len));
             } else {
-                dterm_push_line("*** Not connected. Press F2 or type /local, /bbs, or /chat.");
+                dterm_push_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
             }
             g_dterm_in_len = 0;
             g_dterm_in_buf[0] = '\0';

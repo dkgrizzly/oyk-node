@@ -41,7 +41,8 @@ enum PicoPromptKind {
     PICO_PROMPT_EDIT_IFACE,
     PICO_PROMPT_EDIT_PEER,
     PICO_PROMPT_THEME,
-    PICO_PROMPT_CONFIRM_FORMAT
+    PICO_PROMPT_CONFIRM_FORMAT,
+    PICO_PROMPT_LTERM_CONNECT
 };
 
 class PicoConsole {
@@ -96,6 +97,7 @@ private:
     void render_psram();
     void render_bootloader();
     void render_local_term();
+    void render_local_term_help_modal();
     void render_wizard_modal();
     void render_edit_iface_modal();
     void render_edit_peer_modal();
@@ -130,6 +132,8 @@ private:
     int settings_tab_item_count(int tab) const;
     void edit_current_settings_field();
     void commit_prompt();
+    void open_local_term_target(const char* target);
+    int  exec_local_term_cmd(int cmd);
     void refresh_files_lists();
 
     void open_add_iface_wizard();
@@ -198,6 +202,8 @@ private:
     int lterm_is_local_;
     int lterm_opening_;
     int lterm_scroll_;
+    int lterm_ctrl_a_;
+    int lterm_help_open_;
     OykTermEolParser lterm_eol_;
     char lterm_lines_[32][200];
     int lterm_line_count_;

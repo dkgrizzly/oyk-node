@@ -1293,8 +1293,8 @@ void NcursesUI::modal_local_terminal() {
         std::lock_guard<std::mutex> lk(ts_init->mtx);
         ts_init->append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
         ts_init->append_line("*** Downloads save to incoming/<CALLSIGN-SSID>/<file>");
-        ts_init->append_line("*** F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
-        ts_init->append_line("*** Commands: /connect <port> <call>, /send, /disc, /ports, /console");
+        ts_init->append_line("*** Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT  F2:Connect  F9/Esc:Console");
+        ts_init->append_line("*** All typed / commands pass through to remote CHAT/BBS.");
     }
     auto ts = term_state_;
 
@@ -1518,7 +1518,193 @@ void NcursesUI::modal_local_terminal() {
         return allow;
     };
 
+    auto start_yapp_upload = [&]() {
+        bool is_conn = false;
+        bool is_loc = false;
+        {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            is_conn = ts->connected;
+            is_loc = ts->is_local;
+        }
+        if (!is_conn) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->append_line("*** Connect to a remote node first before YAPP upload (F2).");
+        } else if (is_loc) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->append_line("*** YAPP file transfer is disallowed when both sides are local.");
+        } else {
+            curs_set(0);
+            std::string chosen_file;
+            bool ok = modal_file_selector("YAPP Upload - Select File", chosen_file);
+            curs_set(1);
+            if (ok) {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                std::string err;
+                if (!ts->yapp.start_send(chosen_file, err)) {
+                    ts->append_line("*** YAPP upload error: " + err);
+                } else {
+                    ts->last_yapp_status = ts->yapp.progress().status_message;
+                    ts->append_line("*** " + ts->last_yapp_status);
+                }
+            }
+        }
+    };
+
+    auto show_terminal_help = [&]() -> int {
+        int rows = 0, cols = 0;
+        getmaxyx(stdscr, rows, cols);
+        const int h = std::min(19, std::max(8, rows - 2));
+        const int w = std::min(68, std::max(40, cols - 4));
+        const int cy = std::max(1, (rows - h) / 2);
+        const int cx = std::max(1, (cols - w) / 2);
+        WINDOW* hw = newwin(h, w, cy, cx);
+        if (!hw) return OYK_TCMD_NONE;
+        NcursesShadow hshadow(cy, cx, h, w, has_colors_);
+        keypad(hw, TRUE);
+        wtimeout(hw, 200);
+        curs_set(0);
+
+        int picked = OYK_TCMD_NONE;
+        while (true) {
+            if (external_stop_flag_ && external_stop_flag_->load()) break;
+            werase(hw);
+            draw_modal_frame(hw, h, w, "Terminal Hotkey Help", has_colors_, CP_BORDER);
+            wattron(hw, A_BOLD);
+            mvwaddnstr(hw, 1, 2,
+                       clip("Command prefix: Ctrl+A (press Ctrl+A, then hotkey)", w - 4).c_str(),
+                       w - 4);
+            wattroff(hw, A_BOLD);
+            if (has_colors_) wattron(hw, COLOR_PAIR(CP_BORDER));
+            mvwhline(hw, 2, 1, ACS_HLINE, w - 2);
+            if (h > 6) mvwhline(hw, h - 3, 1, ACS_HLINE, w - 2);
+            if (has_colors_) wattroff(hw, COLOR_PAIR(CP_BORDER));
+
+            const int count = oyk_term_help_count();
+            for (int i = 0; i < count && (3 + i) < (h - 3); ++i) {
+                const OykTermHelpEntry* e = oyk_term_help_entry(i);
+                if (!e) continue;
+                char row_buf[96];
+                std::snprintf(row_buf, sizeof(row_buf), "%-9s %-38s %-14s",
+                              e->key_label, e->action, e->alt_key);
+                mvwaddnstr(hw, 3 + i, 2, clip(row_buf, w - 4).c_str(), w - 4);
+            }
+            if (h > 5) {
+                mvwaddnstr(hw, h - 2, 2,
+                           clip("Press a hotkey to run it, or Esc / Enter / [X] to close", w - 4).c_str(),
+                           w - 4);
+            }
+            hshadow.noutrefresh();
+            wnoutrefresh(hw);
+            doupdate();
+
+            int hc = wgetch(hw);
+            if (hc == ERR) continue;
+            if (hc == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(hw, mev)) break;
+                }
+                continue;
+            }
+            if (hc == 27 || hc == '\n' || hc == '\r' || hc == KEY_ENTER || hc == ' ') break;
+            int cmd = oyk_term_decode_ctrl_a_cmd(hc);
+            if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_HELP && cmd != OYK_TCMD_CANCEL) {
+                picked = cmd;
+                break;
+            }
+        }
+        hshadow.destroy();
+        delwin(hw);
+        curs_set(1);
+        return picked;
+    };
+
+    auto execute_term_cmd = [&](int cmd) -> bool {
+        switch (cmd) {
+            case OYK_TCMD_CONNECT:
+                prompt_connect();
+                return false;
+            case OYK_TCMD_LOCAL:
+                start_connect("local", "LOCAL");
+                return false;
+            case OYK_TCMD_BBS:
+                start_connect("local", "BBS");
+                return false;
+            case OYK_TCMD_CHAT:
+                start_connect("local", "CHAT");
+                return false;
+            case OYK_TCMD_DISCONNECT: {
+                uint64_t sid = 0;
+                {
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    sid = ts->sid;
+                    ts->yapp.cancel("Disconnected");
+                }
+                if (sid != 0) engine_.close_local_terminal(sid);
+                return false;
+            }
+            case OYK_TCMD_YAPP_SEND:
+                start_yapp_upload();
+                return false;
+            case OYK_TCMD_YAPP_ABORT: {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                ts->yapp.cancel("Cancelled by user");
+                ts->append_line("*** YAPP transfer aborted.");
+                return false;
+            }
+            case OYK_TCMD_CYCLE_EOL: {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                oyk_term_eol_cycle_mode(&ts->eol);
+                ts->append_line(std::string("*** Terminal EOL set to ") +
+                                oyk_term_eol_label(&ts->eol) + ".");
+                return false;
+            }
+            case OYK_TCMD_PORTS: {
+                auto snap = engine_.snapshot();
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                ts->append_line("*** Configured Interfaces:");
+                for (const auto& iface : snap.interfaces) {
+                    ts->append_line("  " + iface.id + " [" + iface.type + "] " + iface.status);
+                }
+                return false;
+            }
+            case OYK_TCMD_CLEAR: {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                ts->lines.clear();
+                ts->cur_line.clear();
+                ts->scroll_offset = 0;
+                return false;
+            }
+            case OYK_TCMD_REDRAW:
+                clearok(stdscr, TRUE);
+                return false;
+            case OYK_TCMD_CONSOLE:
+                return true;
+            case OYK_TCMD_SEND_CTRL_A: {
+                uint64_t sid = 0;
+                bool is_conn = false;
+                {
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    sid = ts->sid;
+                    is_conn = ts->connected;
+                }
+                if (is_conn && sid != 0) {
+                    std::vector<uint8_t> bytes(1, 0x01);
+                    engine_.send_local_terminal_bytes(sid, bytes);
+                } else {
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    ts->append_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
+                }
+                return false;
+            }
+            default:
+                return false;
+        }
+    };
+
     std::string& input = ts->input;
+    bool ctrl_a_pending = false;
     curs_set(1);
 
     while (true) {
@@ -1587,7 +1773,7 @@ void NcursesUI::modal_local_terminal() {
             } else if (ts->connecting) {
                 header = " LOCAL TERMINAL | CONNECTING: " + ts->remote_call.str() + " via " + ts->port_id + "..." + eol_tag;
             } else {
-                header = " LOCAL TERMINAL | DISCONNECTED" + eol_tag + " (F2:Connect | F9/Esc:Console)";
+                header = " LOCAL TERMINAL | DISCONNECTED" + eol_tag + " (Ctrl+A Z:Help | F2:Conn | F9/Esc:Console)";
             }
             if (ts->scroll_offset > 0) {
                 header += " [UP " + std::to_string(ts->scroll_offset) + "]";
@@ -1614,8 +1800,10 @@ void NcursesUI::modal_local_terminal() {
         }
 
         // YAPP / hotkey bar
-        std::string bar = "F2:Connect  F3:YAPP Upload  F4:Disconnect  PgUp/Dn:Scroll  F9/Esc:Console";
-        if (yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
+        std::string bar = "Ctrl+A Z:Help  F2:Connect  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Esc:Console";
+        if (ctrl_a_pending) {
+            bar = "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Exit";
+        } else if (yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
             bar = yp.status_message + " (" + std::to_string(yp.bytes_transferred) +
                   (yp.total_bytes > 0 ? ("/" + std::to_string(yp.total_bytes)) : "") + " B)";
         }
@@ -1652,10 +1840,34 @@ void NcursesUI::modal_local_terminal() {
                     ts->scroll_offset = std::max(0, ts->scroll_offset - 3);
                 }
 #endif
+                else if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && mev.y == tlay.hotkey_row) {
+                    if (mev.x >= 1 && mev.x <= 14) {
+                        int hcmd = show_terminal_help();
+                        if (hcmd != OYK_TCMD_NONE && execute_term_cmd(hcmd)) break;
+                    } else if (mev.x >= 15 && mev.x <= 26) {
+                        execute_term_cmd(OYK_TCMD_CONNECT);
+                    }
+                }
             }
             continue;
         }
-        if (ch == 27 || ch == KEY_F(9)) break;
+        if (ctrl_a_pending) {
+            ctrl_a_pending = false;
+            int cmd = oyk_term_decode_ctrl_a_cmd(ch);
+            if (cmd == OYK_TCMD_CANCEL) continue;
+            if (cmd == OYK_TCMD_HELP) cmd = show_terminal_help();
+            if (cmd != OYK_TCMD_NONE && execute_term_cmd(cmd)) break;
+            continue;
+        }
+        if (ch == 0x01) {
+            ctrl_a_pending = true;
+            continue;
+        }
+        if (ch == 0x0C) {
+            clearok(stdscr, TRUE);
+            continue;
+        }
+        if (ch == 27 || ch == KEY_F(9) || ch == '\t') break;
         if (ch == KEY_PPAGE) {
             std::lock_guard<std::mutex> lk(ts->mtx);
             ts->scroll_offset += std::max(1, body_h / 2);
@@ -1675,154 +1887,35 @@ void NcursesUI::modal_local_terminal() {
         }
 
         if (ch == KEY_F(2)) {
-            prompt_connect();
+            execute_term_cmd(OYK_TCMD_CONNECT);
         } else if (ch == KEY_F(3)) {
-            bool is_conn = false;
-            bool is_loc = false;
-            {
-                std::lock_guard<std::mutex> lk(ts->mtx);
-                is_conn = ts->connected;
-                is_loc = ts->is_local;
-            }
-            if (!is_conn) {
-                std::lock_guard<std::mutex> lk(ts->mtx);
-                ts->append_line("*** Connect to a remote node first before YAPP upload (F2).");
-            } else if (is_loc) {
-                std::lock_guard<std::mutex> lk(ts->mtx);
-                ts->append_line("*** YAPP file transfer is disallowed when both sides are local.");
-            } else {
-                curs_set(0);
-                std::string chosen_file;
-                bool ok = modal_file_selector("YAPP Upload - Select File", chosen_file);
-                curs_set(1);
-                if (ok) {
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    std::string err;
-                    if (!ts->yapp.start_send(chosen_file, err)) {
-                        ts->append_line("*** YAPP upload error: " + err);
-                    } else {
-                        ts->last_yapp_status = ts->yapp.progress().status_message;
-                        ts->append_line("*** " + ts->last_yapp_status);
-                    }
-                }
-            }
+            execute_term_cmd(OYK_TCMD_YAPP_SEND);
         } else if (ch == KEY_F(4)) {
-            uint64_t sid = 0;
-            {
-                std::lock_guard<std::mutex> lk(ts->mtx);
-                sid = ts->sid;
-                ts->yapp.cancel("Disconnected");
-            }
-            if (sid != 0) engine_.close_local_terminal(sid);
+            execute_term_cmd(OYK_TCMD_DISCONNECT);
         } else if (ch == KEY_F(6)) {
-            std::lock_guard<std::mutex> lk(ts->mtx);
-            ts->yapp.cancel("Cancelled by user");
-            ts->append_line("*** YAPP transfer aborted.");
+            execute_term_cmd(OYK_TCMD_YAPP_ABORT);
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             std::string line = input;
             input.clear();
 
-            if (!line.empty() && line[0] == '/') {
-                std::istringstream iss(line);
-                std::string cmd;
-                iss >> cmd;
-                std::transform(cmd.begin(), cmd.end(), cmd.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (cmd == "/connect" || cmd == "/c") {
-                    std::string p, t;
-                    iss >> p >> t;
-                    if (p.empty() || t.empty()) {
-                        std::lock_guard<std::mutex> lk(ts->mtx);
-                        ts->append_line("*** Usage: /connect <port> <callsign[@ip:port]>");
-                    } else {
-                        start_connect(p, t);
-                    }
-                } else if (cmd == "/local" || cmd == "/bbs" || cmd == "/chat") {
-                    const std::string tgt = (cmd == "/bbs") ? "BBS" : ((cmd == "/chat") ? "CHAT" : "LOCAL");
-                    start_connect("local", tgt);
-                } else if (cmd == "/eol") {
-                    std::string arg;
-                    iss >> arg;
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    if (arg.empty()) {
-                        ts->append_line(std::string("*** Terminal EOL: ") + oyk_term_eol_label(&ts->eol) +
-                                        " (use /eol auto|cr|lf|crlf)");
-                    } else {
-                        int m = OYK_TERM_EOL_AUTO;
-                        if (oyk_term_eol_parse_mode(arg.c_str(), &m)) {
-                            ts->eol.override_mode = m;
-                            ts->append_line(std::string("*** Terminal EOL set to ") +
-                                            oyk_term_eol_label(&ts->eol) + ".");
-                        } else {
-                            ts->append_line("*** Usage: /eol [auto|cr|lf|crlf]");
-                        }
-                    }
-                } else if (cmd == "/disc" || cmd == "/d") {
-                    uint64_t sid = 0;
-                    { std::lock_guard<std::mutex> lk(ts->mtx); sid = ts->sid; }
-                    if (sid != 0) engine_.close_local_terminal(sid);
-                } else if (cmd == "/send") {
-                    bool is_conn = false;
-                    bool is_loc = false;
-                    { std::lock_guard<std::mutex> lk(ts->mtx); is_conn = ts->connected; is_loc = ts->is_local; }
-                    if (!is_conn) {
-                        std::lock_guard<std::mutex> lk(ts->mtx);
-                        ts->append_line("*** Not connected.");
-                    } else if (is_loc) {
-                        std::lock_guard<std::mutex> lk(ts->mtx);
-                        ts->append_line("*** YAPP file transfer is disallowed when both sides are local.");
-                    } else {
-                        curs_set(0);
-                        std::string chosen_file;
-                        bool ok = modal_file_selector("YAPP Upload - Select File", chosen_file);
-                        curs_set(1);
-                        if (ok) {
-                            std::lock_guard<std::mutex> lk(ts->mtx);
-                            std::string err;
-                            if (!ts->yapp.start_send(chosen_file, err)) {
-                                ts->append_line("*** YAPP upload error: " + err);
-                            } else {
-                                ts->append_line("*** " + ts->yapp.progress().status_message);
-                            }
-                        }
-                    }
-                } else if (cmd == "/ports") {
-                    auto snap = engine_.snapshot();
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Configured Interfaces:");
-                    for (const auto& iface : snap.interfaces) {
-                        ts->append_line("  " + iface.id + " [" + iface.type + "] " + iface.status);
-                    }
-                } else if (cmd == "/abort") {
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->yapp.cancel("Cancelled by user");
-                    ts->append_line("*** YAPP transfer aborted.");
-                } else if (cmd == "/console" || cmd == "/bg" || cmd == "/quit" || cmd == "/exit") {
-                    break;
-                } else {
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Commands: /connect /local /bbs /chat /send /disc /ports /eol /abort /console");
-                }
+            uint64_t sid = 0;
+            bool is_conn = false;
+            std::string wire = line;
+            {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                sid = ts->sid;
+                is_conn = ts->connected;
+                ts->append_line("> " + line);
+                std::size_t eol_len = 0;
+                const char* eol_s = oyk_term_eol_tx_bytes(&ts->eol, &eol_len);
+                wire.append(eol_s, eol_len);
+            }
+            if (is_conn && sid != 0) {
+                std::vector<uint8_t> bytes(wire.begin(), wire.end());
+                engine_.send_local_terminal_bytes(sid, bytes);
             } else {
-                uint64_t sid = 0;
-                bool is_conn = false;
-                std::string wire = line;
-                {
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    sid = ts->sid;
-                    is_conn = ts->connected;
-                    ts->append_line("> " + line);
-                    std::size_t eol_len = 0;
-                    const char* eol_s = oyk_term_eol_tx_bytes(&ts->eol, &eol_len);
-                    wire.append(eol_s, eol_len);
-                }
-                if (is_conn && sid != 0) {
-                    std::vector<uint8_t> bytes(wire.begin(), wire.end());
-                    engine_.send_local_terminal_bytes(sid, bytes);
-                } else {
-                    std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Not connected. Press F2 or type /local, /bbs, /chat, or /connect");
-                }
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                ts->append_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
             }
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
             if (!input.empty()) input.pop_back();

@@ -8,6 +8,7 @@
 #include "oyk_term.hpp"
 
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -318,11 +319,13 @@ struct GtkTermWindowState {
     GtkWidget* btn_disc = nullptr;
     GtkWidget* btn_upload = nullptr;
     GtkWidget* btn_abort = nullptr;
+    GtkWidget* btn_help = nullptr;
     GtkWidget* text_view = nullptr;
     GtkTextBuffer* text_buf = nullptr;
     GtkWidget* input_entry = nullptr;
     GtkWidget* progress_bar = nullptr;
     guint timer_id = 0;
+    bool ctrl_a_pending = false;
 
     std::mutex mtx;
     uint64_t sid = 0;
@@ -401,9 +404,14 @@ gboolean on_gtk_term_tick(gpointer user_data) {
 
     if (yp.state == protocol::YappState::Idle) {
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ts->progress_bar), 0.0);
-        std::string status_txt = is_conn
-            ? ("Connected to " + ts->remote_call.str() + (is_loc ? " (LOCAL)" : " (YAPP ready)") + " [EOL:" + eol_tag + "]")
-            : (is_connecting ? ("Connecting... [EOL:" + eol_tag + "]") : ("Disconnected [EOL:" + eol_tag + "]"));
+        std::string status_txt;
+        if (ts->ctrl_a_pending) {
+            status_txt = "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Close";
+        } else {
+            status_txt = is_conn
+                ? ("Connected to " + ts->remote_call.str() + (is_loc ? " (LOCAL)" : " (YAPP ready)") + " [EOL:" + eol_tag + "]")
+                : (is_connecting ? ("Connecting... [EOL:" + eol_tag + "]") : ("Disconnected [EOL:" + eol_tag + "] | Ctrl+A Z:Help"));
+        }
         gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar), status_txt.c_str());
     } else {
         double frac = (yp.total_bytes > 0)
@@ -591,49 +599,180 @@ void on_gtk_term_abort_yapp(GtkWidget*, gpointer user_data) {
     ts->pending_text += "*** YAPP transfer cancelled.\n";
 }
 
+void exec_gtk_term_cmd(GtkTermWindowState* ts, int cmd) {
+    if (!ts) return;
+    switch (cmd) {
+        case OYK_TCMD_CONNECT: {
+            const char* tgt = gtk_entry_get_text(GTK_ENTRY(ts->call_entry));
+            if (tgt && tgt[0]) on_gtk_term_connect(nullptr, ts);
+            else gtk_widget_grab_focus(ts->call_entry);
+            break;
+        }
+        case OYK_TCMD_LOCAL:
+            gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), 0);
+            gtk_entry_set_text(GTK_ENTRY(ts->call_entry), "LOCAL");
+            on_gtk_term_connect(nullptr, ts);
+            break;
+        case OYK_TCMD_BBS:
+            gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), 0);
+            gtk_entry_set_text(GTK_ENTRY(ts->call_entry), "BBS");
+            on_gtk_term_connect(nullptr, ts);
+            break;
+        case OYK_TCMD_CHAT:
+            gtk_combo_box_set_active(GTK_COMBO_BOX(ts->port_combo), 0);
+            gtk_entry_set_text(GTK_ENTRY(ts->call_entry), "CHAT");
+            on_gtk_term_connect(nullptr, ts);
+            break;
+        case OYK_TCMD_DISCONNECT:
+            on_gtk_term_disconnect(nullptr, ts);
+            break;
+        case OYK_TCMD_YAPP_SEND:
+            on_gtk_term_upload(nullptr, ts);
+            break;
+        case OYK_TCMD_YAPP_ABORT:
+            on_gtk_term_abort_yapp(nullptr, ts);
+            break;
+        case OYK_TCMD_CYCLE_EOL: {
+            std::string msg;
+            {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                oyk_term_eol_cycle_mode(&ts->eol);
+                msg = std::string("*** Terminal EOL set to ") + oyk_term_eol_label(&ts->eol) + ".\n";
+            }
+            gtk_term_append_text_ui(ts, msg);
+            break;
+        }
+        case OYK_TCMD_PORTS: {
+            auto snap = ts->engine->snapshot();
+            std::string out = "*** Configured Interfaces:\n";
+            for (const auto& iface : snap.interfaces) {
+                out += "  " + iface.id + " [" + iface.type + "] " + iface.status + "\n";
+            }
+            gtk_term_append_text_ui(ts, out);
+            break;
+        }
+        case OYK_TCMD_CLEAR:
+            gtk_text_buffer_set_text(ts->text_buf, "", 0);
+            break;
+        case OYK_TCMD_REDRAW:
+            gtk_widget_queue_draw(ts->win);
+            break;
+        case OYK_TCMD_CONSOLE:
+            gtk_widget_destroy(ts->win);
+            break;
+        case OYK_TCMD_SEND_CTRL_A: {
+            uint64_t sid = 0;
+            bool is_conn = false;
+            {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                sid = ts->sid;
+                is_conn = ts->connected;
+            }
+            if (is_conn && sid != 0) {
+                ts->engine->send_local_terminal_bytes(sid, std::vector<uint8_t>{0x01});
+            } else {
+                gtk_term_append_text_ui(ts, "*** Not connected. Press Ctrl+A Z for help.\n");
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+int show_gtk_term_help_dialog(GtkTermWindowState* ts) {
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        "Terminal Hotkey Help",
+        GTK_WINDOW(ts->win),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
+        static_cast<const char*>(nullptr));
+
+    std::string body = "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)\n";
+    body += "----------------------------------------------------------------\n";
+    const int cnt = oyk_term_help_count();
+    for (int i = 0; i < cnt; ++i) {
+        const OykTermHelpEntry* e = oyk_term_help_entry(i);
+        if (!e) continue;
+        char line[96];
+        std::snprintf(line, sizeof(line), "%-9s  %-36s  %s\n",
+                      e->key_label, e->action, e->alt_key);
+        body += line;
+    }
+    body += "----------------------------------------------------------------\n";
+    body += "Press a hotkey to run it, or Esc / Enter / Close";
+
+    GtkWidget* lbl = gtk_label_new(body.c_str());
+    gtk_misc_set_alignment(GTK_MISC(lbl), 0.0f, 0.0f);
+    gtk_misc_set_padding(GTK_MISC(lbl), 10, 8);
+    PangoFontDescription* mono = pango_font_description_from_string("Monospace 9");
+    gtk_widget_modify_font(lbl, mono);
+    pango_font_description_free(mono);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
+
+    g_signal_connect(dlg, "key-press-event",
+                     G_CALLBACK(+[](GtkWidget* d, GdkEventKey* kev, gpointer) -> gboolean {
+                         if (!kev || kev->is_modifier) return FALSE;
+                         if (kev->keyval == GDK_Escape || kev->keyval == GDK_Return ||
+                             kev->keyval == GDK_KP_Enter || kev->keyval == GDK_space) {
+                             gtk_dialog_response(GTK_DIALOG(d), GTK_RESPONSE_CLOSE);
+                             return TRUE;
+                         }
+                         guint32 uc = gdk_keyval_to_unicode(kev->keyval);
+                         int cmd = oyk_term_decode_ctrl_a_cmd(static_cast<int>(uc));
+                         if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_HELP && cmd != OYK_TCMD_CANCEL) {
+                             gtk_dialog_response(GTK_DIALOG(d), 1000 + cmd);
+                             return TRUE;
+                         }
+                         return FALSE;
+                     }), nullptr);
+
+    gtk_widget_show_all(dlg);
+    gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    return (resp >= 1000) ? static_cast<int>(resp - 1000) : OYK_TCMD_NONE;
+}
+
+void on_gtk_term_help_clicked(GtkWidget*, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    int cmd = show_gtk_term_help_dialog(ts);
+    if (cmd != OYK_TCMD_NONE) exec_gtk_term_cmd(ts, cmd);
+}
+
+gboolean on_gtk_term_key_press(GtkWidget*, GdkEventKey* kev, gpointer user_data) {
+    auto* ts = static_cast<GtkTermWindowState*>(user_data);
+    if (!kev || kev->is_modifier) return FALSE;
+    guint32 uc = gdk_keyval_to_unicode(kev->keyval);
+    if (ts->ctrl_a_pending) {
+        ts->ctrl_a_pending = false;
+        int key = (kev->keyval == GDK_Escape) ? 27
+                : (((kev->state & GDK_CONTROL_MASK) && (uc == 'a' || uc == 'A')) ? 0x01
+                : static_cast<int>(uc));
+        int cmd = oyk_term_decode_ctrl_a_cmd(key);
+        if (cmd == OYK_TCMD_HELP) cmd = show_gtk_term_help_dialog(ts);
+        if (cmd != OYK_TCMD_NONE && cmd != OYK_TCMD_CANCEL) {
+            exec_gtk_term_cmd(ts, cmd);
+        }
+        return TRUE;
+    }
+    if ((kev->state & GDK_CONTROL_MASK) && (uc == 'a' || uc == 'A')) {
+        ts->ctrl_a_pending = true;
+        gtk_progress_bar_set_text(
+            GTK_PROGRESS_BAR(ts->progress_bar),
+            "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Close");
+        return TRUE;
+    }
+    if ((kev->state & GDK_CONTROL_MASK) && (uc == 'l' || uc == 'L')) {
+        exec_gtk_term_cmd(ts, OYK_TCMD_REDRAW);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 void on_gtk_term_send_line(GtkWidget*, gpointer user_data) {
     auto* ts = static_cast<GtkTermWindowState*>(user_data);
     std::string line = gtk_entry_get_text(GTK_ENTRY(ts->input_entry));
     gtk_entry_set_text(GTK_ENTRY(ts->input_entry), "");
-
-    if (!line.empty() && line[0] == '/') {
-        std::istringstream iss(line);
-        std::string cmd;
-        iss >> cmd;
-        for (auto& c : cmd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (cmd == "/eol") {
-            std::string arg;
-            iss >> arg;
-            std::string msg;
-            {
-                std::lock_guard<std::mutex> lk(ts->mtx);
-                if (arg.empty()) {
-                    msg = std::string("*** Terminal EOL: ") + oyk_term_eol_label(&ts->eol) +
-                          " (use /eol auto|cr|lf|crlf)\n";
-                } else {
-                    int m = OYK_TERM_EOL_AUTO;
-                    if (oyk_term_eol_parse_mode(arg.c_str(), &m)) {
-                        ts->eol.override_mode = m;
-                        msg = std::string("*** Terminal EOL set to ") + oyk_term_eol_label(&ts->eol) + ".\n";
-                    } else {
-                        msg = "*** Usage: /eol [auto|cr|lf|crlf]\n";
-                    }
-                }
-            }
-            gtk_term_append_text_ui(ts, msg);
-            return;
-        }
-        if (cmd == "/disc" || cmd == "/d") {
-            on_gtk_term_disconnect(nullptr, user_data);
-            return;
-        }
-        if (cmd == "/local" || cmd == "/bbs" || cmd == "/chat") {
-            gtk_entry_set_text(GTK_ENTRY(ts->call_entry),
-                               (cmd == "/bbs") ? "BBS" : ((cmd == "/chat") ? "CHAT" : "LOCAL"));
-            on_gtk_term_connect(nullptr, user_data);
-            return;
-        }
-    }
 
     uint64_t sid = 0;
     bool is_conn = false;
@@ -721,16 +860,19 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     ts->btn_disc = gtk_button_new_with_label("Disconnect");
     ts->btn_upload = gtk_button_new_with_label("YAPP Upload...");
     ts->btn_abort = gtk_button_new_with_label("Abort YAPP");
+    ts->btn_help = gtk_button_new_with_label("Help");
     g_signal_connect(ts->btn_connect, "clicked", G_CALLBACK(on_gtk_term_connect), ts);
     g_signal_connect(ts->btn_disc, "clicked", G_CALLBACK(on_gtk_term_disconnect), ts);
     g_signal_connect(ts->btn_upload, "clicked", G_CALLBACK(on_gtk_term_upload), ts);
     g_signal_connect(ts->btn_abort, "clicked", G_CALLBACK(on_gtk_term_abort_yapp), ts);
+    g_signal_connect(ts->btn_help, "clicked", G_CALLBACK(on_gtk_term_help_clicked), ts);
     g_signal_connect(ts->call_entry, "activate", G_CALLBACK(on_gtk_term_connect), ts);
 
     gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_connect, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_disc, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_upload, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_abort, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(top_bar), ts->btn_help, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(vbox), top_bar, FALSE, FALSE, 2);
 
     ts->text_view = gtk_text_view_new();
@@ -754,6 +896,10 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
     GtkWidget* btn_send = gtk_button_new_with_label("Send");
     g_signal_connect(ts->input_entry, "activate", G_CALLBACK(on_gtk_term_send_line), ts);
     g_signal_connect(btn_send, "clicked", G_CALLBACK(on_gtk_term_send_line), ts);
+    g_signal_connect(ts->win, "key-press-event", G_CALLBACK(on_gtk_term_key_press), ts);
+    g_signal_connect(ts->input_entry, "key-press-event", G_CALLBACK(on_gtk_term_key_press), ts);
+    g_signal_connect(ts->call_entry, "key-press-event", G_CALLBACK(on_gtk_term_key_press), ts);
+    g_signal_connect(ts->text_view, "key-press-event", G_CALLBACK(on_gtk_term_key_press), ts);
     gtk_box_pack_start(GTK_BOX(in_bar), ts->input_entry, TRUE, TRUE, 2);
     gtk_box_pack_start(GTK_BOX(in_bar), btn_send, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(vbox), in_bar, FALSE, FALSE, 2);
@@ -762,13 +908,12 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
         ts,
         "*** Local Packet Terminal (YAPP / YAPP-C enabled)\n"
         "*** Incoming files save to incoming/<CALLSIGN-SSID>/<filename>\n"
-        "*** Enter target callsign (or CALLSIGN@ip:port) and click Connect.\n");
+        "*** Press Ctrl+A Z (or click Help) for hotkeys; typed / commands go to remote BBS/CHAT.\n");
 
     ts->timer_id = g_timeout_add(50, on_gtk_term_tick, ts);
     if (g_gtk_test.enabled) {
         gtk_term_append_text_ui(
             ts,
-            "\n> /bbs\n"
             "*** Connected to KR4OYK-1 BBS\n"
             "Welcome to KR4OYK-1 Packet BBS (OYKNOD)\n"
             "Type L to list messages, R # to read, B to bye.\n"
