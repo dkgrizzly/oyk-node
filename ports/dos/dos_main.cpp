@@ -238,13 +238,13 @@ static void vid_clear(oyk_u8 attr) {
 static void vid_box(int top, int left, int h, int w, oyk_u8 border_attr, oyk_u8 fill_attr, int clear_interior) {
     if (g_vid) dos_vid_box(g_vid, top, left, h, w, border_attr, fill_attr, clear_interior);
 #ifdef OYK_DOS_GFX_BUILD
-    if (g_gfx) {
+    if (g_gfx && g_gfx->cell_has_rgb) {
         /* Clear per-cell RGB overrides inside the newly drawn box interior */
-        for (int r = top; r < top + h && r < OYK_DOS_VID_ROWS; ++r) {
+        for (int r = top; r < top + h && r < g_gfx->rows; ++r) {
             if (r < 0) continue;
-            for (int c = left; c < left + w && c < OYK_DOS_VID_COLS; ++c) {
+            for (int c = left; c < left + w && c < g_gfx->cols; ++c) {
                 if (c < 0) continue;
-                g_gfx->cell_has_rgb[r * OYK_DOS_VID_COLS + c] = 0U;
+                g_gfx->cell_has_rgb[r * g_gfx->cols + c] = 0U;
             }
         }
     }
@@ -512,10 +512,10 @@ static void render_dos_screen() {
     int total_logs = g_node.console_log_count();
     int start = (total_logs > 6) ? (total_logs - 6) : 0;
 #ifdef OYK_DOS_GFX_BUILD
-    int do_smooth_log = (g_gfx && g_gfx_vram && g_gfx_scroll_tmp &&
+    int do_smooth_log = (g_gfx && g_gfx_vram && g_gfx_scroll_tmp && g_vid &&
                          g_gfx_last_log_count >= 6 && total_logs > g_gfx_last_log_count);
     if (do_smooth_log) {
-        memcpy(g_gfx_scroll_tmp, g_gfx_vram, sizeof(oyk_u16) * OYK_DOS_VID_CELLS);
+        memcpy(g_gfx_scroll_tmp, g_gfx_vram, sizeof(oyk_u16) * static_cast<size_t>(g_vid->cells));
     }
 #endif
     for (int r = 0; r < 6; ++r) {
@@ -4473,13 +4473,9 @@ int main(int argc, char* argv[]) {
         }
 #ifdef OYK_DOS_GFX_BUILD
         g_gfx = new OykDosGfx;
-        g_gfx_vram = new oyk_u16[OYK_DOS_VID_CELLS];
-        g_gfx_scroll_tmp = new oyk_u16[OYK_DOS_VID_CELLS];
-        if (!g_gfx || !g_gfx_vram || !dos_gfx_init(g_gfx, g_gfx_video_req)) {
+        if (!g_gfx || !dos_gfx_init(g_gfx, g_gfx_video_req)) {
             printf("No compatible VESA/VGA/EGA graphics mode available (try --headless).\n");
             if (g_gfx) { dos_gfx_shutdown(g_gfx); delete g_gfx; g_gfx = NULL; }
-            delete[] g_gfx_scroll_tmp; g_gfx_scroll_tmp = NULL;
-            delete[] g_gfx_vram; g_gfx_vram = NULL;
             delete g_vid; g_vid = NULL;
             g_node.finish_shutdown();
 #ifdef OYK_DOS_HAS_MTCP
@@ -4491,7 +4487,9 @@ int main(int argc, char* argv[]) {
             g_ems.shutdown();
             return 1;
         }
-        dos_vid_init_sim(g_vid, 0, g_gfx_vram);
+        g_gfx_vram = new oyk_u16[static_cast<size_t>(g_gfx->cells)];
+        g_gfx_scroll_tmp = new oyk_u16[static_cast<size_t>(g_gfx->cells)];
+        dos_vid_init_sim_sized(g_vid, 0, g_gfx->cols, g_gfx->rows, g_gfx_vram);
         if (g_gfx->mode == OYK_GFX_MODE_VBE24 || g_gfx->mode == OYK_GFX_MODE_VBE16 || g_gfx->mode == OYK_GFX_MODE_VBE8) {
             sprintf(g_status_line, "GFX:%s (%s) | Press F10/M for Node menu.",
                     dos_gfx_mode_name(g_gfx->mode),
@@ -4503,7 +4501,7 @@ int main(int argc, char* argv[]) {
         oyk_dos_mouse_init(&g_mouse, 1, g_gfx->width, g_gfx->height, g_gfx->char_w, g_gfx->char_h);
 #else
         dos_vid_init(g_vid);
-        oyk_dos_mouse_init(&g_mouse, 0, 640, 200, 8, 8);
+        oyk_dos_mouse_init(&g_mouse, 0, g_vid->cols * 8, g_vid->rows * 8, 8, 8);
 #endif
 
         int running = 1;

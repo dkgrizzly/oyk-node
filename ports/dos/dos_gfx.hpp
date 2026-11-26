@@ -6,11 +6,12 @@
 
 /*
  * 386+ Graphical Console Renderer for MS-DOS (oyknodeg.exe).
- * Supports VESA VBE (640x480 24/32bpp -> 16/15bpp -> 8bpp), VGA Mode 12h
- * (640x480x16 with programmable 18-bit DAC), and EGA Mode 10h (640x350x16).
- * Preserves the exact 80x25 TUI grid while adding 24-bit themes, alpha-darkened
- * pixel drop shadows, smooth pixel-row scrolling on vertical retrace, and a
- * save-under mouse pointer sprite.
+ * Supports VESA VBE (fast 8bpp programmable-DAC -> 16/15bpp -> 24/32bpp at 640x480
+ * filling all 80x30 cells, plus optional 800x600 100x37 and 1024x768 128x48), VGA Mode 12h
+ * (640x480x16 80x30 with 18-bit DAC), and EGA Mode 10h (640x350x16 80x25).
+ * Optimizes throughput with 32-bit rep movsd scanlines, cached palette writes, zero-copy
+ * pre-decoded font lookups, pre-resolved dirty runs, alpha pixel shadows, smooth scrolling,
+ * and a save-under mouse pointer sprite.
  */
 
 #include "../compat/oyk_portable.hpp"
@@ -18,12 +19,14 @@
 #include "dos_video.hpp"
 #include "dos_xms.hpp"
 
-#define OYK_GFX_MODE_NONE  0
-#define OYK_GFX_MODE_VBE24 1
-#define OYK_GFX_MODE_VBE16 2
-#define OYK_GFX_MODE_VBE8  3
-#define OYK_GFX_MODE_VGA16 4
-#define OYK_GFX_MODE_EGA16 5
+#define OYK_GFX_MODE_NONE    0
+#define OYK_GFX_MODE_VBE24   1
+#define OYK_GFX_MODE_VBE16   2
+#define OYK_GFX_MODE_VBE8    3
+#define OYK_GFX_MODE_VGA16   4
+#define OYK_GFX_MODE_EGA16   5
+#define OYK_GFX_MODE_VBE800  6
+#define OYK_GFX_MODE_VBE1024 7
 
 #define OYK_GFX_MAX_SHADOWS 12
 
@@ -42,6 +45,9 @@ struct OykDosGfx {
     int height;
     int char_w;
     int char_h;
+    int cols;
+    int rows;
+    int cells;
     int bpp;
     int win_seg;
     oyk_u16 bytes_per_scanline;
@@ -50,15 +56,17 @@ struct OykDosGfx {
     int orig_bios_mode;
 
     oyk_u32 palette16[16];
-    oyk_u8 vga256_cube[216];
+    oyk_u32 hw_palette16[16];
+    int hw_palette_valid;
+    oyk_u32 hw_palette_writes;
     int has_custom_theme;
 
-    oyk_u16 prev_cells[OYK_DOS_VID_CELLS];
-    oyk_u32 cell_fg_rgb[OYK_DOS_VID_CELLS];
-    oyk_u32 cell_bg_rgb[OYK_DOS_VID_CELLS];
-    oyk_u8  cell_has_rgb[OYK_DOS_VID_CELLS];
-    oyk_u8  prev_shadow_mask[OYK_DOS_VID_CELLS];
-    oyk_u8  shadow_mask[OYK_DOS_VID_CELLS];
+    oyk_u16* prev_cells;
+    oyk_u32* cell_fg_rgb;
+    oyk_u32* cell_bg_rgb;
+    oyk_u8*  cell_has_rgb;
+    oyk_u8*  prev_shadow_mask;
+    oyk_u8*  shadow_mask;
 
     OykDosGfxShadowRect shadows[OYK_GFX_MAX_SHADOWS];
     int shadow_count;
@@ -70,7 +78,7 @@ struct OykDosGfx {
     int prev_cursor_y;
     int prev_cursor_visible;
 
-    oyk_u8 scan_buf[640 * 4];
+    oyk_u8* scan_buf;
     OykDosFont font;
     OykDosExtMem extmem;
     oyk_u8* sim_rgb; /* Host 24-bit RGB24 framebuffer (width * height * 3) */
@@ -96,12 +104,10 @@ void dos_gfx_add_shadow(OykDosGfx* g, int top, int left, int h, int w);
 
 void dos_gfx_set_cursor(OykDosGfx* g, int px_x, int px_y, int visible);
 
-/* Render updated 80x25 cells + pixel drop shadows + cursor to video / sim_rgb. */
+/* Render updated dynamic cells + pixel drop shadows + cursor to video / sim_rgb. */
 void dos_gfx_present(OykDosGfx* g, const oyk_u16* vram, int force_all);
 
-/* Smooth pixel-row scroll across interior cell rows [top_row .. top_row+rows-1].
- * Animates using extmem / double-buffered scanlines synced to vertical retrace
- * and immediately snaps cleanly on keypress. Returns number of pixel steps rendered. */
+/* Smooth pixel-row scroll across interior cell rows [top_row .. top_row+rows-1]. */
 int dos_gfx_smooth_scroll(OykDosGfx* g,
                           const oyk_u16* prev_vram,
                           const oyk_u16* new_vram,

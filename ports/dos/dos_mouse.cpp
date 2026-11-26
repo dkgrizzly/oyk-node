@@ -19,10 +19,12 @@ static void clamp_coords(OykDosMouse* m, int px_x, int px_y, int* out_row, int* 
     m->cur_px_y = px_y;
     int c = (m->char_w > 0) ? (px_x / m->char_w) : 0;
     int r = (m->char_h > 0) ? (px_y / m->char_h) : 0;
+    int max_c = (m->cols > 0) ? (m->cols - 1) : 79;
+    int max_r = (m->rows > 0) ? (m->rows - 1) : 24;
     if (c < 0) c = 0;
-    if (c > 79) c = 79;
+    if (c > max_c) c = max_c;
     if (r < 0) r = 0;
-    if (r > 24) r = 24;
+    if (r > max_r) r = max_r;
     m->cur_col = c;
     m->cur_row = r;
     if (out_row) *out_row = r;
@@ -37,6 +39,10 @@ int oyk_dos_mouse_init(OykDosMouse* m, int is_gfx, int max_w, int max_h, int cha
     m->max_px_h = (max_h > 0) ? max_h : 200;
     m->char_w = (char_w > 0) ? char_w : 8;
     m->char_h = (char_h > 0) ? char_h : 8;
+    m->cols = m->max_px_w / m->char_w;
+    m->rows = m->max_px_h / m->char_h;
+    if (m->cols < 60) m->cols = 80;
+    if (m->rows < 16) m->rows = 25;
     m->last_click_row = -1;
     m->last_click_col = -1;
 

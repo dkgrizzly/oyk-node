@@ -1085,6 +1085,7 @@ static void test_dos_video_dirty_diff_and_attrs() {
     dos_vid_init_sim(v, 0, sim);
     assert(v->vseg == 0xB000U && v->is_color == 0);
     assert(dos_vid_list_hdr_attr(v) == 0x70U);
+    dos_vid_shutdown(v);
 
     /* Color CGA/VGA mode uses dark-grey background (0x80) + bright white (0x0F) = 0x8F */
     dos_vid_init_sim(v, 1, sim);
@@ -1125,7 +1126,17 @@ static void test_dos_video_dirty_diff_and_attrs() {
     assert(dos_vid_flush(v) == 0UL);
     dos_vid_shadow(v, 20, 75, 10, 10);
     dos_vid_flush(v);
+    dos_vid_shutdown(v);
 
+    /* Dynamic sized text mode (e.g., 80x43 EGA/VGA) */
+    oyk_u16* sim43 = new oyk_u16[80 * 43];
+    dos_vid_init_sim_sized(v, 1, 80, 43, sim43);
+    assert(v->cols == 80 && v->rows == 43 && v->cells == 80 * 43);
+    dos_vid_puts(v, 42, 0, 0x70U, "ROW42", 5);
+    assert(dos_vid_flush_row(v, 42) == 80UL);
+    assert((sim43[42 * 80] & 0xFFU) == 'R');
+    dos_vid_shutdown(v);
+    delete[] sim43;
     delete v;
     delete[] sim;
     printf("[PASS] test_dos_video_dirty_diff_and_attrs\n");
@@ -1738,6 +1749,8 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
     assert(dos_gfx_parse_video_arg("vbe24") == OYK_GFX_MODE_VBE24);
     assert(dos_gfx_parse_video_arg("vbe16") == OYK_GFX_MODE_VBE16);
     assert(dos_gfx_parse_video_arg("vbe8") == OYK_GFX_MODE_VBE8);
+    assert(dos_gfx_parse_video_arg("800x600") == OYK_GFX_MODE_VBE800);
+    assert(dos_gfx_parse_video_arg("1024x768") == OYK_GFX_MODE_VBE1024);
     assert(dos_gfx_parse_video_arg("vga") == OYK_GFX_MODE_VGA16);
     assert(dos_gfx_parse_video_arg("ega") == OYK_GFX_MODE_EGA16);
     assert(dos_gfx_parse_video_arg("bogus") == -1);
@@ -1762,12 +1775,14 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
         assert(xm.available() == 0);
     }
 
-    /* Font glyphs in 8x16 and EGA 8x14 */
+    /* Font glyphs in 8x16 and EGA 8x14 (both copy helper and O(1) direct ptr) */
     OykDosFont fnt;
     oyk_dos_font_init(&fnt);
     oyk_u8 g16[16], g14[14];
     oyk_dos_font_get_glyph(&fnt, 16, 'K', g16);
     oyk_dos_font_get_glyph(&fnt, 14, OYK_BOX_TL, g14);
+    assert(memcmp(g16, oyk_dos_font_glyph_ptr(&fnt, 16, 'K'), 16) == 0);
+    assert(memcmp(g14, oyk_dos_font_glyph_ptr(&fnt, 14, OYK_BOX_TL), 14) == 0);
     int nonzero_16 = 0, nonzero_14 = 0;
     for (int i = 0; i < 16; ++i) if (g16[i] != 0) ++nonzero_16;
     for (int i = 0; i < 14; ++i) if (g14[i] != 0) ++nonzero_14;
@@ -1775,18 +1790,23 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
     oyk_dos_font_shutdown(&fnt);
 
 #ifndef __DOS__
-    /* Graphical renderer sim + alpha pixel shadow + smooth scroll + BMP output */
+    /* Graphical renderer sim: 640x480 fills 80x30 + palette cache skip + 800x600 100x37 + EGA */
     OykDosGfx* g = new OykDosGfx;
-    oyk_u16* v1 = new oyk_u16[OYK_DOS_VID_CELLS];
-    oyk_u16* v2 = new oyk_u16[OYK_DOS_VID_CELLS];
+    oyk_u16* v1 = new oyk_u16[80 * 30];
+    oyk_u16* v2 = new oyk_u16[80 * 30];
     OykDosVideo* vid = new OykDosVideo;
-    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE24) == 1);
-    assert(g->width == 640 && g->height == 480 && g->char_h == 16);
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_NONE) == 1);
+    assert(g->mode == OYK_GFX_MODE_VBE8 && g->width == 640 && g->height == 480 && g->cols == 80 && g->rows == 30);
     OykThemeConfig tc;
     oyk_theme_init_builtin(&tc, 0);
     dos_gfx_set_theme(g, &tc, 0);
-    dos_vid_init_sim(vid, 0, v1);
+    oyk_u32 pw_before = g->hw_palette_writes;
+    dos_gfx_set_theme(g, &tc, 0); /* Identical theme must skip redundant palette writes */
+    assert(g->hw_palette_writes == pw_before);
+
+    dos_vid_init_sim_sized(vid, 0, 80, 30, v1);
     dos_vid_clear(vid, 0x07U);
+    dos_vid_puts(vid, 29, 1, 0x0EU, "BOTTOM_ROW_29", 13);
     dos_vid_box(vid, 4, 10, 6, 30, 0x59U, 0x58U, 1);
     dos_gfx_add_shadow(g, 4, 10, 6, 30);
     dos_vid_puts(vid, 6, 12, 0x58U, "Line A", 12);
@@ -1798,7 +1818,7 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
     oyk_u8 bg_r = static_cast<oyk_u8>((tc.colors[OYK_TR_BG] >> 16) & 0xFFUL);
     assert(spx[0] <= (bg_r / 2 + 1));
 
-    memcpy(v2, v1, sizeof(oyk_u16) * OYK_DOS_VID_CELLS);
+    memcpy(v2, v1, sizeof(oyk_u16) * (80 * 30));
     dos_vid_puts(vid, 6, 12, 0x58U, "Line B", 12);
     dos_vid_flush(vid);
     int steps = dos_gfx_smooth_scroll(g, v2, v1, 5, 11, 4, 28, 1);
@@ -1806,10 +1826,17 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
     assert(dos_gfx_write_bmp(g, "/tmp/oyk_test_dos_gfx.bmp") == 1);
     remove("/tmp/oyk_test_dos_gfx.bmp");
 
+    dos_vid_shutdown(vid);
     dos_gfx_shutdown(g);
-    /* Also verify EGA 640x350 8x14 mode */
+
+    /* 800x600 fills 100x37 cells */
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE800) == 1);
+    assert(g->width == 800 && g->height == 600 && g->cols == 100 && g->rows == 37);
+    dos_gfx_shutdown(g);
+
+    /* EGA 640x350 8x14 fills 80x25 cells */
     assert(dos_gfx_init_sim(g, OYK_GFX_MODE_EGA16) == 1);
-    assert(g->width == 640 && g->height == 350 && g->char_h == 14);
+    assert(g->width == 640 && g->height == 350 && g->char_h == 14 && g->cols == 80 && g->rows == 25);
     dos_gfx_shutdown(g);
 
     delete vid;

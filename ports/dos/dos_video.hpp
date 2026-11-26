@@ -5,9 +5,11 @@
 #define OYK_DOS_VIDEO_HPP
 
 /*
- * Direct 80x25 Text-Mode Double-Buffered Video Driver for MS-DOS
+ * Dynamic Double-Buffered Text Video Buffer / Driver for MS-DOS
  *
  * Strict C++98, zero STL, 16-bit large-model safe.
+ * - Auto-detects active text dimensions from BIOS BDA (80x25, 80x43, 80x50, etc.)
+ *   or accepts explicit graphical cell grid dimensions (e.g. 80x30, 100x37, 128x48).
  * - Composes off-screen into `back[]` and diffs against `front[]` on flush so
  *   only changed cells touch video RAM (eliminating flicker/flashing).
  * - Automatically detects MDA/Hercules (0xB000, mono mode 7) vs CGA/EGA/VGA
@@ -20,9 +22,11 @@
 
 #include "../compat/oyk_portable.hpp"
 
-#define OYK_DOS_VID_COLS 80
-#define OYK_DOS_VID_ROWS 25
-#define OYK_DOS_VID_CELLS (OYK_DOS_VID_COLS * OYK_DOS_VID_ROWS)
+#define OYK_DOS_VID_COLS     80
+#define OYK_DOS_VID_ROWS     25
+#define OYK_DOS_VID_CELLS    (OYK_DOS_VID_COLS * OYK_DOS_VID_ROWS)
+#define OYK_DOS_VID_MAX_COLS 132
+#define OYK_DOS_VID_MAX_ROWS 50
 
 /* CP437 single-line box-drawing characters */
 #define OYK_BOX_TL 0xDAU /* top-left corner */
@@ -38,8 +42,11 @@
 #define OYK_BOX_X  0xC5U /* cross */
 
 struct OykDosVideo {
-    oyk_u16 back[OYK_DOS_VID_CELLS];
-    oyk_u16 front[OYK_DOS_VID_CELLS];
+    oyk_u16* back;
+    oyk_u16* front;
+    int cols;
+    int rows;
+    int cells;
     oyk_u16 vseg;
     int is_color;
     int is_ega_vga;
@@ -50,7 +57,9 @@ struct OykDosVideo {
 };
 
 void dos_vid_init(OykDosVideo* v);
+void dos_vid_init_sized(OykDosVideo* v, int cols, int rows);
 void dos_vid_init_sim(OykDosVideo* v, int is_color, oyk_u16* sim_vram);
+void dos_vid_init_sim_sized(OykDosVideo* v, int is_color, int cols, int rows, oyk_u16* sim_vram);
 void dos_vid_shutdown(OykDosVideo* v);
 
 oyk_u8 dos_vid_attr(const OykDosVideo* v, oyk_u8 color_attr, oyk_u8 mono_attr);

@@ -40,6 +40,8 @@ struct OykDosMouse {
     int max_px_h;
     int char_w;
     int char_h;
+    int cols;
+    int rows;
 
     int cur_px_x;
     int cur_px_y;

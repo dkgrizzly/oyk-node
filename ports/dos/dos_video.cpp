@@ -4,6 +4,7 @@
 #include "dos_video.hpp"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__DOS__) || defined(MSDOS) || defined(__MSDOS__) || defined(_MSDOS)
@@ -17,7 +18,29 @@ static oyk_u16 make_cell(oyk_u8 attr, oyk_u8 ch) {
                                 static_cast<oyk_u16>(ch));
 }
 
-void dos_vid_init_sim(OykDosVideo* v, int is_color, oyk_u16* sim_vram) {
+static int vid_alloc_buffers(OykDosVideo* v, int cols, int rows) {
+    if (cols < 60) cols = 80;
+    if (cols > OYK_DOS_VID_MAX_COLS) cols = OYK_DOS_VID_MAX_COLS;
+    if (rows < 16) rows = 25;
+    if (rows > OYK_DOS_VID_MAX_ROWS) rows = OYK_DOS_VID_MAX_ROWS;
+    v->cols = cols;
+    v->rows = rows;
+    v->cells = cols * rows;
+    size_t bytes = static_cast<size_t>(v->cells) * sizeof(oyk_u16);
+    v->back = static_cast<oyk_u16*>(malloc(bytes));
+    v->front = static_cast<oyk_u16*>(malloc(bytes));
+    if (!v->back || !v->front) {
+        free(v->back);
+        free(v->front);
+        v->back = NULL;
+        v->front = NULL;
+        v->cells = 0;
+        return 0;
+    }
+    return 1;
+}
+
+void dos_vid_init_sim_sized(OykDosVideo* v, int is_color, int cols, int rows, oyk_u16* sim_vram) {
     if (!v) return;
     memset(v, 0, sizeof(*v));
     v->vseg = is_color ? 0xB800U : 0xB000U;
@@ -27,22 +50,43 @@ void dos_vid_init_sim(OykDosVideo* v, int is_color, oyk_u16* sim_vram) {
     v->orig_cursor = 0x0607U;
     v->sim_vram = sim_vram;
     v->last_flush_writes = 0;
+    if (!vid_alloc_buffers(v, cols, rows)) return;
     dos_vid_clear(v, 0x07U);
-    for (int i = 0; i < OYK_DOS_VID_CELLS; ++i) {
+    for (int i = 0; i < v->cells; ++i) {
         v->front[i] = 0xFFFFU;
     }
 }
 
-void dos_vid_init(OykDosVideo* v) {
+void dos_vid_init_sim(OykDosVideo* v, int is_color, oyk_u16* sim_vram) {
+    dos_vid_init_sim_sized(v, is_color, OYK_DOS_VID_COLS, OYK_DOS_VID_ROWS, sim_vram);
+}
+
+void dos_vid_init_sized(OykDosVideo* v, int cols, int rows) {
     if (!v) return;
     memset(v, 0, sizeof(*v));
     v->vseg = 0xB800U;
     v->is_color = 1;
 
+    int det_cols = (cols > 0) ? cols : OYK_DOS_VID_COLS;
+    int det_rows = (rows > 0) ? rows : OYK_DOS_VID_ROWS;
+
 #if defined(__DOS__) || defined(MSDOS) || defined(__MSDOS__) || defined(_MSDOS)
     oyk_u8 mode = *reinterpret_cast<volatile oyk_u8 __far*>(MK_FP(0x0040, 0x0049));
     v->vseg = (mode == 7U) ? 0xB000U : 0xB800U;
     v->is_color = (mode != 7U && mode != 2U && mode != 0U) ? 1 : 0;
+
+    if (cols <= 0) {
+        oyk_u16 bda_cols = *reinterpret_cast<volatile oyk_u16 __far*>(MK_FP(0x0040, 0x004A));
+        if (bda_cols >= 60U && bda_cols <= static_cast<oyk_u16>(OYK_DOS_VID_MAX_COLS)) {
+            det_cols = static_cast<int>(bda_cols);
+        }
+    }
+    if (rows <= 0) {
+        oyk_u8 bda_rm1 = *reinterpret_cast<volatile oyk_u8 __far*>(MK_FP(0x0040, 0x0084));
+        if (bda_rm1 >= 15U && bda_rm1 < static_cast<oyk_u8>(OYK_DOS_VID_MAX_ROWS)) {
+            det_rows = static_cast<int>(bda_rm1) + 1;
+        }
+    }
 
     union REGS r;
     /* Save original hardware cursor and hide it to avoid flicker during updates */
@@ -83,44 +127,58 @@ void dos_vid_init(OykDosVideo* v) {
     }
 #endif
 
+    if (!vid_alloc_buffers(v, det_cols, det_rows)) return;
     dos_vid_clear(v, 0x07U);
-    for (int i = 0; i < OYK_DOS_VID_CELLS; ++i) {
+    for (int i = 0; i < v->cells; ++i) {
         v->front[i] = 0xFFFFU;
     }
 }
 
+void dos_vid_init(OykDosVideo* v) {
+    dos_vid_init_sized(v, 0, 0);
+}
+
 void dos_vid_shutdown(OykDosVideo* v) {
     if (!v) return;
-    dos_vid_clear(v, 0x07U);
-    dos_vid_flush(v);
-
-#if defined(__DOS__) || defined(MSDOS) || defined(__MSDOS__) || defined(_MSDOS)
-    union REGS r;
-    if (v->is_color) {
-        if (v->is_ega_vga) {
-            memset(&r, 0, sizeof(r));
-            r.x.ax = 0x1003;
-            r.h.bl = 0x01;
-            int86(0x10, &r, &r);
-        } else if (v->orig_cga_mode != 0) {
-            volatile oyk_u8 __far* p_crt =
-                reinterpret_cast<volatile oyk_u8 __far*>(MK_FP(0x0040, 0x0065));
-            *p_crt = v->orig_cga_mode;
-            outp(0x3D8U, static_cast<int>(v->orig_cga_mode));
-        }
+    if (v->back && v->front) {
+        dos_vid_clear(v, 0x07U);
+        dos_vid_flush(v);
     }
 
-    memset(&r, 0, sizeof(r));
-    r.h.ah = 0x01;
-    r.x.cx = v->orig_cursor ? v->orig_cursor : 0x0607U;
-    int86(0x10, &r, &r);
+#if defined(__DOS__) || defined(MSDOS) || defined(__MSDOS__) || defined(_MSDOS)
+    if (!v->sim_vram) {
+        union REGS r;
+        if (v->is_color) {
+            if (v->is_ega_vga) {
+                memset(&r, 0, sizeof(r));
+                r.x.ax = 0x1003;
+                r.h.bl = 0x01;
+                int86(0x10, &r, &r);
+            } else if (v->orig_cga_mode != 0) {
+                volatile oyk_u8 __far* p_crt =
+                    reinterpret_cast<volatile oyk_u8 __far*>(MK_FP(0x0040, 0x0065));
+                *p_crt = v->orig_cga_mode;
+                outp(0x3D8U, static_cast<int>(v->orig_cga_mode));
+            }
+        }
 
-    memset(&r, 0, sizeof(r));
-    r.h.ah = 0x02;
-    r.h.bh = 0x00;
-    r.x.dx = 0x0000;
-    int86(0x10, &r, &r);
+        memset(&r, 0, sizeof(r));
+        r.h.ah = 0x01;
+        r.x.cx = v->orig_cursor ? v->orig_cursor : 0x0607U;
+        int86(0x10, &r, &r);
+
+        memset(&r, 0, sizeof(r));
+        r.h.ah = 0x02;
+        r.h.bh = 0x00;
+        r.x.dx = 0x0000;
+        int86(0x10, &r, &r);
+    }
 #endif
+    free(v->back);
+    free(v->front);
+    v->back = NULL;
+    v->front = NULL;
+    v->cells = 0;
 }
 
 oyk_u8 dos_vid_attr(const OykDosVideo* v, oyk_u8 color_attr, oyk_u8 mono_attr) {
@@ -134,38 +192,38 @@ oyk_u8 dos_vid_list_hdr_attr(const OykDosVideo* v) {
 }
 
 void dos_vid_clear(OykDosVideo* v, oyk_u8 attr) {
-    if (!v) return;
+    if (!v || !v->back) return;
     oyk_u16 cell = make_cell(attr, static_cast<oyk_u8>(' '));
-    for (int i = 0; i < OYK_DOS_VID_CELLS; ++i) {
+    for (int i = 0; i < v->cells; ++i) {
         v->back[i] = cell;
     }
 }
 
 void dos_vid_putc(OykDosVideo* v, int row, int col, oyk_u8 attr, oyk_u8 ch) {
-    if (!v || row < 0 || row >= OYK_DOS_VID_ROWS || col < 0 || col >= OYK_DOS_VID_COLS) {
+    if (!v || !v->back || row < 0 || row >= v->rows || col < 0 || col >= v->cols) {
         return;
     }
-    v->back[row * OYK_DOS_VID_COLS + col] = make_cell(attr, ch);
+    v->back[row * v->cols + col] = make_cell(attr, ch);
 }
 
 void dos_vid_puts(OykDosVideo* v, int row, int col, oyk_u8 attr, const char* s, int max_w) {
-    if (!v || row < 0 || row >= OYK_DOS_VID_ROWS || col >= OYK_DOS_VID_COLS || max_w <= 0) {
+    if (!v || !v->back || row < 0 || row >= v->rows || col >= v->cols || max_w <= 0) {
         return;
     }
-    int base = row * OYK_DOS_VID_COLS;
+    int base = row * v->cols;
     int i = 0;
     if (col < 0) {
         i = -col;
         col = 0;
     }
     if (s) {
-        while (i < max_w && col < OYK_DOS_VID_COLS && s[i] != '\0') {
+        while (i < max_w && col < v->cols && s[i] != '\0') {
             v->back[base + col] = make_cell(attr, static_cast<oyk_u8>(s[i]));
             ++i;
             ++col;
         }
     }
-    while (i < max_w && col < OYK_DOS_VID_COLS) {
+    while (i < max_w && col < v->cols) {
         v->back[base + col] = make_cell(attr, static_cast<oyk_u8>(' '));
         ++i;
         ++col;
@@ -173,9 +231,13 @@ void dos_vid_puts(OykDosVideo* v, int row, int col, oyk_u8 attr, const char* s, 
 }
 
 void dos_vid_hline(OykDosVideo* v, int row, int col, int len, oyk_u8 attr, oyk_u8 ch) {
-    for (int i = 0; i < len; ++i) {
-        dos_vid_putc(v, row, col + i, attr, ch);
-    }
+    if (!v || !v->back || row < 0 || row >= v->rows || len <= 0) return;
+    if (col < 0) { len += col; col = 0; }
+    if (col + len > v->cols) len = v->cols - col;
+    if (len <= 0) return;
+    oyk_u16 cell = make_cell(attr, ch);
+    oyk_u16* dst = v->back + row * v->cols + col;
+    for (int i = 0; i < len; ++i) dst[i] = cell;
 }
 
 void dos_vid_vline(OykDosVideo* v, int row, int col, int len, oyk_u8 attr, oyk_u8 ch) {
@@ -186,7 +248,7 @@ void dos_vid_vline(OykDosVideo* v, int row, int col, int len, oyk_u8 attr, oyk_u
 
 void dos_vid_box(OykDosVideo* v, int top, int left, int h, int w,
                  oyk_u8 border_attr, oyk_u8 fill_attr, int fill_interior) {
-    if (!v || h < 2 || w < 2) return;
+    if (!v || !v->back || h < 2 || w < 2) return;
     int bottom = top + h - 1;
     int right = left + w - 1;
 
@@ -208,24 +270,24 @@ void dos_vid_box(OykDosVideo* v, int top, int left, int h, int w,
 }
 
 void dos_vid_shadow(OykDosVideo* v, int top, int left, int h, int w) {
-    if (!v || h < 2 || w < 2) return;
+    if (!v || !v->back || h < 2 || w < 2) return;
     int r, c;
     int r_end = top + h;
     int c_right = left + w;
     for (r = top + 1; r <= r_end; ++r) {
-        if (r < 0 || r >= OYK_DOS_VID_ROWS) continue;
+        if (r < 0 || r >= v->rows) continue;
         for (c = c_right; c < c_right + 2; ++c) {
-            if (c < 0 || c >= OYK_DOS_VID_COLS) continue;
-            oyk_u16& cell = v->back[r * OYK_DOS_VID_COLS + c];
+            if (c < 0 || c >= v->cols) continue;
+            oyk_u16& cell = v->back[r * v->cols + c];
             cell = v->is_color
                 ? static_cast<oyk_u16>((0x08U << 8) | (cell & 0x00FFU))
                 : static_cast<oyk_u16>((0x07U << 8) | 0xB0U);
         }
     }
-    if (r_end >= 0 && r_end < OYK_DOS_VID_ROWS) {
+    if (r_end >= 0 && r_end < v->rows) {
         for (c = left + 2; c < c_right; ++c) {
-            if (c < 0 || c >= OYK_DOS_VID_COLS) continue;
-            oyk_u16& cell = v->back[r_end * OYK_DOS_VID_COLS + c];
+            if (c < 0 || c >= v->cols) continue;
+            oyk_u16& cell = v->back[r_end * v->cols + c];
             cell = v->is_color
                 ? static_cast<oyk_u16>((0x08U << 8) | (cell & 0x00FFU))
                 : static_cast<oyk_u16>((0x07U << 8) | 0xB0U);
@@ -242,10 +304,10 @@ void dos_vid_hdiv(OykDosVideo* v, int row, int left, int w, oyk_u8 attr) {
 
 void dos_vid_title(OykDosVideo* v, int row, int col, int max_w, oyk_u8 attr, const char* title) {
     if (!v || !title || !title[0] || max_w <= 2) return;
-    char buf[82];
+    char buf[136];
     int tlen = static_cast<int>(strlen(title));
     if (tlen > max_w - 2) tlen = max_w - 2;
-    if (tlen > 78) tlen = 78;
+    if (tlen > 130) tlen = 130;
     buf[0] = ' ';
     memcpy(buf + 1, title, static_cast<size_t>(tlen));
     buf[1 + tlen] = ' ';
@@ -254,9 +316,9 @@ void dos_vid_title(OykDosVideo* v, int row, int col, int max_w, oyk_u8 attr, con
 }
 
 static oyk_u32 flush_cell_range(OykDosVideo* v, int start_idx, int end_idx) {
-    if (!v) return 0;
+    if (!v || !v->back || !v->front) return 0;
     if (start_idx < 0) start_idx = 0;
-    if (end_idx > OYK_DOS_VID_CELLS) end_idx = OYK_DOS_VID_CELLS;
+    if (end_idx > v->cells) end_idx = v->cells;
 
     oyk_u32 writes = 0;
     if (v->sim_vram) {
@@ -292,11 +354,12 @@ static oyk_u32 flush_cell_range(OykDosVideo* v, int start_idx, int end_idx) {
 }
 
 oyk_u32 dos_vid_flush_row(OykDosVideo* v, int row) {
-    if (!v || row < 0 || row >= OYK_DOS_VID_ROWS) return 0;
-    int start_idx = row * OYK_DOS_VID_COLS;
-    return flush_cell_range(v, start_idx, start_idx + OYK_DOS_VID_COLS);
+    if (!v || row < 0 || row >= v->rows) return 0;
+    int start_idx = row * v->cols;
+    return flush_cell_range(v, start_idx, start_idx + v->cols);
 }
 
 oyk_u32 dos_vid_flush(OykDosVideo* v) {
-    return flush_cell_range(v, 0, OYK_DOS_VID_CELLS);
+    if (!v) return 0;
+    return flush_cell_range(v, 0, v->cells);
 }

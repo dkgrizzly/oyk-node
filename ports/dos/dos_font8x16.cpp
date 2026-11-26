@@ -307,41 +307,80 @@ static int load_bios_font_table(oyk_u8 bh_code, int bytes_per_glyph, oyk_u8** ou
 void oyk_dos_font_init(OykDosFont* f) {
     if (!f) return;
     memset(f, 0, sizeof(*f));
+    f->tbl_8x16 = new oyk_u8[256U * 16U];
+    f->tbl_8x14 = new oyk_u8[256U * 14U];
+    if (!f->tbl_8x16 || !f->tbl_8x14) {
+        delete[] f->tbl_8x16;
+        delete[] f->tbl_8x14;
+        f->tbl_8x16 = NULL;
+        f->tbl_8x14 = NULL;
+        return;
+    }
+
+    int got16 = 0;
+    int got14 = 0;
 #if defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS)
-    if (load_bios_font_table(0x06U, 16, &f->bios_8x16)) f->has_bios_16 = 1;
-    if (load_bios_font_table(0x02U, 14, &f->bios_8x14)) f->has_bios_14 = 1;
+    oyk_u8* b16 = NULL;
+    oyk_u8* b14 = NULL;
+    if (load_bios_font_table(0x06U, 16, &b16) && b16) {
+        memcpy(f->tbl_8x16, b16, 256U * 16U);
+        delete[] b16;
+        got16 = 1;
+        f->has_bios_16 = 1;
+    }
+    if (load_bios_font_table(0x02U, 14, &b14) && b14) {
+        memcpy(f->tbl_8x14, b14, 256U * 14U);
+        delete[] b14;
+        got14 = 1;
+        f->has_bios_14 = 1;
+    }
 #endif
+    if (!got16) {
+        for (int c = 0; c < 256; ++c) {
+            synth_cp437_8x16(static_cast<oyk_u8>(c), f->tbl_8x16 + static_cast<size_t>(c) * 16U);
+        }
+    }
+    if (!got14) {
+        for (int c = 0; c < 256; ++c) {
+            const oyk_u8* src16 = f->tbl_8x16 + static_cast<size_t>(c) * 16U;
+            oyk_u8* dst14 = f->tbl_8x14 + static_cast<size_t>(c) * 14U;
+            for (int r = 0; r < 14; ++r) {
+                dst14[r] = src16[r + 1];
+            }
+        }
+    }
 }
 
 void oyk_dos_font_shutdown(OykDosFont* f) {
     if (!f) return;
-    delete[] f->bios_8x16;
-    delete[] f->bios_8x14;
+    delete[] f->tbl_8x16;
+    delete[] f->tbl_8x14;
     memset(f, 0, sizeof(*f));
+}
+
+const oyk_u8* oyk_dos_font_glyph_ptr(const OykDosFont* f, int char_h, oyk_u8 ch) {
+    if (f) {
+        if (char_h == 14 && f->tbl_8x14) return f->tbl_8x14 + static_cast<size_t>(ch) * 14U;
+        if (f->tbl_8x16) return f->tbl_8x16 + static_cast<size_t>(ch) * 16U;
+    }
+    if (ch >= 0x20U && ch <= 0x7EU) {
+        return k_ascii_8x16[ch - 0x20U];
+    }
+    return k_ascii_8x16[0];
 }
 
 void oyk_dos_font_get_glyph(const OykDosFont* f, int char_h, oyk_u8 ch, oyk_u8* out_glyph) {
     if (!out_glyph) return;
-    if (char_h == 14 && f && f->has_bios_14 && f->bios_8x14) {
-        memcpy(out_glyph, f->bios_8x14 + (static_cast<size_t>(ch) * 14U), 14U);
-        return;
-    }
-    if (char_h == 16 && f && f->has_bios_16 && f->bios_8x16) {
-        memcpy(out_glyph, f->bios_8x16 + (static_cast<size_t>(ch) * 16U), 16U);
+    int len = (char_h == 14) ? 14 : 16;
+    if (f && f->tbl_8x16 && f->tbl_8x14) {
+        memcpy(out_glyph, oyk_dos_font_glyph_ptr(f, char_h, ch), static_cast<size_t>(len));
         return;
     }
     oyk_u8 tmp[16];
-    if (f && f->has_bios_16 && f->bios_8x16) {
-        memcpy(tmp, f->bios_8x16 + (static_cast<size_t>(ch) * 16U), 16U);
+    synth_cp437_8x16(ch, tmp);
+    if (char_h == 14) {
+        for (int r = 0; r < 14; ++r) out_glyph[r] = tmp[r + 1];
     } else {
-        synth_cp437_8x16(ch, tmp);
-    }
-    if (char_h == 16) {
         memcpy(out_glyph, tmp, 16U);
-    } else {
-        /* Compact 14-row crop preserving top cap-line (row 1) through descender (row 14) */
-        for (int r = 0; r < 14; ++r) {
-            out_glyph[r] = tmp[r + 1];
-        }
     }
 }
