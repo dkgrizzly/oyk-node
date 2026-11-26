@@ -37,6 +37,7 @@ add_library(oyk_android SHARED
     "${OYK_ROOT}/ports/compat/oyk_yapp.cpp"
     "${OYK_ROOT}/ports/compat/oyk_rig.cpp"
     "${OYK_ROOT}/ports/compat/oyk_printer.cpp"
+    "${OYK_ROOT}/ports/compat/oyk_term.cpp"
     "${OYK_ROOT}/ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp"
 )
 

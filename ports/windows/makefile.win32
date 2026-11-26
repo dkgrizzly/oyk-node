@@ -23,7 +23,7 @@ LD  = wlink
 WIN_INC = -I$(WATCOM_DIR)/h -I$(WATCOM_DIR)/h/nt
 CFLAGS  = -3s -os -bt=nt -wx -zq $(WIN_INC) -I../compat
 
-OBJS = win_main32.obj win_service32.obj oyk_portable32.obj oyk_yapp32.obj oyk_rig32.obj oyk_printer32.obj
+OBJS = win_main32.obj win_service32.obj oyk_portable32.obj oyk_yapp32.obj oyk_rig32.obj oyk_printer32.obj oyk_term32.obj
 
 all: oykw32.exe
 
@@ -44,6 +44,9 @@ oyk_rig32.obj: ../compat/oyk_rig.cpp ../compat/oyk_rig.hpp ../compat/oyk_portabl
 
 oyk_printer32.obj: ../compat/oyk_printer.cpp ../compat/oyk_printer.hpp
     $(CC) $(CFLAGS) -fo=oyk_printer32.obj ../compat/oyk_printer.cpp
+
+oyk_term32.obj: ../compat/oyk_term.cpp ../compat/oyk_term.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS) -fo=oyk_term32.obj ../compat/oyk_term.cpp
 
 oyk_win32.res: oyk_win.rc resource.h
     $(RC) -bt=nt -q -r -i=$(WATCOM_DIR)/h/nt -fo=oyk_win32.res oyk_win.rc

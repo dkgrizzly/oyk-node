@@ -2266,6 +2266,142 @@ static void test_oyk_tui_layout_and_close_hit() {
     printf("[PASS] test_oyk_tui_layout_and_close_hit\n");
 }
 
+static void test_oyk_term_eol_and_word_wrap() {
+    /* 1. EOL state machine across CR, LF, CRLF, LFCR, CR+NUL, blank lines, and split packets */
+    OykTermEolParser p;
+    oyk_term_eol_init(&p, OYK_TERM_EOL_CR, 1);
+    assert(oyk_term_eol_effective_tx(&p) == OYK_TERM_EOL_CR);
+    assert(strcmp(oyk_term_eol_label(&p), "CR") == 0);
+
+    /* LF stream with blank lines (\n\n) -> 2 blank newlines, auto-detect LF */
+    assert(oyk_term_eol_feed_byte(&p, 'A') == OYK_TERM_ACT_CHAR);
+    assert(oyk_term_eol_feed_byte(&p, '\n') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_effective_tx(&p) == OYK_TERM_EOL_LF);
+    assert(oyk_term_eol_feed_byte(&p, '\n') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_feed_byte(&p, 'B') == OYK_TERM_ACT_CHAR);
+    assert(strcmp(oyk_term_eol_label(&p), "LF") == 0);
+
+    /* CRLF across split packet boundary (\r at end of pkt 1, \n at start of pkt 2) */
+    oyk_term_eol_reset(&p, OYK_TERM_EOL_CR, 1);
+    assert(oyk_term_eol_feed_byte(&p, 'H') == OYK_TERM_ACT_CHAR);
+    assert(oyk_term_eol_feed_byte(&p, '\r') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_feed_byte(&p, '\n') == OYK_TERM_ACT_IGNORE);
+    assert(oyk_term_eol_effective_tx(&p) == OYK_TERM_EOL_CRLF);
+    assert(strcmp(oyk_term_eol_label(&p), "CRLF") == 0);
+    /* Second consecutive CRLF (\r\n\r\n) must emit exactly ONE blank newline */
+    assert(oyk_term_eol_feed_byte(&p, '\r') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_feed_byte(&p, '\n') == OYK_TERM_ACT_IGNORE);
+    /* LFCR (\n\r) also collapses to a single newline */
+    assert(oyk_term_eol_feed_byte(&p, '\n') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_feed_byte(&p, '\r') == OYK_TERM_ACT_IGNORE);
+    /* CR + NUL (Telnet NVT) collapses cleanly */
+    assert(oyk_term_eol_feed_byte(&p, '\r') == OYK_TERM_ACT_NEWLINE);
+    assert(oyk_term_eol_feed_byte(&p, 0x00U) == OYK_TERM_ACT_IGNORE);
+    assert(oyk_term_eol_feed_byte(&p, 'Z') == OYK_TERM_ACT_CHAR);
+
+    /* 2. Manual /eol override and parse */
+    int mode = 0;
+    assert(oyk_term_eol_parse_mode("lf", &mode) == 1 && mode == OYK_TERM_EOL_LF);
+    p.override_mode = mode;
+    assert(strcmp(oyk_term_eol_label(&p), "LF*") == 0);
+    size_t blen = 0;
+    assert(memcmp(oyk_term_eol_tx_bytes(&p, &blen), "\n", 1) == 0 && blen == 1);
+    assert(oyk_term_eol_parse_mode("auto", &mode) == 1 && mode == OYK_TERM_EOL_AUTO);
+    p.override_mode = mode;
+    assert(strcmp(oyk_term_eol_label(&p), "CR") == 0);
+    assert(oyk_term_eol_parse_mode("CRLF", &mode) == 1 && mode == OYK_TERM_EOL_CRLF);
+    assert(oyk_term_eol_parse_mode("bogus", &mode) == 0);
+
+    /* 3. Format TX text normalizing mixed inputs */
+    char fmt[64];
+    size_t flen = oyk_term_format_tx_text("L1\rL2\nL3\r\n", OYK_TERM_EOL_CRLF, fmt, sizeof(fmt));
+    assert(flen == 12 && strcmp(fmt, "L1\r\nL2\r\nL3\r\n") == 0);
+
+    /* 4. Flush-left word wrap + hard-break + dynamic reflow */
+    const char* para = "Hello packet radio operators across the HF and VHF bands!";
+    OykTermWrapSpan spans[16];
+    int sc = oyk_term_wrap_line(para, strlen(para), 20, spans, 16);
+    assert(sc == 3);
+    assert(spans[0].start == 0 && spans[0].len == 18); /* "Hello packet radio" */
+    assert(spans[1].start == 19 && spans[1].len == 20); /* "operators across the" */
+    assert(spans[2].start == 40 && spans[2].len == 17); /* "HF and VHF bands!" */
+    assert(oyk_term_count_wrapped_rows(para, strlen(para), 40) == 2);
+
+    const char* unbroken = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    sc = oyk_term_wrap_line(unbroken, strlen(unbroken), 10, spans, 16);
+    assert(sc == 3 && spans[0].len == 10 && spans[1].len == 10 && spans[2].len == 6);
+    assert(oyk_term_count_wrapped_rows("", 0, 20) == 1);
+
+    /* 5. Horizontal input slice */
+    size_t in_start = 99;
+    int cur_col = -1;
+    oyk_term_input_slice(5, 20, &in_start, &cur_col);
+    assert(in_start == 0 && cur_col == 5);
+    oyk_term_input_slice(25, 20, &in_start, &cur_col);
+    assert(in_start == 6 && cur_col == 19);
+
+    /* 6. PortableNode inbound AX.25 session adapts TX EOL to LF and CRLF */
+    OykConfig* cfg = new OykConfig();
+    oyk_config_init_default(cfg);
+    assert(oyk_parse_callsign("K4E0L-7", &cfg->callsign) == 1);
+    cfg->iface_count = 1;
+    strcpy(cfg->ifaces[0].id, "ax0");
+    strcpy(cfg->ifaces[0].type, "axudp");
+    strcpy(cfg->ifaces[0].host, "127.0.0.1");
+    cfg->ifaces[0].port = 10093;
+
+    MockTxLog* txlog = new MockTxLog();
+    memset(txlog, 0, sizeof(*txlog));
+    OykPortableNode* node = new OykPortableNode();
+    char err[96];
+    assert(node->init(cfg, mock_tx, txlog, err, sizeof(err)) == 1);
+
+    OykFrame* f = new OykFrame();
+    memset(f, 0, sizeof(*f));
+    f->dst = cfg->callsign;
+    assert(oyk_parse_callsign("W1LF", &f->src) == 1);
+    f->is_command = 1;
+    f->control = 0x3FU;
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+
+    /* W1LF sends command terminated with '\n' (LF) -> replies must use '\n' */
+    txlog->count = 0;
+    memset(f, 0, sizeof(*f));
+    f->dst = cfg->callsign;
+    assert(oyk_parse_callsign("W1LF", &f->src) == 1);
+    f->is_command = 1;
+    f->control = 0x00U;
+    f->has_pid = 1;
+    f->pid = 0xF0U;
+    const char* lf_cmd = "INFO\n";
+    f->info_len = static_cast<oyk_u16>(strlen(lf_cmd));
+    memcpy(f->info, lf_cmd, f->info_len);
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+    assert(txlog_contains(txlog, "\n") == 1);
+    assert(txlog_contains(txlog, "\r") == 0);
+
+    /* Switch peer W1LF to CRLF (\r\n) across 2 packets -> replies adapt to \r\n */
+    txlog->count = 0;
+    const char* p1 = "PORTS\r";
+    f->control = 0x02U; /* N(S)=1 */
+    f->info_len = static_cast<oyk_u16>(strlen(p1));
+    memcpy(f->info, p1, f->info_len);
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+    const char* p2 = "\nINFO\r\n";
+    f->control = 0x04U; /* N(S)=2 */
+    f->info_len = static_cast<oyk_u16>(strlen(p2));
+    memcpy(f->info, p2, f->info_len);
+    txlog->count = 0;
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+    assert(txlog_contains(txlog, "\r\n") == 1);
+
+    delete f;
+    delete node;
+    delete txlog;
+    delete cfg;
+    printf("[PASS] test_oyk_term_eol_and_word_wrap\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -2275,6 +2411,7 @@ int oyk_run_portable_tests() {
     test_portable_rig_and_dos_usb();
     test_portable_printer();
     test_oyk_tui_layout_and_close_hit();
+    test_oyk_term_eol_and_word_wrap();
     test_dos_video_dirty_diff_and_attrs();
     test_derive_default_iface_id();
     test_format_peer_spec();

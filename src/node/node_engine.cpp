@@ -1213,6 +1213,11 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                         SessionDirection::Inbound,
                         sp);
                     sess->set_restricted_ban(decision.ban_key, can_appeal);
+                    if (auto if_it = iface_by_id_.find(meta.interface_id);
+                        if_it != iface_by_id_.end() && if_it->second &&
+                        to_lower(if_it->second->type()) == "telnet") {
+                        sess->set_eol_mode(OYK_TERM_EOL_CRLF, false);
+                    }
                     Session* raw = sess.get();
                     sessions_[sid] = std::move(sess);
 
@@ -1314,6 +1319,9 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                         SessionDirection::Inbound,
                         sp);
                     Session* raw = sess.get();
+                    if (is_telnet_iface) {
+                        raw->set_eol_mode(OYK_TERM_EOL_CRLF, false);
+                    }
                     sessions_[sid] = std::move(sess);
 
                     auto ev = raw->accept_inbound_sabm();

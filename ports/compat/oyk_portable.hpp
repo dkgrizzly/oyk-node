@@ -26,6 +26,8 @@ typedef unsigned int   oyk_u32;
 typedef unsigned long  oyk_u32;
 #endif
 
+#include "oyk_term.hpp"
+
 /* Tunable memory bounds (defaults fit comfortably within 640KB IBM XT conventional RAM) */
 #ifndef OYK_MAX_INTERFACES
 #if defined(TEENSYDUINO)
@@ -392,6 +394,7 @@ struct OykSession {
     time_t last_activity;
     char rx_line[160];
     int rx_line_len;
+    OykTermEolParser rx_eol;
 };
 
 struct OykIfaceRuntime {

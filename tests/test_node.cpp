@@ -3594,6 +3594,52 @@ void test_theme_config_cloning_and_storage() {
     std::cout << "[PASS] test_theme_config_cloning_and_storage\n";
 }
 
+void test_session_eol_detection_and_reply_adaptation() {
+    node::SessionParams sp{};
+    node::Session sess(1, "ax0", ax25::Callsign("K7EOL", 7), ax25::Callsign("N1LF", 0),
+                       "127.0.0.1:10093", node::SessionDirection::Inbound, sp);
+    (void)sess.accept_inbound_sabm();
+    assert(sess.effective_tx_eol() == OYK_TERM_EOL_CR);
+
+    // Receive LF-terminated command with blank line preserved
+    auto f1 = ax25::Frame::make_i(ax25::Callsign("K7EOL", 7), ax25::Callsign("N1LF", 0), 0, 0,
+                                  {'I', 'N', 'F', 'O', '\n', '\n'});
+    auto ev1 = sess.on_frame(f1);
+    assert(ev1.rx_lines.size() == 2);
+    assert(ev1.rx_lines[0] == "INFO");
+    assert(ev1.rx_lines[1].empty());
+    assert(sess.effective_tx_eol() == OYK_TERM_EOL_LF);
+
+    auto tx_lf = sess.queue_text("Line 1\rLine 2\r\n");
+    assert(!tx_lf.tx_frames.empty());
+    std::string wire_lf(tx_lf.tx_frames[0].info.begin(), tx_lf.tx_frames[0].info.end());
+    assert(wire_lf == "Line 1\nLine 2\n");
+
+    // Receive CRLF split across two I-frames (\r then \n) -> upgrades to CRLF, single newline
+    auto f2 = ax25::Frame::make_i(ax25::Callsign("K7EOL", 7), ax25::Callsign("N1LF", 0), 1, 0,
+                                  {'P', 'O', 'R', 'T', 'S', '\r'});
+    auto ev2 = sess.on_frame(f2);
+    assert(ev2.rx_lines.size() == 1 && ev2.rx_lines[0] == "PORTS");
+    auto f3 = ax25::Frame::make_i(ax25::Callsign("K7EOL", 7), ax25::Callsign("N1LF", 0), 2, 0,
+                                  {'\n', 'B', '\r', '\n'});
+    auto ev3 = sess.on_frame(f3);
+    assert(ev3.rx_lines.size() == 1 && ev3.rx_lines[0] == "B");
+    assert(sess.effective_tx_eol() == OYK_TERM_EOL_CRLF);
+
+    auto tx_crlf = sess.queue_text("Alpha\rBeta\n");
+    assert(!tx_crlf.tx_frames.empty());
+    std::string wire_crlf(tx_crlf.tx_frames[0].info.begin(), tx_crlf.tx_frames[0].info.end());
+    assert(wire_crlf == "Alpha\r\nBeta\r\n");
+
+    // Telnet-locked session keeps CRLF even if '\n'-only bytes are fed internally
+    sess.set_eol_mode(OYK_TERM_EOL_CRLF, false);
+    auto f4 = ax25::Frame::make_i(ax25::Callsign("K7EOL", 7), ax25::Callsign("N1LF", 0), 3, 0,
+                                  {'H', 'I', '\n'});
+    (void)sess.on_frame(f4);
+    assert(sess.effective_tx_eol() == OYK_TERM_EOL_CRLF);
+    std::cout << "[PASS] test_session_eol_detection_and_reply_adaptation\n";
+}
+
 } // namespace
 
 int main() {
@@ -3625,6 +3671,7 @@ int main() {
     test_config_include_storage_modes();
     test_same_interface_forwarding_policy();
     test_theme_config_cloning_and_storage();
+    test_session_eol_detection_and_reply_adaptation();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

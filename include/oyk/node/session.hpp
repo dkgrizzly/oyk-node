@@ -5,6 +5,7 @@
 
 #include "oyk/ax25/callsign.hpp"
 #include "oyk/ax25/frame.hpp"
+#include "oyk_term.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -81,6 +82,10 @@ public:
     SessionMode mode() const noexcept { return mode_; }
     void set_mode(SessionMode m) noexcept { mode_ = m; }
     void set_local_terminal() noexcept { mode_ = SessionMode::LocalTerminal; }
+    void set_eol_mode(int default_eol, bool auto_detect) noexcept {
+        oyk_term_eol_init(&rx_eol_, default_eol, auto_detect ? 1 : 0);
+    }
+    int effective_tx_eol() const noexcept { return oyk_term_eol_effective_tx(&rx_eol_); }
     void set_local_loopback(bool v) noexcept { local_loopback_ = v; }
     bool is_local_loopback() const noexcept { return local_loopback_; }
     void set_chat_direct(bool v) noexcept { chat_direct_ = v; }
@@ -153,6 +158,7 @@ private:
     std::deque<SentFrame> unacked_;
     std::deque<uint8_t> tx_queue_;
     std::string rx_line_buf_;
+    OykTermEolParser rx_eol_{};
 
     bool t1_active_ = false;
     std::chrono::steady_clock::time_point t1_deadline_{};

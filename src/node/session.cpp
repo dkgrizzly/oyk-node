@@ -29,6 +29,7 @@ Session::Session(uint64_t id,
     if (params_.maxframe == 0 || params_.maxframe > 7) {
         params_.maxframe = 4;
     }
+    oyk_term_eol_init(&rx_eol_, OYK_TERM_EOL_CR, 1);
 }
 
 std::string Session::state_name(SessionState st) {
@@ -72,6 +73,7 @@ SessionEvents Session::accept_inbound_sabm() {
     unacked_.clear();
     tx_queue_.clear();
     rx_line_buf_.clear();
+    oyk_term_eol_reset(&rx_eol_, rx_eol_.default_eol, rx_eol_.auto_detect);
     stop_t1();
     touch();
     ev.tx_frames.push_back(ax25::Frame::make_ua(remote_call_, local_call_, true));
@@ -118,7 +120,26 @@ SessionEvents Session::initiate_disconnect(const std::string& reason) {
 }
 
 SessionEvents Session::queue_text(const std::string& text) {
-    std::vector<uint8_t> bytes(text.begin(), text.end());
+    if (local_loopback_ || mode_ == SessionMode::LocalTerminal) {
+        std::vector<uint8_t> bytes(text.begin(), text.end());
+        return queue_bytes(bytes);
+    }
+    std::size_t eol_len = 0;
+    const char* eol = oyk_term_eol_tx_bytes(&rx_eol_, &eol_len);
+    std::vector<uint8_t> bytes;
+    bytes.reserve(text.size() + 8);
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == '\r') {
+            if (i + 1 < text.size() && text[i + 1] == '\n') ++i;
+            bytes.insert(bytes.end(), eol, eol + eol_len);
+        } else if (c == '\n') {
+            if (i + 1 < text.size() && text[i + 1] == '\r') ++i;
+            bytes.insert(bytes.end(), eol, eol + eol_len);
+        } else {
+            bytes.push_back(static_cast<uint8_t>(c));
+        }
+    }
     return queue_bytes(bytes);
 }
 
@@ -240,6 +261,7 @@ SessionEvents Session::on_frame(const ax25::Frame& frame) {
             unacked_.clear();
             tx_queue_.clear();
             rx_line_buf_.clear();
+            oyk_term_eol_reset(&rx_eol_, rx_eol_.default_eol, rx_eol_.auto_detect);
             stop_t1();
             ev.tx_frames.push_back(ax25::Frame::make_ua(remote_call_, local_call_, frame.pf()));
             break;
@@ -268,25 +290,23 @@ SessionEvents Session::on_frame(const ax25::Frame& frame) {
 
                 if (bridged_session_id_ == 0 && mode_ != SessionMode::LocalTerminal) {
                     for (uint8_t b : frame.info) {
-                        char c = static_cast<char>(b);
-                        if (c == '\r' || c == '\n') {
-                            if (!rx_line_buf_.empty() || c == '\r') {
-                                ev.rx_lines.push_back(rx_line_buf_);
-                                rx_line_buf_.clear();
-                            }
-                        } else if (b == 0x1A) {
+                        int act = oyk_term_eol_feed_byte(&rx_eol_, b);
+                        if (act == OYK_TERM_ACT_NEWLINE) {
+                            ev.rx_lines.push_back(rx_line_buf_);
+                            rx_line_buf_.clear();
+                        } else if (act == OYK_TERM_ACT_CTRL_Z) {
                             if (!rx_line_buf_.empty()) {
                                 ev.rx_lines.push_back(rx_line_buf_);
                                 rx_line_buf_.clear();
                             }
                             ev.rx_lines.push_back("\x1A");
-                        } else if (c == '\b' || b == 0x7F) {
+                        } else if (act == OYK_TERM_ACT_BS) {
                             if (!rx_line_buf_.empty()) {
                                 rx_line_buf_.pop_back();
                             }
-                        } else if (b >= 0x20 && b < 0x7F) {
+                        } else if (act == OYK_TERM_ACT_CHAR) {
                             if (rx_line_buf_.size() < 512) {
-                                rx_line_buf_.push_back(c);
+                                rx_line_buf_.push_back((b == '\t') ? ' ' : static_cast<char>(b));
                             }
                         }
                     }
@@ -339,22 +359,22 @@ std::vector<std::string> Session::feed_local_loopback_bytes(const std::vector<ui
     touch();
     std::vector<std::string> lines;
     for (uint8_t b : data) {
-        char c = static_cast<char>(b);
-        if (c == '\r' || c == '\n') {
-            if (!rx_line_buf_.empty() || c == '\r') {
-                lines.push_back(rx_line_buf_);
-                rx_line_buf_.clear();
-            }
-        } else if (b == 0x1A) {
+        int act = oyk_term_eol_feed_byte(&rx_eol_, b);
+        if (act == OYK_TERM_ACT_NEWLINE) {
+            lines.push_back(rx_line_buf_);
+            rx_line_buf_.clear();
+        } else if (act == OYK_TERM_ACT_CTRL_Z) {
             if (!rx_line_buf_.empty()) {
                 lines.push_back(rx_line_buf_);
                 rx_line_buf_.clear();
             }
             lines.push_back("\x1A");
-        } else if (c == '\b' || b == 0x7F) {
+        } else if (act == OYK_TERM_ACT_BS) {
             if (!rx_line_buf_.empty()) rx_line_buf_.pop_back();
-        } else if (b >= 0x20 && b < 0x7F) {
-            if (rx_line_buf_.size() < 512) rx_line_buf_.push_back(c);
+        } else if (act == OYK_TERM_ACT_CHAR) {
+            if (rx_line_buf_.size() < 512) {
+                rx_line_buf_.push_back((b == '\t') ? ' ' : static_cast<char>(b));
+            }
         }
     }
     return lines;

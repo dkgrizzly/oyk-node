@@ -49,6 +49,7 @@ if(NOT WIN32)
         src/node/node_engine.cpp
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
     )
 
     target_include_directories(oyknode_core
@@ -216,6 +217,7 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
                         "${_win64_res}"
                         -o "${_win64_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
@@ -232,6 +234,8 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.hpp"
                     "${_win64_res}"
                 COMMENT "Building 64-bit Windows GUI executable (oykw64.exe)"
             )
@@ -268,6 +272,7 @@ if(BUILD_WINDOWS_PORT)
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
                         "${_win32_res}"
                         -o "${_win32_exe}"
                         -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
@@ -284,6 +289,8 @@ if(BUILD_WINDOWS_PORT)
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.hpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_term.hpp"
                     "${_win32_res}"
                 COMMENT "Building 32-bit Windows GUI executable (oykw32.exe)"
             )
@@ -410,6 +417,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
         ports/dos/dos_mouse.cpp
@@ -448,6 +456,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
     )
     target_include_directories(oyk_tinytmux_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
@@ -476,6 +485,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
     )
     target_include_directories(oyk_pico_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat

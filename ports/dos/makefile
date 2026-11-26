@@ -64,8 +64,8 @@ CFG_DEF        = -DCFG_H="oyk_mtcp.cfg"
 CFLAGS_MTCP     = $(CPU) -ml -os -zm -zt32 -bt=dos -zq -DOYK_DOS_HAS_MTCP=1 $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
 CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
 
-NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj
-TEST_OBJS = test_dos.obj test_portable_dos.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj
+NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj oyk_term.obj
+TEST_OBJS = test_dos.obj test_portable_dos.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj oyk_term.obj
 
 MTCP_OBJS = &
     mtcp_packet.obj &
@@ -125,6 +125,9 @@ oyk_printer.obj: ../compat/oyk_printer.cpp ../compat/oyk_printer.hpp
 
 oyk_tui.obj: ../compat/oyk_tui.cpp ../compat/oyk_tui.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=oyk_tui.obj ../compat/oyk_tui.cpp
+
+oyk_term.obj: ../compat/oyk_term.cpp ../compat/oyk_term.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=oyk_term.obj ../compat/oyk_term.cpp
 
 test_dos.obj: test_dos.cpp dos_usb.hpp dos_video.hpp ems.hpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
     $(CC) $(CFLAGS_COMMON) -fo=test_dos.obj test_dos.cpp

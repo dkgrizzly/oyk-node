@@ -2664,6 +2664,7 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
         }
         time_t now_t = now_time();
         memset(sess, 0, sizeof(*sess));
+        oyk_term_eol_init(&sess->rx_eol, OYK_TERM_EOL_CR, 1);
         sess->id = next_session_id_++;
         sess->iface_idx = -1;
         sess->local_call = target;
@@ -2770,6 +2771,7 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
 
     time_t now_t = now_time();
     memset(sess, 0, sizeof(*sess));
+    oyk_term_eol_init(&sess->rx_eol, OYK_TERM_EOL_CR, 1);
     sess->id = next_session_id_++;
     sess->iface_idx = iface_idx;
     sess->local_call = cfg_.callsign;
@@ -2820,19 +2822,18 @@ int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, si
         sess->last_activity = now_time();
         for (size_t i = 0; i < len && sess->state == OYK_SESS_CONNECTED; ++i) {
             oyk_u8 ch = data[i];
-            if (ch == '\r' || ch == '\n') {
+            int act = oyk_term_eol_feed_byte(&sess->rx_eol, ch);
+            if (act == OYK_TERM_ACT_NEWLINE) {
                 sess->rx_line[sess->rx_line_len] = '\0';
-                if (sess->rx_line_len > 0 || ch == '\r') {
-                    if (sess->in_bbs) {
-                        handle_bbs_line(sess, sess->rx_line);
-                    } else if (sess->in_chat) {
-                        handle_chat_line(sess, sess->rx_line);
-                    } else {
-                        handle_normal_command(sess, sess->rx_line);
-                    }
+                if (sess->in_bbs) {
+                    handle_bbs_line(sess, sess->rx_line);
+                } else if (sess->in_chat) {
+                    handle_chat_line(sess, sess->rx_line);
+                } else {
+                    handle_normal_command(sess, sess->rx_line);
                 }
                 sess->rx_line_len = 0;
-            } else if (ch == 0x1AU) {
+            } else if (act == OYK_TERM_ACT_CTRL_Z) {
                 if (sess->rx_line_len > 0) {
                     sess->rx_line[sess->rx_line_len] = '\0';
                     if (sess->in_bbs) handle_bbs_line(sess, sess->rx_line);
@@ -2841,9 +2842,11 @@ int OykPortableNode::send_local_bytes(oyk_u32 session_id, const oyk_u8* data, si
                 if (sess->in_bbs && sess->state == OYK_SESS_CONNECTED) {
                     handle_bbs_line(sess, "/EX");
                 }
-            } else if (ch >= 0x20U && ch <= 0x7EU) {
+            } else if (act == OYK_TERM_ACT_BS) {
+                if (sess->rx_line_len > 0) --sess->rx_line_len;
+            } else if (act == OYK_TERM_ACT_CHAR) {
                 if (sess->rx_line_len < static_cast<int>(sizeof(sess->rx_line) - 1)) {
-                    sess->rx_line[sess->rx_line_len++] = static_cast<char>(ch);
+                    sess->rx_line[sess->rx_line_len++] = (ch == '\t') ? ' ' : static_cast<char>(ch);
                 }
             }
         }
@@ -3226,26 +3229,53 @@ void OykPortableNode::send_text(OykSession* sess, const char* text) {
         return;
     }
     if (!tx_cb_) return;
-    size_t total = strlen(text);
-    size_t pos = 0;
-    while (pos < total) {
-        size_t chunk = total - pos;
-        if (chunk > 220) chunk = 220;
-        OykFrame f;
-        memset(&f, 0, sizeof(f));
-        f.dst = sess->remote_call;
-        f.src = sess->local_call;
-        f.is_command = 1;
+
+    size_t eol_len = 0;
+    const char* eol_bytes = oyk_term_eol_tx_bytes(&sess->rx_eol, &eol_len);
+
+    OykFrame f;
+    memset(&f, 0, sizeof(f));
+    f.dst = sess->remote_call;
+    f.src = sess->local_call;
+    f.is_command = 1;
+    f.has_pid = 1;
+    f.pid = 0xF0U;
+    oyk_u16 chunk_len = 0;
+
+    for (size_t i = 0; ; ++i) {
+        char ch = text[i];
+        if (ch == '\0') break;
+        const char* emit = &ch;
+        size_t emit_len = 1;
+        if (ch == '\r') {
+            if (text[i + 1] == '\n') ++i;
+            emit = eol_bytes;
+            emit_len = eol_len;
+        } else if (ch == '\n') {
+            if (text[i + 1] == '\r') ++i;
+            emit = eol_bytes;
+            emit_len = eol_len;
+        }
+        for (size_t k = 0; k < emit_len; ++k) {
+            f.info[chunk_len++] = static_cast<oyk_u8>(emit[k]);
+            if (chunk_len >= 220U) {
+                f.control = static_cast<oyk_u8>(((sess->vs & 0x07U) << 1) | ((sess->vr & 0x07U) << 5));
+                f.info_len = chunk_len;
+                sess->vs = static_cast<oyk_u8>((sess->vs + 1) & 0x07U);
+                if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
+                    ifaces_[sess->iface_idx].tx_frames++;
+                }
+                chunk_len = 0;
+            }
+        }
+    }
+    if (chunk_len > 0U) {
         f.control = static_cast<oyk_u8>(((sess->vs & 0x07U) << 1) | ((sess->vr & 0x07U) << 5));
-        f.has_pid = 1;
-        f.pid = 0xF0U;
-        f.info_len = static_cast<oyk_u16>(chunk);
-        memcpy(f.info, text + pos, chunk);
+        f.info_len = chunk_len;
         sess->vs = static_cast<oyk_u8>((sess->vs + 1) & 0x07U);
         if (tx_cb_(sess->iface_idx, &f, sess->peer_ip, sess->peer_port, sess->peer_handle, tx_ctx_)) {
             ifaces_[sess->iface_idx].tx_frames++;
         }
-        pos += chunk;
     }
 }
 
@@ -5089,6 +5119,8 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
             mark_welcomed_call(src_s);
 
             memset(sess, 0, sizeof(*sess));
+            oyk_term_eol_init(&sess->rx_eol, is_telnet ? OYK_TERM_EOL_CRLF : OYK_TERM_EOL_CR,
+                              is_telnet ? 0 : 1);
             sess->id = next_session_id_++;
             sess->iface_idx = iface_idx;
             sess->local_call = frame->dst;
@@ -5270,22 +5302,21 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
 
             for (oyk_u16 i = 0; i < frame->info_len; ++i) {
                 oyk_u8 ch = frame->info[i];
-                if (ch == '\r' || ch == '\n') {
+                int act = oyk_term_eol_feed_byte(&sess->rx_eol, ch);
+                if (act == OYK_TERM_ACT_NEWLINE) {
                     sess->rx_line[sess->rx_line_len] = '\0';
-                    if (sess->rx_line_len > 0 || ch == '\r') {
-                        if (sess->restricted_ban) {
-                            handle_restricted_line(sess, sess->rx_line);
-                        } else if (sess->in_bbs) {
-                            handle_bbs_line(sess, sess->rx_line);
-                        } else if (sess->in_chat) {
-                            handle_chat_line(sess, sess->rx_line);
-                        } else {
-                            handle_normal_command(sess, sess->rx_line);
-                        }
+                    if (sess->restricted_ban) {
+                        handle_restricted_line(sess, sess->rx_line);
+                    } else if (sess->in_bbs) {
+                        handle_bbs_line(sess, sess->rx_line);
+                    } else if (sess->in_chat) {
+                        handle_chat_line(sess, sess->rx_line);
+                    } else {
+                        handle_normal_command(sess, sess->rx_line);
                     }
                     sess->rx_line_len = 0;
                     if (sess->state != OYK_SESS_CONNECTED) break;
-                } else if (ch == 0x1AU) {
+                } else if (act == OYK_TERM_ACT_CTRL_Z) {
                     if (sess->rx_line_len > 0) {
                         sess->rx_line[sess->rx_line_len] = '\0';
                         if (sess->in_bbs) handle_bbs_line(sess, sess->rx_line);
@@ -5295,9 +5326,11 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                         handle_bbs_line(sess, "/EX");
                     }
                     if (sess->state != OYK_SESS_CONNECTED) break;
-                } else if (ch >= 0x20U && ch <= 0x7EU) {
+                } else if (act == OYK_TERM_ACT_BS) {
+                    if (sess->rx_line_len > 0) --sess->rx_line_len;
+                } else if (act == OYK_TERM_ACT_CHAR) {
                     if (sess->rx_line_len < static_cast<int>(sizeof(sess->rx_line) - 1)) {
-                        sess->rx_line[sess->rx_line_len++] = static_cast<char>(ch);
+                        sess->rx_line[sess->rx_line_len++] = (ch == '\t') ? ' ' : static_cast<char>(ch);
                     }
                 }
             }
