@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -154,6 +155,9 @@ int main(int argc, char* argv[]) {
         oyk::ui::NcursesUI ui(engine, &g_stop_requested);
         ui.run();
         engine.stop();
+        const std::string signoff_call = engine.config().callsign.str();
+        std::printf("73 de %s\n", signoff_call.c_str());
+        std::fflush(stdout);
         return 0;
     }
 #else
@@ -175,5 +179,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Shutting down cleanly...\n";
     engine.stop();
+    const std::string signoff_call = engine.config().callsign.str();
+    std::printf("73 de %s\n", signoff_call.c_str());
+    std::fflush(stdout);
     return 0;
 }

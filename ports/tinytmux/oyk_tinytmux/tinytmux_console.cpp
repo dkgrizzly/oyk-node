@@ -3070,6 +3070,10 @@ void TinyTmuxConsole::tick(oyk_u32 now_ms) {
             bootloader_pending_ = 0;
             node_->finish_shutdown();
             tinytmux_fs_unmount();
+            char signoff_call[24], signoff_line[48];
+            oyk_format_callsign(&node_->config().callsign, signoff_call, sizeof(signoff_call));
+            sprintf(signoff_line, "\r\n73 de %s\r\n", signoff_call);
+            write_str(signoff_line);
             write_str("\r\n\033[7m Node halted in HalfKay bootloader. Flash firmware or power-cycle board. \033[0m\r\n");
             tinytmux_board_enter_bootloader();
         }

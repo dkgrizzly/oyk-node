@@ -145,9 +145,10 @@ size_t tinytmux_uart_read(int logical_port, oyk_u8* out, size_t max_len) {
 extern "C" void _reboot_Teensyduino_(void);
 
 void tinytmux_board_enter_bootloader() {
+    Serial.send_now();
     Serial.flush();
     SerialUSB1.flush();
-    delay(50);
+    delay(250);
     _reboot_Teensyduino_();
 }
 
