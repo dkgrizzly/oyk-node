@@ -17,6 +17,7 @@ option(BUILD_MSDOS_PORT    "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP
 option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) executable" OFF)
 option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
 option(BUILD_TINYTMUX_PORT "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
+option(BUILD_PICO_PORT     "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
 set(MTCP_DIR "$ENV{HOME}/mTCP" CACHE PATH "Path to Michael Brutman's mTCP source tree (for BUILD_MSDOS_PORT)")
 set(FREEDOS_BOOT_IMG "" CACHE FILEPATH "Path to FreeDOS/MS-DOS boot floppy/disk image for QEMU DOS unit tests")
 
@@ -341,6 +342,54 @@ if(BUILD_TINYTMUX_PORT)
     )
 endif()
 
+# Optional Raspberry Pi Pico (RP2040 / RP2350) firmware targets - built only if requested
+if(BUILD_PICO_PORT)
+    set(_pico_sdk_found "")
+    if(DEFINED ENV{PICO_SDK_PATH} AND EXISTS "$ENV{PICO_SDK_PATH}/pico_sdk_init.cmake")
+        set(_pico_sdk_found "$ENV{PICO_SDK_PATH}")
+    else()
+        file(GLOB _dot_sdks "$ENV{HOME}/.pico-sdk/sdk/*")
+        foreach(_d IN LISTS _dot_sdks "$ENV{HOME}/pico-sdk")
+            if(EXISTS "${_d}/pico_sdk_init.cmake" AND EXISTS "${_d}/lib/cyw43-driver/src" AND EXISTS "${_d}/lib/lwip/src")
+                set(_pico_sdk_found "${_d}")
+                break()
+            endif()
+        endforeach()
+        if(NOT _pico_sdk_found AND EXISTS "$ENV{HOME}/pico-sdk/pico_sdk_init.cmake")
+            set(_pico_sdk_found "$ENV{HOME}/pico-sdk")
+        endif()
+    endif()
+    file(GLOB _arm_gcc_cands "$ENV{HOME}/.pico-sdk/toolchain/*/bin/arm-none-eabi-gcc")
+    find_program(PICO_ARM_GCC_EXE arm-none-eabi-gcc
+        HINTS "$ENV{HOME}/.pico-sdk/toolchain/15_2_Rel1/bin" ${_arm_gcc_cands}
+    )
+    if(NOT _pico_sdk_found)
+        message(FATAL_ERROR "BUILD_PICO_PORT requires Pico SDK in ~/pico-sdk or ~/.pico-sdk/sdk/<ver>")
+    endif()
+    if(NOT PICO_ARM_GCC_EXE)
+        message(FATAL_ERROR "BUILD_PICO_PORT requires arm-none-eabi-gcc in PATH or ~/.pico-sdk/toolchain/<ver>/bin")
+    endif()
+    set(PICO_BOARDS pico_w pico2_w waveshare_core2350b pimoroni_pga2350)
+    set(_pico_board_targets)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pico")
+    foreach(_pb IN LISTS PICO_BOARDS)
+        set(_pb_dir "${CMAKE_CURRENT_BINARY_DIR}/pico/${_pb}")
+        add_custom_target(oyk-pico-${_pb}
+            COMMAND ${CMAKE_COMMAND} -S "${CMAKE_CURRENT_SOURCE_DIR}/ports/pico"
+                    -B "${_pb_dir}"
+                    "-DPICO_BOARD=${_pb}"
+                    "-DPICO_SDK_PATH=${_pico_sdk_found}"
+            COMMAND ${CMAKE_COMMAND} --build "${_pb_dir}" -j
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_pb_dir}/oyk-pico-${_pb}.uf2"
+                    "${CMAKE_CURRENT_BINARY_DIR}/pico/oyk-pico-${_pb}.uf2"
+            COMMENT "Building Raspberry Pi Pico UF2 firmware for ${_pb}"
+        )
+        list(APPEND _pico_board_targets oyk-pico-${_pb})
+    endforeach()
+    add_custom_target(oyk-pico DEPENDS ${_pico_board_targets})
+endif()
+
 if(BUILD_TESTS AND NOT WIN32)
     enable_testing()
 
@@ -400,6 +449,34 @@ if(BUILD_TESTS AND NOT WIN32)
     )
     target_compile_options(oyk_tinytmux_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_tinytmux_tests COMMAND oyk_tinytmux_tests)
+
+    # Strict C++98 host verification of Raspberry Pi Pico (RP2040 / RP2350) boards, PSRAM, storage, RM2 optional radio & 2-UART console
+    add_executable(oyk_pico_tests
+        tests/test_pico.cpp
+        ports/pico/board_pico.cpp
+        ports/pico/pico_psram.cpp
+        ports/pico/pico_fs.cpp
+        ports/pico/pico_radio.cpp
+        ports/pico/pico_net_bridge.cpp
+        ports/pico/pico_console.cpp
+        ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+    )
+    target_include_directories(oyk_pico_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/oyk_tinytmux
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/pico
+    )
+    set_target_properties(oyk_pico_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_pico_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_pico_tests COMMAND oyk_pico_tests)
 
     if(TARGET oyk-node)
         find_package(Python3 COMPONENTS Interpreter)
