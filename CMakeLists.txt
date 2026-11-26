@@ -48,6 +48,7 @@ if(NOT WIN32)
         src/node/command_handler.cpp
         src/node/node_engine.cpp
         ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
     )
 
     target_include_directories(oyknode_core
@@ -408,6 +409,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_yapp.cpp
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
         ports/dos/dos_mouse.cpp
@@ -445,6 +447,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_yapp.cpp
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
     )
     target_include_directories(oyk_tinytmux_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
@@ -472,6 +475,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_yapp.cpp
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
     )
     target_include_directories(oyk_pico_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat

@@ -9,6 +9,7 @@
 #include "oyk_yapp.hpp"
 #include "oyk_rig.hpp"
 #include "oyk_printer.hpp"
+#include "oyk_tui.hpp"
 #include "../ports/dos/dos_usb.hpp"
 #include "../ports/dos/dos_video.hpp"
 #include "../ports/dos/dos_mouse.hpp"
@@ -2164,6 +2165,46 @@ static void test_win_service_cmdline_builder() {
 }
 #endif
 
+static void test_oyk_tui_layout_and_close_hit() {
+    OykTuiConsoleLayout lay;
+    const int sizes[5][2] = { {25, 80}, {30, 80}, {37, 100}, {48, 128}, {50, 132} };
+    for (int i = 0; i < 5; ++i) {
+        int r = sizes[i][0], c = sizes[i][1];
+        oyk_tui_compute_console_layout(r, c, &lay);
+        assert(lay.too_small == 0);
+        assert(lay.status_row == r - 1);
+        assert(lay.iface_box.top == 2 && lay.heard_box.top == 2);
+        assert(lay.iface_box.left == 0);
+        assert(lay.heard_box.left + lay.heard_box.w == c);
+        assert(lay.conn_box.top == lay.iface_box.top + lay.iface_box.h);
+        assert(lay.log_box.top == lay.conn_box.top + lay.conn_box.h);
+        /* Full vertical display fill: bottom of Activity Log meets status row - 1 */
+        assert(lay.log_box.top + lay.log_box.h == lay.status_row);
+    }
+
+    OykTuiTermLayout tlay;
+    oyk_tui_compute_term_layout(30, 80, &tlay);
+    assert(tlay.header_row == 0 && tlay.body_top == 1 && tlay.body_rows == 27 &&
+           tlay.hotkey_row == 28 && tlay.input_row == 29);
+
+    OykTuiRect modal;
+    oyk_tui_center_modal(30, 80, 16, 62, &modal);
+    int close_c = oyk_tui_close_btn_col(&modal);
+    assert(close_c == modal.left + modal.w - 5);
+    assert(oyk_tui_hit_close_btn(&modal, modal.top, close_c) == 1);
+    assert(oyk_tui_hit_close_btn(&modal, modal.top, close_c + 2) == 1);
+    assert(oyk_tui_hit_close_btn(&modal, modal.top + 1, close_c) == 0);
+    assert(oyk_tui_hit_close_btn(&modal, modal.top, close_c - 1) == 0);
+
+    OykThemeConfig nat;
+    oyk_theme_init_dos_native(&nat);
+    assert(nat.colors[OYK_TR_BG] == 0x0000AAUL);
+    assert(nat.colors[OYK_TR_PANEL_BG] == 0x0000AAUL);
+    assert(nat.colors[OYK_TR_STATUS_BG] == 0xAAAAAAUL);
+    assert(nat.colors[OYK_TR_SELECTION_BG] == 0x00AAAAUL);
+    printf("[PASS] test_oyk_tui_layout_and_close_hit\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -2172,6 +2213,7 @@ int oyk_run_portable_tests() {
     test_portable_settings_reconfig_and_readonly();
     test_portable_rig_and_dos_usb();
     test_portable_printer();
+    test_oyk_tui_layout_and_close_hit();
     test_dos_video_dirty_diff_and_attrs();
     test_derive_default_iface_id();
     test_format_peer_spec();

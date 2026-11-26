@@ -87,6 +87,7 @@ add_executable(${TARGET_NAME}
     "${OYK_ROOT}/ports/compat/oyk_yapp.cpp"
     "${OYK_ROOT}/ports/compat/oyk_rig.cpp"
     "${OYK_ROOT}/ports/compat/oyk_printer.cpp"
+    "${OYK_ROOT}/ports/compat/oyk_tui.cpp"
     "${OYK_ROOT}/ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp"
 )
 
