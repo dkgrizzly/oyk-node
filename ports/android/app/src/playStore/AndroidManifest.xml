@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Play Store flavor uses Storage Access Framework (SAF) on API 30+; no MANAGE_EXTERNAL_STORAGE. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+</manifest>

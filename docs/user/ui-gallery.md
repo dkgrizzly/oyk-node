@@ -3,9 +3,9 @@
 
 # OYK-Node UI Gallery
 
-Automated screenshots generated across all five operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
+Automated screenshots generated across all six operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, and **Windows**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
 
 ## 1. Operator Console (Main View)
 
@@ -29,6 +29,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 1. Operator Console (Main View)](images/ui-gallery/win_main.png)
 
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 1. Operator Console (Main View)](images/ui-gallery/android_main.png)
+
 ## 2. Settings — Node Tab
 
 ### POSIX ncurses
@@ -50,6 +54,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Windows GUI (Wine / Win32/64)
 
 ![Windows GUI (Wine / Win32/64) — 2. Settings — Node Tab](images/ui-gallery/win_settings.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 2. Settings — Node Tab](images/ui-gallery/android_settings.png)
 
 ## 3. Add Interface Wizard
 
@@ -73,6 +81,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 3. Add Interface Wizard](images/ui-gallery/win_add_iface.png)
 
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 3. Add Interface Wizard](images/ui-gallery/android_add_iface.png)
+
 ## 4. Edit Interface (Single-View Dialog)
 
 ### POSIX ncurses
@@ -94,6 +106,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Windows GUI (Wine / Win32/64)
 
 ![Windows GUI (Wine / Win32/64) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/win_edit_iface.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/android_edit_iface.png)
 
 ## 5. Settings — Peers Tab
 
@@ -117,6 +133,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 5. Settings — Peers Tab](images/ui-gallery/win_peers.png)
 
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 5. Settings — Peers Tab](images/ui-gallery/android_peers.png)
+
 ## 6. Edit / Add Peer Dialog
 
 ### POSIX ncurses
@@ -138,6 +158,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Windows GUI (Wine / Win32/64)
 
 ![Windows GUI (Wine / Win32/64) — 6. Edit / Add Peer Dialog](images/ui-gallery/win_edit_peer.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 6. Edit / Add Peer Dialog](images/ui-gallery/android_edit_peer.png)
 
 ## 7. Terminate Connection Modal
 
@@ -161,6 +185,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 7. Terminate Connection Modal](images/ui-gallery/win_terminate.png)
 
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 7. Terminate Connection Modal](images/ui-gallery/android_terminate.png)
+
 ## 8. Ban / Unban Callsign Dialog
 
 ### POSIX ncurses
@@ -182,6 +210,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Windows GUI (Wine / Win32/64)
 
 ![Windows GUI (Wine / Win32/64) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/win_ban.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/android_ban.png)
 
 ## 9. Auto-Learned Peers Exit / Bootloader Prompt
 
@@ -205,6 +237,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/win_exit.png)
 
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/android_exit.png)
+
 ## 10. Theme Settings Dialog
 
 ### POSIX ncurses
@@ -226,4 +262,8 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Windows GUI (Wine / Win32/64)
 
 ![Windows GUI (Wine / Win32/64) — 10. Theme Settings Dialog](images/ui-gallery/win_theme.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 10. Theme Settings Dialog](images/ui-gallery/android_theme.png)
 

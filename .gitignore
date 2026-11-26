@@ -20,3 +20,8 @@ incoming/
 ports/dos/freedos/
 ports/dos/mtcp_inc/
 ports/dos/mtcp_inc_stamp
+ports/android/.gradle/
+ports/android/local.properties
+ports/android/build/
+ports/android/app/build/
+ports/android/app/.cxx/

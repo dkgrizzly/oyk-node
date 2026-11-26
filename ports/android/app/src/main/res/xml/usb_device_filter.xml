@@ -1,0 +1,11 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+<resources>
+    <!-- CDC-ACM / CP210x / FTDI / CH340 USB-Serial & RadioFoundry PPP adapters -->
+    <usb-device class="2" />
+    <usb-device vendor-id="4292" />
+    <usb-device vendor-id="1027" />
+    <usb-device vendor-id="6790" />
+    <usb-device vendor-id="9114" />
+    <usb-device vendor-id="11914" />
+</resources>
