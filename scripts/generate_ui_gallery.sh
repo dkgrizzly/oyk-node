@@ -122,11 +122,25 @@ else
     echo "Warning: Wine prefix (~/.wine64 or ~/.wine32), Windows binary, or xvfb-run missing; skipping Windows capture." >&2
 fi
 
+ANDROID_SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Android/Sdk}}"
+echo "[6/6] Capturing Android Compose UI screens under Robolectric..."
+if [[ -x "${ROOT_DIR}/ports/android/gradlew" && -d "${ANDROID_SDK}" ]] && command -v java >/dev/null 2>&1; then
+    (
+        cd "${ROOT_DIR}/ports/android"
+        OYK_UI_CAPTURE_DIR="${TMP_CAP}" ANDROID_HOME="${ANDROID_SDK}" \
+            ./gradlew :app:testPlayStoreDebugUnitTest \
+            --tests "com.kr4oyk.oyknode.OykUiGalleryTest" \
+            --rerun-tasks --no-daemon >/dev/null
+    )
+else
+    echo "Warning: Android Gradle wrapper, Java, or Android SDK unavailable; skipping Android capture." >&2
+fi
+
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme)
-PORTS=(ncurses dos tinytmux gtk win)
+PORTS=(ncurses dos tinytmux gtk win android)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -146,7 +160,7 @@ for f in "${TMP_CAP}"/*.bmp; do
     python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
-for f in "${TMP_CAP}"/gtk_*.png; do
+for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png; do
     [[ -e "$f" ]] || continue
     cp -f "$f" "${OUT_IMG_DIR}/"
 done
@@ -158,6 +172,7 @@ port_label() {
         tinytmux) echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
         gtk)      echo "X11 GTK+ 2.0" ;;
         win)      echo "Windows GUI (Wine / Win32/64)" ;;
+        android)  echo "Android (Material 3 / Jetpack Compose)" ;;
     esac
 }
 
@@ -183,9 +198,9 @@ flow_title() {
 
 # OYK-Node UI Gallery
 
-Automated screenshots generated across all five operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
+Automated screenshots generated across all six operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, and **Windows**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
 
 HEADER
     for flow in "${FLOWS[@]}"; do

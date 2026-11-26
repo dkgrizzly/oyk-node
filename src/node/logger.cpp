@@ -279,7 +279,8 @@ bool Logger::configure(const LogConfig& config, std::string& error_out) {
         if (config_.rotate_daily && fs::exists(target.full_path, ec) && !ec) {
             auto ftime = fs::last_write_time(target.full_path, ec);
             if (!ec) {
-                auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+                auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                    ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
                 std::string file_date = format_date_yyyymmdd(sctp);
                 if (file_date < today) {
                     target.active_date = file_date;

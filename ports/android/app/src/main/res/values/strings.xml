@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+<resources>
+    <string name="app_name">OYK Packet Node</string>
+    <string name="service_channel_name">OYK Packet Node Service</string>
+    <string name="service_notification_title">OYK Packet Node Active</string>
+</resources>

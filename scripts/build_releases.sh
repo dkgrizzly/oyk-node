@@ -536,6 +536,12 @@ if [[ "${SKIP_SRC}" -eq 0 ]]; then
         rm -rf "${SRC_STAGE}/oyk-node-${VER}/dist" \
                "${SRC_STAGE}/oyk-node-${VER}/build" \
                "${SRC_STAGE}/oyk-node-${VER}/build-t41" \
+               "${SRC_STAGE}/oyk-node-${VER}/build-pico"* \
+               "${SRC_STAGE}/oyk-node-${VER}/ports/android/.gradle" \
+               "${SRC_STAGE}/oyk-node-${VER}/ports/android/local.properties" \
+               "${SRC_STAGE}/oyk-node-${VER}/ports/android/build" \
+               "${SRC_STAGE}/oyk-node-${VER}/ports/android/app/build" \
+               "${SRC_STAGE}/oyk-node-${VER}/ports/android/app/.cxx" \
                "${SRC_STAGE}/oyk-node-${VER}/ports/dos/LOGS"
         tar -C "${SRC_STAGE}" -czf "${OUT_DIR}/${SRC_TGZ}" "oyk-node-${VER}"
         (cd "${SRC_STAGE}" && zip -qr "${OUT_DIR}/${SRC_ZIP}" "oyk-node-${VER}")
