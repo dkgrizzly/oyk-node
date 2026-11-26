@@ -120,6 +120,7 @@ static void test_dos_daily_rotation() {
 }
 
 int main() {
+    setvbuf(stdout, NULL, _IONBF, 0);
     printf("=== OYK DOS TESTS START ===\n");
     test_dos_16bit_types_and_eol();
     test_dos_ems4();

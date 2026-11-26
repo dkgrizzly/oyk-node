@@ -66,23 +66,92 @@ bool parse_bool(const std::string& v, bool fallback) {
     return fallback;
 }
 
+std::string resolve_cfg_subpath(const std::string& base_cfg_path, const std::string& raw) {
+    namespace fs = std::filesystem;
+    if (raw.empty()) return {};
+    std::string expanded = expand_tilde(raw);
+    fs::path p(expanded);
+    if (p.is_absolute() || base_cfg_path.empty()) {
+        return p.lexically_normal().string();
+    }
+    fs::path cfg_dir = fs::path(base_cfg_path).parent_path();
+    if (cfg_dir.empty()) {
+        return p.lexically_normal().string();
+    }
+    return (cfg_dir / p).lexically_normal().string();
+}
+
+bool same_normalized_cfg_path(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    namespace fs = std::filesystem;
+    std::error_code ec1, ec2;
+    fs::path pa = fs::weakly_canonical(fs::path(a), ec1);
+    fs::path pb = fs::weakly_canonical(fs::path(b), ec2);
+    if (!ec1 && !ec2) return pa == pb;
+    return fs::path(a).lexically_normal() == fs::path(b).lexically_normal();
+}
+
+void append_iface_lines(const radio::RadioInterfaceConfig& iface, std::vector<std::string>& lines) {
+    lines.push_back("");
+    lines.push_back("[interface " + iface.id + "]");
+    lines.push_back("type = " + iface.type);
+    if (!iface.description.empty()) {
+        lines.push_back("description = " + iface.description);
+    }
+    lines.push_back(std::string("allow_inbound = ") + (iface.allow_inbound ? "true" : "false"));
+    const bool out_allowed = (iface.type == "telnet") ? false : iface.allow_outbound;
+    lines.push_back(std::string("allow_outbound = ") + (out_allowed ? "true" : "false"));
+    for (const auto& [k, v] : iface.params) {
+        if (k == "allow_inbound" || k == "allow_outbound" || k == "inbound" || k == "outbound") continue;
+        lines.push_back(k + " = " + v);
+    }
+}
+
+void append_peer_lines(const radio::PeerConfig& peer, std::vector<std::string>& lines) {
+    if (peer.auto_learned) return;
+    lines.push_back("");
+    lines.push_back("[peer " + peer.id + "]");
+    if (!peer.callsign.empty()) {
+        lines.push_back("callsign = " + peer.callsign);
+    }
+    if (!peer.description.empty()) {
+        lines.push_back("description = " + peer.description);
+    }
+    if (!peer.interface_id.empty()) {
+        lines.push_back("interface = " + peer.interface_id);
+    }
+    if (!peer.host.empty()) {
+        lines.push_back("host = " + peer.host);
+    }
+    if (peer.port > 0) {
+        lines.push_back("port = " + std::to_string(peer.port));
+    }
+    lines.push_back("allow_inbound = " + std::string(peer.allow_inbound ? "true" : "false"));
+    lines.push_back("allow_outbound = " + std::string(peer.allow_outbound ? "true" : "false"));
+}
+
+bool write_cfg_file_with_dirs(const std::string& target,
+                              const std::vector<std::string>& lines,
+                              core::LineEnding eol) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path p(target);
+    if (p.has_parent_path() && !p.parent_path().empty()) {
+        fs::create_directories(p.parent_path(), ec);
+        if (ec) {
+            return false;
+        }
+    }
+    return core::write_lines_binary(target, lines, eol);
+}
+
 } // namespace
 
 std::string NodeConfig::resolved_banlist_path() const {
-    namespace fs = std::filesystem;
     if (!banlist_path.empty()) {
-        std::string expanded = expand_tilde(banlist_path);
-        fs::path p(expanded);
-        if (p.is_absolute() || source_path.empty()) {
-            return p.string();
-        }
-        fs::path cfg_dir = fs::path(source_path).parent_path();
-        if (cfg_dir.empty()) {
-            return p.string();
-        }
-        return (cfg_dir / p).string();
+        return resolve_cfg_subpath(source_path, banlist_path);
     }
-
+    namespace fs = std::filesystem;
     if (!source_path.empty()) {
         fs::path cfg_dir = fs::path(source_path).parent_path();
         if (!cfg_dir.empty()) {
@@ -90,6 +159,14 @@ std::string NodeConfig::resolved_banlist_path() const {
         }
     }
     return "./banlist.cfg";
+}
+
+std::string NodeConfig::resolved_interfaces_path() const {
+    return resolve_cfg_subpath(source_path, interfaces_file);
+}
+
+std::string NodeConfig::resolved_peers_path() const {
+    return resolve_cfg_subpath(source_path, peers_file);
 }
 
 ax25::Callsign NodeConfig::resolved_bbs_callsign() const {
@@ -204,110 +281,139 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
     cfg.line_ending = eol_info.first;
     cfg.has_detected_line_ending = eol_info.found_any;
 
-    std::string current_section;
-    radio::RadioInterfaceConfig* current_iface = nullptr;
-    radio::PeerConfig* current_peer = nullptr;
     bool node_call_explicit_ssid = false;
     bool node_ssid_set = false;
     uint8_t node_ssid_val = DEFAULT_NODE_SSID;
     bool bbs_call_explicit_ssid = false;
     bool chat_call_explicit_ssid = false;
 
-    auto lines = core::split_lines_any_eol(raw_bytes);
-    int line_num = 0;
-    for (std::string raw_line : lines) {
-        ++line_num;
-        // Strip inline comments starting with '#' or ';'
-        auto hash_pos = raw_line.find('#');
-        if (hash_pos != std::string::npos) {
-            raw_line = raw_line.substr(0, hash_pos);
-        }
-        auto semi_pos = raw_line.find(';');
-        if (semi_pos != std::string::npos) {
-            raw_line = raw_line.substr(0, semi_pos);
-        }
+    auto parse_chunk = [&](const std::string& chunk_bytes,
+                           const std::string& file_tag,
+                           bool allow_node_sections,
+                           bool allow_iface_sections,
+                           bool allow_peer_sections) -> bool {
+        std::string current_section;
+        radio::RadioInterfaceConfig* current_iface = nullptr;
+        radio::PeerConfig* current_peer = nullptr;
 
-        std::string line = trim(raw_line);
-        if (line.empty()) continue;
+        auto lines = core::split_lines_any_eol(chunk_bytes);
+        int line_num = 0;
+        for (std::string raw_line : lines) {
+            ++line_num;
+            auto hash_pos = raw_line.find('#');
+            if (hash_pos != std::string::npos) {
+                raw_line = raw_line.substr(0, hash_pos);
+            }
+            auto semi_pos = raw_line.find(';');
+            if (semi_pos != std::string::npos) {
+                raw_line = raw_line.substr(0, semi_pos);
+            }
 
-        if (line.front() == '[' && line.back() == ']') {
-            std::string sec = trim(line.substr(1, line.size() - 2));
-            std::string lower_sec = to_lower(sec);
-            if (lower_sec == "node") {
-                current_section = "node";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec == "logfiles") {
-                current_section = "logfiles";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec == "bbs") {
-                current_section = "bbs";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec == "chat") {
-                current_section = "chat";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec == "rig" || lower_sec == "radio") {
-                current_section = "rig";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec == "printer") {
-                current_section = "printer";
-                current_iface = nullptr;
-                current_peer = nullptr;
-            } else if (lower_sec.rfind("interface", 0) == 0) {
-                std::string rest = trim(sec.substr(9));
-                // Allow "[interface axudp0]" or "[interface:axudp0]"
-                if (!rest.empty() && rest.front() == ':') {
-                    rest = trim(rest.substr(1));
-                }
-                if (rest.empty()) {
-                    error_out = "Config line " + std::to_string(line_num) +
-                                ": interface section requires an ID (e.g. [interface axudp0])";
+            std::string line = trim(raw_line);
+            if (line.empty()) continue;
+
+            if (line.front() == '[' && line.back() == ']') {
+                std::string sec = trim(line.substr(1, line.size() - 2));
+                std::string lower_sec = to_lower(sec);
+                if (lower_sec == "node" || lower_sec == "logfiles" || lower_sec == "bbs" ||
+                    lower_sec == "chat" || lower_sec == "rig" || lower_sec == "radio" ||
+                    lower_sec == "printer") {
+                    if (!allow_node_sections) {
+                        error_out = file_tag + " line " + std::to_string(line_num) +
+                                    ": section [" + sec + "] belongs in main node.cfg";
+                        return false;
+                    }
+                    current_section = (lower_sec == "radio") ? "rig" : lower_sec;
+                    current_iface = nullptr;
+                    current_peer = nullptr;
+                } else if (lower_sec.rfind("interface", 0) == 0) {
+                    std::string rest = trim(sec.substr(9));
+                    if (!rest.empty() && rest.front() == ':') {
+                        rest = trim(rest.substr(1));
+                    }
+                    if (rest.empty()) {
+                        error_out = file_tag + " line " + std::to_string(line_num) +
+                                    ": interface section requires an ID (e.g. [interface axudp0])";
+                        return false;
+                    }
+                    if (!allow_iface_sections) {
+                        current_section = "skip";
+                        current_iface = nullptr;
+                        current_peer = nullptr;
+                        continue;
+                    }
+                    current_section = "interface";
+                    current_peer = nullptr;
+                    current_iface = nullptr;
+                    const std::string rl = to_lower(rest);
+                    for (auto& ex : cfg.interfaces) {
+                        if (to_lower(ex.id) == rl) {
+                            ex = radio::RadioInterfaceConfig{};
+                            ex.id = rest;
+                            current_iface = &ex;
+                            break;
+                        }
+                    }
+                    if (!current_iface) {
+                        radio::RadioInterfaceConfig iface;
+                        iface.id = rest;
+                        cfg.interfaces.push_back(std::move(iface));
+                        current_iface = &cfg.interfaces.back();
+                    }
+                } else if (lower_sec.rfind("peer", 0) == 0 &&
+                           (lower_sec.size() == 4 || lower_sec[4] == ':' ||
+                            std::isspace(static_cast<unsigned char>(lower_sec[4])))) {
+                    std::string rest = trim(sec.substr(4));
+                    if (!rest.empty() && rest.front() == ':') {
+                        rest = trim(rest.substr(1));
+                    }
+                    if (rest.empty()) {
+                        error_out = file_tag + " line " + std::to_string(line_num) +
+                                    ": peer section requires an ID (e.g. [peer remote0])";
+                        return false;
+                    }
+                    if (!allow_peer_sections) {
+                        current_section = "skip";
+                        current_iface = nullptr;
+                        current_peer = nullptr;
+                        continue;
+                    }
+                    current_section = "peer";
+                    current_iface = nullptr;
+                    current_peer = nullptr;
+                    const std::string rl = to_lower(rest);
+                    for (auto& ex : cfg.peers) {
+                        if (to_lower(ex.id) == rl) {
+                            ex = radio::PeerConfig{};
+                            ex.id = rest;
+                            current_peer = &ex;
+                            break;
+                        }
+                    }
+                    if (!current_peer) {
+                        radio::PeerConfig peer;
+                        peer.id = rest;
+                        cfg.peers.push_back(std::move(peer));
+                        current_peer = &cfg.peers.back();
+                    }
+                } else {
+                    error_out = file_tag + " line " + std::to_string(line_num) +
+                                ": unknown section [" + sec + "]";
                     return false;
                 }
-                current_section = "interface";
-                radio::RadioInterfaceConfig iface;
-                iface.id = rest;
-                cfg.interfaces.push_back(std::move(iface));
-                current_iface = &cfg.interfaces.back();
-                current_peer = nullptr;
-            } else if (lower_sec.rfind("peer", 0) == 0 &&
-                       (lower_sec.size() == 4 || lower_sec[4] == ':' ||
-                        std::isspace(static_cast<unsigned char>(lower_sec[4])))) {
-                std::string rest = trim(sec.substr(4));
-                if (!rest.empty() && rest.front() == ':') {
-                    rest = trim(rest.substr(1));
-                }
-                if (rest.empty()) {
-                    error_out = "Config line " + std::to_string(line_num) +
-                                ": peer section requires an ID (e.g. [peer remote0])";
-                    return false;
-                }
-                current_section = "peer";
-                radio::PeerConfig peer;
-                peer.id = rest;
-                cfg.peers.push_back(std::move(peer));
-                current_peer = &cfg.peers.back();
-                current_iface = nullptr;
-            } else {
-                error_out = "Config line " + std::to_string(line_num) +
-                            ": unknown section [" + sec + "]";
+                continue;
+            }
+
+            if (current_section == "skip") continue;
+
+            auto eq = line.find('=');
+            if (eq == std::string::npos) {
+                error_out = file_tag + " line " + std::to_string(line_num) + ": expected key = value";
                 return false;
             }
-            continue;
-        }
-
-        auto eq = line.find('=');
-        if (eq == std::string::npos) {
-            error_out = "Config line " + std::to_string(line_num) + ": expected key = value";
-            return false;
-        }
-        std::string raw_key = trim(line.substr(0, eq));
-        std::string key = to_lower(raw_key);
-        std::string val = trim(line.substr(eq + 1));
+            std::string raw_key = trim(line.substr(0, eq));
+            std::string key = to_lower(raw_key);
+            std::string val = trim(line.substr(eq + 1));
 
         if (current_section == "node" || current_section.empty()) {
             if (key == "callsign") {
@@ -360,6 +466,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.logging.rotate_daily = parse_bool(val, true);
             } else if (key == "banlist") {
                 cfg.banlist_path = val;
+            } else if (key == "interfaces" || key == "interfaces_file") {
+                cfg.interfaces_file = val;
+            } else if (key == "peers" || key == "peers_file") {
+                cfg.peers_file = val;
             } else if (key == "accept_incoming") {
                 cfg.accept_incoming_default = parse_bool(val, true);
             } else if (key == "allow_flash_logging" || key == "allow_logging_to_flash") {
@@ -569,13 +679,51 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 current_peer->allow_outbound = parse_bool(val, true);
             }
         }
+        }
+        return true;
+    };
+
+    if (!parse_chunk(raw_bytes, "Config", true, true, true)) {
+        return false;
+    }
+
+    const std::string if_path = cfg.resolved_interfaces_path();
+    const std::string pr_path = cfg.resolved_peers_path();
+    const bool same_inc = !if_path.empty() && !pr_path.empty() && same_normalized_cfg_path(if_path, pr_path);
+
+    if (same_inc) {
+        if (!same_normalized_cfg_path(if_path, path)) {
+            std::string inc_bytes;
+            if (core::read_file_binary(if_path, inc_bytes)) {
+                if (!parse_chunk(inc_bytes, if_path, false, true, true)) {
+                    return false;
+                }
+            }
+        }
+    } else {
+        if (!if_path.empty() && !same_normalized_cfg_path(if_path, path)) {
+            std::string inc_bytes;
+            if (core::read_file_binary(if_path, inc_bytes)) {
+                if (!parse_chunk(inc_bytes, if_path, false, true, false)) {
+                    return false;
+                }
+            }
+        }
+        if (!pr_path.empty() && !same_normalized_cfg_path(pr_path, path)) {
+            std::string inc_bytes;
+            if (core::read_file_binary(pr_path, inc_bytes)) {
+                if (!parse_chunk(inc_bytes, pr_path, false, false, true)) {
+                    return false;
+                }
+            }
+        }
     }
 
     if (cfg.rig.port == 0 && cfg.rig.protocol != radio::RigProtocol::None) {
         cfg.rig.port = radio::rig_default_port(cfg.rig.protocol);
     }
 
-    if (cfg.interfaces.empty()) {
+    if (cfg.interfaces.empty() && cfg.interfaces_file.empty()) {
         cfg.interfaces = make_default().interfaces;
     }
 
@@ -660,6 +808,12 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     if (!banlist_path.empty()) {
         lines.push_back("banlist = " + banlist_path);
     }
+    if (!interfaces_file.empty()) {
+        lines.push_back("interfaces = " + interfaces_file);
+    }
+    if (!peers_file.empty()) {
+        lines.push_back("peers = " + peers_file);
+    }
 
     if (!logging.log_files.empty()) {
         lines.push_back("");
@@ -723,56 +877,64 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     }
     lines.push_back("condensed = " + std::string(logging.printer.condensed ? "true" : "false"));
 
-    for (const auto& iface : interfaces) {
-        lines.push_back("");
-        lines.push_back("[interface " + iface.id + "]");
-        lines.push_back("type = " + iface.type);
-        if (!iface.description.empty()) {
-            lines.push_back("description = " + iface.description);
+    const std::string if_target = resolve_cfg_subpath(target, interfaces_file);
+    const std::string pr_target = resolve_cfg_subpath(target, peers_file);
+    const bool same_inc = !if_target.empty() && !pr_target.empty() &&
+                          same_normalized_cfg_path(if_target, pr_target);
+    const bool if_inline = if_target.empty() || same_normalized_cfg_path(if_target, target);
+    const bool pr_inline = pr_target.empty() || same_normalized_cfg_path(pr_target, target);
+
+    if (if_inline) {
+        for (const auto& iface : interfaces) {
+            append_iface_lines(iface, lines);
         }
-        lines.push_back(std::string("allow_inbound = ") + (iface.allow_inbound ? "true" : "false"));
-        const bool out_allowed = (iface.type == "telnet") ? false : iface.allow_outbound;
-        lines.push_back(std::string("allow_outbound = ") + (out_allowed ? "true" : "false"));
-        for (const auto& [k, v] : iface.params) {
-            if (k == "allow_inbound" || k == "allow_outbound" || k == "inbound" || k == "outbound") continue;
-            lines.push_back(k + " = " + v);
+    }
+    if (pr_inline) {
+        for (const auto& peer : peers) {
+            append_peer_lines(peer, lines);
         }
     }
 
-    for (const auto& peer : peers) {
-        if (peer.auto_learned) continue;
-        lines.push_back("");
-        lines.push_back("[peer " + peer.id + "]");
-        if (!peer.callsign.empty()) {
-            lines.push_back("callsign = " + peer.callsign);
-        }
-        if (!peer.description.empty()) {
-            lines.push_back("description = " + peer.description);
-        }
-        if (!peer.interface_id.empty()) {
-            lines.push_back("interface = " + peer.interface_id);
-        }
-        if (!peer.host.empty()) {
-            lines.push_back("host = " + peer.host);
-        }
-        if (peer.port > 0) {
-            lines.push_back("port = " + std::to_string(peer.port));
-        }
-        lines.push_back("allow_inbound = " + std::string(peer.allow_inbound ? "true" : "false"));
-        lines.push_back("allow_outbound = " + std::string(peer.allow_outbound ? "true" : "false"));
+    if (!write_cfg_file_with_dirs(target, lines, line_ending)) {
+        return false;
     }
 
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path p(target);
-    if (p.has_parent_path() && !p.parent_path().empty()) {
-        fs::create_directories(p.parent_path(), ec);
-        if (ec) {
+    if (same_inc && !if_inline) {
+        std::vector<std::string> comb_lines;
+        comb_lines.push_back("# OYK Packet Node Interfaces and Peers");
+        for (const auto& iface : interfaces) {
+            append_iface_lines(iface, comb_lines);
+        }
+        for (const auto& peer : peers) {
+            append_peer_lines(peer, comb_lines);
+        }
+        if (!write_cfg_file_with_dirs(if_target, comb_lines, line_ending)) {
             return false;
         }
+    } else {
+        if (!if_inline) {
+            std::vector<std::string> if_lines;
+            if_lines.push_back("# OYK Packet Node Interfaces");
+            for (const auto& iface : interfaces) {
+                append_iface_lines(iface, if_lines);
+            }
+            if (!write_cfg_file_with_dirs(if_target, if_lines, line_ending)) {
+                return false;
+            }
+        }
+        if (!pr_inline) {
+            std::vector<std::string> pr_lines;
+            pr_lines.push_back("# OYK Packet Node Peers");
+            for (const auto& peer : peers) {
+                append_peer_lines(peer, pr_lines);
+            }
+            if (!write_cfg_file_with_dirs(pr_target, pr_lines, line_ending)) {
+                return false;
+            }
+        }
     }
 
-    return core::write_lines_binary(target, lines, line_ending);
+    return true;
 }
 
 std::string derive_default_iface_id(const std::vector<radio::RadioInterfaceConfig>& existing,

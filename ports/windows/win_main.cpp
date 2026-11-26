@@ -2609,6 +2609,7 @@ static void switch_settings_tab(HWND hdlg, int tab) {
         IDC_SET_L_CALL, IDC_SET_CALL, IDC_SET_L_ALIAS, IDC_SET_ALIAS,
         IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO,
         IDC_SET_L_LPOL, IDC_SET_LEARN_POL, IDC_SET_L_NWELC, IDC_SET_NEW_WELC,
+        IDC_SET_L_IFFILE, IDC_SET_IF_FILE, IDC_SET_L_PRFILE, IDC_SET_PR_FILE,
         IDC_SET_ACCEPT
     };
     static const int BBS_IDS[] = {
@@ -2827,6 +2828,17 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 SendMessage(lcb, CB_SETCURSEL, lps, 0);
             }
             SetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome);
+            SetDlgItemText(hdlg, IDC_SET_IF_FILE, g_set_draft.interfaces_file);
+            SetDlgItemText(hdlg, IDC_SET_PR_FILE, g_set_draft.peers_file);
+#if defined(_WIN32) || defined(_WIN64)
+#ifndef EM_SETCUEBANNER
+#define EM_SETCUEBANNER 0x1501
+#endif
+            SendDlgItemMessageW(hdlg, IDC_SET_IF_FILE, EM_SETCUEBANNER, TRUE,
+                                reinterpret_cast<LPARAM>(L"<inline>"));
+            SendDlgItemMessageW(hdlg, IDC_SET_PR_FILE, EM_SETCUEBANNER, TRUE,
+                                reinterpret_cast<LPARAM>(L"<inline>"));
+#endif
 
             CheckDlgButton(hdlg, IDC_SET_BBS_EN, g_set_draft.bbs_enabled ? 1 : 0);
             sprintf(buf, "%u", static_cast<unsigned int>(g_set_draft.bbs_ssid));
@@ -3018,6 +3030,8 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         (lps == 3) ? OYK_LEARN_BOTH : OYK_LEARN_INBOUND;
                 }
                 GetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome, sizeof(g_set_draft.new_user_welcome));
+                GetDlgItemText(hdlg, IDC_SET_IF_FILE, g_set_draft.interfaces_file, sizeof(g_set_draft.interfaces_file));
+                GetDlgItemText(hdlg, IDC_SET_PR_FILE, g_set_draft.peers_file, sizeof(g_set_draft.peers_file));
 
                 g_set_draft.bbs_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_BBS_EN) != 0) ? 1 : 0;
                 GetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf, sizeof(buf));

@@ -646,7 +646,7 @@ void TinyTmuxConsole::render_rig() {
 }
 
 int TinyTmuxConsole::settings_tab_item_count(int tab) const {
-    if (tab == 0) return 8;
+    if (tab == 0) return 10;
     if (tab == 1) return 8;
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
@@ -659,10 +659,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     static const char* TAB_NAMES[7] = {
         "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
-    static const char* NODE_LABELS[8] = {
+    static const char* NODE_LABELS[10] = {
         "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
         "Allow Incoming (Default)", "Allow Logging to Flash",
-        "Learned Peer Policy", "New User Welcome"
+        "Learned Peer Policy", "New User Welcome",
+        "Interfaces File", "Peers File"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS", "BBS SSID (0-15)", "Callsign Override", "BBS Alias",
@@ -709,7 +710,9 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 4) strcpy(val, draft_.accept_incoming ? "[ON]" : "[OFF]");
                 else if (i == 5) strcpy(val, draft_.allow_flash_logging ? "[ON]" : "[OFF]");
                 else if (i == 6) strcpy(val, oyk_format_learned_policy(draft_.learned_peer_policy));
-                else { if (draft_.new_user_welcome[0]) { strncpy(val, draft_.new_user_welcome, 44); val[44] = '\0'; } else strcpy(val, "(use default)"); }
+                else if (i == 7) { if (draft_.new_user_welcome[0]) { strncpy(val, draft_.new_user_welcome, 44); val[44] = '\0'; } else strcpy(val, "(use default)"); }
+                else if (i == 8) { strncpy(val, draft_.interfaces_file, 44); val[44] = '\0'; }
+                else { strncpy(val, draft_.peers_file, 44); val[44] = '\0'; }
             } else if (settings_tab_ == 1) {
                 if (i == 0) strcpy(val, draft_.bbs_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft_, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft_.bbs_ssid), cs); }
@@ -741,8 +744,13 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
-            sprintf(buf, "\033[%d;2H%s %-29.29s : %-44.44s\033[0m",
-                    4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
+            if (settings_tab_ == 0 && (i == 8 || i == 9) && val[0] == '\0' && term_type_ >= TMUX_TERM_VT340) {
+                sprintf(buf, "\033[%d;2H%s %-29.29s : \033[2m<inline>\033[22m                                    \033[0m",
+                        4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
+            } else {
+                sprintf(buf, "\033[%d;2H%s %-29.29s : %-44.44s\033[0m",
+                        4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
+            }
             write_str(buf);
         }
         sprintf(buf, "\033[22;1H%s Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save & Apply  Esc:Cancel \033[0m",
@@ -1829,8 +1837,12 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
             else if (draft_.learned_peer_policy == OYK_LEARN_OUTBOUND) draft_.learned_peer_policy = OYK_LEARN_BOTH;
             else draft_.learned_peer_policy = OYK_LEARN_NONE;
             render();
-        } else {
+        } else if (idx == 7) {
             begin_prompt(PROMPT_SETTINGS_VALUE, "New User Welcome:", draft_.new_user_welcome);
+        } else if (idx == 8) {
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Interfaces File (blank=inline):", draft_.interfaces_file);
+        } else {
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Peers File (blank=inline):", draft_.peers_file);
         }
     } else if (settings_tab_ == 1) {
         if (idx == 0) { draft_.bbs_enabled = draft_.bbs_enabled ? 0 : 1; render(); }
@@ -1985,6 +1997,8 @@ void TinyTmuxConsole::commit_prompt() {
             } else if (idx == 2) con_str_copy(draft_.welcome_text, sizeof(draft_.welcome_text), val);
             else if (idx == 3) con_str_copy(draft_.info_text, sizeof(draft_.info_text), val);
             else if (idx == 7) con_str_copy(draft_.new_user_welcome, sizeof(draft_.new_user_welcome), val);
+            else if (idx == 8) con_str_copy(draft_.interfaces_file, sizeof(draft_.interfaces_file), val);
+            else if (idx == 9) con_str_copy(draft_.peers_file, sizeof(draft_.peers_file), val);
         } else if (settings_tab_ == 1) {
             if (idx == 1) { long v = strtol(val, NULL, 10); if (v >= 0 && v <= 15) draft_.bbs_ssid = static_cast<oyk_u8>(v); }
             else if (idx == 2) { if (!val[0]) memset(&draft_.bbs_callsign, 0, sizeof(draft_.bbs_callsign)); else oyk_parse_callsign(val, &draft_.bbs_callsign); }

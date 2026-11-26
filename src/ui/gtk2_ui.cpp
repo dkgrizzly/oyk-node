@@ -2469,6 +2469,53 @@ void on_settings_rem_iface_clicked(GtkWidget*, gpointer user_data) {
     }
 }
 
+void gtk_apply_inline_hint_state(GtkWidget* entry, bool show_hint) {
+    GdkColor dim_col{};
+    gdk_color_parse("#808080", &dim_col);
+    if (show_hint) {
+        g_object_set_data(G_OBJECT(entry), "oyk_hint", GINT_TO_POINTER(1));
+        gtk_entry_set_text(GTK_ENTRY(entry), "<inline>");
+        gtk_widget_modify_text(entry, GTK_STATE_NORMAL, &dim_col);
+    } else {
+        g_object_set_data(G_OBJECT(entry), "oyk_hint", GINT_TO_POINTER(0));
+        gtk_widget_modify_text(entry, GTK_STATE_NORMAL, nullptr);
+    }
+}
+
+void gtk_setup_inline_hint_entry(GtkWidget* entry, const std::string& initial) {
+    if (initial.empty()) {
+        gtk_apply_inline_hint_state(entry, true);
+    } else {
+        gtk_entry_set_text(GTK_ENTRY(entry), initial.c_str());
+        gtk_apply_inline_hint_state(entry, false);
+    }
+    g_signal_connect(entry, "focus-in-event",
+                     G_CALLBACK(+[](GtkWidget* w, GdkEventFocus*, gpointer) -> gboolean {
+                         if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "oyk_hint")) == 1) {
+                             gtk_entry_set_text(GTK_ENTRY(w), "");
+                             gtk_apply_inline_hint_state(w, false);
+                         }
+                         return FALSE;
+                     }),
+                     nullptr);
+    g_signal_connect(entry, "focus-out-event",
+                     G_CALLBACK(+[](GtkWidget* w, GdkEventFocus*, gpointer) -> gboolean {
+                         const char* txt = gtk_entry_get_text(GTK_ENTRY(w));
+                         if (!txt || txt[0] == '\0') {
+                             gtk_apply_inline_hint_state(w, true);
+                         }
+                         return FALSE;
+                     }),
+                     nullptr);
+}
+
+std::string gtk_inline_hint_entry_value(GtkWidget* entry) {
+    if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "oyk_hint")) == 1) {
+        return {};
+    }
+    return gtk_entry_get_text(GTK_ENTRY(entry));
+}
+
 void open_settings_dialog(GtkAppState* st, int initial_page) {
     node::NodeConfig draft = st->engine->config();
 
@@ -2500,7 +2547,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     };
 
     // Tab 1: Node
-    GtkWidget* t_node = make_table(7);
+    GtkWidget* t_node = make_table(9);
     GtkWidget* e_call = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_call), draft.callsign.str().c_str());
     attach_row(t_node, 0, "Node Callsign (CALL-SSID):", e_call);
@@ -2533,9 +2580,17 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     gtk_entry_set_text(GTK_ENTRY(e_new_welc), draft.new_user_welcome.c_str());
     attach_row(t_node, 5, "New User Welcome:", e_new_welc);
 
+    GtkWidget* e_if_file = gtk_entry_new();
+    gtk_setup_inline_hint_entry(e_if_file, draft.interfaces_file);
+    attach_row(t_node, 6, "Interfaces File:", e_if_file);
+
+    GtkWidget* e_pr_file = gtk_entry_new();
+    gtk_setup_inline_hint_entry(e_pr_file, draft.peers_file);
+    attach_row(t_node, 7, "Peers File:", e_pr_file);
+
     GtkWidget* chk_accept = gtk_check_button_new_with_label("Allow incoming connections by default");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_accept), draft.accept_incoming_default ? TRUE : FALSE);
-    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 6, 7, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new("Node"));
 
     // Tab 2: BBS
@@ -2792,6 +2847,8 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
                              radio::LearnedPeerPolicy::Inbound;
         }
         next.new_user_welcome = gtk_entry_get_text(GTK_ENTRY(e_new_welc));
+        next.interfaces_file = gtk_inline_hint_entry_value(e_if_file);
+        next.peers_file = gtk_inline_hint_entry_value(e_pr_file);
         next.accept_incoming_default = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_accept)) != FALSE;
 
         next.bbs.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_bbs)) != FALSE;

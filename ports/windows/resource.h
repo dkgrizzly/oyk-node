@@ -92,6 +92,10 @@
 #define IDC_SET_LEARN_POL   499
 #define IDC_SET_L_NWELC     507
 #define IDC_SET_NEW_WELC    508
+#define IDC_SET_L_IFFILE    509
+#define IDC_SET_IF_FILE     510
+#define IDC_SET_L_PRFILE    511
+#define IDC_SET_PR_FILE     512
 #define IDC_SET_ACCEPT      464
 
 #define IDC_SET_BBS_EN      465

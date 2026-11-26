@@ -53,7 +53,9 @@ struct NodeConfig {
     BbsConfig bbs;
     ChatConfig chat;
     radio::RigConfig rig;
-    std::string banlist_path; // Optional override from banlist= in [node]
+    std::string banlist_path;     // Optional override from banlist= in [node]
+    std::string interfaces_file;  // Optional interfaces= include path in [node] (empty = inline in node.cfg)
+    std::string peers_file;       // Optional peers= include path in [node] (empty = inline in node.cfg)
 
     bool accept_incoming_default = true;
     bool allow_flash_logging = false;
@@ -73,6 +75,12 @@ struct NodeConfig {
     // Resolves banlist.cfg path: explicit `banlist=` override if set,
     // otherwise `banlist.cfg` in the same directory as `source_path` (or `./banlist.cfg`).
     std::string resolved_banlist_path() const;
+
+    // Resolves optional `interfaces=` include path relative to `source_path` (empty if inline).
+    std::string resolved_interfaces_path() const;
+
+    // Resolves optional `peers=` include path relative to `source_path` (empty if inline).
+    std::string resolved_peers_path() const;
 
     // Resolves BBS callsign: explicit bbs.callsign if valid, else <callsign.base()>-<bbs.ssid>.
     ax25::Callsign resolved_bbs_callsign() const;

@@ -1006,24 +1006,80 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->ifaces[0].block_outbound = 0;
 }
 
+static void resolve_cfg_subpath(const char* base_cfg_path, const char* raw, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!raw || !raw[0]) return;
+    int is_abs = 0;
+    if (raw[0] == '/' || raw[0] == '\\') is_abs = 1;
+    else if (isalpha(static_cast<unsigned char>(raw[0])) && raw[1] == ':') is_abs = 1;
+    if (is_abs || !base_cfg_path || !base_cfg_path[0]) {
+        safe_copy(out, out_sz, raw);
+        return;
+    }
+    char dir[128];
+    safe_copy(dir, sizeof(dir), base_cfg_path);
+    char* slash1 = strrchr(dir, '/');
+    char* slash2 = strrchr(dir, '\\');
+    char* last = (slash1 > slash2) ? slash1 : slash2;
+    if (last) {
+        *(last + 1) = '\0';
+        join_path(dir, raw, out, out_sz);
+        return;
+    }
+    safe_copy(out, out_sz, raw);
+}
+
+static void normalize_cmp_path(const char* in, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!in) return;
+    size_t i = 0;
+    if (in[0] == '.' && (in[1] == '/' || in[1] == '\\')) in += 2;
+    while (*in && i + 1 < out_sz) {
+        char c = (*in == '\\') ? '/' : *in;
+        if (c == '/' && i > 0 && out[i - 1] == '/') {
+            ++in;
+            continue;
+        }
+        out[i++] = c;
+        ++in;
+    }
+    out[i] = '\0';
+}
+
+static int portable_same_path(const char* a, const char* b) {
+    if (!a || !b || !a[0] || !b[0]) return 0;
+    char na[128], nb[128];
+    normalize_cmp_path(a, na, sizeof(na));
+    normalize_cmp_path(b, nb, sizeof(nb));
+#if defined(__DOS__) || defined(__WINDOWS__) || defined(_WIN32) || defined(_WIN64)
+    return (stricmp_ascii(na, nb) == 0) ? 1 : 0;
+#else
+    return (strcmp(na, nb) == 0) ? 1 : 0;
+#endif
+}
+
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz) {
     if (cfg->banlist_path[0] != '\0') {
-        safe_copy(out, out_sz, cfg->banlist_path);
+        resolve_cfg_subpath(cfg->source_path, cfg->banlist_path, out, out_sz);
         return;
     }
     if (cfg->source_path[0] != '\0') {
-        char dir[128];
-        safe_copy(dir, sizeof(dir), cfg->source_path);
-        char* slash1 = strrchr(dir, '/');
-        char* slash2 = strrchr(dir, '\\');
-        char* last = (slash1 > slash2) ? slash1 : slash2;
-        if (last) {
-            *(last + 1) = '\0';
-            join_path(dir, "banlist.cfg", out, out_sz);
-            return;
-        }
+        resolve_cfg_subpath(cfg->source_path, "banlist.cfg", out, out_sz);
+        return;
     }
     safe_copy(out, out_sz, "banlist.cfg");
+}
+
+void oyk_config_resolve_interfaces(const OykConfig* cfg, char* out, size_t out_sz) {
+    if (!cfg || !out || out_sz == 0) return;
+    resolve_cfg_subpath(cfg->source_path, cfg->interfaces_file, out, out_sz);
+}
+
+void oyk_config_resolve_peers(const OykConfig* cfg, char* out, size_t out_sz) {
+    if (!cfg || !out || out_sz == 0) return;
+    resolve_cfg_subpath(cfg->source_path, cfg->peers_file, out, out_sz);
 }
 
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out) {
@@ -1234,31 +1290,20 @@ static void append_migrated_iface_peers(OykConfig* cfg) {
     }
 }
 
-int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz) {
-    size_t raw_len = 0;
-    char* raw = read_all_binary(path, &raw_len);
-    if (!raw) {
-        safe_copy(err_out, err_sz, "Unable to open config file");
-        return 0;
-    }
+struct PortableParseState {
+    int node_call_explicit_ssid;
+    int node_ssid_set;
+    oyk_u8 node_ssid_val;
+    int chat_call_explicit_ssid;
+    int bbs_call_explicit_ssid;
+};
 
-    oyk_config_init_default(cfg);
-    cfg->iface_count = 0;
-    safe_copy(cfg->source_path, sizeof(cfg->source_path), path);
-
-    int found_eol = 0, mixed_eol = 0;
-    cfg->line_ending = oyk_detect_first_eol(raw, raw_len, oyk_platform_default_eol(),
-                                            &found_eol, &mixed_eol);
-    cfg->has_detected_eol = found_eol;
-
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer, 7=peer */
+static void parse_config_bytes(const char* raw, size_t raw_len,
+                               OykConfig* cfg, PortableParseState* st,
+                               int allow_node, int allow_iface, int allow_peer) {
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer, 7=peer, -1=skip */
     OykIfaceConfig* cur_if = NULL;
     OykPeerConfig* cur_peer = NULL;
-    int node_call_explicit_ssid = 0;
-    int node_ssid_set = 0;
-    oyk_u8 node_ssid_val = OYK_DEFAULT_NODE_SSID;
-    int chat_call_explicit_ssid = 0;
-    int bbs_call_explicit_ssid = 0;
 
     size_t pos = 0;
     char line[256];
@@ -1276,27 +1321,27 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             char* sec = line + 1;
             trim_inplace(sec);
             if (stricmp_ascii(sec, "node") == 0) {
-                section = 0;
+                section = allow_node ? 0 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (stricmp_ascii(sec, "logfiles") == 0) {
-                section = 1;
+                section = allow_node ? 1 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (stricmp_ascii(sec, "bbs") == 0) {
-                section = 4;
+                section = allow_node ? 4 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (stricmp_ascii(sec, "chat") == 0) {
-                section = 3;
+                section = allow_node ? 3 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (stricmp_ascii(sec, "rig") == 0 || stricmp_ascii(sec, "radio") == 0) {
-                section = 5;
+                section = allow_node ? 5 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (stricmp_ascii(sec, "printer") == 0) {
-                section = 6;
+                section = allow_node ? 6 : -1;
                 cur_if = NULL;
                 cur_peer = NULL;
             } else if (strlen(sec) > 9 &&
@@ -1305,8 +1350,21 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 char* idp = sec + 9;
                 trim_inplace(idp);
                 if (*idp == ':') { ++idp; trim_inplace(idp); }
-                if (cfg->iface_count < OYK_MAX_INTERFACES) {
+                if (!allow_iface) {
+                    section = -1; cur_if = NULL; cur_peer = NULL;
+                    continue;
+                }
+                cur_if = NULL;
+                for (int ei = 0; ei < cfg->iface_count; ++ei) {
+                    if (stricmp_ascii(cfg->ifaces[ei].id, idp) == 0) {
+                        cur_if = &cfg->ifaces[ei];
+                        break;
+                    }
+                }
+                if (!cur_if && cfg->iface_count < OYK_MAX_INTERFACES) {
                     cur_if = &cfg->ifaces[cfg->iface_count++];
+                }
+                if (cur_if) {
                     memset(cur_if, 0, sizeof(*cur_if));
                     safe_copy(cur_if->id, sizeof(cur_if->id), idp);
                     safe_copy(cur_if->host, sizeof(cur_if->host), "0.0.0.0");
@@ -1316,6 +1374,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     cur_if->block_outbound = 0;
                     section = 2;
                     cur_peer = NULL;
+                } else {
+                    section = -1;
                 }
             } else if (strlen(sec) > 4 &&
                        (sec[0] == 'p' || sec[0] == 'P') &&
@@ -1326,8 +1386,21 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 char* idp = sec + 4;
                 trim_inplace(idp);
                 if (*idp == ':') { ++idp; trim_inplace(idp); }
-                if (*idp && cfg->peer_count < OYK_MAX_CONFIG_PEERS) {
+                if (!allow_peer || !*idp) {
+                    section = -1; cur_if = NULL; cur_peer = NULL;
+                    continue;
+                }
+                cur_peer = NULL;
+                for (int ep = 0; ep < cfg->peer_count && ep < OYK_MAX_CONFIG_PEERS; ++ep) {
+                    if (stricmp_ascii(cfg->peers[ep].id, idp) == 0) {
+                        cur_peer = &cfg->peers[ep];
+                        break;
+                    }
+                }
+                if (!cur_peer && cfg->peer_count < OYK_MAX_CONFIG_PEERS) {
                     cur_peer = &cfg->peers[cfg->peer_count++];
+                }
+                if (cur_peer) {
                     memset(cur_peer, 0, sizeof(*cur_peer));
                     safe_copy(cur_peer->id, sizeof(cur_peer->id), idp);
                     cur_peer->allow_inbound = 1;
@@ -1335,10 +1408,14 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     cur_peer->auto_learned = 0;
                     section = 7;
                     cur_if = NULL;
+                } else {
+                    section = -1;
                 }
             }
             continue;
         }
+
+        if (section < 0) continue;
 
         char* eq = strchr(line, '=');
         if (!eq) continue;
@@ -1350,17 +1427,17 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
 
         if (section == 0) {
             if (stricmp_ascii(k, "callsign") == 0) {
-                oyk_u8 def_s = node_ssid_set ? node_ssid_val : static_cast<oyk_u8>(OYK_DEFAULT_NODE_SSID);
+                oyk_u8 def_s = st->node_ssid_set ? st->node_ssid_val : static_cast<oyk_u8>(OYK_DEFAULT_NODE_SSID);
                 if (oyk_parse_callsign_with_default_ssid(v, def_s, &cfg->callsign)) {
-                    node_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                    st->node_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
                 }
             } else if (stricmp_ascii(k, "ssid") == 0) {
                 int sv = atoi(v);
                 if (sv >= 0 && sv <= 15) {
-                    node_ssid_val = static_cast<oyk_u8>(sv);
-                    node_ssid_set = 1;
-                    if (!node_call_explicit_ssid) {
-                        cfg->callsign.ssid = node_ssid_val;
+                    st->node_ssid_val = static_cast<oyk_u8>(sv);
+                    st->node_ssid_set = 1;
+                    if (!st->node_call_explicit_ssid) {
+                        cfg->callsign.ssid = st->node_ssid_val;
                     }
                 }
             } else if (stricmp_ascii(k, "alias") == 0) {
@@ -1381,6 +1458,10 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cfg->rotate_daily = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "banlist") == 0) {
                 safe_copy(cfg->banlist_path, sizeof(cfg->banlist_path), v);
+            } else if (stricmp_ascii(k, "interfaces") == 0 || stricmp_ascii(k, "interfaces_file") == 0) {
+                safe_copy(cfg->interfaces_file, sizeof(cfg->interfaces_file), v);
+            } else if (stricmp_ascii(k, "peers") == 0 || stricmp_ascii(k, "peers_file") == 0) {
+                safe_copy(cfg->peers_file, sizeof(cfg->peers_file), v);
             } else if (stricmp_ascii(k, "accept_incoming") == 0) {
                 cfg->accept_incoming = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "allow_flash_logging") == 0 ||
@@ -1418,9 +1499,10 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             } else if (stricmp_ascii(k, "allow_inbound") == 0 || stricmp_ascii(k, "inbound") == 0) {
                 cur_if->block_inbound = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1;
             } else if (stricmp_ascii(k, "allow_outbound") == 0 || stricmp_ascii(k, "outbound") == 0) {
-                cur_if->block_outbound = (stricmp_ascii(cur_if->type, "telnet") == 0)
-                                             ? 1
-                                             : ((stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1);
+                cur_if->block_outbound = static_cast<oyk_u8>(
+                    (stricmp_ascii(cur_if->type, "telnet") == 0)
+                        ? 1
+                        : ((stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1));
             } else if (stricmp_ascii(k, "auto_learn") == 0) {
                 cur_if->no_auto_learn = (stricmp_ascii(v, "false") == 0 || strcmp(v, "0") == 0 ||
                                          stricmp_ascii(v, "no") == 0 || stricmp_ascii(v, "off") == 0) ? 1 : 0;
@@ -1444,16 +1526,16 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 int sv = atoi(v);
                 if (sv >= 0 && sv <= 15) {
                     cfg->chat_ssid = static_cast<oyk_u8>(sv);
-                    if (cfg->chat_callsign.base[0] && !chat_call_explicit_ssid) {
+                    if (cfg->chat_callsign.base[0] && !st->chat_call_explicit_ssid) {
                         cfg->chat_callsign.ssid = cfg->chat_ssid;
                     }
                 }
             } else if (stricmp_ascii(k, "callsign") == 0) {
                 if (!v[0]) {
                     memset(&cfg->chat_callsign, 0, sizeof(cfg->chat_callsign));
-                    chat_call_explicit_ssid = 0;
+                    st->chat_call_explicit_ssid = 0;
                 } else if (oyk_parse_callsign_with_default_ssid(v, cfg->chat_ssid, &cfg->chat_callsign)) {
-                    chat_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                    st->chat_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
                 }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 if (!v[0]) memset(&cfg->chat_alias, 0, sizeof(cfg->chat_alias));
@@ -1470,16 +1552,16 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 int sv = atoi(v);
                 if (sv >= 0 && sv <= 15) {
                     cfg->bbs_ssid = static_cast<oyk_u8>(sv);
-                    if (cfg->bbs_callsign.base[0] && !bbs_call_explicit_ssid) {
+                    if (cfg->bbs_callsign.base[0] && !st->bbs_call_explicit_ssid) {
                         cfg->bbs_callsign.ssid = cfg->bbs_ssid;
                     }
                 }
             } else if (stricmp_ascii(k, "callsign") == 0) {
                 if (!v[0]) {
                     memset(&cfg->bbs_callsign, 0, sizeof(cfg->bbs_callsign));
-                    bbs_call_explicit_ssid = 0;
+                    st->bbs_call_explicit_ssid = 0;
                 } else if (oyk_parse_callsign_with_default_ssid(v, cfg->bbs_ssid, &cfg->bbs_callsign)) {
-                    bbs_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
+                    st->bbs_call_explicit_ssid = (strchr(v, '-') != NULL) ? 1 : 0;
                 }
             } else if (stricmp_ascii(k, "alias") == 0) {
                 if (!v[0]) memset(&cfg->bbs_alias, 0, sizeof(cfg->bbs_alias));
@@ -1573,8 +1655,63 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
             }
         }
     }
+}
 
+int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz) {
+    size_t raw_len = 0;
+    char* raw = read_all_binary(path, &raw_len);
+    if (!raw) {
+        safe_copy(err_out, err_sz, "Unable to open config file");
+        return 0;
+    }
+
+    oyk_config_init_default(cfg);
+    cfg->iface_count = 0;
+    safe_copy(cfg->source_path, sizeof(cfg->source_path), path);
+
+    int found_eol = 0, mixed_eol = 0;
+    cfg->line_ending = oyk_detect_first_eol(raw, raw_len, oyk_platform_default_eol(),
+                                            &found_eol, &mixed_eol);
+    cfg->has_detected_eol = found_eol;
+
+    PortableParseState st;
+    memset(&st, 0, sizeof(st));
+    st.node_ssid_val = OYK_DEFAULT_NODE_SSID;
+    parse_config_bytes(raw, raw_len, cfg, &st, 1, 1, 1);
     free(raw);
+
+    char if_path[128], pr_path[128];
+    oyk_config_resolve_interfaces(cfg, if_path, sizeof(if_path));
+    oyk_config_resolve_peers(cfg, pr_path, sizeof(pr_path));
+    int same_inc = (if_path[0] && pr_path[0] && portable_same_path(if_path, pr_path)) ? 1 : 0;
+    if (same_inc) {
+        if (!portable_same_path(if_path, path)) {
+            size_t ilen = 0;
+            char* iraw = read_all_binary(if_path, &ilen);
+            if (iraw) {
+                parse_config_bytes(iraw, ilen, cfg, &st, 0, 1, 1);
+                free(iraw);
+            }
+        }
+    } else {
+        if (if_path[0] && !portable_same_path(if_path, path)) {
+            size_t ilen = 0;
+            char* iraw = read_all_binary(if_path, &ilen);
+            if (iraw) {
+                parse_config_bytes(iraw, ilen, cfg, &st, 0, 1, 0);
+                free(iraw);
+            }
+        }
+        if (pr_path[0] && !portable_same_path(pr_path, path)) {
+            size_t plen = 0;
+            char* praw = read_all_binary(pr_path, &plen);
+            if (praw) {
+                parse_config_bytes(praw, plen, cfg, &st, 0, 0, 1);
+                free(praw);
+            }
+        }
+    }
+
     append_migrated_iface_peers(cfg);
 
     if (cfg->rig_port == 0) {
@@ -1599,7 +1736,7 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
         }
     }
 
-    if (cfg->iface_count == 0) {
+    if (cfg->iface_count == 0 && !cfg->interfaces_file[0]) {
         cfg->iface_count = 1;
         safe_copy(cfg->ifaces[0].id, sizeof(cfg->ifaces[0].id), "axudp0");
         safe_copy(cfg->ifaces[0].type, sizeof(cfg->ifaces[0].type), "axudp");
@@ -1654,6 +1791,49 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
     return 1;
 }
 
+static void write_portable_iface_section(FILE* fp, const OykIfaceConfig* ic, const char* nl) {
+    fprintf(fp, "%s[interface %s]%s", nl, ic->id, nl);
+    fprintf(fp, "type = %s%s", ic->type, nl);
+    if (ic->description[0]) fprintf(fp, "description = %s%s", ic->description, nl);
+    if (stricmp_ascii(ic->type, "kiss-tcp") == 0) {
+        fprintf(fp, "mode = %s%s", ic->server_mode ? "server" : "client", nl);
+        if (ic->host[0]) fprintf(fp, "host = %s%s", ic->host, nl);
+        if (ic->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(ic->port), nl);
+        fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
+    } else if (stricmp_ascii(ic->type, "kiss-serial") == 0) {
+        if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
+        if (ic->baud > 0) fprintf(fp, "baud = %lu%s", static_cast<unsigned long>(ic->baud), nl);
+        fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
+    } else {
+        if (ic->host[0]) fprintf(fp, "bind_host = %s%s", ic->host, nl);
+        if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
+        if (ic->netmask[0]) fprintf(fp, "netmask = %s%s", ic->netmask, nl);
+        if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
+    }
+    fprintf(fp, "allow_inbound = %s%s", ic->block_inbound ? "false" : "true", nl);
+    fprintf(fp, "allow_outbound = %s%s",
+            (stricmp_ascii(ic->type, "telnet") == 0 || ic->block_outbound) ? "false" : "true", nl);
+    if (ic->no_auto_learn) {
+        fprintf(fp, "auto_learn = false%s", nl);
+    }
+    if (ic->learned_peer_policy != OYK_LEARN_INHERIT) {
+        fprintf(fp, "learned_peer_policy = %s%s",
+                oyk_format_learned_policy(ic->learned_peer_policy), nl);
+    }
+}
+
+static void write_portable_peer_section(FILE* fp, const OykPeerConfig* pc, const char* nl) {
+    if (pc->auto_learned) return;
+    fprintf(fp, "%s[peer %s]%s", nl, pc->id, nl);
+    if (pc->callsign[0]) fprintf(fp, "callsign = %s%s", pc->callsign, nl);
+    if (pc->description[0]) fprintf(fp, "description = %s%s", pc->description, nl);
+    if (pc->interface_id[0]) fprintf(fp, "interface = %s%s", pc->interface_id, nl);
+    if (pc->host[0]) fprintf(fp, "host = %s%s", pc->host, nl);
+    if (pc->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(pc->port), nl);
+    fprintf(fp, "allow_inbound = %s%s", pc->allow_inbound ? "true" : "false", nl);
+    fprintf(fp, "allow_outbound = %s%s", pc->allow_outbound ? "true" : "false", nl);
+}
+
 int oyk_config_save(const OykConfig* cfg, const char* path) {
     const char* target = (path && path[0]) ? path : cfg->source_path;
     if (!target || !target[0]) return 0;
@@ -1661,6 +1841,13 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     if (!fp) return 0;
 
     const char* nl = oyk_eol_bytes(cfg->line_ending);
+    char if_target[128], pr_target[128];
+    resolve_cfg_subpath(target, cfg->interfaces_file, if_target, sizeof(if_target));
+    resolve_cfg_subpath(target, cfg->peers_file, pr_target, sizeof(pr_target));
+    int same_inc = (if_target[0] && pr_target[0] && portable_same_path(if_target, pr_target)) ? 1 : 0;
+    int if_inline = (!if_target[0] || portable_same_path(if_target, target)) ? 1 : 0;
+    int pr_inline = (!pr_target[0] || portable_same_path(pr_target, target)) ? 1 : 0;
+
     char call_s[16], alias_s[16];
     oyk_format_callsign(&cfg->callsign, call_s, sizeof(call_s));
     oyk_format_callsign(&cfg->alias, alias_s, sizeof(alias_s));
@@ -1679,6 +1866,8 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "consolelevel = 0x%lx%s", static_cast<unsigned long>(cfg->console_level), nl);
     fprintf(fp, "log_rotate_daily = %s%s", cfg->rotate_daily ? "true" : "false", nl);
     if (cfg->banlist_path[0]) fprintf(fp, "banlist = %s%s", cfg->banlist_path, nl);
+    if (cfg->interfaces_file[0]) fprintf(fp, "interfaces = %s%s", cfg->interfaces_file, nl);
+    if (cfg->peers_file[0]) fprintf(fp, "peers = %s%s", cfg->peers_file, nl);
 
     if (cfg->log_file_count > 0) {
         fprintf(fp, "%s[logfiles]%s", nl, nl);
@@ -1740,52 +1929,50 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     fprintf(fp, "level = 0x%lx%s", static_cast<unsigned long>(cfg->printer_level), nl);
     fprintf(fp, "condensed = %s%s", cfg->printer_condensed ? "true" : "false", nl);
 
-    for (int i = 0; i < cfg->iface_count; ++i) {
-        const OykIfaceConfig* ic = &cfg->ifaces[i];
-        fprintf(fp, "%s[interface %s]%s", nl, ic->id, nl);
-        fprintf(fp, "type = %s%s", ic->type, nl);
-        if (ic->description[0]) fprintf(fp, "description = %s%s", ic->description, nl);
-        if (stricmp_ascii(ic->type, "kiss-tcp") == 0) {
-            fprintf(fp, "mode = %s%s", ic->server_mode ? "server" : "client", nl);
-            if (ic->host[0]) fprintf(fp, "host = %s%s", ic->host, nl);
-            if (ic->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(ic->port), nl);
-            fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
-        } else if (stricmp_ascii(ic->type, "kiss-serial") == 0) {
-            if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
-            if (ic->baud > 0) fprintf(fp, "baud = %lu%s", static_cast<unsigned long>(ic->baud), nl);
-            fprintf(fp, "kiss_port = %u%s", static_cast<unsigned int>(ic->kiss_port), nl);
-        } else {
-            if (ic->host[0]) fprintf(fp, "bind_host = %s%s", ic->host, nl);
-            if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
-            if (ic->netmask[0]) fprintf(fp, "netmask = %s%s", ic->netmask, nl);
-            if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
-        }
-        fprintf(fp, "allow_inbound = %s%s", ic->block_inbound ? "false" : "true", nl);
-        fprintf(fp, "allow_outbound = %s%s",
-                (stricmp_ascii(ic->type, "telnet") == 0 || ic->block_outbound) ? "false" : "true", nl);
-        if (ic->no_auto_learn) {
-            fprintf(fp, "auto_learn = false%s", nl);
-        }
-        if (ic->learned_peer_policy != OYK_LEARN_INHERIT) {
-            fprintf(fp, "learned_peer_policy = %s%s",
-                    oyk_format_learned_policy(ic->learned_peer_policy), nl);
+    if (if_inline) {
+        for (int i = 0; i < cfg->iface_count; ++i) {
+            write_portable_iface_section(fp, &cfg->ifaces[i], nl);
         }
     }
-
-    for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
-        const OykPeerConfig* pc = &cfg->peers[i];
-        if (pc->auto_learned) continue;
-        fprintf(fp, "%s[peer %s]%s", nl, pc->id, nl);
-        if (pc->callsign[0]) fprintf(fp, "callsign = %s%s", pc->callsign, nl);
-        if (pc->description[0]) fprintf(fp, "description = %s%s", pc->description, nl);
-        if (pc->interface_id[0]) fprintf(fp, "interface = %s%s", pc->interface_id, nl);
-        if (pc->host[0]) fprintf(fp, "host = %s%s", pc->host, nl);
-        if (pc->port > 0) fprintf(fp, "port = %u%s", static_cast<unsigned int>(pc->port), nl);
-        fprintf(fp, "allow_inbound = %s%s", pc->allow_inbound ? "true" : "false", nl);
-        fprintf(fp, "allow_outbound = %s%s", pc->allow_outbound ? "true" : "false", nl);
+    if (pr_inline) {
+        for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+            write_portable_peer_section(fp, &cfg->peers[i], nl);
+        }
     }
 
     fclose(fp);
+
+    if (same_inc && !if_inline) {
+        FILE* cfp = fopen(if_target, "wb");
+        if (!cfp) return 0;
+        fprintf(cfp, "# OYK Packet Node Interfaces and Peers%s", nl);
+        for (int i = 0; i < cfg->iface_count; ++i) {
+            write_portable_iface_section(cfp, &cfg->ifaces[i], nl);
+        }
+        for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+            write_portable_peer_section(cfp, &cfg->peers[i], nl);
+        }
+        fclose(cfp);
+    } else {
+        if (!if_inline) {
+            FILE* ifp = fopen(if_target, "wb");
+            if (!ifp) return 0;
+            fprintf(ifp, "# OYK Packet Node Interfaces%s", nl);
+            for (int i = 0; i < cfg->iface_count; ++i) {
+                write_portable_iface_section(ifp, &cfg->ifaces[i], nl);
+            }
+            fclose(ifp);
+        }
+        if (!pr_inline) {
+            FILE* pfp = fopen(pr_target, "wb");
+            if (!pfp) return 0;
+            fprintf(pfp, "# OYK Packet Node Peers%s", nl);
+            for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+                write_portable_peer_section(pfp, &cfg->peers[i], nl);
+            }
+            fclose(pfp);
+        }
+    }
     return 1;
 }
 
