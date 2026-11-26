@@ -14,7 +14,7 @@ TMP_CAP="${TMP_WORK}/captures"
 mkdir -p "${TMP_CAP}" "${OUT_IMG_DIR}" "${TMP_WORK}/logs"
 trap 'rm -rf "${TMP_WORK}"' EXIT
 
-if [[ ! -x "${BUILD_DIR}/oyk-node" || ! -x "${BUILD_DIR}/oyk_portable_tests" || ! -x "${BUILD_DIR}/oyk_tinytmux_tests" ]]; then
+if [[ ! -x "${BUILD_DIR}/oyk-node" || ! -x "${BUILD_DIR}/oyk_portable_tests" || ! -x "${BUILD_DIR}/oyk_tinytmux_tests" || ! -x "${BUILD_DIR}/oyk_pico_tests" ]]; then
     echo "Building host binaries in ${BUILD_DIR}..."
     cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}"
     cmake --build "${BUILD_DIR}" -j
@@ -56,8 +56,11 @@ OYK_UI_CAPTURE_DIR="${TMP_CAP}" python3 "${ROOT_DIR}/tests/test_ncurses_ui.py" "
 echo "[2/5] Capturing MS-DOS 80x25 text-mode screens..."
 OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_portable_tests"
 
-echo "[3/5] Capturing Teensy 4.1 / TinyTMUX ANSI screens..."
+echo "[3/7] Capturing Teensy 4.1 / TinyTMUX ANSI screens..."
 OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_tinytmux_tests"
+
+echo "[4/7] Capturing Raspberry Pi Pico (RP2040/RP2350) ANSI screens..."
+OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_pico_tests"
 
 echo "[4/5] Capturing X11 GTK+ 2.0 screens under Xvfb..."
 if [[ -x "${BUILD_DIR}/oyk-node-gtk" ]] && command -v xvfb-run >/dev/null 2>&1; then
@@ -137,30 +140,30 @@ else
 fi
 
 echo "Validating cross-TUI layout parity..."
-python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
+PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
 
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme)
-PORTS=(ncurses dos tinytmux gtk win android)
+PORTS=(ncurses dos tinytmux pico gtk win android)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f" .ansi)"
-    python3 "${RENDERER}" --ansi "$f" "${OUT_IMG_DIR}/${base}.png"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --ansi "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
 for f in "${TMP_CAP}"/*.dosbuf; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f" .dosbuf)"
-    python3 "${RENDERER}" --dosbuf "$f" "${OUT_IMG_DIR}/${base}.png"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --dosbuf "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
 for f in "${TMP_CAP}"/*.bmp; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f" .bmp)"
-    python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
 for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png; do
@@ -173,6 +176,7 @@ port_label() {
         ncurses)  echo "POSIX ncurses" ;;
         dos)      echo "MS-DOS (80x25 Text)" ;;
         tinytmux) echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
+        pico)     echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
         gtk)      echo "X11 GTK+ 2.0" ;;
         win)      echo "Windows GUI (Wine / Win32/64)" ;;
         android)  echo "Android (Material 3 / Jetpack Compose)" ;;

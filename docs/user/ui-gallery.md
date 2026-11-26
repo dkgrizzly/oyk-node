@@ -21,6 +21,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 1. Operator Console (Main View)](images/ui-gallery/tinytmux_main.png)
 
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 1. Operator Console (Main View)](images/ui-gallery/pico_main.png)
+
 ### X11 GTK+ 2.0
 
 ![X11 GTK+ 2.0 — 1. Operator Console (Main View)](images/ui-gallery/gtk_main.png)
@@ -46,6 +50,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 2. Settings — Node Tab](images/ui-gallery/tinytmux_settings.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 2. Settings — Node Tab](images/ui-gallery/pico_settings.png)
 
 ### X11 GTK+ 2.0
 
@@ -73,6 +81,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 3. Add Interface Wizard](images/ui-gallery/tinytmux_add_iface.png)
 
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 3. Add Interface Wizard](images/ui-gallery/pico_add_iface.png)
+
 ### X11 GTK+ 2.0
 
 ![X11 GTK+ 2.0 — 3. Add Interface Wizard](images/ui-gallery/gtk_add_iface.png)
@@ -98,6 +110,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/tinytmux_edit_iface.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/pico_edit_iface.png)
 
 ### X11 GTK+ 2.0
 
@@ -125,6 +141,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 5. Settings — Peers Tab](images/ui-gallery/tinytmux_peers.png)
 
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 5. Settings — Peers Tab](images/ui-gallery/pico_peers.png)
+
 ### X11 GTK+ 2.0
 
 ![X11 GTK+ 2.0 — 5. Settings — Peers Tab](images/ui-gallery/gtk_peers.png)
@@ -150,6 +170,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 6. Edit / Add Peer Dialog](images/ui-gallery/tinytmux_edit_peer.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 6. Edit / Add Peer Dialog](images/ui-gallery/pico_edit_peer.png)
 
 ### X11 GTK+ 2.0
 
@@ -177,6 +201,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 7. Terminate Connection Modal](images/ui-gallery/tinytmux_terminate.png)
 
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 7. Terminate Connection Modal](images/ui-gallery/pico_terminate.png)
+
 ### X11 GTK+ 2.0
 
 ![X11 GTK+ 2.0 — 7. Terminate Connection Modal](images/ui-gallery/gtk_terminate.png)
@@ -202,6 +230,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/tinytmux_ban.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/pico_ban.png)
 
 ### X11 GTK+ 2.0
 
@@ -229,6 +261,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/tinytmux_exit.png)
 
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/pico_exit.png)
+
 ### X11 GTK+ 2.0
 
 ![X11 GTK+ 2.0 — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/gtk_exit.png)
@@ -254,6 +290,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 10. Theme Settings Dialog](images/ui-gallery/tinytmux_theme.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 10. Theme Settings Dialog](images/ui-gallery/pico_theme.png)
 
 ### X11 GTK+ 2.0
 

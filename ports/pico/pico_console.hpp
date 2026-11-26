@@ -62,8 +62,11 @@ public:
     PicoConsoleView view_mode() const { return view_; }
     PicoPromptKind prompt_kind() const { return prompt_kind_; }
     int settings_tab() const { return settings_tab_; }
-    int settings_sel() const { return settings_sel_; }
+    int settings_sel() const { return settings_sel_[settings_tab_]; }
+    int files_tab() const { return files_tab_; }
+    int has_active_terminal() const { return (lterm_sid_ != 0) ? 1 : 0; }
     int bootloader_pending() const { return bootloader_pending_; }
+    const char* status_line() const { return status_fb_; }
 
 private:
     void write_str(const char* s);
@@ -83,6 +86,8 @@ private:
     void render_console();
     void render_menu();
     void render_settings();
+    void render_files();
+    void render_rig();
     void render_storage();
     void render_psram();
     void render_bootloader();
@@ -101,11 +106,40 @@ private:
     void handle_console_key(int key);
     void handle_menu_key(int key);
     void handle_settings_key(int key);
+    void handle_files_key(int key);
+    void handle_rig_key(int key);
     void handle_storage_key(int key);
     void handle_bootloader_key(int key);
+    void handle_local_term_key(int key);
     void handle_modal_key(int key);
+    void handle_wizard_key(int key);
+    void handle_edit_iface_key(int key);
+    void handle_edit_peer_key(int key);
+    void handle_terminate_key(int key);
+    void handle_ban_key(int key);
+    void handle_theme_key(int key);
+
     void open_settings(int tab);
     void commit_settings();
+    int settings_tab_item_count(int tab) const;
+    void edit_current_settings_field();
+    void commit_prompt();
+    void refresh_files_lists();
+
+    void open_add_iface_wizard();
+    void open_edit_iface_dialog(int idx);
+    void open_edit_peer_dialog(int idx);
+    void open_terminate_dialog();
+    void open_ban_dialog();
+    void open_theme_dialog();
+    void wizard_apply_driver_defaults();
+    int wizard_step_field_count() const;
+    int edit_iface_field_count() const;
+    int wizard_try_advance();
+    int edit_iface_try_save();
+    int edit_peer_try_save();
+    void commit_iface_fields(int slot);
+    void commit_peer_fields(int slot);
 
     OykPortableNode* node_;
     PicoNetBridge* bridge_;
@@ -117,20 +151,43 @@ private:
     PicoPromptKind prompt_kind_;
     int menu_sel_;
     int settings_tab_;
-    int settings_sel_;
+    int settings_sel_[7];
+    int files_tab_;
+    int files_sel_[2];
+    OykPendingIncoming pending_files_[8];
+    int pending_count_;
+    OykApprovedFile approved_files_[8];
+    int approved_count_;
     int storage_sel_;
-    int modal_sel_;
-    int wiz_step_;
-    int wiz_drv_;
     int bootloader_pending_;
     oyk_u32 bootloader_ms_;
 
     OykConfig draft_;
+    char prompt_label_[48];
     char prompt_buf_[96];
     size_t prompt_len_;
     char status_fb_[96];
+    char dialog_fb_[96];
+
+    char ban_call_tmp_[16];
+    char ban_iface_tmp_[16];
+    int wiz_edit_idx_;
+    int wiz_step_;
+    int wiz_drv_;
+    int wiz_last_drv_;
+    int wiz_focus_;
+    int wiz_btn_;
+    char wiz_id_[24];
+    char wiz_desc_[32];
+    char wiz_ep_[40];
+    char wiz_port_[12];
+    char wiz_mask_[20];
+    char wiz_peer_[32];
+    oyk_u8 wiz_flags_;
+    char wiz_err_[64];
 
     oyk_u32 lterm_sid_;
+    int lterm_is_local_;
     char lterm_lines_[12][80];
     int lterm_line_count_;
     char lterm_input_[80];

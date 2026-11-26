@@ -10,6 +10,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 struct PicoCapture {
@@ -225,12 +226,173 @@ static void test_pico_console_inquiry_storage_format_and_bootsel() {
     printf("[PASS] test_pico_console_inquiry_storage_format_and_bootsel\n");
 }
 
+static void pico_save_capture(const char* name, PicoConsole* con, PicoCapture* cap) {
+    const char* dir = getenv("OYK_UI_CAPTURE_DIR");
+    if (!dir || !dir[0]) return;
+    cap->len = 0;
+    cap->buf[0] = '\0';
+    con->render();
+    char path[512];
+    sprintf(path, "%s/pico_%s.ansi", dir, name);
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        fwrite(cap->buf, 1, cap->len, f);
+        fclose(f);
+    }
+}
+
+static void test_pico_ui_flows_and_captures() {
+    pico_board_set_sim_profile("pico2_w");
+    pico_psram_set_sim_available(0, 0, NULL);
+    pico_psram_init_and_test();
+    pico_fs_init(1, 0);
+
+    OykConfig* cfg = new OykConfig();
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
+    strcpy(cfg->source_path, "/nonexistent_ro_dir/node.cfg");
+    cfg->peer_count = 1;
+    strcpy(cfg->peers[0].id, "remote0");
+    strcpy(cfg->peers[0].callsign, "R3MOT-7");
+    strcpy(cfg->peers[0].description, "Remote PoPT Node");
+    strcpy(cfg->peers[0].interface_id, "axudp0");
+    strcpy(cfg->peers[0].host, "12.34.56.78");
+    cfg->peers[0].port = 10093;
+    cfg->peers[0].allow_inbound = 1;
+    cfg->peers[0].allow_outbound = 1;
+
+    OykPortableNode* node = new OykPortableNode();
+    PicoNetBridge* net = new PicoNetBridge();
+    char err[96];
+    assert(node->init(cfg, PicoNetBridge::tx_callback_trampoline, net, err, sizeof(err)) == 1);
+    net->init(node, NULL, 1);
+
+    PicoCapture* cap = new PicoCapture();
+    cap->len = 0; cap->buf[0] = '\0';
+    PicoConsole* con = new PicoConsole();
+    con->init(node, net, pico_cap_tx, cap);
+    con->tick(500UL);
+    con->on_usb_connect();
+    const char* da_x256 = "\033[>41;354;0c";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
+
+    /* Connect an inbound AXUDP peer to populate Active Connections, Heard, and Auto-Learned */
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    sabm.dst = cfg->callsign;
+    assert(oyk_parse_callsign("W3TRM-1", &sabm.src) == 1);
+    sabm.is_command = 1;
+    sabm.control = 0x3FU;
+    node->on_rx_frame(0, &sabm, 0x0A000005UL, 10093U, 0);
+    assert(node->total_active_connections() == 1);
+    assert(node->auto_learned_peer_count() == 1);
+
+    /* 1. Main Console */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->render();
+    assert(strstr(cap->buf, "W3TRM-1") != NULL);
+    assert(strstr(cap->buf, "Node Activity Log") != NULL);
+    pico_save_capture("main", con, cap);
+
+    /* 2. Terminate Connection modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    assert(strstr(cap->buf, "Terminate Active Connection") != NULL);
+    assert(strstr(cap->buf, "W3TRM-1") != NULL);
+    pico_save_capture("terminate", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+    assert(node->total_active_connections() == 0);
+
+    /* 3. Ban / Unban Callsign modal */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    assert(node->ban_count() >= 1);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->render();
+    assert(strstr(cap->buf, "Ban / Unban Callsign") != NULL);
+    assert(strstr(cap->buf, "Active Bans (1):") != NULL);
+    pico_save_capture("ban", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(700UL);
+
+    /* 4. Settings (Node tab) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    assert(con->view_mode() == PICO_VIEW_SETTINGS && con->settings_tab() == 0);
+    assert(strstr(cap->buf, "Node Settings") != NULL);
+    assert(strstr(cap->buf, " Node ") != NULL);
+    assert(strstr(cap->buf, "7:Prn") != NULL);
+    pico_save_capture("settings", con, cap);
+
+    /* 5. Add Interface Wizard (Step 3 showing Same-Iface Fwd toggle) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("4n1\r\r"), 5);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    assert(strstr(cap->buf, "Same-Iface Fwd") != NULL);
+    pico_save_capture("add_iface", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(900UL);
+
+    /* 6. Edit Interface modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "Edit Interface") != NULL);
+    assert(strstr(cap->buf, "Same-Iface Fwd") != NULL);
+    pico_save_capture("edit_iface", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1100UL);
+
+    /* 7. Peers Tab */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("5"), 1);
+    assert(con->settings_tab() == 4);
+    assert(strstr(cap->buf, "R3MOT-7") != NULL);
+    pico_save_capture("peers", con, cap);
+
+    /* 8. Edit Peer Modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "Edit Peer") != NULL);
+    assert(strstr(cap->buf, "Allow Inbound") != NULL);
+    assert(strstr(cap->buf, "Allow Outbound") != NULL);
+    pico_save_capture("edit_peer", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1300UL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1500UL);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    /* 8b. Theme Settings Modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
+    assert(strstr(cap->buf, "Theme Settings") != NULL);
+    pico_save_capture("theme", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1700UL);
+
+    /* 9. Auto-Learned Peers BOOTSEL modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    assert(con->view_mode() == PICO_VIEW_BOOTLOADER);
+    assert(strstr(cap->buf, "Auto-Learned Peers") != NULL);
+    pico_save_capture("exit", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1900UL);
+
+    delete cap;
+    delete con;
+    delete net;
+    delete node;
+    delete cfg;
+    printf("[PASS] test_pico_ui_flows_and_captures\n");
+}
+
 int main() {
     test_all_board_profiles_and_mac();
     test_psram_detection_and_sram_fallback();
     test_storage_sd_flash_fallback_and_format_guard();
     test_rm2_missing_non_fatal_and_2uart_operation();
     test_pico_console_inquiry_storage_format_and_bootsel();
+    test_pico_ui_flows_and_captures();
     printf("All Pico (RP2040 / RP2350) host tests passed!\n");
     return 0;
 }

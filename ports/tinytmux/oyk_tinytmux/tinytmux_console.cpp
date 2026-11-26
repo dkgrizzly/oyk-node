@@ -239,7 +239,7 @@ const char* TinyTmuxConsole::sgr_warn() const {
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
                                                 const char* title, int clear_interior) {
     if (h < 2 || w < 4) return;
-    char line[112];
+    char line[256];
     int inner = w - 2;
     if (inner > 78) inner = 78;
 
@@ -287,7 +287,7 @@ OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
 
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_shadow(int row, int col, int h, int w) {
     if (h < 2 || w < 4) return;
-    char line[128];
+    char line[256];
     const char* sattr = (term_type_ >= TMUX_TERM_VT220) ? "\033[0;90;40m" : "\033[0m";
     int r_end = row + h;
     int c_right = col + w;

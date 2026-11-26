@@ -525,7 +525,7 @@ for pico_board in pico_w pico2_w waveshare_core2350b pimoroni_pga2350; do
                 "-DPICO_BOARD=${pico_board}" \
                 "-DPICO_SDK_PATH=${PICO_SDK_FOUND}" >/dev/null
             "${PICO_CMAKE_BIN}" --build "${BUILD_PICO}" -j
-            st="$(stage_binary_tree "${pico_board}" "tinytmux")"
+            st="$(stage_binary_tree "${pico_board}" "pico")"
             cp "${ROOT_DIR}/ports/pico/node_pico.cfg" "${st}/configs/"
             cp "${ROOT_DIR}/ports/pico/README.md" "${st}/PICO-README.md"
             cp "${BUILD_PICO}/oyk-pico-${pico_board}.uf2" "${st}/"
