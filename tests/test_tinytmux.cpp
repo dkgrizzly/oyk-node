@@ -1312,6 +1312,11 @@ static void tmux_save_capture(const char* name, TinyTmuxConsole* con, ConsoleCap
     }
 }
 
+static void tmux_ui_local_cb(oyk_u32 sid, int ev, const oyk_u8* data, size_t len, const char* r, void* ctx) {
+    TinyTmuxConsole* con = static_cast<TinyTmuxConsole*>(ctx);
+    if (con) con->on_local_term_event(sid, ev, data, len, r);
+}
+
 static void test_tinytmux_ui_flows_and_captures() {
     OykConfig* cfg = new OykConfig();
     oyk_config_init_default(cfg);
@@ -1337,6 +1342,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     ConsoleCap* cap = new ConsoleCap();
     cap->len = 0; cap->buf[0] = '\0';
     con->init(node, console_tx_cap, cap);
+    node->set_local_event_callback(tmux_ui_local_cb, con);
     con->set_net_bridge(bridge);
     con->set_now_ms(500UL);
     con->on_usb_connect();
@@ -1446,12 +1452,23 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->tick(800UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* 8c2. Local Terminal with example /bbs session */
+    /* 8c2. Local Terminal with example /bbs session (banner, live prompt, [EOL:CR], word-wrap, /eol) */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t/bbs\r"), 6);
     assert(con->view_mode() == TMUX_VIEW_LOCAL_TERM);
     assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
+    assert(strstr(cap->buf, "[EOL:CR]") != NULL);
+    assert(strstr(cap->buf, "Packet BBS") != NULL);
+    assert(strstr(cap->buf, "de KR4OYK-11") != NULL);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("?\r"), 2);
+    assert(strstr(cap->buf, "[EOL:CR]") != NULL);
     tmux_save_capture("terminal", con, cap);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol lf\r"), 8);
+    assert(strstr(cap->buf, "[EOL:LF*]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol auto\r"), 10);
+    assert(strstr(cap->buf, "[EOL:CR]") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(900UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);

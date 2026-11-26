@@ -5,6 +5,7 @@
 #include "oyk/ui/theme.hpp"
 #include "oyk/ax25/crc.hpp"
 #include "oyk/protocol/yapp.hpp"
+#include "oyk_term.hpp"
 
 #include <gtk/gtk.h>
 #include <arpa/inet.h>
@@ -328,12 +329,18 @@ struct GtkTermWindowState {
     bool connected = false;
     bool connecting = false;
     bool is_local = false;
+    bool opening_local = false;
+    OykTermEolParser eol{};
     std::string port_id;
     ax25::Callsign remote_call{"UNKNOWN", 0};
     std::string pending_text;
     protocol::YappSession yapp{"incoming"};
     std::string last_yapp_status;
     bool overwrite_prompt_open = false;
+
+    GtkTermWindowState() {
+        oyk_term_eol_init(&eol, OYK_TERM_EOL_CR, 1);
+    }
 };
 
 void gtk_term_append_text_ui(GtkTermWindowState* ts, const std::string& text) {
@@ -347,6 +354,16 @@ void gtk_term_append_text_ui(GtkTermWindowState* ts, const std::string& text) {
     gtk_text_buffer_delete_mark(ts->text_buf, mark);
 }
 
+static bool gtk_term_buf_at_bol(GtkTextBuffer* buf) {
+    if (!buf) return true;
+    GtkTextIter end_iter;
+    gtk_text_buffer_get_end_iter(buf, &end_iter);
+    if (gtk_text_iter_get_offset(&end_iter) == 0) return true;
+    GtkTextIter prev = end_iter;
+    gtk_text_iter_backward_char(&prev);
+    return gtk_text_iter_get_char(&prev) == '\n';
+}
+
 gboolean on_gtk_term_tick(gpointer user_data) {
     auto* ts = static_cast<GtkTermWindowState*>(user_data);
     std::string chunk;
@@ -355,6 +372,7 @@ gboolean on_gtk_term_tick(gpointer user_data) {
     bool is_connecting = false;
     bool is_loc = false;
     std::string overwrite_path;
+    std::string eol_tag = "CR";
 
     {
         std::lock_guard<std::mutex> lk(ts->mtx);
@@ -365,6 +383,7 @@ gboolean on_gtk_term_tick(gpointer user_data) {
         is_conn = ts->connected;
         is_connecting = ts->connecting;
         is_loc = ts->is_local;
+        eol_tag = oyk_term_eol_label(&ts->eol);
         if (!is_loc && ts->yapp.awaiting_overwrite() && !ts->overwrite_prompt_open) {
             overwrite_path = yp.target_path;
             ts->overwrite_prompt_open = true;
@@ -383,8 +402,8 @@ gboolean on_gtk_term_tick(gpointer user_data) {
     if (yp.state == protocol::YappState::Idle) {
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ts->progress_bar), 0.0);
         std::string status_txt = is_conn
-            ? ("Connected to " + ts->remote_call.str() + (is_loc ? " (LOCAL - YAPP disabled)" : " (YAPP ready)"))
-            : (is_connecting ? "Connecting..." : "Disconnected");
+            ? ("Connected to " + ts->remote_call.str() + (is_loc ? " (LOCAL)" : " (YAPP ready)") + " [EOL:" + eol_tag + "]")
+            : (is_connecting ? ("Connecting... [EOL:" + eol_tag + "]") : ("Disconnected [EOL:" + eol_tag + "]"));
         gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ts->progress_bar), status_txt.c_str());
     } else {
         double frac = (yp.total_bytes > 0)
@@ -430,29 +449,59 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lk(ts->mtx);
+        ts->sid = 0;
+        ts->connecting = false;
+        ts->connected = false;
+        ts->is_local = false;
+        ts->opening_local = true;
+        oyk_term_eol_init(&ts->eol, OYK_TERM_EOL_CR, 1);
+    }
+
+    auto feed_rx_normalized = [](GtkTermWindowState* st, const uint8_t* ptr, std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i) {
+            uint8_t b = ptr[i];
+            int act = oyk_term_eol_feed_byte(&st->eol, b);
+            if (act == OYK_TERM_ACT_NEWLINE) {
+                st->pending_text.push_back('\n');
+            } else if (act == OYK_TERM_ACT_BS) {
+                if (!st->pending_text.empty() && st->pending_text.back() != '\n') {
+                    st->pending_text.pop_back();
+                }
+            } else if (act == OYK_TERM_ACT_CHAR) {
+                st->pending_text.push_back((b == '\t') ? ' ' : static_cast<char>(b));
+            }
+        }
+    };
+
     node::NodeEngine::LocalTerminalCallbacks cbs;
     cbs.on_connected = [ts](uint64_t sid) {
         std::lock_guard<std::mutex> lk(ts->mtx);
-        if (ts->sid != sid) return;
+        if (ts->sid != sid) {
+            if (ts->opening_local && ts->sid == 0 && sid != 0) ts->sid = sid;
+            else return;
+        }
         ts->connecting = false;
         ts->connected = true;
-        ts->pending_text += "*** Connected to " + ts->remote_call.str() + " via " + ts->port_id + "\n";
+        if (!ts->opening_local) {
+            ts->pending_text += "*** Connected to " + ts->remote_call.str() + " via " + ts->port_id + "\n";
+        }
     };
-    cbs.on_rx_bytes = [ts](uint64_t sid, const std::vector<uint8_t>& bytes) {
+    cbs.on_rx_bytes = [ts, feed_rx_normalized](uint64_t sid, const std::vector<uint8_t>& bytes) {
         std::lock_guard<std::mutex> lk(ts->mtx);
-        if (ts->sid != sid) return;
-        if (ts->is_local) {
-            for (uint8_t b : bytes) {
-                if (b == '\r') ts->pending_text.push_back('\n');
-                else if (b == '\n' || (b >= 0x20 && b < 0x7F)) ts->pending_text.push_back(static_cast<char>(b));
-            }
+        if (ts->sid != sid) {
+            if (ts->opening_local && ts->sid == 0 && sid != 0) ts->sid = sid;
+            else return;
+        }
+        if (ts->is_local || ts->opening_local) {
+            feed_rx_normalized(ts, bytes.data(), bytes.size());
             return;
         }
         std::vector<uint8_t> plain;
         ts->yapp.feed_bytes(bytes.data(), bytes.size(), plain);
-        for (uint8_t b : plain) {
-            if (b == '\r') ts->pending_text.push_back('\n');
-            else if (b == '\n' || (b >= 0x20 && b < 0x7F)) ts->pending_text.push_back(static_cast<char>(b));
+        if (!plain.empty()) {
+            feed_rx_normalized(ts, plain.data(), plain.size());
         }
         auto yp = ts->yapp.progress();
         if (!yp.status_message.empty() && yp.status_message != ts->last_yapp_status) {
@@ -467,8 +516,9 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
         ts->connecting = false;
         ts->connected = false;
         ts->is_local = false;
+        ts->opening_local = false;
         ts->yapp.reset();
-        ts->pending_text += "*** Disconnected (" + reason + ")\n";
+        ts->pending_text += "\n*** Disconnected (" + reason + ")\n";
     };
 
     uint64_t sid = 0;
@@ -477,6 +527,7 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
     std::string err;
     if (ts->engine->open_local_terminal(port, target, std::move(cbs), sid, &resolved, err, &is_local)) {
         std::lock_guard<std::mutex> lk(ts->mtx);
+        ts->opening_local = false;
         ts->sid = sid;
         ts->is_local = is_local;
         ts->connecting = !is_local;
@@ -484,12 +535,14 @@ void on_gtk_term_connect(GtkWidget*, gpointer user_data) {
         ts->port_id = is_local ? "local" : port;
         ts->remote_call = resolved;
         ts->yapp.set_remote_callsign(resolved);
-        if (is_local) {
-            ts->pending_text += "*** Connected locally to " + resolved.str() + " (YAPP disabled)\n";
-        } else {
+        if (!is_local) {
             ts->pending_text += "*** Connecting to " + resolved.str() + " on " + port + "...\n";
         }
     } else {
+        {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->opening_local = false;
+        }
         gtk_term_append_text_ui(ts, "*** Connect error: " + err + "\n");
     }
 }
@@ -542,16 +595,59 @@ void on_gtk_term_send_line(GtkWidget*, gpointer user_data) {
     auto* ts = static_cast<GtkTermWindowState*>(user_data);
     std::string line = gtk_entry_get_text(GTK_ENTRY(ts->input_entry));
     gtk_entry_set_text(GTK_ENTRY(ts->input_entry), "");
+
+    if (!line.empty() && line[0] == '/') {
+        std::istringstream iss(line);
+        std::string cmd;
+        iss >> cmd;
+        for (auto& c : cmd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (cmd == "/eol") {
+            std::string arg;
+            iss >> arg;
+            std::string msg;
+            {
+                std::lock_guard<std::mutex> lk(ts->mtx);
+                if (arg.empty()) {
+                    msg = std::string("*** Terminal EOL: ") + oyk_term_eol_label(&ts->eol) +
+                          " (use /eol auto|cr|lf|crlf)\n";
+                } else {
+                    int m = OYK_TERM_EOL_AUTO;
+                    if (oyk_term_eol_parse_mode(arg.c_str(), &m)) {
+                        ts->eol.override_mode = m;
+                        msg = std::string("*** Terminal EOL set to ") + oyk_term_eol_label(&ts->eol) + ".\n";
+                    } else {
+                        msg = "*** Usage: /eol [auto|cr|lf|crlf]\n";
+                    }
+                }
+            }
+            gtk_term_append_text_ui(ts, msg);
+            return;
+        }
+        if (cmd == "/disc" || cmd == "/d") {
+            on_gtk_term_disconnect(nullptr, user_data);
+            return;
+        }
+        if (cmd == "/local" || cmd == "/bbs" || cmd == "/chat") {
+            gtk_entry_set_text(GTK_ENTRY(ts->call_entry),
+                               (cmd == "/bbs") ? "BBS" : ((cmd == "/chat") ? "CHAT" : "LOCAL"));
+            on_gtk_term_connect(nullptr, user_data);
+            return;
+        }
+    }
+
     uint64_t sid = 0;
     bool is_conn = false;
+    std::string wire = line;
     {
         std::lock_guard<std::mutex> lk(ts->mtx);
         sid = ts->sid;
         is_conn = ts->connected;
+        std::size_t eol_len = 0;
+        const char* eol_s = oyk_term_eol_tx_bytes(&ts->eol, &eol_len);
+        wire.append(eol_s, eol_len);
     }
-    gtk_term_append_text_ui(ts, "> " + line + "\n");
+    gtk_term_append_text_ui(ts, (gtk_term_buf_at_bol(ts->text_buf) ? "> " : "\n> ") + line + "\n");
     if (is_conn && sid != 0) {
-        std::string wire = line + "\r";
         std::vector<uint8_t> bytes(wire.begin(), wire.end());
         ts->engine->send_local_terminal_bytes(sid, bytes);
     } else {

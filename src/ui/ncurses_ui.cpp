@@ -5,6 +5,7 @@
 #include "oyk/ui/theme.hpp"
 #include "oyk/protocol/yapp.hpp"
 #include "../../ports/compat/oyk_tui.hpp"
+#include "../../ports/compat/oyk_term.hpp"
 
 #include <ncurses.h>
 #include <arpa/inet.h>
@@ -200,30 +201,42 @@ struct NcursesUI::TermState {
     bool connecting = false;
     bool connected = false;
     bool is_local = false;
+    bool opening_local = false;
     std::string port_id;
     ax25::Callsign remote_call{"UNKNOWN", 0};
+    OykTermEolParser eol{};
     std::deque<std::string> lines;
     std::string cur_line;
+    int scroll_offset = 0;
     std::string input;
     protocol::YappSession yapp{"incoming"};
     std::string last_yapp_status;
 
+    TermState() {
+        oyk_term_eol_init(&eol, OYK_TERM_EOL_CR, 1);
+    }
+
     void append_line(const std::string& s) {
         lines.push_back(s);
         while (lines.size() > 400) lines.pop_front();
+        scroll_offset = 0;
     }
 
     void append_bytes(const std::vector<uint8_t>& raw) {
         for (uint8_t b : raw) {
-            if (b == '\r' || b == '\n') {
-                if (!cur_line.empty() || b == '\r') {
-                    append_line(cur_line);
-                    cur_line.clear();
+            int act = oyk_term_eol_feed_byte(&eol, b);
+            if (act == OYK_TERM_ACT_NEWLINE) {
+                append_line(cur_line);
+                cur_line.clear();
+            } else if (act == OYK_TERM_ACT_BS) {
+                if (!cur_line.empty()) cur_line.pop_back();
+            } else if (act == OYK_TERM_ACT_CHAR) {
+                if (cur_line.size() < 1024) {
+                    cur_line.push_back((b == '\t') ? ' ' : static_cast<char>(b));
                 }
-            } else if (b >= 0x20 && b < 0x7F) {
-                cur_line.push_back(static_cast<char>(b));
             }
         }
+        if (!raw.empty()) scroll_offset = 0;
     }
 };
 
@@ -1293,6 +1306,10 @@ void NcursesUI::modal_local_terminal() {
             ts->sid = 0;
             ts->connected = false;
             ts->connecting = false;
+            ts->opening_local = true;
+            ts->cur_line.clear();
+            ts->scroll_offset = 0;
+            oyk_term_eol_init(&ts->eol, OYK_TERM_EOL_CR, 1);
             ts->yapp.reset();
         }
         if (old_sid != 0) engine_.close_local_terminal(old_sid);
@@ -1300,15 +1317,29 @@ void NcursesUI::modal_local_terminal() {
         node::NodeEngine::LocalTerminalCallbacks cbs;
         cbs.on_connected = [ts](uint64_t sid) {
             std::lock_guard<std::mutex> lk(ts->mtx);
-            if (ts->sid != sid) return;
+            if (ts->sid != sid) {
+                if (ts->opening_local && ts->sid == 0 && sid != 0) {
+                    ts->sid = sid;
+                } else {
+                    return;
+                }
+            }
             ts->connecting = false;
             ts->connected = true;
-            ts->append_line("*** Connected to " + ts->remote_call.str() + " via " + ts->port_id);
+            if (!ts->opening_local) {
+                ts->append_line("*** Connected to " + ts->remote_call.str() + " via " + ts->port_id);
+            }
         };
         cbs.on_rx_bytes = [ts](uint64_t sid, const std::vector<uint8_t>& bytes) {
             std::lock_guard<std::mutex> lk(ts->mtx);
-            if (ts->sid != sid) return;
-            if (ts->is_local) {
+            if (ts->sid != sid) {
+                if (ts->opening_local && ts->sid == 0 && sid != 0) {
+                    ts->sid = sid;
+                } else {
+                    return;
+                }
+            }
+            if (ts->is_local || ts->opening_local) {
                 ts->append_bytes(bytes);
                 return;
             }
@@ -1326,10 +1357,15 @@ void NcursesUI::modal_local_terminal() {
         cbs.on_closed = [ts](uint64_t sid, const std::string& reason) {
             std::lock_guard<std::mutex> lk(ts->mtx);
             if (ts->sid != sid) return;
+            if (!ts->cur_line.empty()) {
+                ts->append_line(ts->cur_line);
+                ts->cur_line.clear();
+            }
             ts->sid = 0;
             ts->connecting = false;
             ts->connected = false;
             ts->is_local = false;
+            ts->opening_local = false;
             ts->yapp.reset();
             ts->append_line("*** Disconnected (" + reason + ")");
         };
@@ -1338,8 +1374,10 @@ void NcursesUI::modal_local_terminal() {
         ax25::Callsign resolved;
         bool is_local = false;
         std::string err;
-        if (engine_.open_local_terminal(port, target, std::move(cbs), new_sid, &resolved, err, &is_local)) {
+        bool ok = engine_.open_local_terminal(port, target, std::move(cbs), new_sid, &resolved, err, &is_local);
+        if (ok) {
             std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->opening_local = false;
             ts->sid = new_sid;
             ts->is_local = is_local;
             ts->connecting = !is_local;
@@ -1347,13 +1385,12 @@ void NcursesUI::modal_local_terminal() {
             ts->port_id = is_local ? "local" : port;
             ts->remote_call = resolved;
             ts->yapp.set_remote_callsign(resolved);
-            if (is_local) {
-                ts->append_line("*** Connected locally to " + resolved.str() + " (YAPP disabled on local link)");
-            } else {
+            if (!is_local) {
                 ts->append_line("*** Connecting to " + resolved.str() + " on " + port + "...");
             }
         } else {
             std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->opening_local = false;
             ts->append_line("*** Connect error: " + err);
         }
     };
@@ -1517,26 +1554,50 @@ void NcursesUI::modal_local_terminal() {
         // Top bar
         std::string header;
         protocol::YappProgress yp;
-        std::vector<std::string> view_lines;
-        std::string live_line;
+        std::vector<std::string> wrapped_rows;
+        const int wrap_w = std::max(1, cols - 2);
+        const int body_h = tlay.body_rows;
         {
             std::lock_guard<std::mutex> lk(ts->mtx);
             yp = ts->yapp.progress();
+            const std::string eol_tag = std::string(" [EOL:") + oyk_term_eol_label(&ts->eol) + "]";
+
+            auto append_wrapped = [&](const std::string& s) {
+                std::vector<OykTermWrapSpan> spans(std::max<std::size_t>(16, s.size() / static_cast<std::size_t>(wrap_w) + 4));
+                int sc = oyk_term_wrap_line(s.c_str(), s.size(), wrap_w,
+                                            spans.data(), static_cast<int>(spans.size()));
+                for (int si = 0; si < sc; ++si) {
+                    wrapped_rows.push_back(s.substr(spans[si].start, spans[si].len));
+                }
+            };
+            for (const auto& l : ts->lines) {
+                append_wrapped(l);
+            }
+            if (!ts->cur_line.empty()) {
+                append_wrapped(ts->cur_line);
+            }
+
+            const int total_wrapped = static_cast<int>(wrapped_rows.size());
+            const int max_scroll = std::max(0, total_wrapped - body_h);
+            ts->scroll_offset = std::clamp(ts->scroll_offset, 0, max_scroll);
+
             if (ts->connected) {
                 header = " LOCAL TERMINAL | CONNECTED: " + ts->remote_call.str() + " via " + ts->port_id +
-                         (ts->is_local ? " (LOCAL - YAPP disabled)" : "");
+                         (ts->is_local ? " (LOCAL)" : "") + eol_tag;
             } else if (ts->connecting) {
-                header = " LOCAL TERMINAL | CONNECTING: " + ts->remote_call.str() + " via " + ts->port_id + "...";
+                header = " LOCAL TERMINAL | CONNECTING: " + ts->remote_call.str() + " via " + ts->port_id + "..." + eol_tag;
             } else {
-                header = " LOCAL TERMINAL | DISCONNECTED (F2:Connect | F9/Esc:Console)";
+                header = " LOCAL TERMINAL | DISCONNECTED" + eol_tag + " (F2:Connect | F9/Esc:Console)";
             }
-            int body_h = tlay.body_rows;
-            int total = static_cast<int>(ts->lines.size());
-            int start = std::max(0, total - body_h + (ts->cur_line.empty() ? 0 : 1));
-            for (int i = start; i < total; ++i) {
-                view_lines.push_back(ts->lines[static_cast<std::size_t>(i)]);
+            if (ts->scroll_offset > 0) {
+                header += " [UP " + std::to_string(ts->scroll_offset) + "]";
             }
-            live_line = ts->cur_line;
+
+            const int start = std::max(0, max_scroll - ts->scroll_offset);
+            const int end = std::min(total_wrapped, start + body_h);
+            if (start > 0 || end < total_wrapped) {
+                wrapped_rows.assign(wrapped_rows.begin() + start, wrapped_rows.begin() + end);
+            }
         }
 
         if (has_colors_) attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
@@ -1546,18 +1607,14 @@ void NcursesUI::modal_local_terminal() {
         if (has_colors_) attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
         else attroff(A_REVERSE | A_BOLD);
 
-        int body_h = tlay.body_rows;
         int row = tlay.body_top;
-        for (const auto& l : view_lines) {
+        for (const auto& l : wrapped_rows) {
             if (row >= tlay.body_top + body_h) break;
-            print_clipped(row++, 1, cols - 2, l);
-        }
-        if (!live_line.empty() && row < tlay.body_top + body_h) {
-            print_clipped(row++, 1, cols - 2, live_line);
+            mvaddnstr(row++, 1, l.c_str(), wrap_w);
         }
 
         // YAPP / hotkey bar
-        std::string bar = "F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console";
+        std::string bar = "F2:Connect  F3:YAPP Upload  F4:Disconnect  PgUp/Dn:Scroll  F9/Esc:Console";
         if (yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
             bar = yp.status_message + " (" + std::to_string(yp.bytes_transferred) +
                   (yp.total_bytes > 0 ? ("/" + std::to_string(yp.total_bytes)) : "") + " B)";
@@ -1569,15 +1626,53 @@ void NcursesUI::modal_local_terminal() {
         if (has_colors_) attroff(COLOR_PAIR(CP_MENU));
         else attroff(A_REVERSE);
 
-        // Command input row
+        // Command input row (horizontal scroll)
+        const int in_avail = std::max(1, cols - 3);
+        std::size_t in_start = 0;
+        int cur_col = 0;
+        oyk_term_input_slice(input.size(), in_avail, &in_start, &cur_col);
         mvaddstr(tlay.input_row, 0, "> ");
-        print_clipped(tlay.input_row, 2, cols - 3, input);
-        move(tlay.input_row, std::min(cols - 1, 2 + static_cast<int>(input.size())));
+        mvaddnstr(tlay.input_row, 2, input.c_str() + in_start, in_avail);
+        move(tlay.input_row, std::min(cols - 1, 2 + cur_col));
         refresh();
 
         int ch = getch();
         if (ch == ERR || ch == KEY_RESIZE) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if (mev.bstate & BUTTON4_PRESSED) {
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    ts->scroll_offset += 3;
+                }
+#ifdef BUTTON5_PRESSED
+                else if (mev.bstate & BUTTON5_PRESSED) {
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    ts->scroll_offset = std::max(0, ts->scroll_offset - 3);
+                }
+#endif
+            }
+            continue;
+        }
         if (ch == 27 || ch == KEY_F(9)) break;
+        if (ch == KEY_PPAGE) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->scroll_offset += std::max(1, body_h / 2);
+            continue;
+        } else if (ch == KEY_NPAGE) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->scroll_offset = std::max(0, ts->scroll_offset - std::max(1, body_h / 2));
+            continue;
+        } else if (ch == KEY_HOME) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->scroll_offset = 100000;
+            continue;
+        } else if (ch == KEY_END) {
+            std::lock_guard<std::mutex> lk(ts->mtx);
+            ts->scroll_offset = 0;
+            continue;
+        }
 
         if (ch == KEY_F(2)) {
             prompt_connect();
@@ -1642,6 +1737,26 @@ void NcursesUI::modal_local_terminal() {
                     } else {
                         start_connect(p, t);
                     }
+                } else if (cmd == "/local" || cmd == "/bbs" || cmd == "/chat") {
+                    const std::string tgt = (cmd == "/bbs") ? "BBS" : ((cmd == "/chat") ? "CHAT" : "LOCAL");
+                    start_connect("local", tgt);
+                } else if (cmd == "/eol") {
+                    std::string arg;
+                    iss >> arg;
+                    std::lock_guard<std::mutex> lk(ts->mtx);
+                    if (arg.empty()) {
+                        ts->append_line(std::string("*** Terminal EOL: ") + oyk_term_eol_label(&ts->eol) +
+                                        " (use /eol auto|cr|lf|crlf)");
+                    } else {
+                        int m = OYK_TERM_EOL_AUTO;
+                        if (oyk_term_eol_parse_mode(arg.c_str(), &m)) {
+                            ts->eol.override_mode = m;
+                            ts->append_line(std::string("*** Terminal EOL set to ") +
+                                            oyk_term_eol_label(&ts->eol) + ".");
+                        } else {
+                            ts->append_line("*** Usage: /eol [auto|cr|lf|crlf]");
+                        }
+                    }
                 } else if (cmd == "/disc" || cmd == "/d") {
                     uint64_t sid = 0;
                     { std::lock_guard<std::mutex> lk(ts->mtx); sid = ts->sid; }
@@ -1686,24 +1801,27 @@ void NcursesUI::modal_local_terminal() {
                     break;
                 } else {
                     std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Commands: /connect <port> <call>, /send, /disc, /ports, /abort, /console");
+                    ts->append_line("*** Commands: /connect /local /bbs /chat /send /disc /ports /eol /abort /console");
                 }
             } else {
                 uint64_t sid = 0;
                 bool is_conn = false;
+                std::string wire = line;
                 {
                     std::lock_guard<std::mutex> lk(ts->mtx);
                     sid = ts->sid;
                     is_conn = ts->connected;
                     ts->append_line("> " + line);
+                    std::size_t eol_len = 0;
+                    const char* eol_s = oyk_term_eol_tx_bytes(&ts->eol, &eol_len);
+                    wire.append(eol_s, eol_len);
                 }
                 if (is_conn && sid != 0) {
-                    std::string wire = line + "\r";
                     std::vector<uint8_t> bytes(wire.begin(), wire.end());
                     engine_.send_local_terminal_bytes(sid, bytes);
                 } else {
                     std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Not connected. Press F2 or type /connect <port> <callsign>");
+                    ts->append_line("*** Not connected. Press F2 or type /local, /bbs, /chat, or /connect");
                 }
             }
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {

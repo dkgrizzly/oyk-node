@@ -241,6 +241,11 @@ static void pico_save_capture(const char* name, PicoConsole* con, PicoCapture* c
     }
 }
 
+static void pico_ui_local_cb(oyk_u32 sid, int ev, const oyk_u8* data, size_t len, const char* r, void* ctx) {
+    PicoConsole* con = static_cast<PicoConsole*>(ctx);
+    if (con) con->on_local_term_event(sid, ev, data, len, r);
+}
+
 static void test_pico_ui_flows_and_captures() {
     pico_board_set_sim_profile("pico2_w");
     pico_psram_set_sim_available(0, 0, NULL);
@@ -271,6 +276,7 @@ static void test_pico_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0';
     PicoConsole* con = new PicoConsole();
     con->init(node, net, pico_cap_tx, cap);
+    node->set_local_event_callback(pico_ui_local_cb, con);
     con->tick(500UL);
     con->on_usb_connect();
     const char* da_x256 = "\033[>41;354;0c";
@@ -369,12 +375,22 @@ static void test_pico_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
 
-    /* 8b2. Local Terminal with example /bbs session */
+    /* 8b2. Local Terminal with example /bbs session (banner, live prompt, [EOL:CR], /eol) */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t/bbs\r"), 6);
     assert(con->view_mode() == PICO_VIEW_LOCAL_TERM);
     assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
+    assert(strstr(cap->buf, "[EOL:CR]") != NULL);
+    assert(strstr(cap->buf, "Packet BBS") != NULL);
+    assert(strstr(cap->buf, "de KR4OYK-11") != NULL);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("?\r"), 2);
     pico_save_capture("terminal", con, cap);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol crlf\r"), 10);
+    assert(strstr(cap->buf, "[EOL:CRLF*]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("/eol auto\r"), 10);
+    assert(strstr(cap->buf, "[EOL:CR]") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1900UL);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);

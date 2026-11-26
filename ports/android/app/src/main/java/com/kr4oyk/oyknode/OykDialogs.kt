@@ -815,6 +815,7 @@ fun TerminalCard(
                             ln,
                             color = Color(0xFFE2E8F0),
                             fontFamily = FontFamily.Monospace,
+                            softWrap = true,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

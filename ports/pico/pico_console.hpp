@@ -6,6 +6,7 @@
 
 #include "oyk_pico_config.h"
 #include "oyk_portable.hpp"
+#include "oyk_term.hpp"
 #include "board_pico.hpp"
 #include "pico_net_bridge.hpp"
 
@@ -195,9 +196,14 @@ private:
 
     oyk_u32 lterm_sid_;
     int lterm_is_local_;
-    char lterm_lines_[40][136];
+    int lterm_opening_;
+    int lterm_scroll_;
+    OykTermEolParser lterm_eol_;
+    char lterm_lines_[32][200];
     int lterm_line_count_;
-    char lterm_input_[136];
+    char lterm_curline_[200];
+    int lterm_curline_len_;
+    char lterm_input_[160];
     size_t lterm_input_len_;
 
     int esc_state_;

@@ -26,6 +26,7 @@
 #include "../compat/oyk_yapp.hpp"
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
+#include "../compat/oyk_term.hpp"
 #include "resource.h"
 #include "win_service.hpp"
 
@@ -195,11 +196,12 @@ static HWND g_lterm_hwnd = NULL;
 static oyk_u32 g_lterm_sid = 0;
 static int g_lterm_connected = 0;
 static int g_lterm_connecting = 0;
+static int g_lterm_opening = 0;
 static int g_lterm_is_local = 0;
+static int g_lterm_at_bol = 1;
 static OykCallsign g_lterm_remote;
 static OykYappSession g_lterm_yapp;
-static char g_lterm_curline[260];
-static int g_lterm_curline_len = 0;
+static OykTermEolParser g_lterm_eol;
 static char g_lterm_last_yapp_st[128];
 
 static int win_strieq(const char* a, const char* b) {
@@ -1120,8 +1122,8 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
 /* ==================== Local Terminal & YAPP Dialog ==================== */
 
-static void lterm_append_line(const char* line) {
-    if (!g_lterm_hwnd || !line) return;
+static void lterm_append_raw(const char* text) {
+    if (!g_lterm_hwnd || !text || !text[0]) return;
     HWND ed = GetDlgItem(g_lterm_hwnd, IDC_LTERM_OUTPUT);
     if (!ed) return;
     int cur_len = GetWindowTextLength(ed);
@@ -1130,15 +1132,27 @@ static void lterm_append_line(const char* line) {
         SendMessage(ed, EM_REPLACESEL, FALSE, OYK_LPARAM_STR(""));
         cur_len = GetWindowTextLength(ed);
     }
-    static char buf[320];
+    OYK_EDIT_SETSEL(ed, cur_len, cur_len);
+    SendMessage(ed, EM_REPLACESEL, FALSE, OYK_LPARAM_STR(text));
+    size_t n = strlen(text);
+    if (n > 0) {
+        g_lterm_at_bol = (text[n - 1] == '\n') ? 1 : 0;
+    }
+}
+
+static void lterm_append_line(const char* line) {
+    if (!g_lterm_hwnd || !line) return;
+    if (!g_lterm_at_bol) {
+        lterm_append_raw("\r\n");
+    }
+    static char buf[516];
     size_t n = strlen(line);
     if (n > sizeof(buf) - 3) n = sizeof(buf) - 3;
     memcpy(buf, line, n);
     buf[n++] = '\r';
     buf[n++] = '\n';
     buf[n] = '\0';
-    OYK_EDIT_SETSEL(ed, cur_len, cur_len);
-    SendMessage(ed, EM_REPLACESEL, FALSE, OYK_LPARAM_STR(buf));
+    lterm_append_raw(buf);
 }
 
 static void layout_lterm_controls(HWND hdlg, int cw, int ch) {
@@ -1205,21 +1219,24 @@ static void layout_lterm_controls(HWND hdlg, int cw, int ch) {
 
 static void lterm_update_status() {
     if (!g_lterm_hwnd) return;
-    char st[160];
+    char st[180];
+    const char* eol_lbl = oyk_term_eol_label(&g_lterm_eol);
     if (!g_lterm_is_local && g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
-        sprintf(st, "%.100s (%lu/%lu B)", g_lterm_yapp.status,
+        sprintf(st, "%.100s (%lu/%lu B) [EOL:%s]", g_lterm_yapp.status,
                 static_cast<unsigned long>(g_lterm_yapp.bytes_transferred),
-                static_cast<unsigned long>(g_lterm_yapp.total_bytes));
+                static_cast<unsigned long>(g_lterm_yapp.total_bytes),
+                eol_lbl);
     } else if (g_lterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(st, "Connected to %s (%s)", cs, g_lterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready");
+        sprintf(st, "Connected to %s (%s) [EOL:%s]", cs,
+                g_lterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready", eol_lbl);
     } else if (g_lterm_connecting) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(st, "Connecting to %s...", cs);
+        sprintf(st, "Connecting to %s... [EOL:%s]", cs, eol_lbl);
     } else {
-        strcpy(st, "Disconnected (YAPP saves to incoming\\<CALL-SSID>\\)");
+        sprintf(st, "Disconnected [EOL:%s] (YAPP saves to incoming\\<CALL-SSID>\\)", eol_lbl);
     }
     SetDlgItemText(g_lterm_hwnd, IDC_LTERM_STATUS, st);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_CONNECT), (!g_lterm_connected && !g_lterm_connecting) ? TRUE : FALSE);
@@ -1246,36 +1263,56 @@ static int win_yapp_overwrite_cb(const char* target_path, const char* /*filename
 static void win_local_term_event_cb(oyk_u32 sid, int event_type,
                                     const oyk_u8* data, size_t len,
                                     const char* reason, void* /*ctx*/) {
-    if (sid != g_lterm_sid) return;
+    if (sid != g_lterm_sid) {
+        if (g_lterm_opening && g_lterm_sid == 0 && sid != 0) {
+            g_lterm_sid = sid;
+        } else {
+            return;
+        }
+    }
     if (event_type == 1) {
         g_lterm_connecting = 0;
         g_lterm_connected = 1;
-        char cs[16], msg[80];
-        oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(msg, "*** Connected to %s", cs);
-        lterm_append_line(msg);
+        if (!g_lterm_opening) {
+            char cs[16], msg[80];
+            oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
+            sprintf(msg, "*** Connected to %s", cs);
+            lterm_append_line(msg);
+        }
         lterm_update_status();
     } else if (event_type == 2 && data && len > 0) {
         const oyk_u8* text_ptr = data;
         size_t text_len = len;
         static oyk_u8 plain[512];
-        if (!g_lterm_is_local) {
+        if (!g_lterm_is_local && !g_lterm_opening) {
             text_len = oyk_yapp_feed_bytes(&g_lterm_yapp, data, len, plain, sizeof(plain));
             text_ptr = plain;
         }
+        static char out[512];
+        size_t out_len = 0;
         for (size_t i = 0; i < text_len; ++i) {
             oyk_u8 ch = text_ptr[i];
-            if (ch == '\r' || ch == '\n') {
-                if (g_lterm_curline_len > 0 || ch == '\r') {
-                    g_lterm_curline[g_lterm_curline_len] = '\0';
-                    lterm_append_line(g_lterm_curline);
-                    g_lterm_curline_len = 0;
+            int act = oyk_term_eol_feed_byte(&g_lterm_eol, ch);
+            if (act == OYK_TERM_ACT_NEWLINE) {
+                if (out_len + 3 >= sizeof(out)) {
+                    out[out_len] = '\0';
+                    lterm_append_raw(out);
+                    out_len = 0;
                 }
-            } else if (ch >= 0x20U && ch < 0x7FU) {
-                if (g_lterm_curline_len < static_cast<int>(sizeof(g_lterm_curline) - 1)) {
-                    g_lterm_curline[g_lterm_curline_len++] = static_cast<char>(ch);
+                out[out_len++] = '\r';
+                out[out_len++] = '\n';
+            } else if (act == OYK_TERM_ACT_CHAR) {
+                if (out_len + 2 >= sizeof(out)) {
+                    out[out_len] = '\0';
+                    lterm_append_raw(out);
+                    out_len = 0;
                 }
+                out[out_len++] = (ch == '\t') ? ' ' : static_cast<char>(ch);
             }
+        }
+        if (out_len > 0) {
+            out[out_len] = '\0';
+            lterm_append_raw(out);
         }
         if (!g_lterm_is_local && g_lterm_yapp.status[0] && strcmp(g_lterm_yapp.status, g_lterm_last_yapp_st) != 0) {
             strncpy(g_lterm_last_yapp_st, g_lterm_yapp.status, sizeof(g_lterm_last_yapp_st) - 1);
@@ -1290,6 +1327,7 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
         g_lterm_connecting = 0;
         g_lterm_connected = 0;
         g_lterm_is_local = 0;
+        g_lterm_opening = 0;
         oyk_yapp_reset(&g_lterm_yapp);
         char msg[96];
         sprintf(msg, "*** Disconnected (%s)", reason ? reason : "Closed");
@@ -1309,9 +1347,11 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             g_lterm_sid = 0;
             g_lterm_connected = 0;
             g_lterm_connecting = 0;
+            g_lterm_opening = 0;
             g_lterm_is_local = 0;
-            g_lterm_curline_len = 0;
+            g_lterm_at_bol = 1;
             g_lterm_last_yapp_st[0] = '\0';
+            oyk_term_eol_init(&g_lterm_eol, OYK_TERM_EOL_CR, 1);
             oyk_yapp_init(&g_lterm_yapp, "incoming",
                           win_yapp_send_cb, NULL,
                           win_yapp_overwrite_cb, NULL);
@@ -1405,25 +1445,26 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 char target[96], err[96];
                 GetDlgItemText(hdlg, IDC_LTERM_TARGET, target, sizeof(target));
                 oyk_u32 sid = 0;
-                int is_local = 0;
+                oyk_term_eol_init(&g_lterm_eol, OYK_TERM_EOL_CR, 1);
+                g_lterm_sid = 0;
+                g_lterm_opening = 1;
                 g_lterm_is_local = (s_iface_map[sel] < 0) ? 1 : 0;
-                if (g_node.open_local_terminal(s_iface_map[sel], target, &sid, &g_lterm_remote,
-                                               &is_local, err, sizeof(err))) {
+                int ok = g_node.open_local_terminal(s_iface_map[sel], target, &sid, &g_lterm_remote,
+                                                    &g_lterm_is_local, err, sizeof(err));
+                g_lterm_opening = 0;
+                if (ok) {
                     g_lterm_sid = sid;
-                    g_lterm_is_local = is_local;
-                    g_lterm_connecting = is_local ? 0 : 1;
-                    g_lterm_connected = is_local ? 1 : 0;
+                    g_lterm_connecting = g_lterm_is_local ? 0 : 1;
+                    g_lterm_connected = g_lterm_is_local ? 1 : 0;
                     oyk_yapp_reset(&g_lterm_yapp);
                     oyk_yapp_set_remote(&g_lterm_yapp, &g_lterm_remote);
                     g_lterm_last_yapp_st[0] = '\0';
-                    char cs[16], line[96];
-                    oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-                    if (is_local) {
-                        sprintf(line, "*** Connected locally to %s (YAPP disabled)", cs);
-                    } else {
+                    if (!g_lterm_is_local) {
+                        char cs[16], line[96];
+                        oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
                         sprintf(line, "*** Connecting to %s on %s...", cs, g_node.iface(s_iface_map[sel]).cfg.id);
+                        lterm_append_line(line);
                     }
-                    lterm_append_line(line);
                 } else {
                     g_lterm_is_local = 0;
                     char line[128];
@@ -1484,15 +1525,40 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 return TRUE;
             }
             if (id == IDC_LTERM_SEND || id == IDOK) {
-                static char in_buf[224];
-                GetDlgItemText(hdlg, IDC_LTERM_INPUT, in_buf, sizeof(in_buf) - 2);
+                static char in_buf[228];
+                GetDlgItemText(hdlg, IDC_LTERM_INPUT, in_buf, sizeof(in_buf) - 4);
                 SetDlgItemText(hdlg, IDC_LTERM_INPUT, "");
+                if (strncmp(in_buf, "/eol", 4) == 0 && (in_buf[4] == '\0' || in_buf[4] == ' ')) {
+                    const char* arg = in_buf + 4;
+                    while (*arg == ' ') ++arg;
+                    if (!arg[0]) {
+                        char msg[80];
+                        sprintf(msg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
+                                oyk_term_eol_label(&g_lterm_eol));
+                        lterm_append_line(msg);
+                    } else {
+                        int m = OYK_TERM_EOL_AUTO;
+                        if (oyk_term_eol_parse_mode(arg, &m)) {
+                            g_lterm_eol.override_mode = m;
+                            char msg[80];
+                            sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&g_lterm_eol));
+                            lterm_append_line(msg);
+                            lterm_update_status();
+                        } else {
+                            lterm_append_line("*** Usage: /eol [auto|cr|lf|crlf]");
+                        }
+                    }
+                    return TRUE;
+                }
                 char echo[240];
                 sprintf(echo, "> %s", in_buf);
                 lterm_append_line(echo);
                 if (g_lterm_connected && g_lterm_sid != 0) {
                     size_t n = strlen(in_buf);
-                    in_buf[n++] = '\r';
+                    size_t eol_len = 0;
+                    const char* eol_s = oyk_term_eol_tx_bytes(&g_lterm_eol, &eol_len);
+                    memcpy(in_buf + n, eol_s, eol_len);
+                    n += eol_len;
                     in_buf[n] = '\0';
                     g_node.send_local_bytes(g_lterm_sid, reinterpret_cast<const oyk_u8*>(in_buf), n);
                 } else {

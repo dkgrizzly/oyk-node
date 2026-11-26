@@ -18,7 +18,9 @@ enum TinyTmuxVKey {
     TMUX_KEY_F2    = 0x105,
     TMUX_KEY_F10   = 0x106,
     TMUX_KEY_HOME  = 0x107,
-    TMUX_KEY_END   = 0x108
+    TMUX_KEY_END   = 0x108,
+    TMUX_KEY_PGUP  = 0x109,
+    TMUX_KEY_PGDN  = 0x10A
 };
 
 static int strieq_ci(const char* a, const char* b) {
@@ -64,7 +66,7 @@ TinyTmuxConsole::TinyTmuxConsole()
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
       wiz_edit_idx_(-1), wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
-      lterm_sid_(0), lterm_is_local_(0),
+      lterm_sid_(0), lterm_is_local_(0), lterm_opening_(0), lterm_scroll_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(ESC_IDLE), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_start_ms_(0),
       last_marchc_redraw_ms_(0),
@@ -91,6 +93,7 @@ TinyTmuxConsole::TinyTmuxConsole()
     memset(lterm_lines_, 0, sizeof(lterm_lines_));
     lterm_curline_[0] = '\0';
     lterm_input_[0] = '\0';
+    oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
 }
 
 void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, void* tx_ctx) {
@@ -121,14 +124,17 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     wiz_err_[0] = '\0';
     lterm_sid_ = 0;
     lterm_is_local_ = 0;
+    lterm_opening_ = 0;
+    lterm_scroll_ = 0;
     lterm_line_count_ = 0;
     lterm_curline_len_ = 0;
     lterm_input_len_ = 0;
+    oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
     bootloader_pending_ = 0;
     bootloader_start_ms_ = 0;
     reset_escape();
     if (node_) draft_ = node_->config();
-    push_lterm_line("*** OYK TinyTMUX Local Terminal (Esc:Console, /local, /bbs, /chat, /disc)");
+    push_lterm_line("*** OYK TinyTMUX Local Terminal (Esc:Console, /local, /bbs, /chat, /eol, /disc)");
 }
 
 void TinyTmuxConsole::set_net_bridge(TinyTmuxNetBridge* bridge) {
@@ -367,48 +373,72 @@ void TinyTmuxConsole::write_str(const char* s) {
     }
 }
 
-void TinyTmuxConsole::push_lterm_line(const char* line) {
+OYK_FLASHMEM void TinyTmuxConsole::push_lterm_line(const char* line) {
     if (!line) return;
-    if (lterm_line_count_ < 40) {
-        strncpy(lterm_lines_[lterm_line_count_], line, 135);
-        lterm_lines_[lterm_line_count_][135] = '\0';
+    if (lterm_line_count_ < 32) {
+        strncpy(lterm_lines_[lterm_line_count_], line, 199);
+        lterm_lines_[lterm_line_count_][199] = '\0';
         lterm_line_count_++;
     } else {
-        for (int i = 1; i < 40; ++i) {
-            memcpy(lterm_lines_[i - 1], lterm_lines_[i], 136);
+        for (int i = 1; i < 32; ++i) {
+            memcpy(lterm_lines_[i - 1], lterm_lines_[i], 200);
         }
-        strncpy(lterm_lines_[39], line, 135);
-        lterm_lines_[39][135] = '\0';
+        strncpy(lterm_lines_[31], line, 199);
+        lterm_lines_[31][199] = '\0';
     }
+    lterm_scroll_ = 0;
 }
 
-void TinyTmuxConsole::on_local_term_event(oyk_u32 sid, int event_type,
-                                          const oyk_u8* data, size_t len,
-                                          const char* reason) {
-    if (sid != lterm_sid_) return;
+OYK_FLASHMEM void TinyTmuxConsole::on_local_term_event(oyk_u32 sid, int event_type,
+                                                       const oyk_u8* data, size_t len,
+                                                       const char* reason) {
+    if (sid != lterm_sid_) {
+        if (lterm_opening_ && lterm_sid_ == 0 && sid != 0) {
+            lterm_sid_ = sid;
+        } else {
+            return;
+        }
+    }
     if (event_type == 1) {
         push_lterm_line("*** Connected.");
     } else if (event_type == 2 && data && len > 0) {
         for (size_t i = 0; i < len; ++i) {
             oyk_u8 ch = data[i];
-            if (ch == '\r' || ch == '\n') {
-                if (lterm_curline_len_ > 0 || ch == '\r') {
+            int act = oyk_term_eol_feed_byte(&lterm_eol_, ch);
+            if (act == OYK_TERM_ACT_NEWLINE) {
+                lterm_curline_[lterm_curline_len_] = '\0';
+                push_lterm_line(lterm_curline_);
+                lterm_curline_len_ = 0;
+            } else if (act == OYK_TERM_ACT_BS) {
+                if (lterm_curline_len_ > 0) {
+                    --lterm_curline_len_;
+                    lterm_curline_[lterm_curline_len_] = '\0';
+                }
+            } else if (act == OYK_TERM_ACT_CHAR) {
+                if (lterm_curline_len_ >= 199) {
                     lterm_curline_[lterm_curline_len_] = '\0';
                     push_lterm_line(lterm_curline_);
                     lterm_curline_len_ = 0;
                 }
-            } else if (ch >= 0x20U && ch < 0x7FU) {
-                if (lterm_curline_len_ < 134) {
-                    lterm_curline_[lterm_curline_len_++] = static_cast<char>(ch);
-                }
+                lterm_curline_[lterm_curline_len_++] = (ch == '\t') ? ' ' : static_cast<char>(ch);
+                lterm_curline_[lterm_curline_len_] = '\0';
+                lterm_scroll_ = 0;
             }
         }
     } else if (event_type == 3) {
+        if (lterm_curline_len_ > 0) {
+            lterm_curline_[lterm_curline_len_] = '\0';
+            push_lterm_line(lterm_curline_);
+            lterm_curline_len_ = 0;
+        }
         lterm_sid_ = 0;
         lterm_is_local_ = 0;
         char msg[80];
         sprintf(msg, "*** Disconnected (%s)", reason ? reason : "Closed");
         push_lterm_line(msg);
+    }
+    if (!lterm_opening_ && view_ == TMUX_VIEW_LOCAL_TERM) {
+        render_local_terminal();
     }
 }
 
@@ -682,24 +712,69 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
     OykTuiTermLayout tlay;
     oyk_tui_compute_term_layout(term_rows_, term_cols_, &tlay);
     const int ncols = tlay.cols;
+    const int body_w = (ncols > 2) ? (ncols - 2) : 1;
+    const int body_h = (tlay.body_rows > 0) ? tlay.body_rows : 1;
+    const int show_live = (lterm_curline_len_ > 0) ? 1 : 0;
+
+    int total_rows = 0;
+    for (int i = 0; i < lterm_line_count_; ++i) {
+        total_rows += oyk_term_count_wrapped_rows(lterm_lines_[i], strlen(lterm_lines_[i]), body_w);
+    }
+    if (show_live) {
+        lterm_curline_[lterm_curline_len_] = '\0';
+        total_rows += oyk_term_count_wrapped_rows(lterm_curline_, static_cast<size_t>(lterm_curline_len_), body_w);
+    }
+    int max_scroll = (total_rows > body_h) ? (total_rows - body_h) : 0;
+    if (lterm_scroll_ > max_scroll) lterm_scroll_ = max_scroll;
+    if (lterm_scroll_ < 0) lterm_scroll_ = 0;
+    int first_vis = max_scroll - lterm_scroll_;
+
     write_str("\033[H\033[2J");
-    char hdr[160];
-    sprintf(hdr, " OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc",
-            lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    char hdr[180];
+    if (lterm_scroll_ > 0) {
+        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] [UP %d] | Esc:Console",
+                lterm_sid_ ? "CONNECTED" : "DISCONNECTED",
+                oyk_term_eol_label(&lterm_eol_), lterm_scroll_);
+    } else {
+        sprintf(hdr, " OYK LOCAL TERMINAL (%s) [EOL:%s] | Esc:Console /local /bbs /chat /eol",
+                lterm_sid_ ? "CONNECTED" : "DISCONNECTED",
+                oyk_term_eol_label(&lterm_eol_));
+    }
     sprintf(buf, "\033[%d;1H%s%-*.*s\033[0m", tlay.header_row + 1, sgr_header(), ncols, ncols, hdr);
     write_str(buf);
 
-    int start = (lterm_line_count_ > tlay.body_rows) ? (lterm_line_count_ - tlay.body_rows) : 0;
-    int row = 0;
-    for (int i = start; i < lterm_line_count_ && row < tlay.body_rows; ++i, ++row) {
-        sprintf(buf, "\033[%d;1H%-*.*s", tlay.body_top + 1 + row, ncols - 1, ncols - 1, lterm_lines_[i]);
-        write_str(buf);
+    int vis_idx = 0;
+    int out_row = 0;
+    const int nlines = lterm_line_count_ + show_live;
+    for (int li = 0; li < nlines && out_row < body_h; ++li) {
+        const char* ln = (li < lterm_line_count_) ? lterm_lines_[li] : lterm_curline_;
+        OykTermWrapSpan spans[16];
+        int sc = oyk_term_wrap_line(ln, strlen(ln), body_w, spans, 16);
+        for (int si = 0; si < sc && out_row < body_h; ++si) {
+            if (vis_idx >= first_vis) {
+                char seg[160];
+                size_t slen = spans[si].len;
+                if (slen >= sizeof(seg)) slen = sizeof(seg) - 1;
+                memcpy(seg, ln + spans[si].start, slen);
+                seg[slen] = '\0';
+                sprintf(buf, "\033[%d;2H%-*.*s", tlay.body_top + 1 + out_row, body_w, body_w, seg);
+                write_str(buf);
+                ++out_row;
+            }
+            ++vis_idx;
+        }
     }
     sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
             tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2,
-            "Esc:Console  /local /bbs /chat /disc  Ctrl-L:Redraw/Size");
+            "Esc/Tab:Console  /local /bbs /chat /eol /disc  PgUp/Dn:Scroll  Ctrl-L:Size");
     write_str(buf);
-    sprintf(buf, "\033[%d;1H> %-*.*s", tlay.input_row + 1, ncols - 3, ncols - 3, lterm_input_);
+    int in_avail = (ncols > 3) ? (ncols - 3) : 1;
+    size_t in_start = 0;
+    int cur_col = 0;
+    oyk_term_input_slice(static_cast<size_t>(lterm_input_len_), in_avail, &in_start, &cur_col);
+    sprintf(buf, "\033[%d;1H> %-*.*s\033[%d;%dH",
+            tlay.input_row + 1, in_avail, in_avail, lterm_input_ + in_start,
+            tlay.input_row + 1, 3 + cur_col);
     write_str(buf);
 }
 
@@ -3529,7 +3604,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
-    if (key == 27) {
+    if (key == 27 || key == '\t') {
         view_ = TMUX_VIEW_CONSOLE;
         strcpy(status_line_, lterm_sid_
                                  ? "Console (Local Terminal active; press Tab to return)"
@@ -3537,28 +3612,57 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
         render();
         return;
     }
+    if (key == TMUX_KEY_PGUP) {
+        lterm_scroll_ += 6;
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_PGDN) {
+        lterm_scroll_ = (lterm_scroll_ > 6) ? (lterm_scroll_ - 6) : 0;
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_HOME) {
+        lterm_scroll_ = 10000;
+        render();
+        return;
+    }
+    if (key == TMUX_KEY_END) {
+        lterm_scroll_ = 0;
+        render();
+        return;
+    }
     if (key == '\r' || key == '\n') {
         lterm_input_[lterm_input_len_] = '\0';
-        char line[128];
+        char line[164];
         strcpy(line, lterm_input_);
         lterm_input_len_ = 0;
         lterm_input_[0] = '\0';
 
-        if (strcmp(line, "/console") == 0 || strcmp(line, "/bg") == 0) {
+        if (strieq_ci(line, "/console") || strieq_ci(line, "/bg")) {
             handle_lterm_key(27);
             return;
         }
-        if (strcmp(line, "/local") == 0 || strcmp(line, "/bbs") == 0 || strcmp(line, "/chat") == 0) {
-            const char* target = (line[1] == 'b') ? "BBS" : ((line[1] == 'c') ? "CHAT" : "LOCAL");
+        if (strieq_ci(line, "/local") || strieq_ci(line, "/bbs") || strieq_ci(line, "/chat")) {
+            const char* target = (line[1] == 'b' || line[1] == 'B') ? "BBS"
+                                 : ((line[1] == 'c' || line[1] == 'C') ? "CHAT" : "LOCAL");
             if (lterm_sid_ != 0) node_->close_local_terminal(lterm_sid_);
+            lterm_sid_ = 0;
+            lterm_curline_len_ = 0;
+            lterm_curline_[0] = '\0';
+            lterm_scroll_ = 0;
+            oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
             char err[64];
-            if (!node_->open_local_terminal(-1, target, &lterm_sid_, NULL, &lterm_is_local_, err, sizeof(err))) {
+            lterm_opening_ = 1;
+            int ok = node_->open_local_terminal(-1, target, &lterm_sid_, NULL, &lterm_is_local_, err, sizeof(err));
+            lterm_opening_ = 0;
+            if (!ok) {
                 push_lterm_line(err);
             }
             render();
             return;
         }
-        if (strcmp(line, "/disc") == 0) {
+        if (strieq_ci(line, "/disc") || strieq_ci(line, "/d")) {
             if (lterm_sid_ != 0) {
                 node_->close_local_terminal(lterm_sid_);
                 lterm_sid_ = 0;
@@ -3566,13 +3670,38 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
             render();
             return;
         }
+        if (strncmp(line, "/eol", 4) == 0 && (line[4] == '\0' || line[4] == ' ')) {
+            const char* arg = line + 4;
+            while (*arg == ' ') ++arg;
+            if (!arg[0]) {
+                char msg[80];
+                sprintf(msg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
+                        oyk_term_eol_label(&lterm_eol_));
+                push_lterm_line(msg);
+            } else {
+                int m = OYK_TERM_EOL_AUTO;
+                if (oyk_term_eol_parse_mode(arg, &m)) {
+                    lterm_eol_.override_mode = m;
+                    char msg[80];
+                    sprintf(msg, "*** Terminal EOL set to %s.", oyk_term_eol_label(&lterm_eol_));
+                    push_lterm_line(msg);
+                } else {
+                    push_lterm_line("*** Usage: /eol [auto|cr|lf|crlf]");
+                }
+            }
+            render();
+            return;
+        }
 
-        char echo[136];
-        sprintf(echo, "> %.124s", line);
+        char echo[200];
+        sprintf(echo, "> %.190s", line);
         push_lterm_line(echo);
         if (lterm_sid_ != 0) {
             size_t n = strlen(line);
-            line[n++] = '\r';
+            size_t eol_len = 0;
+            const char* eol_s = oyk_term_eol_tx_bytes(&lterm_eol_, &eol_len);
+            memcpy(line + n, eol_s, eol_len);
+            n += eol_len;
             line[n] = '\0';
             node_->send_local_bytes(lterm_sid_, reinterpret_cast<const oyk_u8*>(line), n);
         } else {
@@ -3589,9 +3718,10 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
     if ((key == 8 || key == 127) && lterm_input_len_ > 0) {
         lterm_input_[--lterm_input_len_] = '\0';
         render();
-    } else if (key >= 0x20 && key < 0x7F && lterm_input_len_ < 120) {
+    } else if (key >= 0x20 && key < 0x7F && lterm_input_len_ < 154) {
         lterm_input_[lterm_input_len_++] = static_cast<char>(key);
         lterm_input_[lterm_input_len_] = '\0';
+        render();
     }
 }
 
@@ -3714,8 +3844,10 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
     }
 
     if (kind == 4 || kind == 5) {
-        if (view_ == TMUX_VIEW_MENU || view_ == TMUX_VIEW_SETTINGS ||
-            view_ == TMUX_VIEW_FILES || view_ == TMUX_VIEW_STORAGE) {
+        if (view_ == TMUX_VIEW_LOCAL_TERM) {
+            dispatch_key((kind == 4) ? TMUX_KEY_PGUP : TMUX_KEY_PGDN);
+        } else if (view_ == TMUX_VIEW_MENU || view_ == TMUX_VIEW_SETTINGS ||
+                   view_ == TMUX_VIEW_FILES || view_ == TMUX_VIEW_STORAGE) {
             dispatch_key((kind == 4) ? TMUX_KEY_UP : TMUX_KEY_DOWN);
         }
         return;
@@ -3857,8 +3989,8 @@ OYK_FLASHMEM void TinyTmuxConsole::process_csi_final(char final_ch) {
             int num = atoi(esc_buf_);
             if (num == 1 || num == 7) dispatch_key(TMUX_KEY_HOME);
             else if (num == 4 || num == 8) dispatch_key(TMUX_KEY_END);
-            else if (num == 5) dispatch_key(TMUX_KEY_UP);
-            else if (num == 6) dispatch_key(TMUX_KEY_DOWN);
+            else if (num == 5) dispatch_key((view_ == TMUX_VIEW_LOCAL_TERM) ? TMUX_KEY_PGUP : TMUX_KEY_UP);
+            else if (num == 6) dispatch_key((view_ == TMUX_VIEW_LOCAL_TERM) ? TMUX_KEY_PGDN : TMUX_KEY_DOWN);
             else if (num == 12) dispatch_key(TMUX_KEY_F2);
             else if (num == 21) dispatch_key(TMUX_KEY_F10);
             break;

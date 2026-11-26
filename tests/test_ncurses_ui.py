@@ -469,12 +469,17 @@ def main() -> int:
             # 8d. Local Packet Terminal with example /bbs session
             os.write(master_fd, b"\t")
             drain_and_wait(master_fd, scr, "LOCAL TERMINAL")
+            assert "[EOL:CR]" in scr.text(), f"Missing [EOL:CR] indicator:\n{scr.text()}"
             os.write(master_fd, b"/connect local BBS\r")
-            drain_and_wait(master_fd, scr, "Connected locally")
+            drain_and_wait(master_fd, scr, "Packet BBS")
             os.write(master_fd, b"HELP\r")
             drain_and_wait(master_fd, scr, "BBS")
             drain_quiet(master_fd, scr, 0.2)
             save_cap(cap_dir, "terminal", scr)
+            os.write(master_fd, b"/eol crlf\r")
+            drain_and_wait(master_fd, scr, "[EOL:CRLF*]")
+            os.write(master_fd, b"/eol auto\r")
+            drain_and_wait(master_fd, scr, "[EOL:CR]")
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
