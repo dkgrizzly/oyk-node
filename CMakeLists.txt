@@ -393,6 +393,17 @@ if(BUILD_TESTS AND NOT WIN32)
     target_compile_options(oyk_tinytmux_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_tinytmux_tests COMMAND oyk_tinytmux_tests)
 
+    if(TARGET oyk-node)
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_FOUND)
+            add_test(NAME oyk_ncurses_ui_tests
+                COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ncurses_ui.py
+                        $<TARGET_FILE:oyk-node>
+            )
+        endif()
+    endif()
+
     # Optional headless 16-bit MS-DOS unit tests in qemu-system-i386
     if(BUILD_MSDOS_PORT)
         find_program(QEMU_I386_EXE qemu-system-i386)

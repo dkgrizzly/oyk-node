@@ -1296,6 +1296,163 @@ static void test_terminal_inquiry_and_ui_modals() {
     printf("[PASS] test_terminal_inquiry_and_ui_modals\n");
 }
 
+static void tmux_save_capture(const char* name, TinyTmuxConsole* con, ConsoleCap* cap) {
+    const char* dir = getenv("OYK_UI_CAPTURE_DIR");
+    if (!dir || !dir[0]) return;
+    cap->len = 0;
+    cap->buf[0] = '\0';
+    con->render();
+    char path[512];
+    sprintf(path, "%s/tinytmux_%s.ansi", dir, name);
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        fwrite(cap->buf, 1, cap->len, f);
+        fclose(f);
+    }
+}
+
+static void test_tinytmux_ui_flows_and_captures() {
+    OykConfig* cfg = new OykConfig();
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
+    strcpy(cfg->source_path, "/nonexistent_ro_dir/node.cfg");
+    cfg->peer_count = 1;
+    strcpy(cfg->peers[0].id, "remote0");
+    strcpy(cfg->peers[0].callsign, "R3MOT-7");
+    strcpy(cfg->peers[0].description, "Remote PoPT Node");
+    strcpy(cfg->peers[0].interface_id, "axudp0");
+    strcpy(cfg->peers[0].host, "12.34.56.78");
+    cfg->peers[0].port = 10093;
+    cfg->peers[0].allow_inbound = 1;
+    cfg->peers[0].allow_outbound = 1;
+
+    OykPortableNode* node = new OykPortableNode();
+    TinyTmuxNetBridge* bridge = new TinyTmuxNetBridge();
+    char err[64];
+    assert(node->init(cfg, TinyTmuxNetBridge::node_tx_callback, bridge, err, sizeof(err)) == 1);
+    assert(bridge->init(node, 100UL) == 1);
+
+    TinyTmuxConsole* con = new TinyTmuxConsole();
+    ConsoleCap* cap = new ConsoleCap();
+    cap->len = 0; cap->buf[0] = '\0';
+    con->init(node, console_tx_cap, cap);
+    con->set_net_bridge(bridge);
+    con->set_now_ms(500UL);
+    con->on_usb_connect();
+    /* Negotiate xterm-256color for 256-color dark-grey list headers & box drawing */
+    const char* da_x256 = "\033[>41;354;0c";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
+
+    /* Connect an inbound station (creates active connection + heard + auto-learned peer) */
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    sabm.dst = cfg->callsign;
+    assert(oyk_parse_callsign("W3TRM-1", &sabm.src) == 1);
+    sabm.is_command = 1;
+    sabm.control = 0x3FU;
+    node->on_rx_frame(0, &sabm, 0x0A000005UL, 10093U, 0);
+    assert(node->total_active_connections() == 1);
+    assert(node->auto_learned_peer_count() == 1);
+
+    oyk_u32 active_sid = 0;
+    for (int i = 0; i < node->max_sessions(); ++i) {
+        if (node->session_slot(i).state == OYK_SESS_CONNECTED) {
+            active_sid = node->session_slot(i).id;
+            break;
+        }
+    }
+    assert(active_sid > 0);
+
+    /* 1. Main Console */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->render();
+    assert(strstr(cap->buf, "W3TRM-1") != NULL);
+    assert(strstr(cap->buf, "axudp0") != NULL);
+    tmux_save_capture("main", con, cap);
+
+    /* 2. Terminate Connection flow */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    assert(strstr(cap->buf, "Terminate session ID") != NULL);
+    tmux_save_capture("terminate", con, cap);
+    char term_seq[24];
+    sprintf(term_seq, "%lu\r", static_cast<unsigned long>(active_sid));
+    con->feed_input(reinterpret_cast<const oyk_u8*>(term_seq), strlen(term_seq));
+    assert(node->total_active_connections() == 0);
+
+    /* 3. Ban / Unban flow */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->render();
+    assert(strstr(cap->buf, "Action:") != NULL);
+    tmux_save_capture("ban", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("B\r\r"), 3);
+    assert(node->ban_count() >= 1);
+
+    /* 4. Settings (Node tab) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS && con->settings_tab() == 0);
+    assert(strstr(cap->buf, "1:Node") != NULL);
+    tmux_save_capture("settings", con, cap);
+
+    /* 5. Add Interface Wizard (Step 3 showing Same-Iface Fwd toggle) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("4n1\r\r"), 5);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    assert(strstr(cap->buf, "Same-Iface Fwd") != NULL);
+    tmux_save_capture("add_iface", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+
+    /* 6. Edit Interface Single View */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "Edit Interface") != NULL);
+    assert(strstr(cap->buf, "Same-Iface Fwd") != NULL);
+    tmux_save_capture("edit_iface", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+
+    /* 7. Peers Tab */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("5"), 1);
+    assert(con->settings_tab() == 4);
+    assert(strstr(cap->buf, "R3MOT-7") != NULL);
+    tmux_save_capture("peers", con, cap);
+
+    /* 8. Edit Peer Modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    assert(strstr(cap->buf, "Edit Peer") != NULL);
+    assert(strstr(cap->buf, "Allow Inbound") != NULL);
+    assert(strstr(cap->buf, "Allow Outbound") != NULL);
+    tmux_save_capture("edit_peer", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(600UL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(700UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */
+    const int base_bl = tinytmux_board_sim_bootloader_count();
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
+    assert(strstr(cap->buf, "auto-learned peer") != NULL);
+    tmux_save_capture("exit", con, cap);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);
+    con->tick(3600UL);
+    assert(tinytmux_board_sim_bootloader_count() == base_bl + 1);
+    assert(strstr(cap->buf, "73 de KR4OYK-7") != NULL);
+
+    delete cap;
+    delete con;
+    delete bridge;
+    delete node;
+    delete cfg;
+    printf("[PASS] test_tinytmux_ui_flows_and_captures\n");
+}
+
 int main() {
     test_board_pinout_and_mac();
     test_psram_detection_and_self_test();
@@ -1305,6 +1462,7 @@ int main() {
     test_printer_usb_and_serial();
     test_vt100_console_full_parity();
     test_terminal_inquiry_and_ui_modals();
+    test_tinytmux_ui_flows_and_captures();
     printf("All TinyTMUX (IMXRT1060 / Teensy 4.1) host tests passed!\n");
     return 0;
 }
