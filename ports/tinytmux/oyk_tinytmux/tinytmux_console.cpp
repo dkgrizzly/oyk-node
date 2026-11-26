@@ -4,6 +4,7 @@
 #include "tinytmux_console.hpp"
 #include "board_tinytmux.hpp"
 #include "tinytmux_fs.hpp"
+#include "oyk_tui.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +59,7 @@ static const TinyTmuxDriverOpt TINYTMUX_DRIVERS[7] = {
 
 TinyTmuxConsole::TinyTmuxConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL), now_ms_(0),
-      term_type_(TMUX_TERM_VT100), view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
+      term_type_(TMUX_TERM_VT100), term_rows_(25), term_cols_(80), view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
       files_tab_(0), pending_count_(0), approved_count_(0),
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
@@ -97,6 +98,8 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     tx_fn_ = tx_fn;
     tx_ctx_ = tx_ctx;
     term_type_ = TMUX_TERM_VT100;
+    term_rows_ = 25;
+    term_cols_ = 80;
     view_ = TMUX_VIEW_CONSOLE;
     menu_sel_ = 0;
     files_tab_ = 0;
@@ -141,12 +144,19 @@ const char* TinyTmuxConsole::term_type_label() const {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::send_size_probe() {
+    write_str("\033[s\033[999;999H\033[6n\033[u");
+}
+
 void TinyTmuxConsole::on_usb_connect() {
     term_type_ = TMUX_TERM_VT100;
+    term_rows_ = 25;
+    term_cols_ = 80;
     mouse_enabled_ = 0;
     reset_escape();
-    /* Asynchronous DA1 + DA2 inquiry; safe fallback stays in VT100 if terminal ignores queries. */
+    /* Asynchronous DA1 + DA2 + CPR size inquiry; safe fallback stays 80x25 VT100. */
     write_str("\033[c\033[>c");
+    send_size_probe();
     render();
 }
 
@@ -245,11 +255,11 @@ const char* TinyTmuxConsole::sgr_warn() const {
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
-                                                const char* title, int clear_interior) {
+                                                const char* title, int clear_interior, int with_close) {
     if (h < 2 || w < 4) return;
     char line[256];
     int inner = w - 2;
-    if (inner > 78) inner = 78;
+    if (inner > 130) inner = 130;
 
     /* Top border */
     sprintf(line, "\033[%d;%dH%s\033(0l", row, col, sgr_border());
@@ -262,10 +272,19 @@ OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
 
     if (title && title[0] && inner > 4) {
         char tbuf[80];
-        int max_t = inner - 4;
+        int max_t = with_close ? (inner - 9) : (inner - 4);
         if (max_t > 68) max_t = 68;
-        sprintf(tbuf, " %.*s ", max_t, title);
-        sprintf(line, "\033[%d;%dH%s%s\033[0m", row, col + 2, sgr_title(), tbuf);
+        if (max_t > 2) {
+            sprintf(tbuf, " %.*s ", max_t, title);
+            sprintf(line, "\033[%d;%dH%s%s\033[0m", row, col + 2, sgr_title(), tbuf);
+            write_str(line);
+        }
+    }
+
+    if (with_close && w >= 12) {
+        int close_col = col + w - 5;
+        const char* csgr = (term_type_ >= TMUX_TERM_VT220) ? "\033[1;91m" : "\033[7m";
+        sprintf(line, "\033[%d;%dH%s[X]\033[0m", row, close_col, csgr);
         write_str(line);
     }
 
@@ -296,26 +315,28 @@ OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_shadow(int row, int col, int h, int w) {
     if (h < 2 || w < 4) return;
     char line[256];
+    const int max_cols = term_cols_;
+    const int max_rows = term_rows_;
     const char* sattr = (term_type_ >= TMUX_TERM_VT220) ? "\033[0;90;40m" : "\033[0m";
     int r_end = row + h;
     int c_right = col + w;
-    if (c_right <= 80) {
-        int rw = (c_right + 1 <= 80) ? 2 : 1;
-        for (int r = row + 1; r <= r_end && r <= 24; ++r) {
+    if (c_right <= max_cols) {
+        int rw = (c_right + 1 <= max_cols) ? 2 : 1;
+        for (int r = row + 1; r <= r_end && r < max_rows; ++r) {
             if (r < 1) continue;
             sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
                     r, c_right, sattr, (rw == 2) ? "aa" : "a");
             write_str(line);
         }
     }
-    if (r_end >= 1 && r_end <= 24) {
+    if (r_end >= 1 && r_end < max_rows) {
         int bx = col + 2;
-        if (bx <= 80) {
+        if (bx <= max_cols) {
             int bw = w - 2;
-            if (bx + bw - 1 > 80) bw = 80 - bx + 1;
+            if (bx + bw - 1 > max_cols) bw = max_cols - bx + 1;
             if (bw > 0) {
-                char shades[82];
-                if (bw > 80) bw = 80;
+                char shades[136];
+                if (bw > 134) bw = 134;
                 for (int i = 0; i < bw; ++i) shades[i] = 'a';
                 shades[bw] = '\0';
                 sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
@@ -328,9 +349,9 @@ OYK_FLASHMEM void TinyTmuxConsole::draw_dec_shadow(int row, int col, int h, int 
 
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_hdiv(int row, int col, int w) {
     if (w < 4) return;
-    char line[96];
+    char line[160];
     int inner = w - 2;
-    if (inner > 78) inner = 78;
+    if (inner > 130) inner = 130;
     sprintf(line, "\033[%d;%dH%s\033(0t", row, col, sgr_border());
     write_str(line);
     for (int i = 0; i < inner; ++i) line[i] = 'q';
@@ -348,16 +369,16 @@ void TinyTmuxConsole::write_str(const char* s) {
 
 void TinyTmuxConsole::push_lterm_line(const char* line) {
     if (!line) return;
-    if (lterm_line_count_ < 16) {
-        strncpy(lterm_lines_[lterm_line_count_], line, 79);
-        lterm_lines_[lterm_line_count_][79] = '\0';
+    if (lterm_line_count_ < 40) {
+        strncpy(lterm_lines_[lterm_line_count_], line, 135);
+        lterm_lines_[lterm_line_count_][135] = '\0';
         lterm_line_count_++;
     } else {
-        for (int i = 1; i < 16; ++i) {
-            memcpy(lterm_lines_[i - 1], lterm_lines_[i], 80);
+        for (int i = 1; i < 40; ++i) {
+            memcpy(lterm_lines_[i - 1], lterm_lines_[i], 136);
         }
-        strncpy(lterm_lines_[15], line, 79);
-        lterm_lines_[15][79] = '\0';
+        strncpy(lterm_lines_[39], line, 135);
+        lterm_lines_[39][135] = '\0';
     }
 }
 
@@ -377,7 +398,7 @@ void TinyTmuxConsole::on_local_term_event(oyk_u32 sid, int event_type,
                     lterm_curline_len_ = 0;
                 }
             } else if (ch >= 0x20U && ch < 0x7FU) {
-                if (lterm_curline_len_ < 78) {
+                if (lterm_curline_len_ < 134) {
                     lterm_curline_[lterm_curline_len_++] = static_cast<char>(ch);
                 }
             }
@@ -391,7 +412,7 @@ void TinyTmuxConsole::on_local_term_event(oyk_u32 sid, int event_type,
     }
 }
 
-void TinyTmuxConsole::render() {
+OYK_FLASHMEM void TinyTmuxConsole::render() {
     if (!node_ || !tx_fn_) return;
     if (term_type_ >= TMUX_TERM_VT220) {
         write_str("\033[?25l");
@@ -469,8 +490,8 @@ void TinyTmuxConsole::render() {
     }
 }
 
-void TinyTmuxConsole::render_console() {
-    char buf[192];
+OYK_FLASHMEM void TinyTmuxConsole::render_console() {
+    char buf[320];
     char call_s[16], psram_s[8], usbh_s[8];
     oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
     tinytmux_psram_format_short(tinytmux_psram_info(), psram_s, sizeof(psram_s));
@@ -480,112 +501,152 @@ void TinyTmuxConsole::render_console() {
         strcpy(usbh_s, "-");
     }
 
+    OykTuiConsoleLayout lay;
+    oyk_tui_compute_console_layout(term_rows_, term_cols_, &lay);
+    const int ncols = lay.cols;
+
     write_str("\033[H\033[2J");
 
-    /* Row 1: Top Menu Bar (matching ncurses/DOS drop-down Node bar) */
-    sprintf(buf, "%s%-80s\033[0m\033[1;2H%s Node \033[0m\033[1;48H%s %-19s  [%9s]\033[0m",
-            sgr_menubar(), "",
+    /* Row 1: Top Menu Bar (full display width) */
+    int hint_col = ncols - 32;
+    if (hint_col < 9) hint_col = 9;
+    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-19s  [%9s]\033[0m",
+            sgr_menubar(), ncols, "",
             sgr_menusel(),
-            sgr_menubar(),
+            hint_col, sgr_menubar(),
             lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | F10/M",
             term_type_label());
     write_str(buf);
 
-    /* Row 2: Header Bar with PSRAM and USBH hardware indicators */
-    sprintf(buf, "\033[2;1H%s OYK TMUX: %-9s Up:%-5lus C:%-2d [IN:%-5s] PSRAM:%-3s USBH:%-3s            \033[0m",
-            sgr_header(),
+    /* Row 2: Header Bar with PSRAM and USBH hardware indicators (full width) */
+    char hdr_txt[160];
+    sprintf(hdr_txt, " OYK TMUX: %-9s Up:%-5lus C:%-2d [IN:%-5s] PSRAM:%-3s USBH:%-3s",
             call_s,
             static_cast<unsigned long>(node_->uptime_seconds()),
             node_->total_active_connections(),
             node_->accept_incoming() ? "ALLOW" : "DENY",
             psram_s,
             usbh_s);
+    sprintf(buf, "\033[2;1H%s%-*.*s\033[0m", sgr_header(), ncols, ncols, hdr_txt);
     write_str(buf);
 
-    /* Rows 3..10: Side-by-side DEC-bordered Interfaces (left) & New Callsigns (right) */
-    draw_dec_box(3, 1, 8, 45, "Interfaces", 0);
-    draw_dec_box(3, 46, 8, 35, "Last 5 New Callsigns Heard", 0);
+    if (lay.too_small) {
+        sprintf(buf, "\033[4;2HTerminal too small (%dx%d). Minimum: 60x16.", ncols, lay.rows);
+        write_str(buf);
+        return;
+    }
 
-    sprintf(buf, "\033[4;2H%s %-8s %-12s %-2s %-14s\033[0m",
-            sgr_list_hdr(), "Port", "Type", "C", "Status / RX-TX");
-    write_str(buf);
-    sprintf(buf, "\033[4;47H%s %-2s %-9s %-7s %-8s \033[0m",
-            sgr_list_hdr(), "#", "Callsign", "Iface", "Time");
+    /* Top split boxes: Interfaces (left) & Last 5 New Callsigns Heard (right) */
+    draw_dec_box(lay.iface_box.top + 1, lay.iface_box.left + 1,
+                 lay.iface_box.h, lay.iface_box.w, "Interfaces", 0, 0);
+    draw_dec_box(lay.heard_box.top + 1, lay.heard_box.left + 1,
+                 lay.heard_box.h, lay.heard_box.w, "Last 5 New Callsigns Heard", 0, 0);
+    sprintf(buf, "\033[%d;%dH%s\033(0w\033(B\033[0m",
+            lay.heard_box.top + 1, lay.heard_box.left + 1, sgr_border());
     write_str(buf);
 
-    for (int i = 0; i < 5; ++i) {
-        char left[48], right[40];
-        if (i < node_->iface_count()) {
+    const int iw = lay.iface_box.w - 2;
+    const int hw = lay.heard_box.w - 2;
+    const int il = lay.iface_box.left + 2;
+    const int hl = lay.heard_box.left + 2;
+    const int top_hdr_row = lay.iface_box.top + 2;
+
+    char lhdr[128], rhdr[128];
+    sprintf(lhdr, " %-8s %-12s %-2s %-14s", "Port", "Type", "C", "Status / RX-TX");
+    sprintf(rhdr, " %-2s %-9s %-7s %-8s", "#", "Callsign", "Iface", "Time");
+    sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m\033[%d;%dH%s%-*.*s\033[0m",
+            top_hdr_row, il, sgr_list_hdr(), iw, iw, lhdr,
+            top_hdr_row, hl, sgr_list_hdr(), hw, hw, rhdr);
+    write_str(buf);
+
+    const int top_vis = (lay.iface_vis_rows > lay.heard_vis_rows) ? lay.iface_vis_rows : lay.heard_vis_rows;
+    for (int i = 0; i < top_vis; ++i) {
+        char left[128], right[128];
+        if (i < lay.iface_vis_rows && i < node_->iface_count()) {
             const OykIfaceRuntime& r = node_->iface(i);
             sprintf(left, " %-8.8s %-12.12s %-2d %-14.14s",
                     r.cfg.id, r.cfg.type, node_->active_connections_on(i), r.status);
         } else {
             left[0] = '\0';
         }
-        if (i < node_->new_heard_count()) {
+        if (i < lay.heard_vis_rows && i < node_->new_heard_count()) {
             const OykNewHeard& nh = node_->new_heard(i);
             sprintf(right, " %d %-9.9s %-7.7s %-8.8s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
         } else {
             right[0] = '\0';
         }
-        sprintf(buf, "\033[%d;2H%-43.43s\033[%d;47H%-33.33s", 5 + i, left, 5 + i, right);
+        sprintf(buf, "\033[%d;%dH%-*.*s\033[%d;%dH%-*.*s",
+                top_hdr_row + 1 + i, il, iw, iw, left,
+                top_hdr_row + 1 + i, hl, hw, hw, right);
         write_str(buf);
     }
 
-    /* Rows 11..16: Active Connections */
+    /* Middle box: Active Connections */
     char conn_title[48];
     sprintf(conn_title, "Active Connections (%d) | Bans: %d",
             node_->total_active_connections(), node_->ban_count());
-    draw_dec_box(11, 1, 6, 80, conn_title, 0);
-    sprintf(buf, "\033[12;2H%s %-4s %-10s %-8s %-8s %-43s\033[0m",
-            sgr_list_hdr(), "#", "Callsign", "Iface", "Since", "Service / Role");
+    draw_dec_box(lay.conn_box.top + 1, lay.conn_box.left + 1,
+                 lay.conn_box.h, lay.conn_box.w, conn_title, 0, 0);
+    const int cw = lay.conn_box.w - 2;
+    char chdr[140];
+    sprintf(chdr, " %-4s %-10s %-8s %-8s %-43s", "#", "Callsign", "Iface", "Since", "Service / Role");
+    sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m",
+            lay.conn_box.top + 2, lay.conn_box.left + 2, sgr_list_hdr(), cw, cw, chdr);
     write_str(buf);
 
     int shown = 0;
-    for (int i = 0; i < node_->max_sessions() && shown < 3; ++i) {
+    for (int i = 0; i < node_->max_sessions() && shown < lay.conn_vis_rows; ++i) {
         const OykSession& s = node_->session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
-            char cs[12];
+            char cs[12], crow[160];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
             const char* role = s.restricted_ban ? "BAN NOTICE"
                                                 : (s.in_bbs ? "BBS"
                                                             : (s.in_chat ? "CHAT"
                                                                          : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
-            sprintf(buf, "\033[%d;2H #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
-                    13 + shown,
+            sprintf(crow, " #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
                     static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? node_->iface(s.iface_idx).cfg.id : "local",
                     s.since_hms, role);
+            sprintf(buf, "\033[%d;%dH%-*.*s",
+                    lay.conn_box.top + 3 + shown, lay.conn_box.left + 2, cw, cw, crow);
             write_str(buf);
             ++shown;
         }
     }
-    for (int r = shown; r < 3; ++r) {
-        sprintf(buf, "\033[%d;2H%-78.78s",
-                13 + r, (r == 0 && shown == 0) ? " (no active connections)" : "");
+    for (int r = shown; r < lay.conn_vis_rows; ++r) {
+        sprintf(buf, "\033[%d;%dH%-*.*s",
+                lay.conn_box.top + 3 + r, lay.conn_box.left + 2, cw, cw,
+                (r == 0 && shown == 0) ? " (no active connections)" : "");
         write_str(buf);
     }
 
-    /* Rows 17..23: Node Activity Log */
-    draw_dec_box(17, 1, 7, 80, "Node Activity Log", 0);
+    /* Lower box: Node Activity Log */
+    draw_dec_box(lay.log_box.top + 1, lay.log_box.left + 1,
+                 lay.log_box.h, lay.log_box.w, "Node Activity Log", 0, 0);
+    const int lw = lay.log_box.w - 2;
+    const int lvis = lay.log_vis_rows;
     int total_logs = node_->console_log_count();
-    int start = (total_logs > 5) ? (total_logs - 5) : 0;
+    int start = (total_logs > lvis) ? (total_logs - lvis) : 0;
     int lrow = 0;
-    for (int i = start; i < total_logs && lrow < 5; ++i, ++lrow) {
-        sprintf(buf, "\033[%d;2H %-77.77s", 18 + lrow, node_->console_log_line(i));
+    for (int i = start; i < total_logs && lrow < lvis; ++i, ++lrow) {
+        char lline[160];
+        sprintf(lline, " %s", node_->console_log_line(i));
+        sprintf(buf, "\033[%d;%dH%-*.*s", lay.log_box.top + 2 + lrow, lay.log_box.left + 2, lw, lw, lline);
         write_str(buf);
     }
-    for (; lrow < 5; ++lrow) {
-        sprintf(buf, "\033[%d;2H%-78s", 18 + lrow, "");
+    for (; lrow < lvis; ++lrow) {
+        sprintf(buf, "\033[%d;%dH%-*s", lay.log_box.top + 2 + lrow, lay.log_box.left + 2, lw, "");
         write_str(buf);
     }
 
-    /* Row 24: Bottom Status Line */
-    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m", sgr_warn(), status_line_);
+    /* Bottom Status Line */
+    sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
+            lay.status_row + 1, sgr_warn(), ncols - 2, ncols - 2, status_line_);
     write_str(buf);
 }
 
-void TinyTmuxConsole::render_menu() {
+OYK_FLASHMEM void TinyTmuxConsole::render_menu() {
     static const char* ITEMS[14] = {
         " [A] Allow Incoming Connections   ",
         " [D] Deny Incoming Connections    ",
@@ -616,17 +677,29 @@ void TinyTmuxConsole::render_menu() {
     }
 }
 
-void TinyTmuxConsole::render_local_terminal() {
-    char buf[160];
+OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
+    char buf[320];
+    OykTuiTermLayout tlay;
+    oyk_tui_compute_term_layout(term_rows_, term_cols_, &tlay);
+    const int ncols = tlay.cols;
     write_str("\033[H\033[2J");
-    sprintf(buf, "%s OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc \033[0m\r\n",
-            sgr_header(), lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    char hdr[160];
+    sprintf(hdr, " OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc",
+            lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    sprintf(buf, "\033[%d;1H%s%-*.*s\033[0m", tlay.header_row + 1, sgr_header(), ncols, ncols, hdr);
     write_str(buf);
-    for (int i = 0; i < lterm_line_count_; ++i) {
-        write_str(lterm_lines_[i]);
-        write_str("\r\n");
+
+    int start = (lterm_line_count_ > tlay.body_rows) ? (lterm_line_count_ - tlay.body_rows) : 0;
+    int row = 0;
+    for (int i = start; i < lterm_line_count_ && row < tlay.body_rows; ++i, ++row) {
+        sprintf(buf, "\033[%d;1H%-*.*s", tlay.body_top + 1 + row, ncols - 1, ncols - 1, lterm_lines_[i]);
+        write_str(buf);
     }
-    sprintf(buf, "> %s", lterm_input_);
+    sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
+            tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2,
+            "Esc:Console  /local /bbs /chat /disc  Ctrl-L:Redraw/Size");
+    write_str(buf);
+    sprintf(buf, "\033[%d;1H> %-*.*s", tlay.input_row + 1, ncols - 3, ncols - 3, lterm_input_);
     write_str(buf);
 }
 
@@ -637,7 +710,7 @@ void TinyTmuxConsole::refresh_files_lists() {
     if (files_sel_[1] >= approved_count_) files_sel_[1] = (approved_count_ > 0) ? (approved_count_ - 1) : 0;
 }
 
-void TinyTmuxConsole::render_files() {
+OYK_FLASHMEM void TinyTmuxConsole::render_files() {
     char buf[192];
     write_str("\033[H\033[2J");
     sprintf(buf, "%s FILES AREA MANAGER (TinyTMUX)                       Esc:Back  R:Refresh \033[0m", sgr_header());
@@ -698,7 +771,7 @@ void TinyTmuxConsole::render_files() {
     write_str(buf);
 }
 
-void TinyTmuxConsole::render_rig() {
+OYK_FLASHMEM void TinyTmuxConsole::render_rig() {
     char buf[192];
     write_str("\033[H\033[2J");
     sprintf(buf, "%s RADIO CONTROL (Hamlib rigctl / RadioFoundry UDP 4191)         Esc:Close \033[0m", sgr_header());
@@ -779,15 +852,20 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
         "Serial Baud Rate", "Printer Log Mask (0x..)", "Condensed 132-Col Mode"
     };
 
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1;
+    const int left = mr.left + 1;
     char buf[192];
-    draw_dec_box(2, 3, 21, 74, "Node Settings", 1);
-    draw_dec_shadow(2, 3, 21, 74);
-    write_str("\033[3;5H");
+    draw_dec_box(top, left, mr.h, mr.w, "Node Settings", 1, 1);
+    draw_dec_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dH", top + 1, left + 2);
+    write_str(buf);
     for (int t = 0; t < 7; ++t) {
         sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), TAB_NAMES[t]);
         write_str(buf);
     }
-    draw_dec_hdiv(4, 3, 74);
+    draw_dec_hdiv(top + 2, left, mr.w);
 
     int cnt = settings_tab_item_count(settings_tab_);
     if (settings_tab_ != 3 && settings_tab_ != 4) {
@@ -842,44 +920,48 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
             if (settings_tab_ == 0 && (i == 8 || i == 9 || i == 10) && val[0] == '\0' && term_type_ >= TMUX_TERM_VT340) {
-                sprintf(buf, "\033[%d;5H%s %-26.26s : \033[2m<inline>\033[22m                                \033[0m",
-                        5 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
+                sprintf(buf, "\033[%d;%dH%s %-26.26s : \033[2m<inline>\033[22m                                \033[0m",
+                        top + 3 + i, left + 2, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
             } else {
-                sprintf(buf, "\033[%d;5H%s %-26.26s : %-40.40s\033[0m",
-                        5 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
+                sprintf(buf, "\033[%d;%dH%s %-26.26s : %-40.40s\033[0m",
+                        top + 3 + i, left + 2, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
             }
             write_str(buf);
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1,
                 sgr_menubar(), "Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else if (settings_tab_ == 3) {
-        sprintf(buf, "\033[5;5H%s %-8s %-13s %-21s %-23s\033[0m",
-                sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
+        sprintf(buf, "\033[%d;%dH%s %-8s %-13s %-21s %-23s\033[0m",
+                top + 3, left + 2, sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
         write_str(buf);
         if (draft_.iface_count == 0) {
-            write_str("\033[6;5H (no interfaces configured; press N to add)");
+            sprintf(buf, "\033[%d;%dH (no interfaces configured; press N to add)", top + 4, left + 2);
+            write_str(buf);
         } else {
             for (int i = 0; i < draft_.iface_count && i < 12; ++i) {
                 const OykIfaceConfig& ic = draft_.ifaces[i];
                 const char* loc = ic.device[0] ? ic.device : ic.host;
                 char pb[28];
                 sprintf(pb, "%u/%lu", static_cast<unsigned int>(ic.port), static_cast<unsigned long>(ic.baud));
-                sprintf(buf, "\033[%d;5H%s %-8.8s %-13.13s %-21.21s %-23.23s\033[0m",
-                        6 + i, (i == settings_sel_[3]) ? sgr_sel() : "",
+                sprintf(buf, "\033[%d;%dH%s %-8.8s %-13.13s %-21.21s %-23.23s\033[0m",
+                        top + 4 + i, left + 2, (i == settings_sel_[3]) ? sgr_sel() : "",
                         ic.id, ic.type, loc, pb);
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1,
                 sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  H:Host/Dev  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else {
-        sprintf(buf, "\033[5;5H%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
-                sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
+        sprintf(buf, "\033[%d;%dH%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
+                top + 3, left + 2, sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
         write_str(buf);
         if (draft_.peer_count == 0) {
-            write_str("\033[6;5H (no peers configured; press A to add)");
+            sprintf(buf, "\033[%d;%dH (no peers configured; press A to add)", top + 4, left + 2);
+            write_str(buf);
         } else {
             for (int i = 0; i < draft_.peer_count && i < 12; ++i) {
                 const OykPeerConfig& pc = draft_.peers[i];
@@ -888,21 +970,23 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (pc.host[0]) sprintf(ep, "%.19s", pc.host);
                 else strcpy(ep, "(any)");
                 sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
-                sprintf(buf, "\033[%d;5H%s %-9.9s %-9.9s %-7.7s %-20.20s %-7.7s %-11.11s\033[0m",
-                        6 + i, (i == settings_sel_[4]) ? sgr_sel() : "",
+                sprintf(buf, "\033[%d;%dH%s %-9.9s %-9.9s %-7.7s %-20.20s %-7.7s %-11.11s\033[0m",
+                        top + 4 + i, left + 2, (i == settings_sel_[4]) ? sgr_sel() : "",
                         pc.id, pc.callsign, pc.interface_id, ep, acl,
                         pc.auto_learned ? "[AUTO]" : "");
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1,
                 sgr_menubar(), "A:Add  E:Edit  D:Del  I:In  O:Out  K:KeepAuto  S/F2:Save  Esc:Back");
         write_str(buf);
     }
-    sprintf(buf, "\033[19;5H%s%-70.70s\033[0m",
-            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
+    sprintf(buf, "\033[%d;%dH%s%-70.70s\033[0m",
+            top + 17, left + 2, sgr_warn(),
+            dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
     write_str(buf);
-    draw_dec_hdiv(20, 3, 74);
+    draw_dec_hdiv(top + 18, left, mr.w);
 }
 
 static void format_progress_bar(oyk_u8 pct, char* out, size_t out_sz) {
@@ -1096,43 +1180,54 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     const char* title = (auto_cnt > 0 && !bootloader_pending_)
                             ? "Auto-Learned Peers - BOOTSEL"
                             : "Confirm Bootloader Entry";
-    draw_dec_box(5, 6, 13, 68, title, 1);
-    draw_dec_shadow(5, 6, 13, 68);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_dec_box(top, left, mr.h, mr.w, title, 1, 1);
+    draw_dec_shadow(top, left, mr.h, mr.w);
 
     if (!bootloader_pending_) {
         if (auto_cnt > 0) {
-            sprintf(buf, "\033[7;8H%d auto-learned peer(s) were added this session.", auto_cnt);
+            sprintf(buf, "\033[%d;%dH%d auto-learned peer(s) were added this session.", top + 2, left + 2, auto_cnt);
             write_str(buf);
-            write_str("\033[9;8HSave them to config, discard them, or review in Peers");
-            write_str("\033[10;8Hbefore entering HalfKay bootloader?");
-            write_str("\033[12;8H[S] Save & Bootloader        [D] Discard & Bootloader");
-            write_str("\033[13;8H[R] Review Peers             [N / Esc] Cancel");
-            draw_dec_hdiv(15, 6, 68);
-            sprintf(buf, "\033[16;7H%s %-64.64s \033[0m",
-                    sgr_menubar(), "S:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel");
+            sprintf(buf, "\033[%d;%dHSave them to config, discard them, or review in Peers", top + 4, left + 2);
+            write_str(buf);
+            sprintf(buf, "\033[%d;%dHbefore entering HalfKay bootloader?", top + 5, left + 2);
+            write_str(buf);
+            sprintf(buf, "\033[%d;%dH[S] Save & Bootloader        [D] Discard & Bootloader", top + 7, left + 2);
+            write_str(buf);
+            sprintf(buf, "\033[%d;%dH[R] Review Peers             [N / Esc] Cancel", top + 8, left + 2);
+            write_str(buf);
+            draw_dec_hdiv(top + 10, left, mr.w);
+            sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
+                    top + 11, left + 1, sgr_menubar(), "S:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel");
             write_str(buf);
         } else {
             if (active > 0) {
-                sprintf(buf, "\033[7;8HEnter HalfKay bootloader? (%d active connection(s))", active);
+                sprintf(buf, "\033[%d;%dHEnter HalfKay bootloader? (%d active connection(s))", top + 2, left + 2, active);
                 write_str(buf);
-                write_str("\033[9;8HRemote users will be notified that the node is going offline for");
-                write_str("\033[10;8Ha firmware upgrade and gracefully disconnected before rebooting.");
+                sprintf(buf, "\033[%d;%dHRemote users will be notified that the node is going offline for", top + 4, left + 2);
+                write_str(buf);
+                sprintf(buf, "\033[%d;%dHa firmware upgrade and gracefully disconnected before rebooting.", top + 5, left + 2);
+                write_str(buf);
             } else {
-                write_str("\033[7;8HEnter HalfKay bootloader? (no active connections)");
+                sprintf(buf, "\033[%d;%dHEnter HalfKay bootloader? (no active connections)", top + 2, left + 2);
+                write_str(buf);
             }
-            sprintf(buf, "\033[12;8H%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
-                    sgr_sel());
+            sprintf(buf, "\033[%d;%dH%s WARNING: Node will stay OFFLINE in HalfKay bootloader mode \033[0m",
+                    top + 7, left + 2, sgr_sel());
             write_str(buf);
-            write_str("\033[13;8Huntil you flash new firmware or power-cycle the Teensy 4.1 board.");
-            draw_dec_hdiv(15, 6, 68);
-            sprintf(buf, "\033[16;7H%s %-64.64s \033[0m",
-                    sgr_menubar(), "Y:Enter HalfKay Bootloader   N/Esc:Cancel");
+            sprintf(buf, "\033[%d;%dHuntil you flash new firmware or power-cycle the Teensy 4.1 board.", top + 8, left + 2);
+            write_str(buf);
+            draw_dec_hdiv(top + 10, left, mr.w);
+            sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
+                    top + 11, left + 1, sgr_menubar(), "Y:Enter HalfKay Bootloader   N/Esc:Cancel");
             write_str(buf);
         }
     } else {
         oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
-        sprintf(buf, "\033[8;8HNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
-                disc_left, static_cast<unsigned long>(elapsed));
+        sprintf(buf, "\033[%d;%dHNotifying users & draining AX.25 disconnects (%d left, %lu/3000ms)...",
+                top + 3, left + 2, disc_left, static_cast<unsigned long>(elapsed));
         write_str(buf);
     }
 }
@@ -1344,12 +1439,14 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
     char buf[192];
-    const int top = 3, left = 6, h = 19, w = 68;
-    draw_dec_box(top, left, h, w, "Add Interface", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Add Interface", 1, 1);
     draw_dec_shadow(top, left, h, w);
 
-    /* Top-right progress indicator on caption border */
-    sprintf(buf, "\033[%d;%dH%s %s \033[0m", top, left + w - 18, sgr_title(), PROG[wiz_step_]);
+    /* Top-right progress indicator left of [X] */
+    sprintf(buf, "\033[%d;%dH%s %s \033[0m", top, left + w - 22, sgr_title(), PROG[wiz_step_]);
     write_str(buf);
 
     const char* drv = TINYTMUX_DRIVERS[wiz_drv_].type;
@@ -1511,8 +1608,10 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
     char buf[192];
-    const int top = 3, left = 6, h = 19, w = 68;
-    draw_dec_box(top, left, h, w, "Edit Interface", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Edit Interface", 1, 1);
     draw_dec_shadow(top, left, h, w);
 
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
@@ -1609,10 +1708,12 @@ OYK_FLASHMEM void TinyTmuxConsole::render_confirm_format_modal() {
     static const char* NAMES[3] = {
         "microSD Card (SDIO)", "QSPI Flash (FlexSPI2 CS1)", "Internal 4 MB Flash (LittleFS)"
     };
-    const int top = 6, left = 6, h = 12, w = 68;
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 12, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
     const char* target = (storage_sel_ >= 0 && storage_sel_ < 3) ? NAMES[storage_sel_] : "Storage";
     char buf[160];
-    draw_dec_box(top, left, h, w, "CONFIRM DESTRUCTIVE FORMAT", 1);
+    draw_dec_box(top, left, h, w, "CONFIRM DESTRUCTIVE FORMAT", 1, 1);
     draw_dec_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dHTarget : %-56.56s", top + 2, left + 2, target);
     write_str(buf);
@@ -1670,8 +1771,10 @@ OYK_FLASHMEM void TinyTmuxConsole::open_edit_peer_dialog(int edit_idx) {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_edit_peer_dialog() {
     char buf[192];
-    const int top = 4, left = 6, h = 16, w = 68;
-    draw_dec_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 16, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1, 1);
     draw_dec_shadow(top, left, h, w);
 
     char if_lbl[32], in_lbl[8], out_lbl[8];
@@ -1899,8 +2002,10 @@ OYK_FLASHMEM void TinyTmuxConsole::open_terminate_dialog() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_terminate_dialog() {
     char buf[192];
-    const int top = 4, left = 8, h = 16, w = 64;
-    draw_dec_box(top, left, h, w, "Terminate Active Connection", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 16, 64, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Terminate Active Connection", 1, 1);
     draw_dec_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-5s %-11s %-10s %-30s \033[0m",
             top + 2, left + 2, sgr_list_hdr(), "ID", "Callsign", "Port", "State");
@@ -1978,8 +2083,10 @@ OYK_FLASHMEM void TinyTmuxConsole::open_ban_dialog() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_ban_dialog() {
     char buf[192];
-    const int top = 2, left = 3, h = 21, w = 74;
-    draw_dec_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1, 1);
     draw_dec_shadow(top, left, h, w);
 
     sprintf(buf, "\033[%d;%dHCallsign: %s %-12.12s \033[0m",
@@ -2036,11 +2143,15 @@ OYK_FLASHMEM void TinyTmuxConsole::render_ban_dialog() {
     write_str(buf);
 
     if (wiz_btn_ && bcnt > 0 && wiz_edit_idx_ >= 0 && wiz_edit_idx_ < bcnt) {
-        draw_dec_box(9, 17, 6, 46, "Confirm Unban", 1);
-        draw_dec_shadow(9, 17, 6, 46);
-        sprintf(buf, "\033[11;19HUnban callsign %-24.24s", node_->ban_entry(wiz_edit_idx_).key);
+        OykTuiRect cmr;
+        oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &cmr);
+        draw_dec_box(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w, "Confirm Unban", 1, 1);
+        draw_dec_shadow(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w);
+        sprintf(buf, "\033[%d;%dHUnban callsign %-24.24s",
+                cmr.top + 3, cmr.left + 3, node_->ban_entry(wiz_edit_idx_).key);
         write_str(buf);
-        write_str("\033[12;19H[Y] Yes   [N] No");
+        sprintf(buf, "\033[%d;%dH[Y] Yes   [N] No", cmr.top + 4, cmr.left + 3);
+        write_str(buf);
     }
 }
 
@@ -2155,8 +2266,10 @@ OYK_FLASHMEM void TinyTmuxConsole::open_theme_dialog() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_theme_dialog() {
     char buf[192];
-    const int top = 2, left = 3, h = 21, w = 74;
-    draw_dec_box(top, left, h, w, "Theme Settings", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Theme Settings", 1, 1);
     draw_dec_shadow(top, left, h, w);
 
     const char* active = wiz_desc_[0] ? wiz_desc_ : "dark";
@@ -2351,10 +2464,12 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_theme_key(int key) {
     }
 }
 
-void TinyTmuxConsole::render_prompt_overlay() {
+OYK_FLASHMEM void TinyTmuxConsole::render_prompt_overlay() {
     char buf[192];
-    const int top = 9, left = 6, h = 6, w = 68;
-    draw_dec_box(top, left, h, w, "Input", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 6, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_dec_box(top, left, h, w, "Input", 1, 1);
     draw_dec_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 1, left + 2, sgr_title(), prompt_label_);
     write_str(buf);
@@ -3008,7 +3123,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
     }
 }
 
-void TinyTmuxConsole::handle_prompt_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_prompt_key(int key) {
     if (prompt_kind_ == PROMPT_TERMINATE_SID) {
         handle_terminate_key(key);
         return;
@@ -3051,7 +3166,7 @@ void TinyTmuxConsole::handle_prompt_key(int key) {
     }
 }
 
-void TinyTmuxConsole::handle_console_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_console_key(int key) {
     if (key == 'm' || key == 'M' || key == TMUX_KEY_F10) {
         view_ = TMUX_VIEW_MENU;
         menu_sel_ = 0;
@@ -3101,11 +3216,12 @@ void TinyTmuxConsole::handle_console_key(int key) {
         view_ = TMUX_VIEW_STORAGE;
         render();
     } else if (key == 0x0C) {
+        send_size_probe();
         render();
     }
 }
 
-void TinyTmuxConsole::handle_menu_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_menu_key(int key) {
     if (key == 27 || key == TMUX_KEY_F10 || key == 'x' || key == 'X') {
         view_ = TMUX_VIEW_CONSOLE;
         render();
@@ -3139,7 +3255,7 @@ void TinyTmuxConsole::handle_menu_key(int key) {
     }
 }
 
-void TinyTmuxConsole::handle_files_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_files_key(int key) {
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
@@ -3213,7 +3329,7 @@ void TinyTmuxConsole::handle_files_key(int key) {
     }
 }
 
-void TinyTmuxConsole::handle_rig_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_rig_key(int key) {
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
@@ -3354,7 +3470,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_settings_key(int key) {
     }
 }
 
-void TinyTmuxConsole::handle_psram_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_psram_key(int key) {
     if (key == 27) {
         if (tinytmux_psram_marchc_status()->state == TMUX_MARCHC_RUNNING) {
             tinytmux_psram_marchc_cancel();
@@ -3412,7 +3528,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
     render();
 }
 
-void TinyTmuxConsole::handle_lterm_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::handle_lterm_key(int key) {
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;
         strcpy(status_line_, lterm_sid_
@@ -3465,6 +3581,11 @@ void TinyTmuxConsole::handle_lterm_key(int key) {
         render();
         return;
     }
+    if (key == 0x0C) {
+        send_size_probe();
+        render();
+        return;
+    }
     if ((key == 8 || key == 127) && lterm_input_len_ > 0) {
         lterm_input_[--lterm_input_len_] = '\0';
         render();
@@ -3481,7 +3602,7 @@ void TinyTmuxConsole::reset_escape() {
     esc_buf_[0] = '\0';
 }
 
-void TinyTmuxConsole::dispatch_key(int key) {
+OYK_FLASHMEM void TinyTmuxConsole::dispatch_key(int key) {
     if (!node_) return;
     if (prompt_kind_ != PROMPT_NONE) {
         handle_prompt_key(key);
@@ -3550,18 +3671,43 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_da_csi() {
 
 OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int kind) {
     if (!node_) return;
+    const int r0 = row1 - 1;
+    const int c0 = col1 - 1;
     /* kind: 0=left, 2=right, 4=wheel_up, 5=wheel_down */
     if (prompt_kind_ != PROMPT_NONE) {
         if (kind == 4) dispatch_key(TMUX_KEY_UP);
         else if (kind == 5) dispatch_key(TMUX_KEY_DOWN);
         else if (kind == 2) dispatch_key(27);
-        else if (kind == 0 && prompt_kind_ == PROMPT_THEME_SETTINGS) {
-            if (row1 == 4 && col1 >= 14 && col1 <= 38) {
-                dispatch_key((col1 < 25) ? TMUX_KEY_LEFT : TMUX_KEY_RIGHT);
-            } else if (row1 == 21 && col1 >= 34 && col1 <= 53) {
-                dispatch_key('s');
-            } else if (row1 == 21 && col1 >= 54) {
-                dispatch_key(27);
+        else if (kind == 0) {
+            OykTuiRect mr;
+            if (prompt_kind_ == PROMPT_THEME_SETTINGS) {
+                oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { dispatch_key(27); return; }
+                const int mleft1 = mr.left + 1;
+                if (r0 == mr.top + 1 && c0 >= mr.left + 10 && c0 <= mr.left + 36) {
+                    dispatch_key((c0 < mr.left + 22) ? TMUX_KEY_LEFT : TMUX_KEY_RIGHT);
+                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 33 && col1 <= mleft1 + 51) {
+                    dispatch_key('s');
+                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 52) {
+                    dispatch_key(27);
+                }
+            } else if (prompt_kind_ == PROMPT_BAN_CALLSIGN) {
+                if (wiz_btn_) {
+                    oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &mr);
+                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { dispatch_key(27); return; }
+                } else {
+                    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { dispatch_key(27); return; }
+                }
+            } else {
+                int ph = 6, pw = 68;
+                if (prompt_kind_ == PROMPT_TERMINATE_SID) { ph = 16; pw = 64; }
+                else if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD ||
+                         prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE) { ph = 19; pw = 68; }
+                else if (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER) { ph = 16; pw = 68; }
+                else if (prompt_kind_ == PROMPT_CONFIRM_FORMAT) { ph = 12; pw = 68; }
+                oyk_tui_center_modal(term_rows_, term_cols_, ph, pw, &mr);
+                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { dispatch_key(27); return; }
             }
         }
         return;
@@ -3585,9 +3731,9 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
 
     if (view_ == TMUX_VIEW_CONSOLE) {
         if (row1 == 1) {
-            if (col1 <= 9 || col1 >= 69) dispatch_key(TMUX_KEY_F10);
-            else if (col1 >= 49 && col1 <= 68) dispatch_key('\t');
-        } else if (row1 == 2 && col1 >= 61) {
+            if (col1 <= 9 || col1 >= term_cols_ - 11) dispatch_key(TMUX_KEY_F10);
+            else if (col1 >= term_cols_ - 31) dispatch_key('\t');
+        } else if (row1 == 2 && col1 >= 40) {
             dispatch_key(node_->accept_incoming() ? 'd' : 'a');
         }
     } else if (view_ == TMUX_VIEW_MENU) {
@@ -3605,8 +3751,16 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
         }
     } else if (view_ == TMUX_VIEW_SETTINGS) {
         static const int TAB_LENS[7] = { 8, 7, 8, 10, 9, 7, 7 }; /* " 1:Node " .. " 7:Prn " */
-        if (row1 == 3) {
-            int tx = 5;
+        OykTuiRect mr;
+        oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+            dispatch_key(27);
+            return;
+        }
+        const int top1 = mr.top + 1;
+        const int left1 = mr.left + 1;
+        if (row1 == top1 + 1) {
+            int tx = left1 + 2;
             for (int t = 0; t < 7; ++t) {
                 if (col1 >= tx && col1 < tx + TAB_LENS[t]) {
                     settings_tab_ = t;
@@ -3615,13 +3769,13 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
                 }
                 tx += TAB_LENS[t] + 1;
             }
-        } else if (row1 == 21) {
-            if (col1 >= 52) dispatch_key(27);
-            else if (col1 >= 38) dispatch_key('s');
+        } else if (row1 == top1 + 19) {
+            if (col1 >= left1 + 49) dispatch_key(27);
+            else if (col1 >= left1 + 35) dispatch_key('s');
         } else {
-            int row_base = (settings_tab_ == 3 || settings_tab_ == 4) ? 6 : 5;
+            int row_base = top1 + ((settings_tab_ == 3 || settings_tab_ == 4) ? 4 : 3);
             int cnt = settings_tab_item_count(settings_tab_);
-            if (row1 >= row_base && row1 < row_base + cnt && row1 < 18) {
+            if (row1 >= row_base && row1 < row_base + cnt && row1 < top1 + 16) {
                 int idx = row1 - row_base;
                 if (idx == settings_sel_[settings_tab_]) {
                     dispatch_key('\r');
@@ -3632,14 +3786,22 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
             }
         }
     } else if (view_ == TMUX_VIEW_BOOTLOADER && !bootloader_pending_) {
-        if (row1 == 12 && col1 >= 8 && col1 <= 34) dispatch_key('s');
-        else if (row1 == 12 && col1 >= 36) dispatch_key('d');
-        else if (row1 == 13 && col1 >= 8 && col1 <= 34) dispatch_key('r');
-        else if (row1 == 13 && col1 >= 36) dispatch_key(27);
+        OykTuiRect mr;
+        oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+            dispatch_key(27);
+            return;
+        }
+        const int top1 = mr.top + 1;
+        const int left1 = mr.left + 1;
+        if (row1 == top1 + 7 && col1 >= left1 + 2 && col1 <= left1 + 28) dispatch_key('s');
+        else if (row1 == top1 + 7 && col1 >= left1 + 30) dispatch_key('d');
+        else if (row1 == top1 + 8 && col1 >= left1 + 2 && col1 <= left1 + 28) dispatch_key('r');
+        else if (row1 == top1 + 8 && col1 >= left1 + 30) dispatch_key(27);
     }
 }
 
-void TinyTmuxConsole::process_csi_final(char final_ch) {
+OYK_FLASHMEM void TinyTmuxConsole::process_csi_final(char final_ch) {
     if ((final_ch == 'M' || final_ch == 'm') && esc_buf_[0] == '<') {
         if (final_ch == 'm') return; /* Ignore release */
         const char* p = esc_buf_ + 1;
@@ -3673,6 +3835,24 @@ void TinyTmuxConsole::process_csi_final(char final_ch) {
                 handle_da_csi();
             }
             break;
+        case 'R':
+            if (esc_buf_[0] != '?') {
+                const char* semi = strchr(esc_buf_, ';');
+                if (semi) {
+                    int r = atoi(esc_buf_);
+                    int c = atoi(semi + 1);
+                    if (r >= 24 && c >= 80) {
+                        if (r > 50) r = 50;
+                        if (c > 132) c = 132;
+                        if (r != term_rows_ || c != term_cols_) {
+                            term_rows_ = r;
+                            term_cols_ = c;
+                            render();
+                        }
+                    }
+                }
+            }
+            break;
         case '~': {
             int num = atoi(esc_buf_);
             if (num == 1 || num == 7) dispatch_key(TMUX_KEY_HOME);
@@ -3688,7 +3868,7 @@ void TinyTmuxConsole::process_csi_final(char final_ch) {
     }
 }
 
-void TinyTmuxConsole::process_ss3_final(char ch) {
+OYK_FLASHMEM void TinyTmuxConsole::process_ss3_final(char ch) {
     switch (ch) {
         case 'A': dispatch_key(TMUX_KEY_UP); break;
         case 'B': dispatch_key(TMUX_KEY_DOWN); break;

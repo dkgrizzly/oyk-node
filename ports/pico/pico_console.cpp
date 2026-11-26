@@ -6,6 +6,7 @@
 #include "pico_psram.hpp"
 #include "pico_radio.hpp"
 #include "oyk_rig.hpp"
+#include "../compat/oyk_tui.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,7 +94,7 @@ static const char* pico_format_sgr(int slot, oyk_u32 fg_rgb, oyk_u32 bg_rgb,
 
 PicoConsole::PicoConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL),
-      term_type_(PICO_TERM_VT100), view_(PICO_VIEW_CONSOLE),
+      term_type_(PICO_TERM_VT100), term_rows_(25), term_cols_(80), view_(PICO_VIEW_CONSOLE),
       prompt_kind_(PICO_PROMPT_NONE), menu_sel_(0), settings_tab_(0),
       files_tab_(0), pending_count_(0), approved_count_(0),
       storage_sel_(0), bootloader_pending_(0), bootloader_ms_(0),
@@ -211,11 +212,11 @@ const char* PicoConsole::sgr_warn() const {
     return pico_format_sgr(7, tc.colors[OYK_TR_WARN], tc.colors[OYK_TR_BG], 0, 1, term_type_);
 }
 
-void PicoConsole::draw_box(int row, int col, int h, int w, const char* title, int clear_interior) {
+void PicoConsole::draw_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close) {
     if (h < 2 || w < 4) return;
     char line[256];
     int inner = w - 2;
-    if (inner > 78) inner = 78;
+    if (inner > 130) inner = 130;
 
     sprintf(line, "\033[%d;%dH%s\033(0l", row, col, sgr_border());
     write_str(line);
@@ -226,7 +227,18 @@ void PicoConsole::draw_box(int row, int col, int h, int w, const char* title, in
     write_str("\033(B\033[0m");
 
     if (title && title[0] && inner > 4) {
-        sprintf(line, "\033[%d;%dH%s %.*s \033[0m", row, col + 2, sgr_title(), inner - 4, title);
+        int max_t = with_close ? (inner - 9) : (inner - 4);
+        if (max_t > 68) max_t = 68;
+        if (max_t > 2) {
+            sprintf(line, "\033[%d;%dH%s %.*s \033[0m", row, col + 2, sgr_title(), max_t, title);
+            write_str(line);
+        }
+    }
+
+    if (with_close && w >= 12) {
+        int close_col = col + w - 5;
+        const char* csgr = (term_type_ >= PICO_TERM_VT220) ? "\033[1;91m" : "\033[7m";
+        sprintf(line, "\033[%d;%dH%s[X]\033[0m", row, close_col, csgr);
         write_str(line);
     }
 
@@ -253,26 +265,28 @@ void PicoConsole::draw_box(int row, int col, int h, int w, const char* title, in
 void PicoConsole::draw_shadow(int row, int col, int h, int w) {
     if (h < 2 || w < 4) return;
     char line[256];
+    const int max_cols = term_cols_;
+    const int max_rows = term_rows_;
     const char* sattr = (term_type_ >= PICO_TERM_VT220) ? "\033[0;90;40m" : "\033[0m";
     int r_end = row + h;
     int c_right = col + w;
-    if (c_right <= 80) {
-        int rw = (c_right + 1 <= 80) ? 2 : 1;
-        for (int r = row + 1; r <= r_end && r <= 24; ++r) {
+    if (c_right <= max_cols) {
+        int rw = (c_right + 1 <= max_cols) ? 2 : 1;
+        for (int r = row + 1; r <= r_end && r < max_rows; ++r) {
             if (r < 1) continue;
             sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
                     r, c_right, sattr, (rw == 2) ? "aa" : "a");
             write_str(line);
         }
     }
-    if (r_end >= 1 && r_end <= 24) {
+    if (r_end >= 1 && r_end < max_rows) {
         int bx = col + 2;
-        if (bx <= 80) {
+        if (bx <= max_cols) {
             int bw = w - 2;
-            if (bx + bw - 1 > 80) bw = 80 - bx + 1;
+            if (bx + bw - 1 > max_cols) bw = max_cols - bx + 1;
             if (bw > 0) {
-                char shades[82];
-                if (bw > 80) bw = 80;
+                char shades[136];
+                if (bw > 134) bw = 134;
                 for (int i = 0; i < bw; ++i) shades[i] = 'a';
                 shades[bw] = '\0';
                 sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
@@ -285,9 +299,9 @@ void PicoConsole::draw_shadow(int row, int col, int h, int w) {
 
 void PicoConsole::draw_hdiv(int row, int col, int w) {
     if (w < 4) return;
-    char line[128];
+    char line[160];
     int inner = w - 2;
-    if (inner > 78) inner = 78;
+    if (inner > 130) inner = 130;
     sprintf(line, "\033[%d;%dH%s\033(0t", row, col, sgr_border());
     write_str(line);
     for (int i = 0; i < inner; ++i) line[i] = 'q';
@@ -297,13 +311,20 @@ void PicoConsole::draw_hdiv(int row, int col, int w) {
     write_str("\033(B\033[0m");
 }
 
+void PicoConsole::send_size_probe() {
+    write_str("\033[s\033[999;999H\033[6n\033[u");
+}
+
 void PicoConsole::on_usb_connect() {
     term_type_ = PICO_TERM_VT100;
+    term_rows_ = 25;
+    term_cols_ = 80;
     mouse_enabled_ = 0;
     esc_state_ = 0;
     esc_len_ = 0;
     x10_len_ = 0;
     write_str("\033[c\033[>c");
+    send_size_probe();
     render();
 }
 
@@ -341,96 +362,136 @@ void PicoConsole::render() {
 }
 
 void PicoConsole::render_console() {
-    char buf[192], call_s[16], psram_s[8], rad_s[8];
+    char buf[320], call_s[16], psram_s[8], rad_s[8];
     const PicoBoardProfile* prof = pico_current_board_profile();
     oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
     pico_psram_format_short(pico_psram_info(), psram_s, sizeof(psram_s));
     if (bridge_) bridge_->format_short_radio_status(rad_s, sizeof(rad_s));
     else strcpy(rad_s, "NONE");
 
+    OykTuiConsoleLayout lay;
+    oyk_tui_compute_console_layout(term_rows_, term_cols_, &lay);
+    const int ncols = lay.cols;
+
     write_str("\033[H\033[2J");
-    sprintf(buf, "%s%-80s\033[0m\033[1;2H%s Node \033[0m\033[1;48H%s %-19s  [%9s]\033[0m",
-            sgr_menubar(), "",
+    int hint_col = ncols - 32;
+    if (hint_col < 9) hint_col = 9;
+    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-19s  [%9s]\033[0m",
+            sgr_menubar(), ncols, "",
             sgr_menusel(),
-            sgr_menubar(),
+            hint_col, sgr_menubar(),
             lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | F10/M",
             term_type_label());
     write_str(buf);
 
-    sprintf(buf, "\033[2;1H%s OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s\033[0m",
-            sgr_header(), prof->board_id, call_s,
+    char hdr_txt[160];
+    sprintf(hdr_txt, " OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s",
+            prof->board_id, call_s,
             static_cast<unsigned long>(node_->uptime_seconds()),
             node_->total_active_connections(),
             node_->accept_incoming() ? "ALLOW" : "DENY",
             psram_s, rad_s);
+    sprintf(buf, "\033[2;1H%s%-*.*s\033[0m", sgr_header(), ncols, ncols, hdr_txt);
     write_str(buf);
 
-    draw_box(3, 1, 8, 45, "Interfaces", 0);
-    draw_box(3, 46, 8, 35, "Last 5 New Callsigns Heard", 0);
-    sprintf(buf, "\033[4;2H%s %-8s %-11s %-2s %-15s\033[0m",
-            sgr_list_hdr(), "Port", "Type", "C", "Status");
-    write_str(buf);
-    sprintf(buf, "\033[4;47H%s %-2s %-9s %-7s %-8s \033[0m",
-            sgr_list_hdr(), "#", "Callsign", "Iface", "Time");
+    if (lay.too_small) {
+        sprintf(buf, "\033[4;2HTerminal too small (%dx%d). Minimum: 60x16.", ncols, lay.rows);
+        write_str(buf);
+        return;
+    }
+
+    draw_box(lay.iface_box.top + 1, lay.iface_box.left + 1,
+             lay.iface_box.h, lay.iface_box.w, "Interfaces", 0, 0);
+    draw_box(lay.heard_box.top + 1, lay.heard_box.left + 1,
+             lay.heard_box.h, lay.heard_box.w, "Last 5 New Callsigns Heard", 0, 0);
+    sprintf(buf, "\033[%d;%dH%s\033(0w\033(B\033[0m",
+            lay.heard_box.top + 1, lay.heard_box.left + 1, sgr_border());
     write_str(buf);
 
-    for (int i = 0; i < 5; ++i) {
-        char lft[48], rgt[40];
-        if (i < node_->iface_count()) {
+    const int iw = lay.iface_box.w - 2;
+    const int hw = lay.heard_box.w - 2;
+    const int il = lay.iface_box.left + 2;
+    const int hl = lay.heard_box.left + 2;
+    const int top_hdr_row = lay.iface_box.top + 2;
+
+    char lhdr[128], rhdr[128];
+    sprintf(lhdr, " %-8s %-11s %-2s %-15s", "Port", "Type", "C", "Status");
+    sprintf(rhdr, " %-2s %-9s %-7s %-8s", "#", "Callsign", "Iface", "Time");
+    sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m\033[%d;%dH%s%-*.*s\033[0m",
+            top_hdr_row, il, sgr_list_hdr(), iw, iw, lhdr,
+            top_hdr_row, hl, sgr_list_hdr(), hw, hw, rhdr);
+    write_str(buf);
+
+    const int top_vis = (lay.iface_vis_rows > lay.heard_vis_rows) ? lay.iface_vis_rows : lay.heard_vis_rows;
+    for (int i = 0; i < top_vis; ++i) {
+        char lft[128], rgt[128];
+        if (i < lay.iface_vis_rows && i < node_->iface_count()) {
             const OykIfaceRuntime& r = node_->iface(i);
             sprintf(lft, " %-8.8s %-11.11s %-2d %-15.15s",
                     r.cfg.id, r.cfg.type, node_->active_connections_on(i), r.status);
         } else lft[0] = '\0';
-        if (i < node_->new_heard_count()) {
+        if (i < lay.heard_vis_rows && i < node_->new_heard_count()) {
             const OykNewHeard& nh = node_->new_heard(i);
             sprintf(rgt, " %d %-9.9s %-7.7s %-8.8s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
         } else rgt[0] = '\0';
-        sprintf(buf, "\033[%d;2H%-43.43s\033[%d;47H%-33.33s", 5 + i, lft, 5 + i, rgt);
+        sprintf(buf, "\033[%d;%dH%-*.*s\033[%d;%dH%-*.*s",
+                top_hdr_row + 1 + i, il, iw, iw, lft,
+                top_hdr_row + 1 + i, hl, hw, hw, rgt);
         write_str(buf);
     }
 
     char ct[48];
     sprintf(ct, "Active Connections (%d) | Bans: %d",
             node_->total_active_connections(), node_->ban_count());
-    draw_box(11, 1, 6, 80, ct, 0);
-    sprintf(buf, "\033[12;2H%s %-4s %-10s %-8s %-8s %-43s\033[0m",
-            sgr_list_hdr(), "#", "Callsign", "Iface", "Since", "Service / Role");
+    draw_box(lay.conn_box.top + 1, lay.conn_box.left + 1,
+             lay.conn_box.h, lay.conn_box.w, ct, 0, 0);
+    const int cw = lay.conn_box.w - 2;
+    char chdr[140];
+    sprintf(chdr, " %-4s %-10s %-8s %-8s %-43s", "#", "Callsign", "Iface", "Since", "Service / Role");
+    sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m",
+            lay.conn_box.top + 2, lay.conn_box.left + 2, sgr_list_hdr(), cw, cw, chdr);
     write_str(buf);
 
     int shown = 0;
-    for (int i = 0; i < node_->max_sessions() && shown < 3; ++i) {
+    for (int i = 0; i < node_->max_sessions() && shown < lay.conn_vis_rows; ++i) {
         const OykSession& s = node_->session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
-            char cs[12];
+            char cs[12], crow[160];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
             const char* role = s.restricted_ban ? "BAN NOTICE"
                                                 : (s.in_bbs ? "BBS"
                                                             : (s.in_chat ? "CHAT"
                                                                          : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
-            sprintf(buf, "\033[%d;2H #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
-                    13 + shown, static_cast<unsigned long>(s.id), cs,
+            sprintf(crow, " #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
+                    static_cast<unsigned long>(s.id), cs,
                     (s.iface_idx >= 0) ? node_->iface(s.iface_idx).cfg.id : "local",
                     s.since_hms, role);
+            sprintf(buf, "\033[%d;%dH%-*.*s",
+                    lay.conn_box.top + 3 + shown, lay.conn_box.left + 2, cw, cw, crow);
             write_str(buf);
             ++shown;
         }
     }
-    for (int r = shown; r < 3; ++r) {
-        sprintf(buf, "\033[%d;2H%-78.78s",
-                13 + r, (r == 0 && shown == 0) ? " (no active connections)" : "");
+    for (int r = shown; r < lay.conn_vis_rows; ++r) {
+        sprintf(buf, "\033[%d;%dH%-*.*s",
+                lay.conn_box.top + 3 + r, lay.conn_box.left + 2, cw, cw,
+                (r == 0 && shown == 0) ? " (no active connections)" : "");
         write_str(buf);
     }
 
-    draw_box(17, 1, 7, 80, "Node Activity Log", 0);
+    draw_box(lay.log_box.top + 1, lay.log_box.left + 1,
+             lay.log_box.h, lay.log_box.w, "Node Activity Log", 0, 0);
+    const int lw = lay.log_box.w - 2;
+    const int lvis = lay.log_vis_rows;
     const int tot_logs = node_->console_log_count();
-    const int start_log = (tot_logs > 5) ? (tot_logs - 5) : 0;
-    for (int i = 0; i < 5; ++i) {
+    const int start_log = (tot_logs > lvis) ? (tot_logs - lvis) : 0;
+    for (int i = 0; i < lvis; ++i) {
         const char* ln = ((start_log + i) < tot_logs) ? node_->console_log_line(start_log + i) : "";
-        sprintf(buf, "\033[%d;2H%-78.78s", 18 + i, ln ? ln : "");
+        sprintf(buf, "\033[%d;%dH%-*.*s", lay.log_box.top + 2 + i, lay.log_box.left + 2, lw, lw, ln ? ln : "");
         write_str(buf);
     }
-    sprintf(buf, "\033[24;1H%s %-78.78s \033[0m",
-            sgr_warn(),
+    sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
+            lay.status_row + 1, sgr_warn(), ncols - 2, ncols - 2,
             status_fb_[0] ? status_fb_ : "M:Menu  Tab:Term  S:Settings  T:TermConn  B:Ban  H:Theme  G:Storage");
     write_str(buf);
 }
@@ -501,15 +562,20 @@ void PicoConsole::render_settings() {
         "Serial Baud Rate", "Printer Log Mask (0x..)", "Condensed 132-Col Mode"
     };
 
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1;
+    const int left = mr.left + 1;
     char buf[192];
-    draw_box(2, 3, 21, 74, "Node Settings", 1);
-    draw_shadow(2, 3, 21, 74);
-    write_str("\033[3;5H");
+    draw_box(top, left, mr.h, mr.w, "Node Settings", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dH", top + 1, left + 2);
+    write_str(buf);
     for (int t = 0; t < 7; ++t) {
         sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), kTabs[t]);
         write_str(buf);
     }
-    draw_hdiv(4, 3, 74);
+    draw_hdiv(top + 2, left, mr.w);
 
     int cnt = settings_tab_item_count(settings_tab_);
     if (settings_tab_ != 3 && settings_tab_ != 4) {
@@ -563,40 +629,42 @@ void PicoConsole::render_settings() {
                 else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
-            sprintf(buf, "\033[%d;5H%s %-26.26s : %-40.40s\033[0m",
-                    5 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
+            sprintf(buf, "\033[%d;%dH%s %-26.26s : %-40.40s\033[0m",
+                    top + 3 + i, left + 2, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i], val);
             write_str(buf);
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
-                sgr_menubar(), "Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1, sgr_menubar(), "Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else if (settings_tab_ == 3) {
-        sprintf(buf, "\033[5;5H%s %-8s %-13s %-21s %-23s\033[0m",
-                sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
+        sprintf(buf, "\033[%d;%dH%s %-8s %-13s %-21s %-23s\033[0m",
+                top + 3, left + 2, sgr_list_hdr(), "ID", "Type", "Dev/Host", "Port/Baud");
         write_str(buf);
         if (draft_.iface_count == 0) {
-            write_str("\033[6;5H (no interfaces configured; press N to add)");
+            sprintf(buf, "\033[%d;%dH (no interfaces configured; press N to add)", top + 4, left + 2);
+            write_str(buf);
         } else {
             for (int i = 0; i < draft_.iface_count && i < 12; ++i) {
                 const OykIfaceConfig& ic = draft_.ifaces[i];
                 const char* loc = ic.device[0] ? ic.device : ic.host;
                 char pb[28];
                 sprintf(pb, "%u/%lu", static_cast<unsigned int>(ic.port), static_cast<unsigned long>(ic.baud));
-                sprintf(buf, "\033[%d;5H%s %-8.8s %-13.13s %-21.21s %-23.23s\033[0m",
-                        6 + i, (i == settings_sel_[3]) ? sgr_sel() : "",
+                sprintf(buf, "\033[%d;%dH%s %-8.8s %-13.13s %-21.21s %-23.23s\033[0m",
+                        top + 4 + i, left + 2, (i == settings_sel_[3]) ? sgr_sel() : "",
                         ic.id, ic.type, loc, pb);
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
-                sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  H:Theme  S/F2:Save  Esc:Cancel");
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1, sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  H:Theme  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else {
-        sprintf(buf, "\033[5;5H%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
-                sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
+        sprintf(buf, "\033[%d;%dH%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
+                top + 3, left + 2, sgr_list_hdr(), "ID", "Callsign", "Iface", "Endpoint", "ACL", "Tag");
         write_str(buf);
         if (draft_.peer_count == 0) {
-            write_str("\033[6;5H (no peers configured; press A to add)");
+            sprintf(buf, "\033[%d;%dH (no peers configured; press A to add)", top + 4, left + 2);
+            write_str(buf);
         } else {
             for (int i = 0; i < draft_.peer_count && i < 12; ++i) {
                 const OykPeerConfig& pc = draft_.peers[i];
@@ -605,21 +673,21 @@ void PicoConsole::render_settings() {
                 else if (pc.host[0]) sprintf(ep, "%.19s", pc.host);
                 else strcpy(ep, "(any)");
                 sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
-                sprintf(buf, "\033[%d;5H%s %-9.9s %-9.9s %-7.7s %-20.20s %-7.7s %-11.11s\033[0m",
-                        6 + i, (i == settings_sel_[4]) ? sgr_sel() : "",
+                sprintf(buf, "\033[%d;%dH%s %-9.9s %-9.9s %-7.7s %-20.20s %-7.7s %-11.11s\033[0m",
+                        top + 4 + i, left + 2, (i == settings_sel_[4]) ? sgr_sel() : "",
                         pc.id, pc.callsign, pc.interface_id, ep, acl,
                         pc.auto_learned ? "[AUTO]" : "");
                 write_str(buf);
             }
         }
-        sprintf(buf, "\033[21;4H%s %-70.70s \033[0m",
-                sgr_menubar(), "A:Add  E:Edit  D:Del  I:In  O:Out  K:KeepAuto  S/F2:Save  Esc:Back");
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1, sgr_menubar(), "A:Add  E:Edit  D:Del  I:In  O:Out  K:KeepAuto  S/F2:Save  Esc:Back");
         write_str(buf);
     }
-    sprintf(buf, "\033[19;5H%s%-70.70s\033[0m",
-            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
+    sprintf(buf, "\033[%d;%dH%s%-70.70s\033[0m",
+            top + 17, left + 2, sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Edit settings, then press S or F2 to Save & Apply.");
     write_str(buf);
-    draw_hdiv(20, 3, 74);
+    draw_hdiv(top + 18, left, mr.w);
 }
 
 void PicoConsole::refresh_files_lists() {
@@ -632,8 +700,10 @@ void PicoConsole::refresh_files_lists() {
 
 void PicoConsole::render_files() {
     char buf[192];
-    const int top = 3, left = 4, h = 19, w = 72;
-    draw_box(top, left, h, w, "Files Area Manager", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 72, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Files Area Manager", 1, 1);
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s 1:Pending Incoming (%d) \033[0m  %s 2:Approved Files (%d) \033[0m",
             top + 1, left + 2,
@@ -693,52 +763,63 @@ void PicoConsole::render_files() {
 
 void PicoConsole::render_rig() {
     char buf[160];
-    draw_box(4, 6, 15, 68, "Radio Control (Hamlib / RadioFoundry)", 1);
-    draw_shadow(4, 6, 15, 68);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 15, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, "Radio Control (Hamlib / RadioFoundry)", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
     const OykConfig& cfg = node_->config();
     if (!cfg.rig_enabled) {
-        write_str("\033[6;8HRig control is DISABLED. Configure in Settings (S) -> Tab 6:Rig.");
+        sprintf(buf, "\033[%d;%dHRig control is DISABLED. Configure in Settings (S) -> Tab 6:Rig.", top + 2, left + 2);
+        write_str(buf);
     } else {
         OykRigStatus st;
         oyk_rig_status_init(&st, oyk_rig_parse_protocol(cfg.rig_protocol));
         char summary[96];
         oyk_rig_format_summary(&st, summary, sizeof(summary));
-        sprintf(buf, "\033[6;8HProtocol : %-14s  Target: %s:%u",
+        sprintf(buf, "\033[%d;%dHProtocol : %-14s  Target: %s:%u",
+                top + 2, left + 2,
                 oyk_rig_protocol_name(st.protocol),
                 cfg.rig_host[0] ? cfg.rig_host : "(none)",
                 static_cast<unsigned int>(cfg.rig_port ? cfg.rig_port : oyk_rig_default_port(st.protocol)));
         write_str(buf);
-        sprintf(buf, "\033[8;8HRadio    : %.54s", summary);
+        sprintf(buf, "\033[%d;%dHRadio    : %.54s", top + 4, left + 2, summary);
         write_str(buf);
     }
-    draw_hdiv(16, 6, 68);
-    sprintf(buf, "\033[17;7H%s %-64.64s \033[0m", sgr_menubar(), "Esc:Close");
+    draw_hdiv(top + 12, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m", top + 13, left + 1, sgr_menubar(), "Esc:Close");
     write_str(buf);
 }
 
 void PicoConsole::render_storage() {
     const PicoFsStatus* fs = pico_fs_status();
     char buf[128];
-    draw_box(3, 5, 18, 70, "Storage Manager (SD / QSPI Flash)", 1);
-    draw_shadow(3, 5, 18, 70);
-    sprintf(buf, "\033[5;7HActive Medium : %s", fs->medium_label);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 18, 70, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, "Storage Manager (SD / QSPI Flash)", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dHActive Medium : %s", top + 2, left + 2, fs->medium_label);
     write_str(buf);
-    sprintf(buf, "\033[6;7HSD Card       : %s  | Flash KV: %s",
+    sprintf(buf, "\033[%d;%dHSD Card       : %s  | Flash KV: %s",
+            top + 3, left + 2,
             fs->sd_present ? "DETECTED" : "ABSENT",
             fs->flash_ready ? "READY" : "N/A");
     write_str(buf);
-    sprintf(buf, "\033[7;7HCapacity      : %lu KB Total (%lu KB Used)",
+    sprintf(buf, "\033[%d;%dHCapacity      : %lu KB Total (%lu KB Used)",
+            top + 4, left + 2,
             static_cast<unsigned long>(fs->total_kb),
             static_cast<unsigned long>(fs->used_kb));
     write_str(buf);
-    write_str("\033[10;7H[ F ] Format Active Storage (Confirmation Modal Required)");
+    sprintf(buf, "\033[%d;%dH[ F ] Format Active Storage (Confirmation Modal Required)", top + 7, left + 2);
+    write_str(buf);
     if (status_fb_[0]) {
-        sprintf(buf, "\033[13;7H%s%-60.60s\033[0m", sgr_warn(), status_fb_);
+        sprintf(buf, "\033[%d;%dH%s%-60.60s\033[0m", top + 10, left + 2, sgr_warn(), status_fb_);
         write_str(buf);
     }
-    draw_hdiv(18, 5, 70);
-    sprintf(buf, "\033[19;6H%s %-66.66s \033[0m",
-            sgr_menubar(), "F:Format Active Storage   Esc:Back to Console");
+    draw_hdiv(top + 15, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-66.66s \033[0m",
+            top + 16, left + 1, sgr_menubar(), "F:Format Active Storage   Esc:Back to Console");
     write_str(buf);
 }
 
@@ -747,29 +828,36 @@ void PicoConsole::render_psram() {
     const PicoBoardProfile* prof = pico_current_board_profile();
     const PicoRadioState* rs = pico_radio_state();
     char buf[128];
-    draw_box(3, 5, 17, 70, "PSRAM & Hardware Diagnostics", 1);
-    draw_shadow(3, 5, 17, 70);
-    sprintf(buf, "\033[5;7HBoard Profile : %s (%s)", prof->board_id, prof->board_label);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 17, 70, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, "PSRAM & Hardware Diagnostics", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dHBoard Profile : %s (%s)", top + 2, left + 2, prof->board_id, prof->board_label);
     write_str(buf);
-    sprintf(buf, "\033[6;7HFlash / SRAM  : %lu MB Flash | %lu KB SRAM",
+    sprintf(buf, "\033[%d;%dHFlash / SRAM  : %lu MB Flash | %lu KB SRAM",
+            top + 3, left + 2,
             static_cast<unsigned long>(prof->flash_bytes / (1024UL * 1024UL)),
             static_cast<unsigned long>(prof->sram_bytes / 1024UL));
     write_str(buf);
-    sprintf(buf, "\033[7;7HPSRAM Status  : %s", pi->chip_label);
+    sprintf(buf, "\033[%d;%dHPSRAM Status  : %s", top + 4, left + 2, pi->chip_label);
     write_str(buf);
-    sprintf(buf, "\033[8;7HPSRAM Pool    : %lu / %lu bytes (SRAM fallback: %lu bytes)",
+    sprintf(buf, "\033[%d;%dHPSRAM Pool    : %lu / %lu bytes (SRAM fallback: %lu bytes)",
+            top + 5, left + 2,
             static_cast<unsigned long>(pi->pool_used_bytes),
             static_cast<unsigned long>(pi->pool_total_bytes),
             static_cast<unsigned long>(pi->sram_fallback_used_bytes));
     write_str(buf);
-    sprintf(buf, "\033[10;7HWireless Radio: %s (Wi-Fi: %s, BT: %s)",
+    sprintf(buf, "\033[%d;%dHWireless Radio: %s (Wi-Fi: %s, BT: %s)",
+            top + 7, left + 2,
             rs->module_present ? "PRESENT" : "ABSENT (non-fatal)",
             rs->wifi_enabled ? "ON" : "OFF",
             rs->bt_enabled ? "ON" : "OFF");
     write_str(buf);
-    write_str("\033[11;7HHardware UARTs: ser0 (UART0 TX=0/RX=1) | ser1 (UART1 TX=4/RX=5)");
-    draw_hdiv(17, 5, 70);
-    sprintf(buf, "\033[18;6H%s %-66.66s \033[0m", sgr_menubar(), "Esc:Return");
+    sprintf(buf, "\033[%d;%dHHardware UARTs: ser0 (UART0 TX=0/RX=1) | ser1 (UART1 TX=4/RX=5)", top + 8, left + 2);
+    write_str(buf);
+    draw_hdiv(top + 14, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-66.66s \033[0m", top + 15, left + 1, sgr_menubar(), "Esc:Return");
     write_str(buf);
 }
 
@@ -777,52 +865,73 @@ void PicoConsole::render_bootloader() {
     char call_s[16], buf[128];
     oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
     const int auto_cnt = node_->auto_learned_peer_count();
+    OykTuiRect mr;
     if (bootloader_pending_) {
-        draw_box(8, 12, 7, 56, "BOOTSEL UF2 Reboot", 1);
-        draw_shadow(8, 12, 7, 56);
-        write_str("\033[10;14HEntering RP2xxx USB BOOTSEL mode...");
-        sprintf(buf, "\033[11;14H%s73 de %s\033[0m", sgr_title(), call_s);
+        oyk_tui_center_modal(term_rows_, term_cols_, 7, 56, &mr);
+        const int top = mr.top + 1, left = mr.left + 1;
+        draw_box(top, left, mr.h, mr.w, "BOOTSEL UF2 Reboot", 1, 1);
+        draw_shadow(top, left, mr.h, mr.w);
+        sprintf(buf, "\033[%d;%dHEntering RP2xxx USB BOOTSEL mode...", top + 2, left + 2);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s73 de %s\033[0m", top + 3, left + 2, sgr_title(), call_s);
         write_str(buf);
         return;
     }
     if (auto_cnt > 0) {
-        draw_box(5, 6, 13, 68, "Auto-Learned Peers - BOOTSEL", 1);
-        draw_shadow(5, 6, 13, 68);
-        sprintf(buf, "\033[7;8H%d auto-learned peer(s) added during this session.", auto_cnt);
+        oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+        const int top = mr.top + 1, left = mr.left + 1;
+        draw_box(top, left, mr.h, mr.w, "Auto-Learned Peers - BOOTSEL", 1, 1);
+        draw_shadow(top, left, mr.h, mr.w);
+        sprintf(buf, "\033[%d;%dH%d auto-learned peer(s) added during this session.", top + 2, left + 2, auto_cnt);
         write_str(buf);
-        write_str("\033[9;8HSave to peers config, discard, or review before BOOTSEL?");
-        write_str("\033[11;8H[S] Save & BOOTSEL        [D] Discard & BOOTSEL");
-        write_str("\033[12;8H[R] Review Peers          [N / Esc] Cancel");
-        draw_hdiv(15, 6, 68);
-        sprintf(buf, "\033[16;7H%s %-64.64s \033[0m",
-                sgr_menubar(), "S:Save & Reboot  D:Discard  R/E:Review Peers  N/Esc:Cancel");
+        sprintf(buf, "\033[%d;%dHSave to peers config, discard, or review before BOOTSEL?", top + 4, left + 2);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH[S] Save & BOOTSEL        [D] Discard & BOOTSEL", top + 6, left + 2);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH[R] Review Peers          [N / Esc] Cancel", top + 7, left + 2);
+        write_str(buf);
+        draw_hdiv(top + 10, left, mr.w);
+        sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
+                top + 11, left + 1, sgr_menubar(), "S:Save & Reboot  D:Discard  R/E:Review Peers  N/Esc:Cancel");
         write_str(buf);
     } else {
-        draw_box(6, 10, 10, 60, "Enter BOOTSEL Mode (UF2 Flash)", 1);
-        draw_shadow(6, 10, 10, 60);
-        write_str("\033[8;12HPress Y or Enter to reboot into RP2xxx BOOTSEL mode.");
-        write_str("\033[9;12HThe device will mount as RPI-RP2 / RP2350 USB drive.");
-        draw_hdiv(13, 10, 60);
-        sprintf(buf, "\033[14;11H%s %-56.56s \033[0m",
-                sgr_menubar(), "Y/Enter:Enter BOOTSEL   N/Esc:Cancel");
+        oyk_tui_center_modal(term_rows_, term_cols_, 10, 60, &mr);
+        const int top = mr.top + 1, left = mr.left + 1;
+        draw_box(top, left, mr.h, mr.w, "Enter BOOTSEL Mode (UF2 Flash)", 1, 1);
+        draw_shadow(top, left, mr.h, mr.w);
+        sprintf(buf, "\033[%d;%dHPress Y or Enter to reboot into RP2xxx BOOTSEL mode.", top + 2, left + 2);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dHThe device will mount as RPI-RP2 / RP2350 USB drive.", top + 3, left + 2);
+        write_str(buf);
+        draw_hdiv(top + 7, left, mr.w);
+        sprintf(buf, "\033[%d;%dH%s %-56.56s \033[0m",
+                top + 8, left + 1, sgr_menubar(), "Y/Enter:Enter BOOTSEL   N/Esc:Cancel");
         write_str(buf);
     }
 }
 
 void PicoConsole::render_local_term() {
-    char buf[128];
+    char buf[320];
+    OykTuiTermLayout tlay;
+    oyk_tui_compute_term_layout(term_rows_, term_cols_, &tlay);
+    const int ncols = tlay.cols;
     write_str("\033[H\033[2J");
-    sprintf(buf, "%s OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc   \033[0m\r\n",
-            sgr_header(), lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    char hdr[160];
+    sprintf(hdr, " OYK LOCAL TERMINAL (%s) | Esc:Console  /local /bbs /chat /disc",
+            lterm_sid_ ? "CONNECTED" : "DISCONNECTED");
+    sprintf(buf, "\033[%d;1H%s%-*.*s\033[0m", tlay.header_row + 1, sgr_header(), ncols, ncols, hdr);
     write_str(buf);
-    for (int i = 0; i < lterm_line_count_ && i < 12; ++i) {
-        sprintf(buf, "\033[%d;1H%-79.79s", 3 + i, lterm_lines_[i]);
+    int start = (lterm_line_count_ > tlay.body_rows) ? (lterm_line_count_ - tlay.body_rows) : 0;
+    int row = 0;
+    for (int i = start; i < lterm_line_count_ && row < tlay.body_rows; ++i, ++row) {
+        sprintf(buf, "\033[%d;1H%-*.*s", tlay.body_top + 1 + row, ncols - 1, ncols - 1, lterm_lines_[i]);
         write_str(buf);
     }
-    sprintf(buf, "\033[23;1H> %-76.76s", lterm_input_);
+    sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
+            tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2,
+            "Commands: /local /bbs /chat /disc   Esc/Tab:Return   Ctrl-L:Resize");
     write_str(buf);
-    sprintf(buf, "\033[24;1H%s Commands: /local /bbs /chat /disc   Esc/Tab:Return to Console        \033[0m",
-            sgr_menubar());
+    sprintf(buf, "\033[%d;1H> %-*.*s", tlay.input_row + 1, ncols - 3, ncols - 3, lterm_input_);
     write_str(buf);
 }
 
@@ -962,13 +1071,15 @@ void PicoConsole::open_edit_iface_dialog(int idx) {
 
 void PicoConsole::render_wizard_modal() {
     char prog[24], buf[192];
-    const int top = 3, left = 6, h = 19, w = 68;
-    draw_box(top, left, h, w, "Add Interface", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Add Interface", 1, 1);
     draw_shadow(top, left, h, w);
     int fill = (wiz_step_ + 1) * 2;
     for (int i = 0; i < 8; ++i) prog[i] = (i < fill) ? '#' : '.';
     prog[8] = '\0';
-    sprintf(buf, "\033[%d;%dH%s[%s] %d/4\033[0m", top, left + w - 16, sgr_title(), prog, wiz_step_ + 1);
+    sprintf(buf, "\033[%d;%dH%s[%s] %d/4\033[0m", top, left + w - 20, sgr_title(), prog, wiz_step_ + 1);
     write_str(buf);
 
     const char* drv = kWizardDrivers[wiz_drv_];
@@ -1073,8 +1184,10 @@ void PicoConsole::render_wizard_modal() {
 
 void PicoConsole::render_edit_iface_modal() {
     char buf[192];
-    const int top = 3, left = 6, h = 19, w = 68;
-    draw_box(top, left, h, w, "Edit Interface", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Edit Interface", 1, 1);
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
             top + 1, left + 2, sgr_title(), "Edit interface settings and select Save to update draft:");
@@ -1204,8 +1317,10 @@ void PicoConsole::commit_peer_fields(int slot) {
 
 void PicoConsole::render_edit_peer_modal() {
     char buf[192];
-    const int top = 3, left = 8, h = 18, w = 64;
-    draw_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 18, 64, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1, 1);
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-58.58s \033[0m",
             top + 1, left + 2, sgr_title(), "Configure peer mapping and inbound/outbound permissions:");
@@ -1259,8 +1374,10 @@ void PicoConsole::open_terminate_dialog() {
 
 void PicoConsole::render_terminate_modal() {
     char buf[192];
-    const int top = 4, left = 8, h = 16, w = 64;
-    draw_box(top, left, h, w, "Terminate Active Connection", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 16, 64, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Terminate Active Connection", 1, 1);
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-5s %-11s %-10s %-30s \033[0m",
             top + 2, left + 2, sgr_list_hdr(), "ID", "Callsign", "Port", "State");
@@ -1307,8 +1424,10 @@ void PicoConsole::open_ban_dialog() {
 
 void PicoConsole::render_ban_modal() {
     char buf[192];
-    const int top = 2, left = 3, h = 21, w = 74;
-    draw_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1, 1);
     draw_shadow(top, left, h, w);
 
     sprintf(buf, "\033[%d;%dHCallsign: %s %-12.12s \033[0m",
@@ -1360,11 +1479,15 @@ void PicoConsole::render_ban_modal() {
     write_str(buf);
 
     if (wiz_btn_ && bcnt > 0 && wiz_edit_idx_ >= 0 && wiz_edit_idx_ < bcnt) {
-        draw_box(9, 17, 6, 46, "Confirm Unban", 1);
-        draw_shadow(9, 17, 6, 46);
-        sprintf(buf, "\033[11;19HUnban callsign %-24.24s", node_->ban_entry(wiz_edit_idx_).key);
+        OykTuiRect cmr;
+        oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &cmr);
+        draw_box(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w, "Confirm Unban", 1, 1);
+        draw_shadow(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w);
+        sprintf(buf, "\033[%d;%dHUnban callsign %-24.24s",
+                cmr.top + 3, cmr.left + 3, node_->ban_entry(wiz_edit_idx_).key);
         write_str(buf);
-        write_str("\033[12;19H[Y] Yes   [N] No");
+        sprintf(buf, "\033[%d;%dH[Y] Yes   [N] No", cmr.top + 4, cmr.left + 3);
+        write_str(buf);
     }
 }
 
@@ -1384,8 +1507,10 @@ void PicoConsole::open_theme_dialog() {
 
 void PicoConsole::render_theme_modal() {
     char buf[192];
-    const int top = 2, left = 3, h = 21, w = 74;
-    draw_box(top, left, h, w, "Theme Settings", 1);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
+    draw_box(top, left, h, w, "Theme Settings", 1, 1);
     draw_shadow(top, left, h, w);
 
     const char* active = wiz_desc_[0] ? wiz_desc_ : "dark";
@@ -1444,25 +1569,32 @@ void PicoConsole::render_theme_modal() {
 }
 
 void PicoConsole::render_confirm_format_modal() {
-    char buf[120];
-    draw_box(7, 10, 9, 60, "Confirm Storage Format", 1);
-    draw_shadow(7, 10, 9, 60);
-    write_str("\033[9;12HType FORMAT to erase active storage and press Enter:");
-    sprintf(buf, "\033[11;12H> %s%-16s\033[0m", sgr_sel(), prompt_buf_);
+    char buf[192];
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 9, 60, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, "Confirm Storage Format", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dHType FORMAT to erase active storage and press Enter:", top + 2, left + 2);
     write_str(buf);
-    draw_hdiv(13, 10, 60);
-    sprintf(buf, "\033[14;11H%s %-56.56s \033[0m", sgr_menubar(), "Enter:Confirm   Esc:Cancel");
+    sprintf(buf, "\033[%d;%dH> %s%-16.16s\033[0m", top + 4, left + 2, sgr_sel(), prompt_buf_);
+    write_str(buf);
+    draw_hdiv(top + 6, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-56.56s \033[0m", top + 7, left + 1, sgr_menubar(), "Enter:Confirm   Esc:Cancel");
     write_str(buf);
 }
 
 void PicoConsole::render_text_prompt() {
     char buf[128];
-    draw_box(8, 12, 7, 56, prompt_label_[0] ? prompt_label_ : "Edit Setting", 1);
-    draw_shadow(8, 12, 7, 56);
-    sprintf(buf, "\033[10;14H%s> %-48.48s\033[0m", sgr_sel(), prompt_buf_);
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 7, 56, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, prompt_label_[0] ? prompt_label_ : "Edit Setting", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dH%s> %-48.48s\033[0m", top + 2, left + 2, sgr_sel(), prompt_buf_);
     write_str(buf);
-    draw_hdiv(12, 12, 56);
-    sprintf(buf, "\033[13;13H%s %-52.52s \033[0m", sgr_menubar(), "Enter:OK   Esc:Cancel");
+    draw_hdiv(top + 4, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-52.52s \033[0m", top + 5, left + 1, sgr_menubar(), "Enter:OK   Esc:Cancel");
     write_str(buf);
 }
 
@@ -1596,8 +1728,8 @@ void PicoConsole::on_local_term_event(oyk_u32 sid, int event_type,
     if (event_type == 3) lterm_sid_ = 0UL;
     else lterm_sid_ = sid;
     if (event_type == 2 && data && len > 0) {
-        if (lterm_line_count_ < 12) {
-            size_t n = (len < 78) ? len : 78;
+        if (lterm_line_count_ < 40) {
+            size_t n = (len < 134) ? len : 134;
             memcpy(lterm_lines_[lterm_line_count_], data, n);
             lterm_lines_[lterm_line_count_][n] = '\0';
             ++lterm_line_count_;
@@ -1628,17 +1760,42 @@ void PicoConsole::tick(oyk_u32 now_ms) {
 
 void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
     if (!node_) return;
+    const int r0 = row1 - 1;
+    const int c0 = col1 - 1;
     if (prompt_kind_ != PICO_PROMPT_NONE) {
         if (kind == 4) handle_key_code(PK_UP);
         else if (kind == 5) handle_key_code(PK_DOWN);
         else if (kind == 2) handle_key_code(PK_ESC);
-        else if (kind == 0 && prompt_kind_ == PICO_PROMPT_THEME) {
-            if (row1 == 4 && col1 >= 14 && col1 <= 38) {
-                handle_key_code((col1 < 25) ? PK_LEFT : PK_RIGHT);
-            } else if (row1 == 21 && col1 >= 34 && col1 <= 53) {
-                handle_key_code('s');
-            } else if (row1 == 21 && col1 >= 54) {
-                handle_key_code(PK_ESC);
+        else if (kind == 0) {
+            OykTuiRect mr;
+            if (prompt_kind_ == PICO_PROMPT_THEME) {
+                oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                const int mleft1 = mr.left + 1;
+                if (r0 == mr.top + 1 && c0 >= mr.left + 10 && c0 <= mr.left + 36) {
+                    handle_key_code((c0 < mr.left + 22) ? PK_LEFT : PK_RIGHT);
+                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 33 && col1 <= mleft1 + 51) {
+                    handle_key_code('s');
+                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 52) {
+                    handle_key_code(PK_ESC);
+                }
+            } else if (prompt_kind_ == PICO_PROMPT_BAN_CALL) {
+                if (wiz_btn_) {
+                    oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &mr);
+                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                } else {
+                    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                }
+            } else {
+                int ph = 7, pw = 56;
+                if (prompt_kind_ == PICO_PROMPT_TERM_SID) { ph = 16; pw = 64; }
+                else if (prompt_kind_ == PICO_PROMPT_ADD_WIZARD ||
+                         prompt_kind_ == PICO_PROMPT_EDIT_IFACE) { ph = 19; pw = 68; }
+                else if (prompt_kind_ == PICO_PROMPT_EDIT_PEER) { ph = 18; pw = 64; }
+                else if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) { ph = 9; pw = 60; }
+                oyk_tui_center_modal(term_rows_, term_cols_, ph, pw, &mr);
+                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
             }
         }
         return;
@@ -1662,9 +1819,9 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
 
     if (view_ == PICO_VIEW_CONSOLE) {
         if (row1 == 1) {
-            if (col1 <= 9 || col1 >= 69) handle_key_code(PK_F10);
-            else if (col1 >= 49 && col1 <= 68) handle_key_code(PK_TAB);
-        } else if (row1 == 2 && col1 >= 55) {
+            if (col1 <= 9 || col1 >= term_cols_ - 11) handle_key_code(PK_F10);
+            else if (col1 >= term_cols_ - 31) handle_key_code(PK_TAB);
+        } else if (row1 == 2 && col1 >= 40) {
             handle_key_code(node_->accept_incoming() ? 'd' : 'a');
         }
     } else if (view_ == PICO_VIEW_MENU) {
@@ -1682,8 +1839,16 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
         }
     } else if (view_ == PICO_VIEW_SETTINGS) {
         static const int kTabLens[7] = { 8, 7, 8, 10, 9, 7, 7 };
-        if (row1 == 3) {
-            int tx = 5;
+        OykTuiRect mr;
+        oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
+        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+            handle_key_code(PK_ESC);
+            return;
+        }
+        const int top1 = mr.top + 1;
+        const int left1 = mr.left + 1;
+        if (row1 == top1 + 1) {
+            int tx = left1 + 2;
             for (int t = 0; t < 7; ++t) {
                 if (col1 >= tx && col1 < tx + kTabLens[t]) {
                     settings_tab_ = t;
@@ -1692,13 +1857,13 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
                 }
                 tx += kTabLens[t] + 1;
             }
-        } else if (row1 == 21) {
-            if (col1 >= 52) handle_key_code(PK_ESC);
-            else if (col1 >= 38) handle_key_code('s');
+        } else if (row1 == top1 + 19) {
+            if (col1 >= left1 + 49) handle_key_code(PK_ESC);
+            else if (col1 >= left1 + 35) handle_key_code('s');
         } else {
-            int row_base = (settings_tab_ == 3 || settings_tab_ == 4) ? 6 : 5;
+            int row_base = top1 + ((settings_tab_ == 3 || settings_tab_ == 4) ? 4 : 3);
             int cnt = settings_tab_item_count(settings_tab_);
-            if (row1 >= row_base && row1 < row_base + cnt && row1 < 18) {
+            if (row1 >= row_base && row1 < row_base + cnt && row1 < top1 + 16) {
                 int idx = row1 - row_base;
                 if (idx == settings_sel_[settings_tab_]) {
                     handle_key_code(PK_ENTER);
@@ -1708,11 +1873,32 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
                 }
             }
         }
+    } else if (view_ == PICO_VIEW_FILES || view_ == PICO_VIEW_RIG ||
+               view_ == PICO_VIEW_STORAGE || view_ == PICO_VIEW_PSRAM) {
+        OykTuiRect mr;
+        int ph = (view_ == PICO_VIEW_FILES) ? 19 : ((view_ == PICO_VIEW_RIG) ? 15 : ((view_ == PICO_VIEW_STORAGE) ? 18 : 17));
+        int pw = (view_ == PICO_VIEW_FILES) ? 72 : ((view_ == PICO_VIEW_RIG) ? 68 : 70);
+        oyk_tui_center_modal(term_rows_, term_cols_, ph, pw, &mr);
+        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+            handle_key_code(PK_ESC);
+            return;
+        }
     } else if (view_ == PICO_VIEW_BOOTLOADER && !bootloader_pending_) {
-        if (row1 == 11 && col1 >= 8 && col1 <= 34) handle_key_code('s');
-        else if (row1 == 11 && col1 >= 36) handle_key_code('d');
-        else if (row1 == 12 && col1 >= 8 && col1 <= 34) handle_key_code('r');
-        else if (row1 == 12 && col1 >= 36) handle_key_code(PK_ESC);
+        OykTuiRect mr;
+        int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
+        oyk_tui_center_modal(term_rows_, term_cols_, auto_cnt > 0 ? 13 : 10, auto_cnt > 0 ? 68 : 60, &mr);
+        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+            handle_key_code(PK_ESC);
+            return;
+        }
+        const int top1 = mr.top + 1;
+        const int left1 = mr.left + 1;
+        if (auto_cnt > 0) {
+            if (row1 == top1 + 6 && col1 >= left1 + 2 && col1 <= left1 + 28) handle_key_code('s');
+            else if (row1 == top1 + 6 && col1 >= left1 + 30) handle_key_code('d');
+            else if (row1 == top1 + 7 && col1 >= left1 + 2 && col1 <= left1 + 28) handle_key_code('r');
+            else if (row1 == top1 + 7 && col1 >= left1 + 30) handle_key_code(PK_ESC);
+        }
     }
 }
 
@@ -1807,6 +1993,23 @@ void PicoConsole::handle_char(oyk_u8 ch, oyk_u32 now_ms) {
             render();
             return;
         }
+        if (ch == 'R' && esc_buf_[0] != '?') {
+            const char* semi = strchr(esc_buf_, ';');
+            if (semi) {
+                int r = atoi(esc_buf_);
+                int c = atoi(semi + 1);
+                if (r >= 24 && c >= 80) {
+                    if (r > 50) r = 50;
+                    if (c > 132) c = 132;
+                    if (r != term_rows_ || c != term_cols_) {
+                        term_rows_ = r;
+                        term_cols_ = c;
+                        render();
+                    }
+                }
+            }
+            return;
+        }
         if (ch == 'A') handle_key_code(PK_UP);
         else if (ch == 'B') handle_key_code(PK_DOWN);
         else if (ch == 'C') handle_key_code(PK_RIGHT);
@@ -1870,6 +2073,9 @@ void PicoConsole::handle_console_key(int key) {
         status_fb_[0] = '\0'; view_ = PICO_VIEW_STORAGE; render();
     } else if (key == 'u' || key == 'U') {
         bootloader_pending_ = 0; view_ = PICO_VIEW_BOOTLOADER; render();
+    } else if (key == 0x0C) {
+        send_size_probe();
+        render();
     }
 }
 
@@ -2056,7 +2262,7 @@ void PicoConsole::handle_local_term_key(int key) {
             if (lterm_sid_ != 0) node_->close_local_terminal(lterm_sid_);
             char err[64];
             if (!node_->open_local_terminal(-1, target, &lterm_sid_, NULL, &lterm_is_local_, err, sizeof(err))) {
-                if (lterm_line_count_ < 12) pico_str_copy(lterm_lines_[lterm_line_count_++], 80, err);
+                if (lterm_line_count_ < 40) pico_str_copy(lterm_lines_[lterm_line_count_++], 136, err);
             }
             render();
             return;
@@ -2065,12 +2271,17 @@ void PicoConsole::handle_local_term_key(int key) {
             if (lterm_sid_ != 0) { node_->close_local_terminal(lterm_sid_); lterm_sid_ = 0; }
             render(); return;
         }
-        if (lterm_line_count_ < 12) sprintf(lterm_lines_[lterm_line_count_++], "> %.76s", line);
+        if (lterm_line_count_ < 40) sprintf(lterm_lines_[lterm_line_count_++], "> %.120s", line);
         if (lterm_sid_ != 0 && node_) {
-            char tx[84];
+            char tx[138];
             sprintf(tx, "%s\r", line);
             node_->send_local_bytes(lterm_sid_, reinterpret_cast<const oyk_u8*>(tx), strlen(tx));
         }
+        render();
+        return;
+    }
+    if (key == 0x0C) {
+        send_size_probe();
         render();
         return;
     }

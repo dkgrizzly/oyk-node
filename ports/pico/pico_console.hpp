@@ -58,6 +58,8 @@ public:
                              const oyk_u8* data, size_t len, const char* reason);
 
     PicoTermType term_type() const { return term_type_; }
+    int term_rows() const { return term_rows_; }
+    int term_cols() const { return term_cols_; }
     const char* term_type_label() const;
     PicoConsoleView view_mode() const { return view_; }
     PicoPromptKind prompt_kind() const { return prompt_kind_; }
@@ -70,7 +72,8 @@ public:
 
 private:
     void write_str(const char* s);
-    void draw_box(int row, int col, int h, int w, const char* title, int clear_interior);
+    void send_size_probe();
+    void draw_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close = 0);
     void draw_shadow(int row, int col, int h, int w);
     void draw_hdiv(int row, int col, int w);
     const OykConfig* active_theme_cfg() const;
@@ -149,6 +152,8 @@ private:
     void* tx_ctx_;
 
     PicoTermType term_type_;
+    int term_rows_;
+    int term_cols_;
     PicoConsoleView view_;
     PicoPromptKind prompt_kind_;
     int menu_sel_;
@@ -190,9 +195,9 @@ private:
 
     oyk_u32 lterm_sid_;
     int lterm_is_local_;
-    char lterm_lines_[12][80];
+    char lterm_lines_[40][136];
     int lterm_line_count_;
-    char lterm_input_[80];
+    char lterm_input_[136];
     size_t lterm_input_len_;
 
     int esc_state_;

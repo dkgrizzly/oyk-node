@@ -19,6 +19,7 @@
 #include "../compat/oyk_yapp.hpp"
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
+#include "../compat/oyk_tui.hpp"
 #include "dos_usb.hpp"
 #include "dos_video.hpp"
 #include "dos_mouse.hpp"
@@ -368,8 +369,84 @@ static void resolve_dos_theme_attrs(const OykConfig* cfg, DosThemeAttrs* out) {
     out->dlg_inp  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_INPUT_BG], tc.colors[OYK_TR_INPUT_FG], 0x07U);
 }
 
-static void render_dos_screen() {
-    char line[82];
+struct DosTuiCtx {
+    DosThemeAttrs ta;
+};
+
+static oyk_u8 dos_tui_style_attr(const DosTuiCtx* dc, int style) {
+    const DosThemeAttrs& t = dc->ta;
+    switch (style) {
+        case OYK_TUI_STYLE_BG:
+        case OYK_TUI_STYLE_NORMAL:     return t.norm;
+        case OYK_TUI_STYLE_DIM:        return t.dim;
+        case OYK_TUI_STYLE_BORDER:     return t.bdr;
+        case OYK_TUI_STYLE_TITLE:      return t.ttl;
+        case OYK_TUI_STYLE_HEADER:     return t.top_hdr;
+        case OYK_TUI_STYLE_MENU_BAR:   return t.menu_bg;
+        case OYK_TUI_STYLE_MENU_SEL:   return t.menu_sel;
+        case OYK_TUI_STYLE_LIST_HDR:   return t.list_hdr;
+        case OYK_TUI_STYLE_STATUS:     return t.stat;
+        case OYK_TUI_STYLE_OK:         return t.run_up;
+        case OYK_TUI_STYLE_ALLOW:      return t.allow_at;
+        case OYK_TUI_STYLE_DENY:       return t.deny_at;
+        case OYK_TUI_STYLE_WARN:       return dos_vid_attr(g_vid, 0x1EU, 0x0FU);
+        case OYK_TUI_STYLE_ERROR:      return t.run_dn;
+        case OYK_TUI_STYLE_DLG_BORDER: return t.dlg_bdr;
+        case OYK_TUI_STYLE_DLG_FILL:   return t.dlg_fill;
+        case OYK_TUI_STYLE_DLG_SEL:    return t.dlg_sel;
+        case OYK_TUI_STYLE_DLG_INPUT:  return t.dlg_inp;
+        case OYK_TUI_STYLE_DLG_BAR:    return t.menu_bg;
+        case OYK_TUI_STYLE_CLOSE_BTN:  return t.dlg_bdr;
+        default:                       return t.norm;
+    }
+}
+
+static void dos_tb_get_size(void* /*ctx*/, int* out_rows, int* out_cols) {
+    if (out_rows) *out_rows = g_vid ? g_vid->rows : 25;
+    if (out_cols) *out_cols = g_vid ? g_vid->cols : 80;
+}
+
+static void dos_tb_clear(void* ctx, int style) {
+    vid_clear(dos_tui_style_attr(static_cast<const DosTuiCtx*>(ctx), style));
+}
+
+static void dos_tb_put_text(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    vid_puts(row, col, dos_tui_style_attr(static_cast<const DosTuiCtx*>(ctx), style), text, max_w);
+}
+
+static void dos_tb_put_box(void* ctx, int top, int left, int h, int w,
+                           int border_style, int fill_style, int fill_interior) {
+    const DosTuiCtx* dc = static_cast<const DosTuiCtx*>(ctx);
+    vid_box(top, left, h, w, dos_tui_style_attr(dc, border_style), dos_tui_style_attr(dc, fill_style), fill_interior);
+}
+
+static void dos_tb_put_hdiv(void* ctx, int row, int left, int w, int style) {
+    dos_vid_hdiv(g_vid, row, left, w, dos_tui_style_attr(static_cast<const DosTuiCtx*>(ctx), style));
+}
+
+static void dos_tb_put_shadow(void* /*ctx*/, int top, int left, int h, int w) {
+    vid_shadow(top, left, h, w);
+}
+
+static void dos_tb_present(void* /*ctx*/) {
+    vid_flush();
+}
+
+static void dos_init_tui_backend(const OykConfig* cfg, DosTuiCtx* dc, OykTuiBackend* b) {
+    resolve_dos_theme_attrs(cfg ? cfg : (g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config()), &dc->ta);
+    b->ctx        = dc;
+    b->get_size   = dos_tb_get_size;
+    b->clear      = dos_tb_clear;
+    b->put_text   = dos_tb_put_text;
+    b->put_box    = dos_tb_put_box;
+    b->put_hdiv   = dos_tb_put_hdiv;
+    b->put_shadow = dos_tb_put_shadow;
+    b->present    = dos_tb_present;
+}
+
+static void draw_dos_console_to_back() {
+    if (!g_vid) return;
+    char line[140];
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
 
@@ -380,32 +457,19 @@ static void render_dos_screen() {
     }
 #endif
 
-    DosThemeAttrs ta;
-    resolve_dos_theme_attrs(g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config(), &ta);
-    oyk_u8 menu_bg  = ta.menu_bg;
-    oyk_u8 menu_sel = ta.menu_sel;
-    oyk_u8 top_hdr  = ta.top_hdr;
-    oyk_u8 allow_at = ta.allow_at;
-    oyk_u8 deny_at  = ta.deny_at;
-    oyk_u8 bdr_at   = ta.bdr;
-    oyk_u8 ttl_at   = ta.ttl;
-    oyk_u8 list_hdr = ta.list_hdr;
-    oyk_u8 norm_at  = ta.norm;
-    oyk_u8 dim_at   = ta.dim;
-    oyk_u8 run_up   = ta.run_up;
-    oyk_u8 run_dn   = ta.run_dn;
-    oyk_u8 stat_at  = ta.stat;
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
 
-    /* Row 0: Top Menu Bar (matching GUI and ncurses menu bar) */
-    vid_puts(0, 0,  menu_bg, "", 80);
-    vid_puts(0, 1,  menu_sel, " Node ", 6);
-    if (dos_local_term_is_active()) {
-        vid_puts(0, 44, menu_bg, "Tab/F9:Term(ACTIVE) F10/M:Menu ", 36);
-    } else {
-        vid_puts(0, 52, menu_bg, "Tab/F9:Term  F10/M:Menu ", 28);
-    }
+    OykTuiConsoleLayout lay;
+    oyk_tui_compute_console_layout(g_vid->rows, g_vid->cols, &lay);
+    tb.clear(tb.ctx, OYK_TUI_STYLE_BG);
 
-    /* Row 1: Header bar */
+    /* Row 0: Top Menu Bar */
+    oyk_tui_draw_menu_bar(&tb, lay.cols, dos_local_term_is_active(), NULL);
+
+    /* Row 1: Header banner with full/compact Incoming pill */
 #ifdef OYK_DOS_GFX_BUILD
     sprintf(line, " OYK NODE (DOS-GFX:%s): %-8s | Up:%lus | C:%d | %s",
             g_gfx ? dos_gfx_mode_name(g_gfx->mode) : "txt",
@@ -422,66 +486,61 @@ static void render_dos_screen() {
             g_ems.available() ? "EMS " : "",
             g_usb_stack.installed ? "USB" : (g_mtcp_active ? "mTCP" : "STD"));
 #endif
-    vid_puts(1, 0, top_hdr, line, 61);
-    vid_puts(1, 61, g_node.accept_incoming() ? allow_at : deny_at,
-             g_node.accept_incoming() ? " [INCOMING: ALLOW] " : " [INCOMING: DENY]  ", 19);
+    oyk_tui_draw_status_banner(&tb, lay.cols, line, g_node.accept_incoming(), 0);
 
-    /* Row 2: Single-line border separating Interfaces (0..43) & New Heard (43..79) */
-    dos_vid_putc(g_vid, 2, 0, bdr_at, OYK_BOX_TL);
-    dos_vid_hline(g_vid, 2, 1, 42, bdr_at, OYK_BOX_H);
-    dos_vid_title(g_vid, 2, 2, 39, ttl_at, "Radio Interfaces (Active Conn)");
-    dos_vid_putc(g_vid, 2, 43, bdr_at, OYK_BOX_TT);
-    dos_vid_hline(g_vid, 2, 44, 35, bdr_at, OYK_BOX_H);
-    dos_vid_title(g_vid, 2, 45, 33, ttl_at, "Last 5 New Callsigns Heard");
-    dos_vid_putc(g_vid, 2, 79, bdr_at, OYK_BOX_TR);
+    /* Interfaces (left) & Last 5 New Callsigns Heard (right) */
+    const int lx = lay.iface_box.left;
+    const int lw = lay.iface_box.w;
+    const int rx = lay.heard_box.left;
+    const int rw = lay.heard_box.w;
+    const int top_y = lay.iface_box.top;
+    const int top_h = lay.iface_box.h;
 
-    /* Row 3: Dark-grey list headers (0x8F color / 0x70 mono) */
-    dos_vid_putc(g_vid, 3, 0, bdr_at, OYK_BOX_V);
-    vid_puts(3, 1, list_hdr, "Port    Type   Conn Status       RX/TX    ", 42);
-    dos_vid_putc(g_vid, 3, 43, bdr_at, OYK_BOX_V);
-    vid_puts(3, 44, list_hdr, "#  Callsign   Port     Heard       ", 35);
-    dos_vid_putc(g_vid, 3, 79, bdr_at, OYK_BOX_V);
+    vid_box(top_y, lx, top_h, lw, ta.bdr, ta.norm, 0);
+    vid_box(top_y, rx, top_h, rw, ta.bdr, ta.norm, 0);
+    dos_vid_putc(g_vid, top_y, rx, ta.bdr, OYK_BOX_TT);
+    dos_vid_title(g_vid, top_y, lx + 2, lw - 4, ta.ttl, "Radio Interfaces (Active Conn)");
+    dos_vid_title(g_vid, top_y, rx + 2, rw - 4, ta.ttl, "Last 5 New Callsigns Heard");
 
-    /* Rows 4..8: Interfaces + New Callsigns Heard */
-    for (int i = 0; i < 5; ++i) {
-        dos_vid_putc(g_vid, 4 + i, 0, bdr_at, OYK_BOX_V);
+    vid_puts(top_y + 1, lx + 1, ta.list_hdr, "Port    Type   Conn Status       RX/TX", lw - 2);
+    vid_puts(top_y + 1, rx + 1, ta.list_hdr, "#  Callsign   Port     Heard", rw - 2);
+
+    for (int i = 0; i < lay.iface_vis_rows; ++i) {
+        int rrow = top_y + 2 + i;
         if (i < g_node.iface_count()) {
             const OykIfaceRuntime& r = g_node.iface(i);
             sprintf(line, "%-7.7s %-6.6s %-4d %-12.12s %lu/%lu",
                     r.cfg.id, r.cfg.type, g_node.active_connections_on(i), r.status,
                     static_cast<unsigned long>(r.rx_frames),
                     static_cast<unsigned long>(r.tx_frames));
-            vid_puts(4 + i, 1, r.running ? run_up : run_dn, line, 42);
+            vid_puts(rrow, lx + 1, r.running ? ta.run_up : ta.run_dn, line, lw - 2);
         } else {
-            vid_puts(4 + i, 1, norm_at, "", 42);
+            vid_puts(rrow, lx + 1, ta.norm, "", lw - 2);
         }
 
-        dos_vid_putc(g_vid, 4 + i, 43, bdr_at, OYK_BOX_V);
         if (i < g_node.new_heard_count()) {
             const OykNewHeard& nh = g_node.new_heard(i);
             sprintf(line, "%d. %-10.10s %-8.8s %-8.8s",
                     i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-            vid_puts(4 + i, 44, norm_at, line, 35);
+            vid_puts(rrow, rx + 1, ta.norm, line, rw - 2);
         } else {
-            vid_puts(4 + i, 44, dim_at,
-                     (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", 35);
+            vid_puts(rrow, rx + 1, ta.dim,
+                     (i == 0 && g_node.new_heard_count() == 0) ? "(none heard yet)" : "", rw - 2);
         }
-        dos_vid_putc(g_vid, 4 + i, 79, bdr_at, OYK_BOX_V);
     }
 
-    /* Row 9..15: Active Connections section */
-    dos_vid_hdiv(g_vid, 9, 0, 80, bdr_at);
-    dos_vid_putc(g_vid, 9, 43, bdr_at, OYK_BOX_BT);
+    /* Active Connections */
+    vid_box(lay.conn_box.top, 0, lay.conn_box.h, lay.cols, ta.bdr, ta.norm, 0);
+    dos_vid_putc(g_vid, lay.conn_box.top, 0, ta.bdr, OYK_BOX_LT);
+    dos_vid_putc(g_vid, lay.conn_box.top, rx, ta.bdr, OYK_BOX_BT);
+    dos_vid_putc(g_vid, lay.conn_box.top, lay.cols - 1, ta.bdr, OYK_BOX_RT);
     sprintf(line, "Active Connections (%d) | Banned: %d",
             g_node.total_active_connections(), g_node.ban_count());
-    dos_vid_title(g_vid, 9, 2, 76, ttl_at, line);
+    dos_vid_title(g_vid, lay.conn_box.top, 2, lay.cols - 4, ta.ttl, line);
+    vid_puts(lay.conn_box.top + 1, 1, ta.list_hdr, "ID   Callsign   Port     Since    Mode", lay.cols - 2);
 
-    dos_vid_putc(g_vid, 10, 0, bdr_at, OYK_BOX_V);
-    vid_puts(10, 1, list_hdr, "ID   Callsign   Port     Since    Mode", 78);
-    dos_vid_putc(g_vid, 10, 79, bdr_at, OYK_BOX_V);
-
-    int row = 11;
-    for (int i = 0; i < g_node.max_sessions() && row < 16; ++i) {
+    int drawn_s = 0;
+    for (int i = 0; i < g_node.max_sessions() && drawn_s < lay.conn_vis_rows; ++i) {
         const OykSession& s = g_node.session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
             char cs[12];
@@ -493,50 +552,50 @@ static void render_dos_screen() {
                                      : (s.in_bbs ? "BBS"
                                                  : (s.in_chat ? "CHAT"
                                                               : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL"))));
-            dos_vid_putc(g_vid, row, 0, bdr_at, OYK_BOX_V);
-            vid_puts(row, 1, norm_at, line, 78);
-            dos_vid_putc(g_vid, row, 79, bdr_at, OYK_BOX_V);
-            ++row;
+            vid_puts(lay.conn_box.top + 2 + drawn_s, 1, ta.norm, line, lay.cols - 2);
+            ++drawn_s;
         }
     }
-    while (row < 16) {
-        dos_vid_putc(g_vid, row, 0, bdr_at, OYK_BOX_V);
-        vid_puts(row, 1, norm_at, "", 78);
-        dos_vid_putc(g_vid, row, 79, bdr_at, OYK_BOX_V);
-        ++row;
+    while (drawn_s < lay.conn_vis_rows) {
+        vid_puts(lay.conn_box.top + 2 + drawn_s, 1, ta.norm, "", lay.cols - 2);
+        ++drawn_s;
     }
 
-    /* Rows 16..23: Node Activity Log section */
-    dos_vid_hdiv(g_vid, 16, 0, 80, bdr_at);
-    dos_vid_title(g_vid, 16, 2, 76, ttl_at, "Node Activity Log");
+    /* Node Activity Log filling ALL remaining rows cleanly to status_row */
+    vid_box(lay.log_box.top, 0, lay.log_box.h, lay.cols, ta.bdr, ta.norm, 0);
+    dos_vid_putc(g_vid, lay.log_box.top, 0, ta.bdr, OYK_BOX_LT);
+    dos_vid_putc(g_vid, lay.log_box.top, lay.cols - 1, ta.bdr, OYK_BOX_RT);
+    dos_vid_title(g_vid, lay.log_box.top, 2, lay.cols - 4, ta.ttl, "Node Activity Log");
+
     int total_logs = g_node.console_log_count();
-    int start = (total_logs > 6) ? (total_logs - 6) : 0;
+    int start = (total_logs > lay.log_vis_rows) ? (total_logs - lay.log_vis_rows) : 0;
 #ifdef OYK_DOS_GFX_BUILD
     int do_smooth_log = (g_gfx && g_gfx_vram && g_gfx_scroll_tmp && g_vid &&
-                         g_gfx_last_log_count >= 6 && total_logs > g_gfx_last_log_count);
+                         g_gfx_last_log_count >= lay.log_vis_rows &&
+                         total_logs > g_gfx_last_log_count);
     if (do_smooth_log) {
         memcpy(g_gfx_scroll_tmp, g_gfx_vram, sizeof(oyk_u16) * static_cast<size_t>(g_vid->cells));
     }
 #endif
-    for (int r = 0; r < 6; ++r) {
+    for (int r = 0; r < lay.log_vis_rows; ++r) {
         int idx = start + r;
-        dos_vid_putc(g_vid, 17 + r, 0, bdr_at, OYK_BOX_V);
-        vid_puts(17 + r, 1, norm_at, (idx < total_logs) ? g_node.console_log_line(idx) : "", 78);
-        dos_vid_putc(g_vid, 17 + r, 79, bdr_at, OYK_BOX_V);
+        vid_puts(lay.log_box.top + 1 + r, 1, ta.norm,
+                 (idx < total_logs) ? g_node.console_log_line(idx) : "", lay.cols - 2);
     }
-    dos_vid_putc(g_vid, 23, 0, bdr_at, OYK_BOX_BL);
-    dos_vid_hline(g_vid, 23, 1, 78, bdr_at, OYK_BOX_H);
-    dos_vid_putc(g_vid, 23, 79, bdr_at, OYK_BOX_BR);
 
-    /* Row 24: Status message line */
-    vid_puts(24, 0, stat_at, g_status_line, 80);
+    oyk_tui_draw_status_bar(&tb, lay.status_row, lay.cols, g_status_line);
 #ifdef OYK_DOS_GFX_BUILD
     if (do_smooth_log) {
         vid_flush();
-        dos_gfx_smooth_scroll(g_gfx, g_gfx_scroll_tmp, g_gfx_vram, 17, 1, 6, 78, 1);
+        dos_gfx_smooth_scroll(g_gfx, g_gfx_scroll_tmp, g_gfx_vram,
+                              lay.log_box.top + 1, 1, lay.log_vis_rows, lay.cols - 2, 1);
     }
     g_gfx_last_log_count = total_logs;
 #endif
+}
+
+static void render_dos_screen() {
+    draw_dos_console_to_back();
     vid_flush();
 }
 
@@ -857,8 +916,10 @@ static int dos_rig_refresh(char* err_out, size_t err_sz) {
 }
 
 static void prompt_line(const char* prompt, char* out, int max_len) {
-    vid_puts(24, 0, 0x4F, prompt, 80);
-    vid_flush_row(24);
+    int prow = g_vid ? (g_vid->rows - 1) : 24;
+    int pcols = g_vid ? g_vid->cols : 80;
+    vid_puts(prow, 0, 0x4F, prompt, pcols);
+    vid_flush_row(prow);
     int len = 0;
     out[0] = '\0';
     int pcol = static_cast<int>(strlen(prompt));
@@ -876,8 +937,8 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
             out[len++] = static_cast<char>(ch);
             out[len] = '\0';
         }
-        vid_puts(24, pcol, 0x4F, out, 80 - pcol);
-        vid_flush_row(24);
+        vid_puts(prow, pcol, 0x4F, out, pcols - pcol);
+        vid_flush_row(prow);
     }
 }
 
@@ -885,14 +946,20 @@ static void run_dos_settings(int initial_tab = 0);
 
 static int confirm_dos_exit() {
     const int auto_cnt = g_node.auto_learned_peer_count();
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+
     if (auto_cnt > 0) {
-        const int top = 6, left = 4, h = 11, w = 72;
-        oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-        oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-        oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+        OykTuiRect mr;
+        oyk_tui_center_modal(srows, scols, 11, 72, &mr);
+        const int top = mr.top, left = mr.left, w = mr.w;
         oyk_u8 warn_at = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
-        oyk_u8 btn_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
-        oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+        oyk_u8 btn_at  = ta.menu_bg;
+        oyk_u8 sel_at  = ta.dlg_sel;
 
         static const char* BTNS[4] = {
             "[ Save & Exit ]", "[ Discard & Exit ]", "[ Review Peers ]", "[ Cancel ]"
@@ -905,13 +972,12 @@ static int confirm_dos_exit() {
             g_node.tick();
             if (dirty) {
                 dirty = 0;
-                vid_box(top, left, h, w, bdr_at, fill_at, 1);
-                vid_shadow(top, left, h, w);
-                dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Auto-Learned Peers");
+                draw_dos_console_to_back();
+                oyk_tui_draw_modal(&tb, &mr, "Auto-Learned Peers", 1);
                 char l1[68];
                 sprintf(l1, "%d auto-learned peer(s) were added during this session.", auto_cnt);
                 vid_puts(top + 2, left + 3, warn_at, l1, w - 6);
-                vid_puts(top + 3, left + 3, fill_at,
+                vid_puts(top + 3, left + 3, ta.dlg_fill,
                          "Save them to configuration, discard them, or review in Peers?", w - 6);
                 int bx = left + 3;
                 for (int i = 0; i < 4; ++i) {
@@ -919,9 +985,8 @@ static int confirm_dos_exit() {
                     vid_puts(top + 6, bx, (focus == i) ? sel_at : btn_at, BTNS[i], bl);
                     bx += bl + 2;
                 }
-                dos_vid_hdiv(g_vid, top + 8, left, w, bdr_at);
-                vid_puts(top + 9, left + 2, fill_at,
-                         "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc", w - 4);
+                oyk_tui_draw_modal_footer(&tb, &mr, NULL,
+                                          "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc");
                 vid_flush();
             }
             int ch = 0;
@@ -933,14 +998,17 @@ static int confirm_dos_exit() {
                 if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
                     act = 3; break;
                 }
-                if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) && mev.row == top + 6) {
-                    int bx = left + 3;
-                    for (int i = 0; i < 4; ++i) {
-                        int bl = static_cast<int>(strlen(BTNS[i]));
-                        if (mev.col >= bx && mev.col < bx + bl) { act = i; break; }
-                        bx += bl + 2;
+                if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                    if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) { act = 3; break; }
+                    if (mev.row == top + 6) {
+                        int bx = left + 3;
+                        for (int i = 0; i < 4; ++i) {
+                            int bl = static_cast<int>(strlen(BTNS[i]));
+                            if (mev.col >= bx && mev.col < bx + bl) { act = i; break; }
+                            bx += bl + 2;
+                        }
+                        if (act < 4) break;
                     }
-                    if (act < 4) break;
                 }
                 continue;
             }
@@ -975,13 +1043,12 @@ static int confirm_dos_exit() {
         return 0;
     }
 
-    const int top = 7, left = 12, h = 9, w = 56;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 9, 56, &mr);
+    const int top = mr.top, left = mr.left, w = mr.w;
     oyk_u8 warn_at = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
-    oyk_u8 btn_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 btn_at  = ta.menu_bg;
+    oyk_u8 sel_at  = ta.dlg_sel;
 
     int focus = 1; /* Default to [ No / Cancel ] */
     int confirmed = 0;
@@ -998,31 +1065,27 @@ static int confirm_dos_exit() {
         }
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Exit OYK Node");
+            draw_dos_console_to_back();
+            oyk_tui_draw_modal(&tb, &mr, "Exit OYK Node", 1);
 
             char line1[60];
             if (active > 0) {
                 sprintf(line1, "Exit OYK Node? (%d active connection%s)",
                         active, (active == 1) ? "" : "s");
                 vid_puts(top + 2, left + 3, warn_at, line1, w - 6);
-                vid_puts(top + 3, left + 3, fill_at,
+                vid_puts(top + 3, left + 3, ta.dlg_fill,
                          "Active sessions will be gracefully disconnected.", w - 6);
             } else {
-                vid_puts(top + 2, left + 3, fill_at,
+                vid_puts(top + 2, left + 3, ta.dlg_fill,
                          "Are you sure you want to exit OYK Node?", w - 6);
-                vid_puts(top + 3, left + 3, fill_at,
+                vid_puts(top + 3, left + 3, ta.dlg_fill,
                          "(No active connections)", w - 6);
             }
 
-            /* Centered buttons at row top + 5 */
             vid_puts(top + 5, left + 13, (focus == 0) ? sel_at : btn_at, "[ Yes / Exit ]", 14);
             vid_puts(top + 5, left + 30, (focus == 1) ? sel_at : btn_at, "[ No / Cancel ]", 15);
-
-            dos_vid_hdiv(g_vid, top + 6, left, w, bdr_at);
-            vid_puts(top + 7, left + 2, fill_at,
-                     "Left/Right/Tab:Select   Enter:OK   Y/N/Esc", w - 4);
+            oyk_tui_draw_modal_footer(&tb, &mr, NULL,
+                                      "Left/Right/Tab:Select   Enter:OK   Y/N/Esc");
             vid_flush();
         }
 
@@ -1035,9 +1098,12 @@ static int confirm_dos_exit() {
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
                 confirmed = 0; break;
             }
-            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) && mev.row == top + 5) {
-                if (mev.col >= left + 13 && mev.col < left + 27) { confirmed = 1; break; }
-                if (mev.col >= left + 30 && mev.col < left + 45) { confirmed = 0; break; }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) { confirmed = 0; break; }
+                if (mev.row == top + 5) {
+                    if (mev.col >= left + 13 && mev.col < left + 27) { confirmed = 1; break; }
+                    if (mev.col >= left + 30 && mev.col < left + 45) { confirmed = 0; break; }
+                }
             }
             continue;
         }
@@ -1120,9 +1186,11 @@ static int dos_yapp_send_cb(const oyk_u8* data, size_t len, void* /*ctx*/) {
 
 static int dos_yapp_overwrite_cb(const char* target_path, const char* /*filename*/, void* /*ctx*/) {
     char prompt[80];
+    int prow = g_vid ? (g_vid->rows - 1) : 24;
+    int pcols = g_vid ? g_vid->cols : 80;
     sprintf(prompt, "Overwrite %.48s? [Y/N]: ", target_path);
-    vid_puts(24, 0, 0x4F, prompt, 80);
-    vid_flush_row(24);
+    vid_puts(prow, 0, 0x4F, prompt, pcols);
+    vid_flush_row(prow);
     while (!g_break_flag) {
         dos_pump_network();
         if (kbhit()) {
@@ -1231,15 +1299,23 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
     int top = 0;
     int picked = 0;
     int dirty = 1;
-    const int panel_x = 8;
-    const int panel_w = 64;
-    const int list_y = 5;
-    const int list_h = 15;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 21, 64, &mr);
+    const int panel_x = mr.left;
+    const int panel_w = mr.w;
+    const int list_y = mr.top + 4;
+    const int list_h = mr.h - 6;
+    oyk_u8 bdr_at  = ta.dlg_bdr;
+    oyk_u8 hdr_at  = ta.list_hdr;
     oyk_u8 dir_at  = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
-    oyk_u8 file_at = dos_vid_attr(g_vid, 0x1FU, 0x07U);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 file_at = ta.dlg_fill;
+    oyk_u8 sel_at  = ta.dlg_sel;
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -1250,27 +1326,17 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
 
         if (dirty) {
             dirty = 0;
-            /* Draw Norton Commander single-pane box with single-line borders */
-            vid_box(1, panel_x, 20, panel_w, bdr_at, file_at, 0);
-            vid_shadow(1, panel_x, 20, panel_w);
-            dos_vid_title(g_vid, 1, panel_x + 2, panel_w - 4, bdr_at,
-                          title ? title : "Select File");
+            /* Draw Norton Commander single-pane box centered with [X] & L-shadow */
+            oyk_tui_draw_modal(&tb, &mr, title ? title : "Select File", 1);
             if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
             char hdr[66];
             sprintf(hdr, " %-60.60s ", cur_dir);
-            dos_vid_putc(g_vid, 2, panel_x, bdr_at, OYK_BOX_V);
-            vid_puts(2, panel_x + 1, dos_vid_attr(g_vid, 0x1BU, 0x07U), hdr, panel_w - 2);
-            dos_vid_putc(g_vid, 2, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
-            dos_vid_hdiv(g_vid, 3, panel_x, panel_w, bdr_at);
-
-            /* Row 4: Dark-grey column header row */
-            dos_vid_putc(g_vid, 4, panel_x, bdr_at, OYK_BOX_V);
-            vid_puts(4, panel_x + 1, hdr_at, " Name                                            Size     ", panel_w - 2);
-            dos_vid_putc(g_vid, 4, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
+            vid_puts(mr.top + 1, panel_x + 1, dos_vid_attr(g_vid, 0x1BU, 0x07U), hdr, panel_w - 2);
+            dos_vid_hdiv(g_vid, mr.top + 2, panel_x, panel_w, bdr_at);
+            vid_puts(mr.top + 3, panel_x + 1, hdr_at, " Name                                            Size     ", panel_w - 2);
 
             for (int i = 0; i < list_h; ++i) {
                 int idx = top + i;
-                dos_vid_putc(g_vid, list_y + i, panel_x, bdr_at, OYK_BOX_V);
                 if (idx < count) {
                     const DosFsEntry& e = entries[idx];
                     char sz_s[12];
@@ -1288,10 +1354,10 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
                 } else {
                     vid_puts(list_y + i, panel_x + 1, file_at, "", panel_w - 2);
                 }
-                dos_vid_putc(g_vid, list_y + i, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
             }
-            vid_puts(21, panel_x, dos_vid_attr(g_vid, 0x30U, 0x70U),
-                     " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel              ", panel_w);
+            dos_vid_hdiv(g_vid, mr.top + mr.h - 2, panel_x, panel_w, bdr_at);
+            vid_puts(mr.top + mr.h - 1, panel_x + 1, ta.menu_bg,
+                     " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel", panel_w - 2);
             vid_flush();
         }
 
@@ -1306,6 +1372,10 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
                 continue;
             }
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) &&
+                oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) {
+                break;
+            }
             if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
                 (mev.button & OYK_MOUSE_BTN_LEFT) &&
                 mev.row >= list_y && mev.row < list_y + list_h &&
@@ -1375,12 +1445,15 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
 }
 
 static void render_dos_terminal(const char* input_buf) {
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x03U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x0BU, 0x0FU);
-    oyk_u8 top_hdr = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    if (!g_vid) return;
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    OykTuiTermLayout tlay;
+    oyk_tui_compute_term_layout(g_vid->rows, g_vid->cols, &tlay);
 
-    char hdr[82];
+    char hdr[140];
     if (g_dterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
@@ -1391,23 +1464,22 @@ static void render_dos_terminal(const char* input_buf) {
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
         sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s...", cs);
     } else {
-        strcpy(hdr, " LOCAL TERMINAL | DISCONNECTED (Press F2 to Connect)");
+        strcpy(hdr, " LOCAL TERMINAL | DISCONNECTED (Press F2:Connect | F9/Esc:Console)");
     }
-    vid_puts(0, 0, top_hdr, hdr, 80);
+    vid_puts(tlay.header_row, 0, ta.top_hdr, hdr, tlay.cols);
 
-    vid_box(1, 0, 21, 80, bdr_at, 0x07U, 0);
-    dos_vid_title(g_vid, 1, 2, 76, ttl_at, "Terminal Output");
+    vid_box(tlay.body_top, 0, tlay.body_rows, tlay.cols, ta.bdr, ta.norm, 0);
+    dos_vid_title(g_vid, tlay.body_top, 2, tlay.cols - 4, ta.ttl, "Terminal Output");
 
-    int body_h = 19;
-    int start = (g_dterm_line_count > body_h) ? (g_dterm_line_count - body_h) : 0;
-    for (int r = 0; r < body_h; ++r) {
+    int inner_h = (tlay.body_rows > 2) ? (tlay.body_rows - 2) : 1;
+    int start = (g_dterm_line_count > inner_h) ? (g_dterm_line_count - inner_h) : 0;
+    for (int r = 0; r < inner_h; ++r) {
         int idx = start + r;
-        dos_vid_putc(g_vid, 2 + r, 0, bdr_at, OYK_BOX_V);
-        vid_puts(2 + r, 1, 0x07U, (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", 78);
-        dos_vid_putc(g_vid, 2 + r, 79, bdr_at, OYK_BOX_V);
+        vid_puts(tlay.body_top + 1 + r, 1, ta.norm,
+                 (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", tlay.cols - 2);
     }
 
-    char bar[82];
+    char bar[140];
     if (g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
         sprintf(bar, " %.56s (%lu/%lu B)", g_dterm_yapp.status,
                 static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
@@ -1415,13 +1487,11 @@ static void render_dos_terminal(const char* input_buf) {
     } else {
         strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
     }
-    vid_puts(22, 0, bar_at, bar, 80);
+    vid_puts(tlay.hotkey_row, 0, ta.menu_bg, bar, tlay.cols);
 
-    char in_row[82];
-    sprintf(in_row, "> %.77s", input_buf);
-    vid_puts(23, 0, 0x0FU, in_row, 80);
-    vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x07U),
-             "F9/Esc switches to Console without closing active terminal session.", 80);
+    char in_row[140];
+    sprintf(in_row, "> %s", input_buf);
+    vid_puts(tlay.input_row, 0, ta.norm, in_row, tlay.cols);
     vid_flush();
 }
 
@@ -1575,19 +1645,27 @@ static void run_dos_approve_incoming_files() {
     int sel[2] = { 0, 0 };
     int top[2] = { 0, 0 };
     char feedback[78];
-    sprintf(feedback, "BBS Files Area: %.56s", g_node.config().bbs_files_path);
+    sprintf(feedback, "BBS Files Area: %.54s", g_node.config().bbs_files_path);
 
-    const int panel_x = 4;
-    const int panel_w = 72;
-    const int list_y = 6;
-    const int list_h = 12;
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 21, 74, &mr);
+
+    static const char* FILE_TABS[2] = { "1:Pending Incoming", "2:Approved Files" };
+    const int panel_x = mr.left;
+    const int panel_w = mr.w;
+    const int list_y = mr.top + 5;
+    const int list_h = mr.h - 9;
     int dirty = 1;
-    oyk_u8 bdr_at = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 hdr_at = dos_vid_list_hdr_attr(g_vid);
-    oyk_u8 tab_bg = dos_vid_attr(g_vid, 0x70U, 0x07U);
-    oyk_u8 tab_hi = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 row_at = dos_vid_attr(g_vid, 0x1FU, 0x07U);
-    oyk_u8 sel_at = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 bdr_at = ta.dlg_bdr;
+    oyk_u8 hdr_at = ta.list_hdr;
+    oyk_u8 row_at = ta.dlg_fill;
+    oyk_u8 sel_at = ta.dlg_sel;
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -1600,37 +1678,29 @@ static void run_dos_approve_incoming_files() {
 
         if (dirty) {
             dirty = 0;
-            vid_box(2, panel_x, 17, panel_w, bdr_at, row_at, 0);
-            vid_shadow(2, panel_x, 17, panel_w);
-            dos_vid_title(g_vid, 2, panel_x + 2, panel_w - 4, bdr_at, "Manage BBS Files Area");
+            draw_dos_console_to_back();
+            oyk_tui_draw_modal(&tb, &mr, "Manage BBS Files Area", 1);
+            oyk_tui_draw_tabs(&tb, mr.top + 1, panel_x + 1, panel_w - 2, FILE_TABS, 2, tab);
+            dos_vid_hdiv(g_vid, mr.top + 2, panel_x, panel_w, bdr_at);
 
-            vid_puts(3, panel_x + 1, tab_bg, "", panel_w - 2);
-            dos_vid_putc(g_vid, 3, panel_x, bdr_at, OYK_BOX_V);
-            vid_puts(3, panel_x + 2, (tab == 0) ? tab_hi : tab_bg, " 1:Pending Incoming ", 20);
-            vid_puts(3, panel_x + 23, (tab == 1) ? tab_hi : tab_bg, " 2:Approved Files ", 18);
-            dos_vid_putc(g_vid, 3, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
-
-            dos_vid_putc(g_vid, 4, panel_x, bdr_at, OYK_BOX_V);
             if (tab == 0) {
-                vid_puts(4, panel_x + 1, hdr_at,
+                vid_puts(mr.top + 3, panel_x + 1, hdr_at,
                          " Uploader      Filename                                     Size      ", panel_w - 2);
             } else {
-                vid_puts(4, panel_x + 1, hdr_at,
+                vid_puts(mr.top + 3, panel_x + 1, hdr_at,
                          " Approved File Path                                         Size      ", panel_w - 2);
             }
-            dos_vid_putc(g_vid, 4, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
-            dos_vid_hdiv(g_vid, 5, panel_x, panel_w, bdr_at);
+            dos_vid_hdiv(g_vid, mr.top + 4, panel_x, panel_w, bdr_at);
 
             for (int i = 0; i < list_h; ++i) {
                 int idx = top[tab] + i;
-                dos_vid_putc(g_vid, list_y + i, panel_x, bdr_at, OYK_BOX_V);
                 if (count == 0 && i == 1) {
                     vid_puts(list_y + i, panel_x + 1, row_at,
                              (tab == 0) ? " (No pending files in incoming\\<CALLSIGN-SSID>\\)"
                                         : " (No approved files in BBS files area)",
                              panel_w - 2);
                 } else if (idx < count) {
-                    char row[72];
+                    char row[74];
                     if (tab == 0) {
                         sprintf(row, " %-13.13s %-42.42s %9lu ",
                                 items[idx].uploader, items[idx].filename,
@@ -1644,20 +1714,41 @@ static void run_dos_approve_incoming_files() {
                 } else {
                     vid_puts(list_y + i, panel_x + 1, row_at, "", panel_w - 2);
                 }
-                dos_vid_putc(g_vid, list_y + i, panel_x + panel_w - 1, bdr_at, OYK_BOX_V);
             }
-            vid_puts(list_y + list_h + 1, panel_x, dos_vid_attr(g_vid, 0x30U, 0x70U),
-                     (tab == 0)
-                         ? " Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close        "
-                         : " Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close           ",
-                     panel_w);
-            vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), feedback, 80);
+            oyk_tui_draw_modal_footer(&tb, &mr, feedback,
+                                      (tab == 0)
+                                          ? "Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close"
+                                          : "Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close");
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                if (mev.wheel_delta < 0 && sel[tab] > 0) --sel[tab];
+                else if (mev.wheel_delta > 0 && sel[tab] + 1 < count) ++sel[tab];
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
+                (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+                if (mev.row == mr.top + 1) {
+                    tab = (mev.col < panel_x + 24) ? 0 : 1;
+                    continue;
+                }
+                if (mev.row >= list_y && mev.row < list_y + list_h &&
+                    mev.col > panel_x && mev.col < panel_x + panel_w - 1) {
+                    int idx = top[tab] + (mev.row - list_y);
+                    if (idx < count) sel[tab] = idx;
+                }
+            }
+            continue;
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72 && sel[tab] > 0) --sel[tab];
@@ -1758,14 +1849,17 @@ static void run_dos_approve_incoming_files() {
 }
 
 static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int* accepted_out) {
+    int prow = g_vid ? (g_vid->rows - 1) : 24;
+    int pcols = g_vid ? g_vid->cols : 80;
     int len = static_cast<int>(strlen(buf));
     if (len >= max_len) { len = max_len - 1; buf[len] = '\0'; }
     int pcol = static_cast<int>(strlen(prompt));
-    if (pcol > 60) pcol = 60;
-    int avail = 80 - pcol;
+    if (pcol > pcols - 20) pcol = pcols - 20;
+    vid_puts(prow, 0, 0x4F, prompt, pcols);
+    int avail = pcols - pcol;
     int start = (len > avail) ? (len - avail) : 0;
-    vid_puts(24, pcol, 0x4F, buf + start, avail);
-    vid_flush_row(24);
+    vid_puts(prow, pcol, 0x4F, buf + start, avail);
+    vid_flush_row(prow);
     if (accepted_out) *accepted_out = 0;
     while (!g_break_flag) {
         dos_pump_network();
@@ -1782,8 +1876,8 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
             buf[len] = '\0';
         }
         start = (len > avail) ? (len - avail) : 0;
-        vid_puts(24, pcol, 0x4F, buf + start, avail);
-        vid_flush_row(24);
+        vid_puts(prow, pcol, 0x4F, buf + start, avail);
+        vid_flush_row(prow);
     }
 }
 
@@ -1880,11 +1974,19 @@ static void run_dos_rig_control() {
         }
     }
 
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 21, 74, &mr);
+
     int dirty = 1;
     int prev_rf = g_rf_reply_flag;
-    oyk_u8 top_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1BU, 0x07U);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 bdr_at  = ta.dlg_bdr;
+    oyk_u8 fill_at = ta.dlg_fill;
     oyk_u8 val_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 hdr_at  = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
 
@@ -1898,67 +2000,70 @@ static void run_dos_rig_control() {
         }
         if (dirty) {
             dirty = 0;
-            vid_clear(fill_at);
-            vid_puts(0, 0, top_at, " OYK RADIO / RIG CONTROL (MS-DOS)                              Esc:Close", 80);
+            draw_dos_console_to_back();
+            oyk_tui_draw_modal(&tb, &mr, "Radio / Rig Control", 1);
 
-            vid_box(2, 0, 19, 80, bdr_at, fill_at, 0);
-            dos_vid_title(g_vid, 2, 2, 76, val_at, "Radio / Rig Control");
-
-            char row[82];
+            char row[80];
             sprintf(row, " Protocol : %-14s  Endpoint: %s:%u  [%s]",
                     oyk_rig_protocol_name(proto),
                     cfg.rig_host[0] ? cfg.rig_host : "127.0.0.1",
                     static_cast<unsigned int>(cfg.rig_port),
                     cfg.rig_enabled ? (g_rig_status.reachable ? "ONLINE" : "NO REPLY") : "DISABLED");
-            vid_puts(3, 1, val_at, row, 78);
-            dos_vid_hdiv(g_vid, 4, 0, 80, bdr_at);
+            vid_puts(mr.top + 2, mr.left + 1, val_at, row, mr.w - 2);
+            dos_vid_hdiv(g_vid, mr.top + 3, mr.left, mr.w, bdr_at);
 
             if (proto == OYK_RIG_PROTO_RADIOFOUNDRY) {
                 sprintf(row, " Zone / Pos   : Zone %d, Channel Pos %d (0-based)", g_rig_status.zone, g_rig_status.pos);
-                vid_puts(5, 1, val_at, row, 78);
+                vid_puts(mr.top + 4, mr.left + 1, val_at, row, mr.w - 2);
                 sprintf(row, " Channel Name : %s", g_rig_status.channel_name[0] ? g_rig_status.channel_name : "(unknown)");
-                vid_puts(6, 1, val_at, row, 78);
+                vid_puts(mr.top + 5, mr.left + 1, val_at, row, mr.w - 2);
                 sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
-                vid_puts(7, 1, val_at, row, 78);
+                vid_puts(mr.top + 6, mr.left + 1, val_at, row, mr.w - 2);
                 if (g_rig_status.is_dmr) {
                     sprintf(row, " DMR Params   : CC %d  TS %d  TG %ld",
                             g_rig_status.color_code, g_rig_status.timeslot, g_rig_status.talkgroup);
                 } else {
                     strcpy(row, " DMR Params   : (analog / not reported)");
                 }
-                vid_puts(8, 1, val_at, row, 78);
-                sprintf(row, " Raw Status   : %.60s", g_rig_status.raw_status[0] ? g_rig_status.raw_status : "(none)");
-                vid_puts(10, 1, fill_at, row, 78);
-                dos_vid_hdiv(g_vid, 12, 0, 80, bdr_at);
-                dos_vid_title(g_vid, 12, 2, 76, hdr_at, "Commands (RadioFoundry / takRF UDP 4191)");
-                vid_puts(14, 1, fill_at, "  [Q/R] Query (select)    [Z] Select Zone & Pos   [N] Stop Notify", 78);
-                vid_puts(15, 1, fill_at, "  [+/-] Step Channel      [[/]] Step Zone         [Esc] Close", 78);
+                vid_puts(mr.top + 7, mr.left + 1, val_at, row, mr.w - 2);
+                sprintf(row, " Raw Status   : %.52s", g_rig_status.raw_status[0] ? g_rig_status.raw_status : "(none)");
+                vid_puts(mr.top + 9, mr.left + 1, fill_at, row, mr.w - 2);
+                dos_vid_hdiv(g_vid, mr.top + 11, mr.left, mr.w, bdr_at);
+                dos_vid_title(g_vid, mr.top + 11, mr.left + 2, mr.w - 4, hdr_at, "Commands (RadioFoundry / takRF UDP 4191)");
+                vid_puts(mr.top + 13, mr.left + 1, fill_at, "  [Q/R] Query (select)    [Z] Select Zone & Pos   [N] Stop Notify", mr.w - 2);
+                vid_puts(mr.top + 14, mr.left + 1, fill_at, "  [+/-] Step Channel      [[/]] Step Zone         [Esc] Close", mr.w - 2);
             } else {
                 sprintf(row, " Frequency    : %lu Hz", static_cast<unsigned long>(g_rig_status.freq_hz));
-                vid_puts(5, 1, val_at, row, 78);
+                vid_puts(mr.top + 4, mr.left + 1, val_at, row, mr.w - 2);
                 sprintf(row, " Mode / PB    : %s (%lu Hz)",
                         g_rig_status.mode[0] ? g_rig_status.mode : "(unknown)",
                         static_cast<unsigned long>(g_rig_status.passband_hz));
-                vid_puts(6, 1, val_at, row, 78);
+                vid_puts(mr.top + 5, mr.left + 1, val_at, row, mr.w - 2);
                 sprintf(row, " PTT / VFO    : %s  |  VFO: %s",
                         g_rig_status.ptt > 0 ? "TX" : (g_rig_status.ptt == 0 ? "RX" : "UNKNOWN"),
                         g_rig_status.vfo[0] ? g_rig_status.vfo : "(unknown)");
-                vid_puts(7, 1, val_at, row, 78);
-                dos_vid_hdiv(g_vid, 12, 0, 80, bdr_at);
-                dos_vid_title(g_vid, 12, 2, 76, hdr_at, "Commands (Hamlib rigctld TCP 4532)");
-                vid_puts(14, 1, fill_at, "  [Q/R] Query Rig         [F] Set Frequency (Hz)  [M] Set Mode", 78);
-                vid_puts(15, 1, fill_at, "  [P]   Toggle PTT RX/TX  [V] Set VFO             [Esc] Close", 78);
+                vid_puts(mr.top + 6, mr.left + 1, val_at, row, mr.w - 2);
+                dos_vid_hdiv(g_vid, mr.top + 11, mr.left, mr.w, bdr_at);
+                dos_vid_title(g_vid, mr.top + 11, mr.left + 2, mr.w - 4, hdr_at, "Commands (Hamlib rigctld TCP 4532)");
+                vid_puts(mr.top + 13, mr.left + 1, fill_at, "  [Q/R] Query Rig         [F] Set Frequency (Hz)  [M] Set Mode", mr.w - 2);
+                vid_puts(mr.top + 14, mr.left + 1, fill_at, "  [P]   Toggle PTT RX/TX  [V] Set VFO             [Esc] Close", mr.w - 2);
             }
 
-            vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
-            vid_puts(24, 0, dos_vid_attr(g_vid, 0x70U, 0x70U),
-                     " Q/R:Refresh  Esc:Return to Operator Console                                    ", 80);
+            oyk_tui_draw_modal_footer(&tb, &mr, fb, "Q/R:Refresh   Esc:Return to Operator Console");
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) &&
+                oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+            continue;
+        }
         if (ch == 0 || ch == 0xE0) { getch(); continue; }
         if (ch == 27) break;
 
@@ -2290,15 +2395,23 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
 
-    const int top = 3, left = 6, h = 19, w = 68;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 19, 68, &mr);
+    const int top = mr.top, left = mr.left, h = mr.h, w = mr.w;
+    oyk_u8 bdr_at  = ta.dlg_bdr;
+    oyk_u8 fill_at = ta.dlg_fill;
+    oyk_u8 ttl_at  = ta.dlg_bdr;
+    oyk_u8 hdr_at  = ta.list_hdr;
+    oyk_u8 sel_at  = ta.dlg_sel;
+    oyk_u8 inp_at  = ta.dlg_inp;
     oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 bar_at  = ta.menu_bg;
 
     DosAddWizState st;
     memset(&st, 0, sizeof(st));
@@ -2314,10 +2427,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
 
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Add Interface");
-            dos_vid_title(g_vid, top, left + w - 18, 16, ttl_at, PROG[st.step]);
+            oyk_tui_draw_modal(&tb, &mr, "Add Interface", 1);
+            dos_vid_title(g_vid, top, left + w - 23, 16, ttl_at, PROG[st.step]);
 
             const char* prompt = "Select the driver for the new interface:";
             if (st.step == 1) {
@@ -2443,10 +2554,24 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
-        if (ch == 0 || ch == 0xE0) {
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return 0;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return 0;
+                if (mev.row == top + 17) {
+                    if (st.step > 0 && mev.col >= left + 2 && mev.col < left + 12) { st.btn = 0; ch = '\r'; }
+                    else if (mev.col >= left + 14 && mev.col < left + 24) { st.btn = 1; ch = '\r'; }
+                    else if (mev.col >= left + 26 && mev.col < left + 36) return 0;
+                    else continue;
+                } else continue;
+            } else continue;
+        }
+        if (inp == 1 && (ch == 0 || ch == 0xE0)) {
             int ext = getch();
             if (ext == 73 || ext == 61) { /* PgUp / F3 -> Back */
                 if (st.step > 0) { st.step--; st.focus = 0; st.btn = 1; st.err[0] = '\0'; }
@@ -2646,14 +2771,22 @@ static int dos_edit_try_save(const OykConfig* draft,
 static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIfaceConfig* out_ic) {
     if (edit_idx < 0 || edit_idx >= draft->iface_count) return 0;
 
-    const int top = 3, left = 6, h = 19, w = 68;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 19, 68, &mr);
+    const int top = mr.top, left = mr.left, h = mr.h, w = mr.w;
+    oyk_u8 bdr_at  = ta.dlg_bdr;
+    oyk_u8 fill_at = ta.dlg_fill;
+    oyk_u8 ttl_at  = ta.dlg_bdr;
+    oyk_u8 sel_at  = ta.dlg_sel;
+    oyk_u8 inp_at  = ta.dlg_inp;
     oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 bar_at  = ta.menu_bg;
 
     DosEditIfaceState st;
     memset(&st, 0, sizeof(st));
@@ -2689,9 +2822,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
 
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Edit Interface");
+            oyk_tui_draw_modal(&tb, &mr, "Edit Interface", 1);
             vid_puts(top + 1, left + 2, ttl_at, "Edit interface settings and select Save to update draft:", w - 4);
 
             char drv_lbl[32], lp_lbl[24];
@@ -2751,11 +2882,24 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
         int tbase = (st.drv == 0) ? 7 : ((st.drv == 3) ? 6 : 5);
-        if (ch == 0 || ch == 0xE0) {
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return 0;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return 0;
+                if (mev.row == top + 17) {
+                    if (mev.col >= left + 2 && mev.col < left + 12) { st.focus = fcnt; st.btn = 0; ch = '\r'; }
+                    else if (mev.col >= left + 14 && mev.col < left + 24) return 0;
+                    else continue;
+                } else continue;
+            } else continue;
+        }
+        if (inp == 1 && (ch == 0 || ch == 0xE0)) {
             int ext = getch();
             if (ext == 72) st.focus = (st.focus + fcnt) % (fcnt + 1);
             else if (ext == 80) st.focus = (st.focus + 1) % (fcnt + 1);
@@ -2944,13 +3088,20 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
         "Host / DMR ID", "Port (0=default)", "Allow Inbound", "Allow Outbound"
     };
 
-    const int top = 4, left = 6, h = 17, w = 68;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 17, 68, &mr);
+    const int top = mr.top, left = mr.left, w = mr.w;
+    oyk_u8 bdr_at  = ta.dlg_bdr;
+    oyk_u8 fill_at = ta.dlg_fill;
+    oyk_u8 sel_at  = ta.dlg_sel;
     oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    oyk_u8 bar_at  = ta.menu_bg;
 
     int focus = (edit_idx >= 0) ? 0 : 1;
     int btn = 0;
@@ -2962,10 +3113,7 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at,
-                          (edit_idx >= 0) ? "Edit Peer" : "Add Peer");
+            oyk_tui_draw_modal(&tb, &mr, (edit_idx >= 0) ? "Edit Peer" : "Add Peer", 1);
             for (int r = 0; r < 8; ++r) {
                 char vbuf[50], row[66];
                 if (r == 0) strncpy(vbuf, st.id, 46);
@@ -2988,10 +3136,23 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
                      "Up/Dn/Tab:Field  Lt/Rt/Spc:Toggle  Enter:Save  Esc:Cancel", w - 4);
             vid_flush();
         }
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
-        if (ch == 0 || ch == 0xE0) {
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+                if (mev.row == top + 13) {
+                    if (mev.col >= left + 20 && mev.col < left + 28) { focus = 8; btn = 0; ch = '\r'; }
+                    else if (mev.col >= left + 36 && mev.col < left + 46) break;
+                    else continue;
+                } else continue;
+            } else continue;
+        }
+        if (inp == 1 && (ch == 0 || ch == 0xE0)) {
             int ext = getch();
             if (ext == 72) focus = (focus + 8) % 9;
             else if (ext == 80) focus = (focus + 1) % 9;
@@ -3078,7 +3239,7 @@ static void run_dos_settings(int initial_tab) {
     draft = g_node.config();
 
     static const char* TAB_NAMES[7] = {
-        " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Prn "
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
     static const char* NODE_LABELS[10] = {
         "Node Callsign",
@@ -3133,17 +3294,14 @@ static void run_dos_settings(int initial_tab) {
     char fb[78];
     sprintf(fb, "Config: %.68s", draft.source_path[0] ? draft.source_path : "node.cfg");
 
-    oyk_u8 top_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1BU, 0x07U);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 tab_bg  = dos_vid_attr(g_vid, 0x70U, 0x07U);
-    oyk_u8 tab_hi  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
-
     while (!g_break_flag) {
         dos_pump_network();
         g_node.tick();
+
+        const int srows = g_vid ? g_vid->rows : 25;
+        const int scols = g_vid ? g_vid->cols : 80;
+        OykTuiRect mr;
+        oyk_tui_center_modal(srows, scols, 21, 74, &mr);
 
         int cnt = (tab == 0) ? 10 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
         if (cnt <= 0) sel[tab] = 0;
@@ -3151,41 +3309,38 @@ static void run_dos_settings(int initial_tab) {
 
         if (dirty) {
             dirty = 0;
-            vid_clear(fill_at);
-            vid_puts(0, 0, top_at, " OYK NODE SETTINGS (MS-DOS)                      F2/S:Save & Apply  Esc:Cancel", 80);
+            draw_dos_console_to_back();
+            DosTuiCtx dc;
+            OykTuiBackend tb;
+            dos_init_tui_backend(NULL, &dc, &tb);
+            oyk_tui_draw_modal(&tb, &mr, "Node Settings", 1);
+            oyk_tui_draw_tabs(&tb, mr.top + 1, mr.left + 1, mr.w - 2, TAB_NAMES, 7, tab);
+            dos_vid_hdiv(g_vid, mr.top + 2, mr.left, mr.w, dc.ta.dlg_bdr);
 
-            /* Row 1: Tab bar */
-            vid_puts(1, 0, tab_bg, "", 80);
-            int tx = 1;
-            for (int t = 0; t < 7; ++t) {
-                int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
-                vid_puts(1, tx, (t == tab) ? tab_hi : tab_bg, TAB_NAMES[t], tlen);
-                tx += tlen + 1;
-            }
-
-            vid_box(2, 0, 20, 80, bdr_at, fill_at, 0);
+            const int inner_x = mr.left + 1;
+            const int inner_w = mr.w - 2;
 
             if (tab != 3 && tab != 4) {
                 const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 5) ? RIG_LABELS : PRN_LABELS)));
-                for (int i = 0; i < cnt; ++i) {
+                for (int i = 0; i < cnt && i < 13; ++i) {
                     char val[56], cs[16], row[82];
                     val[0] = '\0';
                     if (tab == 0) {
                         if (i == 0) oyk_format_callsign(&draft.callsign, val, sizeof(val));
                         else if (i == 1) { if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                        else if (i == 2) { strncpy(val, draft.welcome_text, 46); val[46] = '\0'; }
-                        else if (i == 3) { strncpy(val, draft.info_text, 46); val[46] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.welcome_text, 42); val[42] = '\0'; }
+                        else if (i == 3) { strncpy(val, draft.info_text, 42); val[42] = '\0'; }
                         else if (i == 4) strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]");
                         else if (i == 5) strcpy(val, oyk_format_learned_policy(draft.learned_peer_policy));
                         else if (i == 6) {
-                            if (draft.new_user_welcome[0]) { strncpy(val, draft.new_user_welcome, 46); val[46] = '\0'; }
+                            if (draft.new_user_welcome[0]) { strncpy(val, draft.new_user_welcome, 42); val[42] = '\0'; }
                             else strcpy(val, "(use default)");
                         } else if (i == 7) {
-                            strncpy(val, draft.interfaces_file, 46); val[46] = '\0';
+                            strncpy(val, draft.interfaces_file, 42); val[42] = '\0';
                         } else if (i == 8) {
-                            strncpy(val, draft.peers_file, 46); val[46] = '\0';
+                            strncpy(val, draft.peers_file, 42); val[42] = '\0';
                         } else if (i == 9) {
-                            strncpy(val, draft.themes_file, 46); val[46] = '\0';
+                            strncpy(val, draft.themes_file, 42); val[42] = '\0';
                         }
                     } else if (tab == 1) {
                         if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
@@ -3193,43 +3348,45 @@ static void run_dos_settings(int initial_tab) {
                         else if (i == 2) { if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                         else if (i == 3) { if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                         else if (i == 4) strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 5) { strncpy(val, draft.bbs_files_path, 46); val[46] = '\0'; }
-                        else if (i == 6) { strncpy(val, draft.bbs_mail_path, 46); val[46] = '\0'; }
-                        else if (i == 7) { strncpy(val, draft.bbs_welcome, 46); val[46] = '\0'; }
+                        else if (i == 5) { strncpy(val, draft.bbs_files_path, 42); val[42] = '\0'; }
+                        else if (i == 6) { strncpy(val, draft.bbs_mail_path, 42); val[42] = '\0'; }
+                        else if (i == 7) { strncpy(val, draft.bbs_welcome, 42); val[42] = '\0'; }
                     } else if (tab == 2) {
                         if (i == 0) strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]");
                         else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); }
                         else if (i == 2) { if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                         else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                        else if (i == 4) { strncpy(val, draft.chat_topic, 46); val[46] = '\0'; }
-                        else if (i == 5) { strncpy(val, draft.chat_welcome, 46); val[46] = '\0'; }
+                        else if (i == 4) { strncpy(val, draft.chat_topic, 42); val[42] = '\0'; }
+                        else if (i == 5) { strncpy(val, draft.chat_welcome, 42); val[42] = '\0'; }
                     } else if (tab == 5) {
                         if (i == 0) strcpy(val, draft.rig_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 46); val[46] = '\0'; }
-                        else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 46); val[46] = '\0'; }
+                        else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 42); val[42] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 42); val[42] = '\0'; }
                         else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft.rig_port));
                         else if (i == 4) sprintf(val, "%u s", static_cast<unsigned int>(draft.rig_poll_sec));
                         else if (i == 5) strcpy(val, draft.rig_notify ? "[ON]" : "[OFF]");
                     } else {
                         if (i == 0) strcpy(val, draft.printer_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 46); val[46] = '\0'; }
-                        else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 46); val[46] = '\0'; }
+                        else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 42); val[42] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 42); val[42] = '\0'; }
                         else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
                         else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft.printer_level));
                         else if (i == 5) strcpy(val, draft.printer_condensed ? "[ON]" : "[OFF]");
                     }
-                    sprintf(row, " %-29.29s: %-46.46s", labels[i], val);
-                    vid_puts(3 + i, 1, (i == sel[tab]) ? sel_at : fill_at, row, 78);
+                    sprintf(row, " %-25.25s: %-42.42s", labels[i], val);
+                    vid_puts(mr.top + 3 + i, inner_x, (i == sel[tab]) ? dc.ta.dlg_sel : dc.ta.dlg_fill, row, inner_w);
                     if (tab == 0 && (i == 7 || i == 8) && val[0] == '\0' && g_vid && g_vid->is_color) {
-                        vid_puts(3 + i, 33, (i == sel[tab]) ? sel_at : dos_vid_attr(g_vid, 0x18U, 0x07U), "<inline>", 8);
+                        vid_puts(mr.top + 3 + i, inner_x + 28,
+                                 (i == sel[tab]) ? dc.ta.dlg_sel : dos_vid_attr(g_vid, 0x18U, 0x07U),
+                                 "<inline>", 8);
                     }
                 }
             } else if (tab == 3) {
-                vid_puts(3, 1, hdr_at, " #  ID          Type         Endpoint / Device             Peers", 78);
+                vid_puts(mr.top + 3, inner_x, dc.ta.list_hdr, " #  ID          Type         Endpoint / Device             Peers", inner_w);
                 if (draft.iface_count == 0) {
-                    vid_puts(4, 1, fill_at, " (no interfaces configured - press A to add)", 78);
+                    vid_puts(mr.top + 4, inner_x, dc.ta.dlg_fill, " (no interfaces configured - press A to add)", inner_w);
                 } else {
-                    for (int i = 0; i < draft.iface_count && i < 16; ++i) {
+                    for (int i = 0; i < draft.iface_count && i < 12; ++i) {
                         const OykIfaceConfig& ic = draft.ifaces[i];
                         int pcnt = ic.peer_count;
                         for (int pi = 0; pi < draft.peer_count && pi < OYK_MAX_CONFIG_PEERS; ++pi) {
@@ -3240,42 +3397,40 @@ static void run_dos_settings(int initial_tab) {
                             sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
                                     static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
                         } else {
-                            sprintf(ep, "%.20s:%u", ic.host[0] ? ic.host : "0.0.0.0",
+                            sprintf(ep, "%.18s:%u", ic.host[0] ? ic.host : "0.0.0.0",
                                     static_cast<unsigned int>(ic.port));
                         }
-                        sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
+                        sprintf(row, " %-2d %-11.11s %-12.12s %-25.25s %d",
                                 i + 1, ic.id, ic.type, ep, pcnt);
-                        vid_puts(4 + i, 1, (i == sel[3]) ? sel_at : fill_at, row, 78);
+                        vid_puts(mr.top + 4 + i, inner_x, (i == sel[3]) ? dc.ta.dlg_sel : dc.ta.dlg_fill, row, inner_w);
                     }
                 }
             } else {
-                vid_puts(3, 1, hdr_at, " ID         Callsign  Iface    Endpoint               ACL     Tag", 78);
+                vid_puts(mr.top + 3, inner_x, dc.ta.list_hdr, " ID         Callsign  Iface    Endpoint            ACL     Tag", inner_w);
                 if (draft.peer_count == 0) {
-                    vid_puts(4, 1, fill_at, " (no peers configured - press A to add)", 78);
+                    vid_puts(mr.top + 4, inner_x, dc.ta.dlg_fill, " (no peers configured - press A to add)", inner_w);
                 } else {
-                    for (int i = 0; i < draft.peer_count && i < 16; ++i) {
+                    for (int i = 0; i < draft.peer_count && i < 12; ++i) {
                         const OykPeerConfig& pc = draft.peers[i];
-                        char ep[28], acl[10], row[82];
-                        if (pc.host[0] && pc.port > 0) sprintf(ep, "%.15s:%u", pc.host, static_cast<unsigned int>(pc.port));
-                        else if (pc.host[0]) sprintf(ep, "%.21s", pc.host);
+                        char ep[24], acl[10], row[82];
+                        if (pc.host[0] && pc.port > 0) sprintf(ep, "%.13s:%u", pc.host, static_cast<unsigned int>(pc.port));
+                        else if (pc.host[0]) sprintf(ep, "%.19s", pc.host);
                         else strcpy(ep, "(any)");
                         sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
-                        sprintf(row, " %-10.10s %-9.9s %-8.8s %-22.22s %-7.7s %s",
+                        sprintf(row, " %-10.10s %-9.9s %-8.8s %-19.19s %-7.7s %s",
                                 pc.id, pc.callsign, pc.interface_id, ep, acl,
                                 pc.auto_learned ? "[AUTO]" : "");
-                        vid_puts(4 + i, 1, (i == sel[4]) ? sel_at : fill_at, row, 78);
+                        vid_puts(mr.top + 4 + i, inner_x, (i == sel[4]) ? dc.ta.dlg_sel : dc.ta.dlg_fill, row, inner_w);
                     }
                 }
             }
 
-            vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
-            if (tab == 3) {
-                vid_puts(24, 0, tab_bg, " Tab/1-7:Tabs  A:Add  Enter/E:Edit  D:Remove  S/F2:Save  Esc:Cancel ", 80);
-            } else if (tab == 4) {
-                vid_puts(24, 0, tab_bg, " 1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc:Cancel", 80);
-            } else {
-                vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
-            }
+            const char* hint = (tab == 3)
+                ? "Tab/1-7:Tabs  A:Add  Enter/E:Edit  D:Remove  S/F2:Save  Esc:Cancel"
+                : ((tab == 4)
+                    ? "1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc:Cancel"
+                    : "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel");
+            oyk_tui_draw_modal_footer(&tb, &mr, fb, hint);
             vid_flush();
         }
 
@@ -3293,16 +3448,17 @@ static void run_dos_settings(int initial_tab) {
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
             if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
                 (mev.button & OYK_MOUSE_BTN_LEFT)) {
-                if (mev.row == 1) {
-                    int tx = 1;
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+                if (mev.row == mr.top + 1) {
+                    int tx = mr.left + 2;
                     for (int t = 0; t < 7; ++t) {
-                        int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
+                        int tlen = static_cast<int>(strlen(TAB_NAMES[t])) + 2;
                         if (mev.col >= tx && mev.col < tx + tlen) { tab = t; break; }
                         tx += tlen + 1;
                     }
                     continue;
                 }
-                int row_base = (tab == 3 || tab == 4) ? 4 : 3;
+                int row_base = (tab == 3 || tab == 4) ? (mr.top + 4) : (mr.top + 3);
                 if (mev.row >= row_base && mev.row < row_base + cnt) {
                     int idx = mev.row - row_base;
                     if (mev.kind == OYK_MOUSE_DBLCLICK || idx == sel[tab]) {
@@ -3573,13 +3729,10 @@ static void run_dos_terminate_dialog() {
         strcpy(g_status_line, "No active connections to terminate.");
         return;
     }
-    const int top = 4, left = 8, h = 16, w = 64;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 16, 64, &mr);
 
     int sel = 0, dirty = 1;
     while (!g_break_flag) {
@@ -3603,11 +3756,13 @@ static void run_dos_terminate_dialog() {
 
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, 32, ttl_at, "Terminate Active Connection");
-            vid_puts(top + 2, left + 2, hdr_at, "ID    Callsign    Port       State", w - 4);
-            int list_h = h - 6;
+            draw_dos_console_to_back();
+            DosTuiCtx dc;
+            OykTuiBackend tb;
+            dos_init_tui_backend(NULL, &dc, &tb);
+            oyk_tui_draw_modal(&tb, &mr, "Terminate Active Connection", 1);
+            vid_puts(mr.top + 2, mr.left + 2, dc.ta.list_hdr, "ID    Callsign    Port       State", mr.w - 4);
+            int list_h = mr.h - 6;
             for (int r = 0; r < list_h && r < scnt; ++r) {
                 const OykSession& s = g_node.session_slot(sslot[r]);
                 char cs[16], id_s[10], row[64];
@@ -3615,10 +3770,9 @@ static void run_dos_terminate_dialog() {
                 sprintf(id_s, "#%lu", static_cast<unsigned long>(s.id));
                 const char* ifid = (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local";
                 sprintf(row, "%-5s %-11.11s %-10.10s %-28.28s", id_s, cs, ifid, "[CONNECTED]");
-                vid_puts(top + 3 + r, left + 2, (r == sel) ? sel_at : fill_at, row, w - 4);
+                vid_puts(mr.top + 3 + r, mr.left + 2, (r == sel) ? dc.ta.dlg_sel : dc.ta.dlg_fill, row, mr.w - 4);
             }
-            dos_vid_hdiv(g_vid, top + h - 3, left, w, bdr_at);
-            vid_puts(top + h - 2, left + 2, bar_at, "Up/Down: select | Enter: terminate | Esc: cancel", w - 4);
+            oyk_tui_draw_modal_footer(&tb, &mr, NULL, "Up/Down: select | Enter: terminate | Esc: cancel");
             vid_flush();
         }
 
@@ -3636,10 +3790,11 @@ static void run_dos_terminate_dialog() {
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return;
             if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
                 (mev.button & OYK_MOUSE_BTN_LEFT)) {
-                int list_h = h - 6;
-                if (mev.row >= top + 3 && mev.row < top + 3 + list_h &&
-                    mev.col >= left + 2 && mev.col < left + w - 2) {
-                    int r = mev.row - (top + 3);
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return;
+                int list_h = mr.h - 6;
+                if (mev.row >= mr.top + 3 && mev.row < mr.top + 3 + list_h &&
+                    mev.col >= mr.left + 2 && mev.col < mr.left + mr.w - 2) {
+                    int r = mev.row - (mr.top + 3);
                     if (r < scnt) {
                         if (mev.kind == OYK_MOUSE_DBLCLICK || r == sel) {
                             sel = r;
@@ -3666,15 +3821,13 @@ static void run_dos_terminate_dialog() {
 }
 
 static void run_dos_ban_dialog() {
-    const int top = 2, left = 3, h = 21, w = 74;
-    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
-    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
-    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
-    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr, cmr;
+    oyk_tui_center_modal(srows, scols, 21, 74, &mr);
+    oyk_tui_center_modal(srows, scols, 6, 46, &cmr);
+
     oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
-    oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
-    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
 
     char call_in[12], lift_in[20], reason_in[48], fb[72];
     call_in[0] = '\0';
@@ -3697,30 +3850,32 @@ static void run_dos_ban_dialog() {
 
         if (dirty) {
             dirty = 0;
-            vid_box(top, left, h, w, bdr_at, fill_at, 1);
-            vid_shadow(top, left, h, w);
-            dos_vid_title(g_vid, top, left + 2, 38, ttl_at, "Ban / Unban Callsign (banlist.cfg)");
+            draw_dos_console_to_back();
+            DosTuiCtx dc;
+            OykTuiBackend tb;
+            dos_init_tui_backend(NULL, &dc, &tb);
+            oyk_tui_draw_modal(&tb, &mr, "Ban / Unban Callsign (banlist.cfg)", 1);
 
-            vid_puts(top + 2, left + 2, fill_at, "Callsign: ", 10);
-            vid_puts(top + 2, left + 12, (focus == 0 && !confirm_pop) ? sel_at : inp_at, call_in, 12);
-            vid_puts(top + 3, left + 2, fill_at, "Lift At : ", 10);
-            vid_puts(top + 3, left + 12, (focus == 1 && !confirm_pop) ? sel_at : inp_at, lift_in, 16);
-            vid_puts(top + 3, left + 30, fill_at, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
-            vid_puts(top + 4, left + 2, fill_at, "Reason  : ", 10);
-            vid_puts(top + 4, left + 12, (focus == 2 && !confirm_pop) ? sel_at : inp_at, reason_in, 56);
+            vid_puts(mr.top + 2, mr.left + 2, dc.ta.dlg_fill, "Callsign: ", 10);
+            vid_puts(mr.top + 2, mr.left + 12, (focus == 0 && !confirm_pop) ? dc.ta.dlg_sel : inp_at, call_in, 12);
+            vid_puts(mr.top + 3, mr.left + 2, dc.ta.dlg_fill, "Lift At : ", 10);
+            vid_puts(mr.top + 3, mr.left + 12, (focus == 1 && !confirm_pop) ? dc.ta.dlg_sel : inp_at, lift_in, 16);
+            vid_puts(mr.top + 3, mr.left + 30, dc.ta.dlg_fill, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
+            vid_puts(mr.top + 4, mr.left + 2, dc.ta.dlg_fill, "Reason  : ", 10);
+            vid_puts(mr.top + 4, mr.left + 12, (focus == 2 && !confirm_pop) ? dc.ta.dlg_sel : inp_at, reason_in, 56);
 
             char opts[64];
             sprintf(opts, "Options : [%c] Hard Ban (H)   [%c] Appeal Allowed (A)",
                     hard_ban ? 'X' : ' ', appeal_ok ? 'X' : ' ');
-            vid_puts(top + 5, left + 2, (focus == 3 && !confirm_pop) ? sel_at : fill_at, opts, 66);
+            vid_puts(mr.top + 5, mr.left + 2, (focus == 3 && !confirm_pop) ? dc.ta.dlg_sel : dc.ta.dlg_fill, opts, 66);
 
             char hdr[32];
             sprintf(hdr, "Active Bans (%d):", bcnt);
-            vid_puts(top + 7, left + 2, fill_at, hdr, 30);
-            vid_puts(top + 8, left + 2, hdr_at, "Callsign   Type  Lift At          Reason", w - 4);
+            vid_puts(mr.top + 7, mr.left + 2, dc.ta.dlg_fill, hdr, 30);
+            vid_puts(mr.top + 8, mr.left + 2, dc.ta.list_hdr, "Callsign   Type  Lift At          Reason", mr.w - 4);
             const int list_h = 7;
             if (bcnt == 0) {
-                vid_puts(top + 9, left + 4, fill_at, "(none)", 20);
+                vid_puts(mr.top + 9, mr.left + 4, dc.ta.dlg_fill, "(none)", 20);
             } else {
                 int off = (unban_sel >= list_h) ? (unban_sel - list_h + 1) : 0;
                 for (int i = 0; i < list_h && (off + i) < bcnt; ++i) {
@@ -3729,36 +3884,64 @@ static void run_dos_ban_dialog() {
                     sprintf(row, "%-10.10s %-5s %-16.16s %-34.34s",
                             e.key, (e.flags & OYK_BAN_HARD_BAN) ? "HARD" : "SOFT",
                             e.lift_at, e.reason);
-                    vid_puts(top + 9 + i, left + 2,
-                             (focus == 4 && !confirm_pop && (off + i) == unban_sel) ? sel_at : fill_at,
-                             row, w - 4);
+                    vid_puts(mr.top + 9 + i, mr.left + 2,
+                             (focus == 4 && !confirm_pop && (off + i) == unban_sel) ? dc.ta.dlg_sel : dc.ta.dlg_fill,
+                             row, mr.w - 4);
                 }
             }
-            if (fb[0]) vid_puts(top + h - 3, left + 2, err_at, fb, w - 4);
-            dos_vid_hdiv(g_vid, top + h - 2, left, w, bdr_at);
             const char* help = (focus == 4)
                                    ? "Up/Down: pick | Enter: UNBAN (confirm) | Tab: next | Esc: close"
                                    : ((focus == 3)
                                           ? "H: hard/soft | A: appeal | Enter: BAN | Tab: next | Esc: close"
                                           : "Enter: BAN | Tab: next field | Esc: close");
-            vid_puts(top + h - 1, left + 2, bar_at, help, w - 4);
+            oyk_tui_draw_modal_footer(&tb, &mr, fb[0] ? fb : NULL, help);
 
             if (confirm_pop && bcnt > 0) {
                 char msg[42];
-                vid_box(9, 17, 6, 46, bdr_at, fill_at, 1);
-                vid_shadow(9, 17, 6, 46);
-                dos_vid_title(g_vid, 9, 19, 18, ttl_at, "Confirm Unban");
+                oyk_tui_draw_modal(&tb, &cmr, "Confirm Unban", 1);
                 sprintf(msg, "Unban callsign %s?", g_node.ban_entry(unban_sel).key);
-                vid_puts(11, 19, fill_at, msg, 42);
-                vid_puts(12, 19, sel_at, "[Y] Yes   [N] No", 20);
+                vid_puts(cmr.top + 2, cmr.left + 2, dc.ta.dlg_fill, msg, cmr.w - 4);
+                vid_puts(cmr.top + 3, cmr.left + 2, dc.ta.dlg_sel, "[Y] Yes   [N] No", 20);
             }
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
-        if (ch == 0 || ch == 0xE0) {
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                if (confirm_pop) { confirm_pop = 0; continue; }
+                return;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (confirm_pop) {
+                    if (oyk_tui_hit_close_btn(&cmr, mev.row, mev.col)) { confirm_pop = 0; continue; }
+                    if (mev.row == cmr.top + 3) {
+                        if (mev.col >= cmr.left + 2 && mev.col < cmr.left + 10) ch = 'Y';
+                        else { confirm_pop = 0; continue; }
+                    } else continue;
+                } else {
+                    if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return;
+                    if (mev.row == mr.top + 2) { focus = 0; continue; }
+                    if (mev.row == mr.top + 3) { focus = 1; continue; }
+                    if (mev.row == mr.top + 4) { focus = 2; continue; }
+                    if (mev.row == mr.top + 5) { focus = 3; continue; }
+                    if (mev.row >= mr.top + 9 && mev.row < mr.top + 16 && bcnt > 0) {
+                        int off = (unban_sel >= 7) ? (unban_sel - 6) : 0;
+                        int idx = off + (mev.row - (mr.top + 9));
+                        if (idx < bcnt) {
+                            if (focus == 4 && idx == unban_sel) confirm_pop = 1;
+                            else { focus = 4; unban_sel = idx; }
+                        }
+                    }
+                    continue;
+                }
+            } else continue;
+        }
+        if (inp == 1 && (ch == 0 || ch == 0xE0)) {
             int ext = getch();
             if (!confirm_pop && focus == 4) {
                 if (ext == 72 && unban_sel > 0) --unban_sel;
@@ -3879,24 +4062,28 @@ static void run_dos_theme_dialog() {
         if (role_sel < scroll) scroll = role_sel;
         if (role_sel >= scroll + vis_rows) scroll = role_sel - vis_rows + 1;
 
+        const int srows = g_vid ? g_vid->rows : 25;
+        const int scols = g_vid ? g_vid->cols : 80;
+        OykTuiRect mr;
+        oyk_tui_center_modal(srows, scols, 21, 74, &mr);
+        const int top = mr.top, left = mr.left, bw = mr.w;
+
         if (dirty) {
             dirty = 0;
-            render_dos_screen();
-            DosThemeAttrs ta;
-            resolve_dos_theme_attrs(&draft, &ta);
-
-            const int top = 2, left = 3, bh = 21, bw = 74;
-            vid_box(top, left, bh, bw, ta.dlg_bdr, ta.dlg_fill, 1);
-            vid_shadow(top, left, bh, bw);
-            dos_vid_title(g_vid, top, left + 2, 18, ta.dlg_bdr, "Theme Settings");
+            draw_dos_console_to_back();
+            DosTuiCtx dc;
+            OykTuiBackend tb;
+            dos_init_tui_backend(&draft, &dc, &tb);
+            const DosThemeAttrs& ta = dc.ta;
+            oyk_tui_draw_modal(&tb, &mr, "Theme Settings", 1);
 
             char hdr_line[72];
             sprintf(hdr_line, "Theme  : < %-18.18s > (%s)", active,
                     oyk_theme_is_builtin(active) ? "Built-in (not saved)" : "Custom");
-            vid_puts(4, left + 2, ta.dlg_fill, hdr_line, bw - 4);
-            vid_puts(5, left + 2, ta.dlg_fill,
+            vid_puts(top + 2, left + 2, ta.dlg_fill, hdr_line, bw - 4);
+            vid_puts(top + 3, left + 2, ta.dlg_fill,
                      "Editing built-in clones custom-dark or custom-light.", bw - 4);
-            vid_puts(7, left + 2, ta.list_hdr,
+            vid_puts(top + 5, left + 2, ta.list_hdr,
                      "Role              Key            Color     Preview", bw - 4);
 
             for (int r = 0; r < vis_rows && (scroll + r) < OYK_THEME_COLOR_COUNT; ++r) {
@@ -3905,20 +4092,18 @@ static void run_dos_theme_dialog() {
                 oyk_theme_format_hex(pal.colors[idx], hx, sizeof(hx));
                 sprintf(row_s, "%-16.16s  %-13.13s  %-8.8s",
                         oyk_theme_role_label(idx), oyk_theme_role_key(idx), hx);
-                vid_puts(8 + r, left + 2, (idx == role_sel) ? ta.dlg_sel : ta.dlg_fill, row_s, 44);
+                vid_puts(top + 6 + r, left + 2, (idx == role_sel) ? ta.dlg_sel : ta.dlg_fill, row_s, 44);
                 oyk_u8 sw = dos_make_pair_attr(g_vid, pal.colors[idx], pal.colors[idx], ta.dlg_fill);
-                vid_puts(8 + r, left + 47, sw, "    ", 4);
+                vid_puts(top + 6 + r, left + 47, sw, "    ", 4);
 #ifdef OYK_DOS_GFX_BUILD
                 if (g_gfx) {
-                    dos_gfx_set_cell_rgb(g_gfx, 8 + r, left + 47, 4, pal.colors[idx], pal.colors[idx]);
+                    dos_gfx_set_cell_rgb(g_gfx, top + 6 + r, left + 47, 4, pal.colors[idx], pal.colors[idx]);
                 }
 #endif
             }
 
-            dos_vid_hdiv(g_vid, 19, left, bw, ta.dlg_bdr);
-            vid_puts(20, left + 2, ta.dlg_fill, fb, bw - 4);
-            vid_puts(21, left + 2, ta.menu_bg,
-                     "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", bw - 4);
+            oyk_tui_draw_modal_footer(&tb, &mr, fb,
+                                      "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel");
             vid_flush();
         }
 
@@ -3937,19 +4122,20 @@ static void run_dos_theme_dialog() {
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
             if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
                 (mev.button & OYK_MOUSE_BTN_LEFT)) {
-                if (mev.row == 4 && mev.col >= 13 && mev.col <= 38) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+                if (mev.row == top + 2 && mev.col >= left + 10 && mev.col <= left + 35) {
                     int ci = 0;
                     for (int i = 0; i < n_names; ++i) {
                         if (strcmp(names[i], active) == 0) { ci = i; break; }
                     }
-                    ci = (mev.col < 25) ? ((ci + n_names - 1) % n_names) : ((ci + 1) % n_names);
+                    ci = (mev.col < left + 22) ? ((ci + n_names - 1) % n_names) : ((ci + 1) % n_names);
                     strncpy(active, names[ci], sizeof(active) - 1);
                     active[sizeof(active) - 1] = '\0';
                     sprintf(fb, "Previewing '%s' (press S/F2 to save or Esc to revert).", active);
                     continue;
                 }
-                if (mev.row >= 8 && mev.row < 8 + vis_rows && (scroll + mev.row - 8) < OYK_THEME_COLOR_COUNT) {
-                    int idx = scroll + (mev.row - 8);
+                if (mev.row >= top + 6 && mev.row < top + 6 + vis_rows && (scroll + mev.row - (top + 6)) < OYK_THEME_COLOR_COUNT) {
+                    int idx = scroll + (mev.row - (top + 6));
                     if (mev.kind == OYK_MOUSE_DBLCLICK || idx == role_sel) {
                         role_sel = idx;
                         ch = '\r';
@@ -3957,9 +4143,9 @@ static void run_dos_theme_dialog() {
                         role_sel = idx;
                         continue;
                     }
-                } else if (mev.row == 21 && mev.col >= 35 && mev.col <= 52) {
+                } else if (mev.row == mr.top + mr.h - 2 && mev.col >= left + 34 && mev.col <= left + 51) {
                     ch = 's';
-                } else if (mev.row == 21 && mev.col >= 53 && mev.col <= 68) {
+                } else if (mev.row == mr.top + mr.h - 2 && mev.col >= left + 52 && mev.col <= left + 65) {
                     ch = 27;
                 } else {
                     continue;
@@ -4098,29 +4284,23 @@ static void open_dos_node_menu(int* running) {
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
-    static const int ITEM_ROWS[11] = { 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 14 };
+    static const int ITEM_ROWS_REL[11] = { 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13 };
+    static const int SEPS[2] = { 3, 12 };
+    const OykTuiRect mrect = { 1, 1, 15, 34 };
 
     int sel = 0;
     int chosen = -1;
     int dirty = 1;
-    DosThemeAttrs ta;
-    resolve_dos_theme_attrs(g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config(), &ta);
-    oyk_u8 menu_bg  = ta.menu_bg;
-    oyk_u8 menu_sel = ta.menu_sel;
     while (chosen < 0 && !g_break_flag) {
         dos_pump_network();
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            vid_box(1, 1, 15, 34, menu_bg, menu_bg, 0);
-            vid_shadow(1, 1, 15, 34);
-            dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
-            dos_vid_hdiv(g_vid, 13, 1, 34, menu_bg);
-            for (int i = 0; i < 11; ++i) {
-                dos_vid_putc(g_vid, ITEM_ROWS[i], 1, menu_bg, OYK_BOX_V);
-                vid_puts(ITEM_ROWS[i], 2, (i == sel) ? menu_sel : menu_bg, ITEMS[i], 32);
-                dos_vid_putc(g_vid, ITEM_ROWS[i], 34, menu_bg, OYK_BOX_V);
-            }
+            draw_dos_console_to_back();
+            DosTuiCtx dc;
+            OykTuiBackend tb;
+            dos_init_tui_backend(NULL, &dc, &tb);
+            oyk_tui_draw_dropdown_menu(&tb, &mrect, ITEMS, ITEM_ROWS_REL, 11, SEPS, 2, sel);
             vid_flush();
         }
 
@@ -4136,9 +4316,9 @@ static void open_dos_node_menu(int* running) {
             }
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
-                if (mev.row < 1 || mev.row >= 16 || mev.col < 1 || mev.col > 34) break;
+                if (!oyk_tui_point_in_rect(&mrect, mev.row, mev.col)) break;
                 for (int i = 0; i < 11; ++i) {
-                    if (mev.row == ITEM_ROWS[i]) { chosen = i; break; }
+                    if (mev.row == mrect.top + ITEM_ROWS_REL[i]) { chosen = i; break; }
                 }
             }
             continue;
@@ -4525,13 +4705,14 @@ int main(int argc, char* argv[]) {
                 if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
                     open_dos_node_menu(&running);
                 } else if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                    const int ncols = g_vid ? g_vid->cols : 80;
                     if (mev.row == 0 && mev.col <= 8) {
                         open_dos_node_menu(&running);
-                    } else if (mev.row == 0 && mev.col >= 44 && mev.col <= 64) {
+                    } else if (mev.row == 0 && mev.col >= ncols - 36 && mev.col < ncols - 12) {
                         run_dos_local_terminal();
-                    } else if (mev.row == 0 && mev.col >= 66) {
+                    } else if (mev.row == 0 && mev.col >= ncols - 12) {
                         open_dos_node_menu(&running);
-                    } else if (mev.row == 1 && mev.col >= 61) {
+                    } else if (mev.row == 1 && mev.col >= ncols - 19) {
                         run_dos_menu_action(g_node.accept_incoming() ? 1 : 0, &running);
                     }
                 }

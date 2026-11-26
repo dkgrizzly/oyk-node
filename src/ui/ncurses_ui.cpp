@@ -4,6 +4,7 @@
 #include "oyk/ui/ncurses_ui.hpp"
 #include "oyk/ui/theme.hpp"
 #include "oyk/protocol/yapp.hpp"
+#include "../../ports/compat/oyk_tui.hpp"
 
 #include <ncurses.h>
 #include <arpa/inet.h>
@@ -36,6 +37,40 @@ constexpr int CP_NC_SEL   = 10;
 constexpr int CP_BASE     = 11;
 constexpr int CP_SHADOW   = 12;
 constexpr int CP_PREVIEW_BASE = 13; // 13..31 for up to kThemeRoleCount swatches
+
+// Draw a floating modal box with title and standard top-right [X] close button.
+static void draw_modal_frame(WINDOW* win, int h, int w, const std::string& title,
+                             bool has_colors, int border_pair = CP_BORDER,
+                             bool bold_title = true) {
+    OykTuiRect r{0, 0, h, w};
+    if (has_colors && border_pair > 0) wattron(win, COLOR_PAIR(border_pair));
+    box(win, 0, 0);
+    if (has_colors && border_pair > 0) wattroff(win, COLOR_PAIR(border_pair));
+
+    const int close_c = oyk_tui_close_btn_col(&r);
+    const int max_t = (close_c >= 0) ? std::max(0, close_c - 3) : std::max(0, w - 4);
+    if (!title.empty() && max_t > 2) {
+        std::string t = " " + title.substr(0, static_cast<std::size_t>(max_t - 2)) + " ";
+        if (bold_title) wattron(win, A_BOLD);
+        mvwaddnstr(win, 0, 2, t.c_str(), max_t);
+        if (bold_title) wattroff(win, A_BOLD);
+    }
+    if (close_c >= 0) {
+        if (has_colors) wattron(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
+        else wattron(win, A_REVERSE | A_BOLD);
+        mvwaddnstr(win, 0, close_c, "[X]", 3);
+        if (has_colors) wattroff(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
+        else wattroff(win, A_REVERSE | A_BOLD);
+    }
+}
+
+static bool hit_modal_close_btn(WINDOW* win, const MEVENT& mev) {
+    int wy = 0, wx = 0, wh = 0, ww = 0;
+    getbegyx(win, wy, wx);
+    getmaxyx(win, wh, ww);
+    OykTuiRect r{wy, wx, wh, ww};
+    return oyk_tui_hit_close_btn(&r, mev.y, mev.x) != 0;
+}
 
 // Classic 2-col right, 1-row bottom translucent drop shadow for menus and modals.
 struct NcursesShadow {
@@ -387,7 +422,10 @@ void NcursesUI::draw_screen(const node::NodeSnapshot& snap) {
     int cols = 0;
     getmaxyx(stdscr, rows, cols);
 
-    if (rows < 16 || cols < 60) {
+    OykTuiConsoleLayout lay{};
+    oyk_tui_compute_console_layout(rows, cols, &lay);
+
+    if (lay.too_small) {
         mvprintw(0, 0, "Terminal too small (%dx%d). Minimum recommended: 80x24.", cols, rows);
         mvprintw(2, 0, "Node: %s | Conn: %zu | Incoming: %s",
                  snap.node_callsign.c_str(),
@@ -399,31 +437,20 @@ void NcursesUI::draw_screen(const node::NodeSnapshot& snap) {
     }
 
     draw_menu_bar(cols);
-    draw_header(snap, 1, cols);
+    draw_header(snap, lay.banner_row, cols);
 
-    // Vertical layout:
-    // Row 0: Top menu bar (Node)
-    // Row 1: Header status bar
-    // Rows 2..(1+top_h): Interfaces (left) + Last 5 New Callsigns Heard (right)
-    // Middle: Active Connections & Banned Summary
-    // Lower: Activity Log
-    // Row rows-1: Status message
-    const int avail_h = rows - 3; // exclude menu bar (1) + header (1) + status (1)
-    const int top_h = std::max(8, std::min(10, avail_h / 3 + 1));
-    const int mid_h = std::max(5, (avail_h - top_h) / 2);
-    const int bot_h = std::max(4, avail_h - top_h - mid_h);
-
-    const int right_w = std::max(34, std::min(44, cols * 42 / 100));
-    const int left_w = cols - right_w;
-
-    draw_interfaces_pane(snap, 2, 0, top_h, left_w);
-    draw_new_callsigns_pane(snap, 2, left_w, top_h, right_w);
-    draw_sessions_pane(snap, 2 + top_h, 0, mid_h, cols);
-    draw_log_pane(snap, 2 + top_h + mid_h, 0, bot_h, cols);
+    draw_interfaces_pane(snap, lay.iface_box.top, lay.iface_box.left, lay.iface_box.h, lay.iface_box.w);
+    draw_new_callsigns_pane(snap, lay.heard_box.top, lay.heard_box.left, lay.heard_box.h, lay.heard_box.w);
+    if (has_colors_) attron(COLOR_PAIR(CP_BORDER));
+    mvaddch(lay.heard_box.top, lay.heard_box.left, ACS_TTEE);
+    mvaddch(lay.heard_box.top + lay.heard_box.h - 1, lay.heard_box.left, ACS_BTEE);
+    if (has_colors_) attroff(COLOR_PAIR(CP_BORDER));
+    draw_sessions_pane(snap, lay.conn_box.top, lay.conn_box.left, lay.conn_box.h, lay.conn_box.w);
+    draw_log_pane(snap, lay.log_box.top, lay.log_box.left, lay.log_box.h, lay.log_box.w);
 
     // Status message line at bottom (no bottom buttons)
     if (has_colors_) attron(COLOR_PAIR(CP_WARN));
-    print_clipped(rows - 1, 1, cols - 2, status_message_);
+    print_clipped(lay.status_row, 1, cols - 2, status_message_);
     if (has_colors_) attroff(COLOR_PAIR(CP_WARN));
 
     refresh();
@@ -883,12 +910,7 @@ void NcursesUI::modal_theme() {
         if (role_sel >= scroll + vis_rows) scroll = role_sel - vis_rows + 1;
 
         werase(win);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
-        box(win, 0, 0);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
-        wattron(win, A_BOLD);
-        mvwprintw(win, 0, 2, " Theme Settings ");
-        wattroff(win, A_BOLD);
+        draw_modal_frame(win, h, w, "Theme Settings", has_colors_, CP_BORDER);
 
         mvwprintw(win, 2, 2, "Theme  : < %-20.20s >  (%s)",
                   active_name.c_str(),
@@ -949,6 +971,7 @@ void NcursesUI::modal_theme() {
 #endif
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
                 if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) {
+                    if (hit_modal_close_btn(win, mev)) break;
                     if (ly == 2 && lx >= 10 && lx <= 36) {
                         ch = (lx < 22) ? KEY_LEFT : KEY_RIGHT;
                     } else if (ly >= 6 && ly < 6 + vis_rows && (scroll + ly - 6) < static_cast<int>(kThemeRoleCount)) {
@@ -1133,9 +1156,7 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
         if (sel >= top + list_h) top = sel - list_h + 1;
 
         werase(win);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_NC_PANEL));
-        box(win, 0, 0);
-        mvwaddnstr(win, 0, 2, (" " + clip(title, w - 6) + " ").c_str(), w - 4);
+        draw_modal_frame(win, h, w, title, has_colors_, CP_NC_PANEL, false);
         wattron(win, A_BOLD);
         mvwaddnstr(win, 1, 2, clip(cur_dir.string(), w - 4).c_str(), w - 4);
         wattroff(win, A_BOLD);
@@ -1185,6 +1206,8 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
                 if (mev.bstate & BUTTON5_PRESSED) { if (sel + 1 < static_cast<int>(entries.size())) ++sel; continue; }
 #endif
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
+                    hit_modal_close_btn(win, mev)) break;
                 if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
                     ly >= 3 && ly < 3 + list_h && (top + ly - 3) < static_cast<int>(entries.size())) {
                     int idx = top + (ly - 3);
@@ -1364,8 +1387,7 @@ void NcursesUI::modal_local_terminal() {
             if (external_stop_flag_ && external_stop_flag_->load()) break;
             curs_set(1);
             werase(cw);
-            box(cw, 0, 0);
-            mvwprintw(cw, 0, 2, " Connect to Remote Packet Node ");
+            draw_modal_frame(cw, h, w, "Connect to Remote Packet Node", has_colors_, CP_BORDER);
             mvwaddnstr(cw, 2, 2, "Port    : ", w - 4);
             if (focus == 0) wattron(cw, A_UNDERLINE | A_BOLD);
             mvwaddnstr(cw, 2, 12, clip(port_in, w - 14).c_str(), w - 14);
@@ -1384,6 +1406,14 @@ void NcursesUI::modal_local_terminal() {
 
             int ch = wgetch(cw);
             if (ch == ERR) continue;
+            if (ch == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(cw, mev)) break;
+                }
+                continue;
+            }
             if (ch == 27) break;
             if (ch == '\t') {
                 focus = 1 - focus;
@@ -1424,8 +1454,7 @@ void NcursesUI::modal_local_terminal() {
         while (true) {
             if (external_stop_flag_ && external_stop_flag_->load()) break;
             werase(ow);
-            box(ow, 0, 0);
-            mvwprintw(ow, 0, 2, " YAPP File Already Exists ");
+            draw_modal_frame(ow, h, w, "YAPP File Already Exists", has_colors_, CP_BORDER);
             mvwaddnstr(ow, 2, 2, clip("File: " + path_str, w - 4).c_str(), w - 4);
             mvwaddnstr(ow, 4, 2, "Overwrite existing file?  [Y] Yes   [N] No", w - 4);
             oshadow.noutrefresh();
@@ -1433,6 +1462,17 @@ void NcursesUI::modal_local_terminal() {
             doupdate();
             int ch = wgetch(ow);
             if (ch == ERR) continue;
+            if (ch == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { allow = false; break; }
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(ow, mev)) {
+                        allow = false;
+                        break;
+                    }
+                }
+                continue;
+            }
             if (ch == 'y' || ch == 'Y') { allow = true; break; }
             if (ch == 'n' || ch == 'N' || ch == 27) { allow = false; break; }
         }
@@ -1470,6 +1510,8 @@ void NcursesUI::modal_local_terminal() {
 
         int rows = 0, cols = 0;
         getmaxyx(stdscr, rows, cols);
+        OykTuiTermLayout tlay{};
+        oyk_tui_compute_term_layout(rows, cols, &tlay);
         erase();
 
         // Top bar
@@ -1488,7 +1530,7 @@ void NcursesUI::modal_local_terminal() {
             } else {
                 header = " LOCAL TERMINAL | DISCONNECTED (F2:Connect | F9/Esc:Console)";
             }
-            int body_h = std::max(1, rows - 4);
+            int body_h = tlay.body_rows;
             int total = static_cast<int>(ts->lines.size());
             int start = std::max(0, total - body_h + (ts->cur_line.empty() ? 0 : 1));
             for (int i = start; i < total; ++i) {
@@ -1499,18 +1541,18 @@ void NcursesUI::modal_local_terminal() {
 
         if (has_colors_) attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
         else attron(A_REVERSE | A_BOLD);
-        mvhline(0, 0, ' ', cols);
-        print_clipped(0, 0, cols, header);
+        mvhline(tlay.header_row, 0, ' ', cols);
+        print_clipped(tlay.header_row, 0, cols, header);
         if (has_colors_) attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
         else attroff(A_REVERSE | A_BOLD);
 
-        int body_h = std::max(1, rows - 4);
-        int row = 1;
+        int body_h = tlay.body_rows;
+        int row = tlay.body_top;
         for (const auto& l : view_lines) {
-            if (row >= 1 + body_h) break;
+            if (row >= tlay.body_top + body_h) break;
             print_clipped(row++, 1, cols - 2, l);
         }
-        if (!live_line.empty() && row < 1 + body_h) {
+        if (!live_line.empty() && row < tlay.body_top + body_h) {
             print_clipped(row++, 1, cols - 2, live_line);
         }
 
@@ -1522,15 +1564,15 @@ void NcursesUI::modal_local_terminal() {
         }
         if (has_colors_) attron(COLOR_PAIR(CP_MENU));
         else attron(A_REVERSE);
-        mvhline(rows - 2, 0, ' ', cols);
-        print_clipped(rows - 2, 1, cols - 2, bar);
+        mvhline(tlay.hotkey_row, 0, ' ', cols);
+        print_clipped(tlay.hotkey_row, 1, cols - 2, bar);
         if (has_colors_) attroff(COLOR_PAIR(CP_MENU));
         else attroff(A_REVERSE);
 
         // Command input row
-        mvaddstr(rows - 1, 0, "> ");
-        print_clipped(rows - 1, 2, cols - 3, input);
-        move(rows - 1, std::min(cols - 1, 2 + static_cast<int>(input.size())));
+        mvaddstr(tlay.input_row, 0, "> ");
+        print_clipped(tlay.input_row, 2, cols - 3, input);
+        move(tlay.input_row, std::min(cols - 1, 2 + static_cast<int>(input.size())));
         refresh();
 
         int ch = getch();
@@ -1712,12 +1754,7 @@ void NcursesUI::modal_terminate_connection() {
         }
 
         werase(win);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
-        box(win, 0, 0);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
-        wattron(win, A_BOLD);
-        mvwprintw(win, 0, 2, " Terminate Active Connection ");
-        wattroff(win, A_BOLD);
+        draw_modal_frame(win, h, w, "Terminate Active Connection", has_colors_, CP_BORDER);
 
         const int inner_w = w - 4;
         if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
@@ -1780,6 +1817,8 @@ void NcursesUI::modal_terminate_connection() {
                 }
 #endif
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
+                    hit_modal_close_btn(win, mev)) break;
                 if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
                     ly >= 3 && ly < 3 + list_h &&
                     (offset + ly - 3) < static_cast<int>(snap.active_sessions.size())) {
@@ -1870,8 +1909,7 @@ void NcursesUI::modal_ban_callsign() {
         while (true) {
             if (external_stop_flag_ && external_stop_flag_->load()) break;
             werase(cwin);
-            box(cwin, 0, 0);
-            mvwprintw(cwin, 0, 2, " Confirm Unban ");
+            draw_modal_frame(cwin, ch_h, cw, "Confirm Unban", has_colors_, CP_BORDER);
             mvwaddnstr(cwin, 2, 2, clip("Unban callsign " + call_key + "?", cw - 4).c_str(), cw - 4);
             mvwaddnstr(cwin, 3, 2, "[Y] Yes   [N] No", cw - 4);
             cshadow.noutrefresh();
@@ -1879,6 +1917,17 @@ void NcursesUI::modal_ban_callsign() {
             doupdate();
             int k = wgetch(cwin);
             if (k == ERR) continue;
+            if (k == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { yes = false; break; }
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(cwin, mev)) {
+                        yes = false;
+                        break;
+                    }
+                }
+                continue;
+            }
             if (k == 'y' || k == 'Y') { yes = true; break; }
             if (k == 'n' || k == 'N' || k == 27) { yes = false; break; }
         }
@@ -1901,8 +1950,7 @@ void NcursesUI::modal_ban_callsign() {
 
         curs_set((focus <= 2) ? 1 : 0);
         werase(win);
-        box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Ban / Unban Callsign (banlist.cfg) ");
+        draw_modal_frame(win, h, w, "Ban / Unban Callsign (banlist.cfg)", has_colors_, CP_BORDER);
 
         mvwaddnstr(win, 2, 2, "Callsign: ", w - 4);
         if (focus == 0) wattron(win, A_UNDERLINE | A_BOLD);
@@ -1972,6 +2020,14 @@ void NcursesUI::modal_ban_callsign() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) break;
+            }
+            continue;
+        }
         if (ch == 27) break;
 
         if (ch == '\t') {
@@ -2117,10 +2173,7 @@ void NcursesUI::modal_approve_incoming_files() {
         if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
 
         werase(win);
-        box(win, 0, 0);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
-        mvwaddnstr(win, 0, 2, " Manage BBS Files Area ", w - 4);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
+        draw_modal_frame(win, h, w, "Manage BBS Files Area", has_colors_, CP_BORDER);
 
         // Row 1: Tab bar matching GTK & Windows (Pending Incoming | Approved Files)
         int tx = 2;
@@ -2208,6 +2261,14 @@ void NcursesUI::modal_approve_incoming_files() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) break;
+            }
+            continue;
+        }
         if (ch == 27 || ch == 'q' || ch == 'Q') break;
         if (ch == '\t' || ch == KEY_RIGHT || ch == KEY_LEFT || ch == KEY_BTAB) {
             tab = 1 - tab;
@@ -2349,8 +2410,7 @@ void NcursesUI::modal_rig_control() {
         auto st = rig.status();
 
         werase(win);
-        box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Radio / Rig Control ");
+        draw_modal_frame(win, h, w, "Radio / Rig Control", has_colors_, CP_BORDER);
 
         std::ostringstream hdr;
         hdr << "Protocol: " << radio::rig_protocol_to_string(rc.protocol)
@@ -2407,6 +2467,14 @@ void NcursesUI::modal_rig_control() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) break;
+            }
+            continue;
+        }
         if (ch == 27) break;
 
         std::string err;
@@ -2531,8 +2599,7 @@ void NcursesUI::modal_settings(int initial_tab) {
         keypad(nwin, TRUE);
         wtimeout(nwin, 200);
         werase(nwin);
-        box(nwin, 0, 0);
-        mvwprintw(nwin, 0, 2, " %s ", title.c_str());
+        draw_modal_frame(nwin, nh, nw, title, has_colors_, CP_BORDER);
         int lw = nw - 4;
         std::size_t pos = 0;
         for (int line = 2; line <= 4 && pos < msg.size(); ++line) {
@@ -2740,8 +2807,7 @@ void NcursesUI::modal_settings(int initial_tab) {
         }
 
         werase(win);
-        box(win, 0, 0);
-        mvwprintw(win, 0, 2, " Node Settings ");
+        draw_modal_frame(win, h, w, "Node Settings", has_colors_, CP_BORDER);
 
         // Row 1: Tab bar matching GTK/Windows/DOS/TinyTMUX tabs
         int tx = 2;
@@ -2872,6 +2938,7 @@ void NcursesUI::modal_settings(int initial_tab) {
 #endif
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
                 if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) {
+                    if (hit_modal_close_btn(win, mev)) break;
                     if (ly == 1) {
                         int tx = 2;
                         for (int t = 0; t < 7; ++t) {
@@ -3572,15 +3639,12 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
         }
 
         werase(wiz);
-        if (has_colors_) wattron(wiz, COLOR_PAIR(CP_BORDER));
-        box(wiz, 0, 0);
-        if (has_colors_) wattroff(wiz, COLOR_PAIR(CP_BORDER));
-
+        draw_modal_frame(wiz, h, w, "Add Interface", has_colors_, CP_BORDER);
         wattron(wiz, A_BOLD);
-        mvwprintw(wiz, 0, 2, " Add Interface ");
         std::string prog_str = std::string(" ") + PROG[step] + " ";
-        if (w > static_cast<int>(prog_str.size()) + 20) {
-            mvwaddnstr(wiz, 0, w - static_cast<int>(prog_str.size()) - 2,
+        const int wiz_cc = w - 5;
+        if (wiz_cc > static_cast<int>(prog_str.size()) + 18) {
+            mvwaddnstr(wiz, 0, wiz_cc - static_cast<int>(prog_str.size()) - 1,
                        prog_str.c_str(), static_cast<int>(prog_str.size()));
         }
         wattroff(wiz, A_BOLD);
@@ -3755,6 +3819,17 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
 
         int ch = wgetch(wiz);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { committed = false; break; }
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(wiz, mev)) {
+                    committed = false;
+                    break;
+                }
+            }
+            continue;
+        }
         if (ch == 27) {
             committed = false;
             break;
@@ -4028,12 +4103,9 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
         }
 
         werase(dlg);
-        if (has_colors_) wattron(dlg, COLOR_PAIR(CP_BORDER));
-        box(dlg, 0, 0);
-        if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_BORDER));
+        draw_modal_frame(dlg, h, w, "Edit Interface", has_colors_, CP_BORDER);
 
         wattron(dlg, A_BOLD);
-        mvwprintw(dlg, 0, 2, " Edit Interface ");
         mvwaddnstr(dlg, 1, 2, "Edit interface settings and select Save to update draft:", w - 4);
         wattroff(dlg, A_BOLD);
 
@@ -4127,6 +4199,17 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
 
         int ch = wgetch(dlg);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { committed = false; break; }
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(dlg, mev)) {
+                    committed = false;
+                    break;
+                }
+            }
+            continue;
+        }
         if (ch == 27) {
             committed = false;
             break;
@@ -4318,8 +4401,7 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
         if (external_stop_flag_ && external_stop_flag_->load()) break;
 
         werase(dlg);
-        box(dlg, 0, 0);
-        mvwprintw(dlg, 0, 2, (edit_idx >= 0) ? " Edit Peer " : " Add Peer ");
+        draw_modal_frame(dlg, h, w, (edit_idx >= 0) ? "Edit Peer" : "Add Peer", has_colors_, CP_BORDER);
 
         auto val_for = [&](int r) -> std::string {
             switch (r) {
@@ -4368,6 +4450,17 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
 
         int ch = wgetch(dlg);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { committed = false; break; }
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(dlg, mev)) {
+                    committed = false;
+                    break;
+                }
+            }
+            continue;
+        }
         if (ch == 27) { committed = false; break; }
         if (ch == KEY_UP || ch == KEY_BTAB) { focus = (focus + 8) % 9; continue; }
         if (ch == KEY_DOWN || ch == '\t') { focus = (focus + 1) % 9; continue; }
@@ -4457,12 +4550,7 @@ bool NcursesUI::modal_confirm_exit() {
         while (true) {
             if (external_stop_flag_ && external_stop_flag_->load()) { act = AutoExitAct::DiscardExit; break; }
             werase(win);
-            if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
-            box(win, 0, 0);
-            if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
-            wattron(win, A_BOLD);
-            mvwprintw(win, 0, 2, " Auto-Learned Peers ");
-            wattroff(win, A_BOLD);
+            draw_modal_frame(win, h, w, "Auto-Learned Peers", has_colors_, CP_BORDER);
 
             std::string l1 = std::to_string(auto_cnt) + " auto-learned peer(s) added this session.";
             mvwaddnstr(win, 2, 3, l1.c_str(), w - 6);
@@ -4491,6 +4579,10 @@ bool NcursesUI::modal_confirm_exit() {
                     int ly = mev.y - wy;
                     int lx = mev.x - wx;
                     if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { act = AutoExitAct::Cancel; break; }
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) {
+                        act = AutoExitAct::Cancel;
+                        break;
+                    }
                     if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && ly == 6) {
                         int bx = 3;
                         for (int i = 0; i < 4; ++i) {
@@ -4556,13 +4648,7 @@ bool NcursesUI::modal_confirm_exit() {
 
         auto snap = engine_.snapshot();
         werase(win);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
-        box(win, 0, 0);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
-
-        wattron(win, A_BOLD);
-        mvwprintw(win, 0, 2, " Exit OYK Node ");
-        wattroff(win, A_BOLD);
+        draw_modal_frame(win, h, w, "Exit OYK Node", has_colors_, CP_BORDER);
 
         if (snap.total_active_connections > 0) {
             std::string l1 = "Exit OYK Node? (" + std::to_string(snap.total_active_connections) +
@@ -4607,6 +4693,10 @@ bool NcursesUI::modal_confirm_exit() {
                 int ly = mev.y - wy;
                 int lx = mev.x - wx;
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { confirmed = false; break; }
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) {
+                    confirmed = false;
+                    break;
+                }
                 if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && ly == 5) {
                     if (lx >= bx && lx < bx + static_cast<int>(yes_lbl.size())) { confirmed = true; break; }
                     if (lx >= bx + static_cast<int>(yes_lbl.size()) + 4) { confirmed = false; break; }

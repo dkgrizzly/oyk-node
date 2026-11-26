@@ -74,6 +74,8 @@ public:
                              const oyk_u8* data, size_t len,
                              const char* reason);
 
+    int term_rows() const { return term_rows_; }
+    int term_cols() const { return term_cols_; }
     TinyTmuxViewMode view_mode() const { return view_; }
     int settings_tab() const { return settings_tab_; }
     int current_settings_sel() const { return settings_sel_[settings_tab_]; }
@@ -125,9 +127,10 @@ private:
     const char* sgr_list_hdr() const;
     const char* sgr_sel() const;
     const char* sgr_warn() const;
-    void draw_dec_box(int row, int col, int h, int w, const char* title, int clear_interior);
+    void draw_dec_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close = 0);
     void draw_dec_shadow(int row, int col, int h, int w);
     void draw_dec_hdiv(int row, int col, int w);
+    void send_size_probe();
 
     void render_console();
     void render_menu();
@@ -195,6 +198,8 @@ private:
     oyk_u32 now_ms_;
 
     TinyTmuxTermType term_type_;
+    int term_rows_;
+    int term_cols_;
     TinyTmuxViewMode view_;
     int menu_sel_;
     char status_line_[96];
@@ -239,11 +244,11 @@ private:
     /* Persistent switchable local terminal state */
     oyk_u32 lterm_sid_;
     int lterm_is_local_;
-    char lterm_lines_[16][80];
+    char lterm_lines_[40][136];
     int lterm_line_count_;
-    char lterm_curline_[80];
+    char lterm_curline_[136];
     int lterm_curline_len_;
-    char lterm_input_[128];
+    char lterm_input_[136];
     int lterm_input_len_;
 
     EscState esc_state_;

@@ -388,14 +388,15 @@ static void test_pico_ui_flows_and_captures() {
     con->tick(2100UL);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);
 
-    /* 8c. Mouse verification: VT100 must NOT enable mouse, xterm-256 enables ?1000h/?1006h,
-     * SGR left click + wheel + X10 right-click navigate menus cleanly. */
+    /* 8c. Mouse & dynamic CPR size verification: VT100 must NOT enable mouse, emits \033[6n probe,
+     * SGR left click + wheel + X10 right-click navigate menus, [X] closes Settings, CPR resizes display. */
     {
         PicoConsole* vt_con = new PicoConsole;
         PicoCapture* vt_cap = new PicoCapture;
         vt_con->init(node, net, pico_cap_tx, vt_cap);
         vt_con->on_usb_connect();
         assert(strstr(vt_cap->buf, "\033[?1000h") == NULL);
+        assert(strstr(vt_cap->buf, "\033[6n") != NULL);
         delete vt_cap;
         delete vt_con;
     }
@@ -406,6 +407,20 @@ static void test_pico_ui_flows_and_captures() {
     const unsigned char x10_rclick[6] = { 0x1B, '[', 'M', 32 + 2, 32 + 8, 32 + 5 };
     con->feed_input(x10_rclick, 6);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    /* Open Settings, verify [X] rendered, and close via SGR click on [X] (row 3, col 74 1-based) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    assert(con->view_mode() == PICO_VIEW_SETTINGS);
+    assert(strstr(cap->buf, "[X]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;74;3M"), 10);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    /* Verify dynamic CPR terminal size probe response scales to 120x36 and back to 80x25 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[36;120R"), 9);
+    assert(con->term_rows() == 36 && con->term_cols() == 120);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[25;80R"), 8);
+    assert(con->term_rows() == 25 && con->term_cols() == 80);
 
     /* 9. Auto-Learned Peers BOOTSEL modal */
     cap->len = 0; cap->buf[0] = '\0';

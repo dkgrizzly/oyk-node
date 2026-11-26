@@ -1466,8 +1466,8 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */
-    /* 9a. Mouse support: VT100 never gets mouse enable; xterm-256 already got ?1000h/?1006h;
-     * verify SGR click on 'Node' opens Menu, wheel/click/X10 right-click work cleanly. */
+    /* 9a. Mouse & dynamic CPR size support: VT100 must NOT enable mouse, emits \033[6n probe;
+     * SGR click on 'Node' opens Menu, wheel/X10 right-click, [X] closes Settings, CPR resizes display. */
     {
         TinyTmuxConsole* vt_con = new TinyTmuxConsole;
         ConsoleCap* vt_cap = new ConsoleCap;
@@ -1475,6 +1475,7 @@ static void test_tinytmux_ui_flows_and_captures() {
         vt_con->init(node, console_tx_cap, vt_cap);
         vt_con->on_usb_connect();
         assert(strstr(vt_cap->buf, "\033[?1000h") == NULL); /* Plain VT100 must NOT enable mouse */
+        assert(strstr(vt_cap->buf, "\033[6n") != NULL);     /* CPR size probe emitted on connect */
         delete vt_cap;
         delete vt_con;
     }
@@ -1487,6 +1488,20 @@ static void test_tinytmux_ui_flows_and_captures() {
     const unsigned char x10_rclick[6] = { 0x1B, '[', 'M', 32 + 2, 32 + 10, 32 + 5 };
     con->feed_input(x10_rclick, 6); /* X10 right-click closes menu */
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* Open Settings, verify [X] rendered, and close via SGR click on [X] (row 3, col 74 1-based) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+    assert(strstr(cap->buf, "[X]") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;74;3M"), 10);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* Verify dynamic CPR terminal size probe response scales to 120x36 and back to 80x25 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[36;120R"), 9);
+    assert(con->term_rows() == 36 && con->term_cols() == 120);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[25;80R"), 8);
+    assert(con->term_rows() == 25 && con->term_cols() == 80);
 
     const int base_bl = tinytmux_board_sim_bootloader_count();
     cap->len = 0; cap->buf[0] = '\0';
