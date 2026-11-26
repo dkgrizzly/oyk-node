@@ -978,6 +978,7 @@ static void test_vt100_console_full_parity() {
     assert(tinytmux_board_sim_bootloader_count() == 0); /* Not 3s yet */
     con->tick(t + 3050UL);
     assert(tinytmux_board_sim_bootloader_count() == 1);
+    assert(strstr(cap->buf, "73 de ") != NULL);
     assert(node->disconnecting_count() == 0);
     assert(tinytmux_fs_is_mounted() == 0);
 

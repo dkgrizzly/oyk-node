@@ -3679,6 +3679,11 @@ int main(int argc, char* argv[]) {
         delete g_vid;
         g_vid = NULL;
     }
-    printf("OYK Packet Node (MS-DOS) exited cleanly.\n");
+    {
+        char signoff_call[24];
+        oyk_format_callsign(&g_node.config().callsign, signoff_call, sizeof(signoff_call));
+        printf("73 de %s\n", signoff_call);
+        fflush(stdout);
+    }
     return 0;
 }
