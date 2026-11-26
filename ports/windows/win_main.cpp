@@ -1339,8 +1339,30 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             lterm_append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
             lterm_append_line("*** Select 'local' for local node/BBS/CHAT, or a radio port for remote nodes.");
             lterm_update_status();
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) {
+                lterm_append_line("> /bbs");
+                lterm_append_line("*** Connected locally to KR4OYK-1 (YAPP disabled)");
+                lterm_append_line("Welcome to KR4OYK-1 Packet BBS (OYKNOD)");
+                lterm_append_line("Type L to list messages, R # to read, B to bye.");
+                lterm_append_line("KR4OYK-1> L");
+                lterm_append_line("Msg#  Size  From     To       Subject");
+                lterm_append_line("1     248   W3TRM-1  ALL      Welcome to OYK Packet Node");
+                SetTimer(hdlg, 99, 250, NULL);
+            }
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99 && g_win_ui_test) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "terminal");
+                DestroyWindow(hdlg);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_GETMINMAXINFO: {
 #if defined(_WIN32) || defined(_WIN64)
             LPMINMAXINFO mmi = (LPMINMAXINFO)lp;
@@ -1580,8 +1602,21 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             sprintf(st, "Files Area: %.60s (%d pending, %d approved)",
                     g_node.config().bbs_files_path, s_count, s_app_count);
             SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99 && g_win_ui_test) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "files");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_DESTROY:
             if (s_items) { delete[] s_items; s_items = NULL; }
             if (s_approved) { delete[] s_approved; s_approved = NULL; }
@@ -3890,6 +3925,16 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 refresh_gui();
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
                 refresh_gui();
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                refresh_gui();
+                if (!g_lterm_hwnd) {
+                    g_lterm_hwnd = CreateDialog(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL),
+                                                NULL, (DLGPROC)TerminalDlgProc);
+                    if (g_lterm_hwnd) ShowWindow(g_lterm_hwnd, SW_SHOW);
+                }
+                SetTimer(hwnd, 98, 600, NULL);
+            } else if (wp == 98 && g_win_ui_test) {
+                KillTimer(hwnd, 98);
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
 #endif
             }

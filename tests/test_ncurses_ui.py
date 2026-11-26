@@ -348,6 +348,9 @@ def main() -> int:
                 f"logpath = {os.path.join(tmp, 'logs')}\n"
                 f"banlist = {os.path.join(tmp, 'banlist.cfg')}\n"
                 f"welcome = Welcome to KR4OYK-7\n\n"
+                f"[bbs]\n"
+                f"enabled = true\n"
+                f"callsign = KR4OYK-1\n\n"
                 f"[interface axudp0]\n"
                 f"type = axudp\n"
                 f"bind_host = 127.0.0.1\n"
@@ -457,6 +460,26 @@ def main() -> int:
             drain_and_wait(master_fd, scr, "Theme Settings")
             drain_quiet(master_fd, scr, 0.15)
             save_cap(cap_dir, "theme", scr)
+            os.write(master_fd, b"\x1b")
+            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
+
+            # 8d. Local Packet Terminal with example /bbs session
+            os.write(master_fd, b"\t")
+            drain_and_wait(master_fd, scr, "LOCAL TERMINAL")
+            os.write(master_fd, b"/connect local BBS\r")
+            drain_and_wait(master_fd, scr, "Connected locally")
+            os.write(master_fd, b"HELP\r")
+            drain_and_wait(master_fd, scr, "BBS")
+            drain_quiet(master_fd, scr, 0.2)
+            save_cap(cap_dir, "terminal", scr)
+            os.write(master_fd, b"\x1b")
+            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
+
+            # 8e. Manage BBS Files Area modal
+            os.write(master_fd, b"f")
+            drain_and_wait(master_fd, scr, "Manage BBS Files Area")
+            drain_quiet(master_fd, scr, 0.15)
+            save_cap(cap_dir, "files", scr)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 

@@ -467,12 +467,223 @@ def render_bmp_to_png(in_path: str, out_path: str) -> None:
     write_png(out_path, width, height, rgb_rows)
 
 
+def read_png(in_path: str) -> tuple:
+    """Decode an 8-bit RGB, RGBA, or indexed PNG using Python stdlib zlib only."""
+    with open(in_path, "rb") as f:
+        raw = f.read()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"Not a PNG file: {in_path}")
+    off = 8
+    width = height = bit_depth = color_type = interlace = 0
+    palette = []
+    idat = bytearray()
+    while off + 8 <= len(raw):
+        length, ctype = struct.unpack_from(">I4s", raw, off)
+        data = raw[off + 8:off + 8 + length]
+        off += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type, _, _, interlace = struct.unpack_from(">IIBBBBB", data, 0)
+        elif ctype == b"PLTE":
+            palette = [(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data) - 2, 3)]
+        elif ctype == b"IDAT":
+            idat.extend(data)
+        elif ctype == b"IEND":
+            break
+    if bit_depth != 8 or interlace != 0 or color_type not in (2, 3, 6):
+        raise ValueError(f"Unsupported PNG format depth={bit_depth} type={color_type} interlace={interlace} in {in_path}")
+
+    bpp = 3 if color_type == 2 else (4 if color_type == 6 else 1)
+    stride = width * bpp
+    decomp = zlib.decompress(bytes(idat))
+    prev = bytearray(stride)
+    pos = 0
+    rgb_rows = []
+    for _ in range(height):
+        flt = decomp[pos]
+        pos += 1
+        cur = bytearray(decomp[pos:pos + stride])
+        pos += stride
+        if flt == 1:
+            for i in range(bpp, stride):
+                cur[i] = (cur[i] + cur[i - bpp]) & 0xFF
+        elif flt == 2:
+            for i in range(stride):
+                cur[i] = (cur[i] + prev[i]) & 0xFF
+        elif flt == 3:
+            for i in range(stride):
+                left = cur[i - bpp] if i >= bpp else 0
+                cur[i] = (cur[i] + ((left + prev[i]) >> 1)) & 0xFF
+        elif flt == 4:
+            for i in range(stride):
+                a = cur[i - bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i - bpp] if i >= bpp else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                cur[i] = (cur[i] + pr) & 0xFF
+        prev = cur
+
+        if color_type == 2:
+            rgb_rows.append(bytes(cur))
+        elif color_type == 6:
+            out = bytearray(width * 3)
+            for x in range(width):
+                s = x * 4
+                a = cur[s + 3]
+                d = x * 3
+                if a == 255:
+                    out[d] = cur[s]
+                    out[d + 1] = cur[s + 1]
+                    out[d + 2] = cur[s + 2]
+                else:
+                    inv = 255 - a
+                    out[d] = (cur[s] * a + 16 * inv) // 255
+                    out[d + 1] = (cur[s + 1] * a + 20 * inv) // 255
+                    out[d + 2] = (cur[s + 2] * a + 26 * inv) // 255
+            rgb_rows.append(bytes(out))
+        else:
+            out = bytearray(width * 3)
+            for x in range(width):
+                r, g, b = palette[cur[x]] if cur[x] < len(palette) else (0, 0, 0)
+                d = x * 3
+                out[d], out[d + 1], out[d + 2] = r, g, b
+            rgb_rows.append(bytes(out))
+    return width, height, rgb_rows
+
+
+def scale_rgb_rows(src_w: int, src_h: int, rgb_rows: list, max_w: int, max_h: int) -> tuple:
+    """Aspect-preserving area-averaged downscale using stdlib integers only."""
+    if src_w <= max_w and src_h <= max_h:
+        return src_w, src_h, rgb_rows
+    scale = min(max_w / float(src_w), max_h / float(src_h))
+    dst_w = max(1, int(round(src_w * scale)))
+    dst_h = max(1, int(round(src_h * scale)))
+    x_ranges = [((dx * src_w) // dst_w, max(((dx * src_w) // dst_w) + 1, ((dx + 1) * src_w) // dst_w))
+                for dx in range(dst_w)]
+    out_rows = []
+    for dy in range(dst_h):
+        sy0 = (dy * src_h) // dst_h
+        sy1 = max(sy0 + 1, ((dy + 1) * src_h) // dst_h)
+        y_cnt = sy1 - sy0
+        scan = bytearray(dst_w * 3)
+        for dx, (sx0, sx1) in enumerate(x_ranges):
+            cnt = y_cnt * (sx1 - sx0)
+            rs = gs = bs = 0
+            for sy in range(sy0, sy1):
+                row = rgb_rows[sy]
+                for sx in range(sx0, sx1):
+                    p = sx * 3
+                    rs += row[p]
+                    gs += row[p + 1]
+                    bs += row[p + 2]
+            dp = dx * 3
+            scan[dp] = rs // cnt
+            scan[dp + 1] = gs // cnt
+            scan[dp + 2] = bs // cnt
+        out_rows.append(bytes(scan))
+    return dst_w, dst_h, out_rows
+
+
+def draw_bitmap_text(canvas: list, cw: int, ch: int, x0: int, y0: int, text: str,
+                     fg: tuple, scale: int = 1) -> None:
+    blank = FONT_MAP.get(" ", b"\x00" * GLYPH_H)
+    cx = x0
+    for ch_val in text:
+        bmp = FONT_MAP.get(ch_val, blank)
+        for gy in range(GLYPH_H):
+            bits = bmp[gy] if gy < len(bmp) else 0
+            for sy in range(scale):
+                py = y0 + gy * scale + sy
+                if not (0 <= py < ch):
+                    continue
+                row = canvas[py]
+                for gx in range(GLYPH_W):
+                    if bits & (0x80 >> gx):
+                        for sx in range(scale):
+                            px = cx + gx * scale + sx
+                            if 0 <= px < cw:
+                                p = px * 3
+                                row[p] = fg[0]
+                                row[p + 1] = fg[1]
+                                row[p + 2] = fg[2]
+        cx += GLYPH_W * scale
+
+
+def render_contact_sheet(out_png: str, title: str, cols: int, cell_w: int, cell_h: int, items: list) -> None:
+    """Compose a labeled COLS x N grid PNG contact sheet from LABEL:IMG_PATH entries."""
+    parsed = []
+    for item in items:
+        label, path = item.split(":", 1)
+        if not os.path.exists(path):
+            continue
+        iw, ih, irows = read_png(path)
+        sw, sh, srows = scale_rgb_rows(iw, ih, irows, cell_w, cell_h)
+        parsed.append((label, sw, sh, srows))
+    if not parsed:
+        raise ValueError(f"No valid images provided for contact sheet {out_png}")
+
+    rows_n = (len(parsed) + cols - 1) // cols
+    pad = 12
+    header_h = 44
+    tile_w = cell_w + 16
+    tile_h = cell_h + 34
+    out_w = pad * 2 + cols * tile_w + (cols - 1) * pad
+    out_h = header_h + pad + rows_n * tile_h + (rows_n - 1) * pad + pad
+
+    bg_rgb = (15, 23, 42)
+    card_rgb = (24, 32, 42)
+    border_rgb = (56, 189, 248)
+    title_rgb = (248, 250, 252)
+    lbl_rgb = (250, 204, 21)
+
+    row_template = bytearray([bg_rgb[0], bg_rgb[1], bg_rgb[2]] * out_w)
+    canvas = [bytearray(row_template) for _ in range(out_h)]
+
+    # Header bar accent divider
+    for x in range(pad, out_w - pad):
+        p = x * 3
+        canvas[header_h - 4][p:p + 3] = bytes(border_rgb)
+    draw_bitmap_text(canvas, out_w, out_h, pad, 6, title, title_rgb, scale=2)
+
+    for idx, (label, sw, sh, srows) in enumerate(parsed):
+        r = idx // cols
+        c = idx % cols
+        tx = pad + c * (tile_w + pad)
+        ty = header_h + pad + r * (tile_h + pad)
+        # Card background + border
+        for py in range(ty, ty + tile_h):
+            row = canvas[py]
+            is_edge_y = (py == ty or py == ty + tile_h - 1)
+            for px in range(tx, tx + tile_w):
+                col_v = border_rgb if (is_edge_y or px == tx or px == tx + tile_w - 1) else card_rgb
+                p = px * 3
+                row[p:p + 3] = bytes(col_v)
+        # Centered thumbnail
+        ix = tx + (tile_w - sw) // 2
+        iy = ty + 8 + (cell_h - sh) // 2
+        for sy in range(sh):
+            dst_row = canvas[iy + sy]
+            src_row = srows[sy]
+            dst_off = ix * 3
+            dst_row[dst_off:dst_off + sw * 3] = src_row
+        # Centered caption below thumbnail
+        cap = label[:max(1, (tile_w - 8) // GLYPH_W)]
+        lx = tx + max(4, (tile_w - len(cap) * GLYPH_W) // 2)
+        ly = ty + cell_h + 12
+        draw_bitmap_text(canvas, out_w, out_h, lx, ly, cap, lbl_rgb, scale=1)
+
+    write_png(out_png, out_w, out_h, [bytes(row) for row in canvas])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Render OYK UI capture files to PNG")
     grp = ap.add_mutually_exclusive_group(required=True)
     grp.add_argument("--ansi", nargs=2, metavar=("IN_ANSI", "OUT_PNG"))
     grp.add_argument("--dosbuf", nargs=2, metavar=("IN_DOSBUF", "OUT_PNG"))
     grp.add_argument("--bmp", nargs=2, metavar=("IN_BMP", "OUT_PNG"))
+    grp.add_argument("--scale", nargs=4, metavar=("IN_PNG", "OUT_PNG", "MAX_W", "MAX_H"))
+    grp.add_argument("--contact-sheet", nargs="+", metavar="ARG")
     args = ap.parse_args()
     if args.ansi:
         render_ansi_to_png(args.ansi[0], args.ansi[1])
@@ -480,6 +691,15 @@ def main() -> int:
         render_dosbuf_to_png(args.dosbuf[0], args.dosbuf[1])
     elif args.bmp:
         render_bmp_to_png(args.bmp[0], args.bmp[1])
+    elif args.scale:
+        w, h, rows = read_png(args.scale[0])
+        sw, sh, srows = scale_rgb_rows(w, h, rows, int(args.scale[2]), int(args.scale[3]))
+        write_png(args.scale[1], sw, sh, srows)
+    elif args.contact_sheet:
+        if len(args.contact_sheet) < 6:
+            raise SystemExit("Usage: --contact-sheet OUT_PNG TITLE COLS CELL_W CELL_H LABEL:IMG ...")
+        out_png, title, cols_s, cw_s, ch_s = args.contact_sheet[:5]
+        render_contact_sheet(out_png, title, int(cols_s), int(cw_s), int(ch_s), args.contact_sheet[5:])
     return 0
 
 

@@ -265,5 +265,40 @@ class OykUiGalleryTest {
                 ThemeSettingsCard(cfg = sampleCfg, systemDark = true, onDismiss = {}, onSave = { _, _ -> })
             }
         }
+        captureComposableToPng("terminal") {
+            ModalOverlayFrame {
+                TerminalCard(
+                    remoteLabel = "KR4OYK-1 BBS (LOCAL)",
+                    lines = listOf(
+                        "*** Local Packet Terminal (YAPP ready)",
+                        "> /bbs",
+                        "*** Connected to KR4OYK-1 BBS",
+                        "Welcome to KR4OYK-1 Packet BBS (OYKNOD)",
+                        "KR4OYK-1> LIST",
+                        "Msg#  Size  From     Subject",
+                        "1     248   W3TRM-1  Welcome to OYK Node",
+                        "KR4OYK-1> "
+                    ),
+                    inputText = "R 1",
+                    onSend = {},
+                    onBack = {}
+                )
+            }
+        }
+        captureComposableToPng("files") {
+            ModalOverlayFrame {
+                FilesCard(
+                    incomingFiles = listOf(
+                        Triple("W3TRM-1", "fieldday.txt", "1.4 KB"),
+                        Triple("N0CALL-7", "aprs.cfg", "612 B")
+                    ),
+                    approvedFiles = listOf(
+                        Pair("bulletins/welcome.txt", "420 B"),
+                        Pair("software/yapp_info.txt", "2.1 KB")
+                    ),
+                    onDismiss = {}
+                )
+            }
+        }
     }
 }

@@ -2065,6 +2065,47 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "theme", sim_vram, g);
 
+    /* 11. Local Terminal (/bbs example session) */
+    if (g) {
+        dos_gfx_clear_shadows(g);
+        dos_gfx_clear_cell_rgb(g);
+    }
+    dos_vid_clear(v, p.bg);
+    dos_vid_puts(v, 0, 0, p.hdr, " LOCAL TERMINAL | CONNECTED: KR4OYK-1 (LOCAL - YAPP disabled)", 80);
+    dos_vid_box(v, 1, 0, 21, 80, bdr, p.bg, 1);
+    dos_vid_title(v, 1, 2, 76, p.hdr, "Terminal Output");
+    dos_vid_puts(v, 2, 2, p.bg, "*** OYK Local Terminal (/local, /bbs, /chat, /disc)", 76);
+    dos_vid_puts(v, 3, 2, p.bg, "> /bbs", 76);
+    dos_vid_puts(v, 4, 2, p.ok, "*** Connected locally to KR4OYK-1 (BBS)", 76);
+    dos_vid_puts(v, 5, 2, p.bg, "Welcome to KR4OYK-1 Packet BBS (OYKNOD)", 76);
+    dos_vid_puts(v, 6, 2, p.bg, "Type L to list messages, R # to read, B to bye.", 76);
+    dos_vid_puts(v, 7, 2, p.bg, "KR4OYK-1> L", 76);
+    dos_vid_puts(v, 8, 2, p.lhdr, "Msg#  Size  From     To       Subject", 76);
+    dos_vid_puts(v, 9, 2, p.bg, "1     248   W3TRM-1  ALL      Welcome to OYK Packet Node", 76);
+    dos_vid_puts(v, 10, 2, p.bg, "KR4OYK-1> _", 76);
+    dos_vid_hline(v, 22, 0, 80, bar, ' ');
+    dos_vid_puts(v, 22, 0, bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console", 80);
+    dos_vid_puts(v, 23, 0, fill, "> ", 80);
+    dos_vid_puts(v, 24, 0, p.stat, "F9/Esc switches to Console without closing active terminal session.", 80);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "terminal", sim_vram, g);
+
+    /* 12. Manage BBS Files Area Modal */
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 2, 8, 17, 64, bdr, fill);
+    dos_vid_title(v, 2, 10, 60, bdr, "Manage BBS Files Area");
+    dos_vid_puts(v, 3, 9, sel, "[1:Pending Incoming (2)]", 24);
+    dos_vid_puts(v, 3, 35, bar, " 2:Approved Files (2) ", 22);
+    dos_vid_puts(v, 4, 9, lhdr, "Uploader     Filename                      Size", 62);
+    dos_vid_puts(v, 5, 9, sel,  "W3TRM-1      fieldday.txt                  1420 B", 62);
+    dos_vid_puts(v, 6, 9, fill, "N0CALL-7     aprs.cfg                       612 B", 62);
+    dos_vid_hdiv(v, 16, 8, 64, bdr);
+    dos_vid_puts(v, 17, 10, bar, "A:Approve  D:Del  Tab:Switch  R:Refresh  Esc:Close", 60);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "files", sim_vram, g);
+
     delete v;
     delete[] sim_vram;
 }

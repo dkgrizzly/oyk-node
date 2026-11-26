@@ -116,6 +116,10 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
         need("Theme Settings")
         need("Preview")
         need("Lt/Rt:Theme")
+    elif flow == "terminal":
+        need("LOCAL TERMINAL")
+    elif flow == "files":
+        need("Pending Incoming")
 
 
 def main() -> int:

@@ -3,9 +3,43 @@
 
 # OYK-Node UI Gallery
 
-Automated screenshots generated across all six operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
+Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+
+## Port Contact Sheets
+
+### POSIX ncurses
+
+![POSIX ncurses — Contact Sheet](images/ui-gallery/ncurses_contact_sheet.png)
+
+### MS-DOS (80x25 Text)
+
+![MS-DOS (80x25 Text) — Contact Sheet](images/ui-gallery/dos_contact_sheet.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — Contact Sheet](images/ui-gallery/dos_gfx_contact_sheet.png)
+
+### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
+
+![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — Contact Sheet](images/ui-gallery/tinytmux_contact_sheet.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — Contact Sheet](images/ui-gallery/pico_contact_sheet.png)
+
+### X11 GTK+ 2.0
+
+![X11 GTK+ 2.0 — Contact Sheet](images/ui-gallery/gtk_contact_sheet.png)
+
+### Windows GUI (Wine / Win32/64)
+
+![Windows GUI (Wine / Win32/64) — Contact Sheet](images/ui-gallery/win_contact_sheet.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — Contact Sheet](images/ui-gallery/android_contact_sheet.png)
 
 ## 1. Operator Console (Main View)
 
@@ -346,4 +380,72 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 10. Theme Settings Dialog](images/ui-gallery/android_theme.png)
+
+## 11. Local Packet Terminal (/bbs Session)
+
+### POSIX ncurses
+
+![POSIX ncurses — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/ncurses_terminal.png)
+
+### MS-DOS (80x25 Text)
+
+![MS-DOS (80x25 Text) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/dos_terminal.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/dos_gfx_terminal.png)
+
+### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
+
+![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/tinytmux_terminal.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/pico_terminal.png)
+
+### X11 GTK+ 2.0
+
+![X11 GTK+ 2.0 — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/gtk_terminal.png)
+
+### Windows GUI (Wine / Win32/64)
+
+![Windows GUI (Wine / Win32/64) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/win_terminal.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/android_terminal.png)
+
+## 12. File Manager / Pending & Approved BBS Files
+
+### POSIX ncurses
+
+![POSIX ncurses — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/ncurses_files.png)
+
+### MS-DOS (80x25 Text)
+
+![MS-DOS (80x25 Text) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/dos_files.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/dos_gfx_files.png)
+
+### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
+
+![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/tinytmux_files.png)
+
+### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/pico_files.png)
+
+### X11 GTK+ 2.0
+
+![X11 GTK+ 2.0 — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/gtk_files.png)
+
+### Windows GUI (Wine / Win32/64)
+
+![Windows GUI (Wine / Win32/64) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/win_files.png)
+
+### Android (Material 3 / Jetpack Compose)
+
+![Android (Material 3 / Jetpack Compose) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/android_files.png)
 

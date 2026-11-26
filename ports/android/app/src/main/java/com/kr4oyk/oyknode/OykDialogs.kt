@@ -779,3 +779,108 @@ fun ExitDialog(
         ExitCard(autoLearnedCount, onDismiss, onSaveAndExit, onDiscardAndExit, onReviewPeers)
     }
 }
+
+@Composable
+fun TerminalCard(
+    remoteLabel: String,
+    lines: List<String>,
+    inputText: String,
+    onSend: () -> Unit,
+    onBack: () -> Unit
+) {
+    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Local Packet Terminal", style = MaterialTheme.typography.titleMedium)
+                    Text("Session: $remoteLabel", style = MaterialTheme.typography.labelSmall)
+                }
+                TextButton(onClick = onBack) { Text("Console") }
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    lines.forEach { ln ->
+                        Text(
+                            ln,
+                            color = Color(0xFFE2E8F0),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = {},
+                    label = { Text("Command") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = onSend, modifier = Modifier.align(Alignment.CenterVertically)) {
+                    Text("Send")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun FilesCard(
+    incomingFiles: List<Triple<String, String, String>>,
+    approvedFiles: List<Pair<String, String>>,
+    onDismiss: () -> Unit
+) {
+    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Manage BBS Files Area", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Pending Incoming (${incomingFiles.size})  |  Approved (${approvedFiles.size})",
+                style = MaterialTheme.typography.labelMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("Pending Incoming Uploads", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            incomingFiles.forEach { (uploader, name, size) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("$uploader / $name", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    Text(size, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text("Approved BBS Files", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            approvedFiles.forEach { (rel, size) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("/$rel", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    Text(size, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    }
+}

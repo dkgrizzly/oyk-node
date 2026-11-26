@@ -176,6 +176,9 @@ stage_binary_tree() {
     if [[ -n "${img_prefix}" ]]; then
         for img in "${ROOT_DIR}/docs/user/images/ui-gallery/${img_prefix}"_*.png; do
             if [[ -f "${img}" ]]; then
+                if [[ "${img_prefix}" == "dos" && "$(basename "${img}")" == dos_gfx_* ]]; then
+                    continue
+                fi
                 cp "${img}" "${stage_dir}/docs/user/images/ui-gallery/"
                 copied_pngs=$((copied_pngs + 1))
             fi
@@ -223,7 +226,7 @@ for h2, subs in sections:
     kept_subs = []
     for sub, slines in subs:
         body = "\n".join(slines)
-        if needle and needle in body:
+        if needle and needle in body and not (prefix == "dos" and "images/ui-gallery/dos_gfx_" in body):
             kept_subs.append((sub, slines))
     if kept_subs:
         filtered_sections.append((h2, kept_subs))

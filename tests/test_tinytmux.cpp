@@ -1446,6 +1446,25 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->tick(800UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
+    /* 8c2. Local Terminal with example /bbs session */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\t/bbs\r"), 6);
+    assert(con->view_mode() == TMUX_VIEW_LOCAL_TERM);
+    assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
+    tmux_save_capture("terminal", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(900UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* 8c3. Files Area Manager */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+    assert(con->view_mode() == TMUX_VIEW_FILES);
+    tmux_save_capture("files", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1000UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
     /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */
     /* 9a. Mouse support: VT100 never gets mouse enable; xterm-256 already got ?1000h/?1006h;
      * verify SGR click on 'Node' opens Menu, wheel/click/X10 right-click work cleanly. */
@@ -1479,7 +1498,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);
     assert(strstr(cap->buf, "\033[?1006l\033[?1000l") != NULL);
-    con->tick(3600UL);
+    con->tick(4500UL);
     assert(tinytmux_board_sim_bootloader_count() == base_bl + 1);
     assert(strstr(cap->buf, "73 de KR4OYK-7") != NULL);
 

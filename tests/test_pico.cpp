@@ -369,6 +369,25 @@ static void test_pico_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
 
+    /* 8b2. Local Terminal with example /bbs session */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\t/bbs\r"), 6);
+    assert(con->view_mode() == PICO_VIEW_LOCAL_TERM);
+    assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
+    pico_save_capture("terminal", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1900UL);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    /* 8b3. Files Area Manager */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+    assert(con->view_mode() == PICO_VIEW_FILES);
+    pico_save_capture("files", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(2100UL);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
     /* 8c. Mouse verification: VT100 must NOT enable mouse, xterm-256 enables ?1000h/?1006h,
      * SGR left click + wheel + X10 right-click navigate menus cleanly. */
     {
@@ -396,7 +415,7 @@ static void test_pico_ui_flows_and_captures() {
     pico_save_capture("exit", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);
     assert(strstr(cap->buf, "\033[?1006l\033[?1000l") != NULL);
-    con->tick(1900UL);
+    con->tick(2300UL);
 
     delete cap;
     delete con;

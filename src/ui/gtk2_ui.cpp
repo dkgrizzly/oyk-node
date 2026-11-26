@@ -669,6 +669,24 @@ void on_local_terminal_clicked(GtkWidget*, gpointer user_data) {
         "*** Enter target callsign (or CALLSIGN@ip:port) and click Connect.\n");
 
     ts->timer_id = g_timeout_add(50, on_gtk_term_tick, ts);
+    if (g_gtk_test.enabled) {
+        gtk_term_append_text_ui(
+            ts,
+            "\n> /bbs\n"
+            "*** Connected to KR4OYK-1 BBS\n"
+            "Welcome to KR4OYK-1 Packet BBS (OYKNOD)\n"
+            "Type L to list messages, R # to read, B to bye.\n"
+            "KR4OYK-1> L\n"
+            "Msg#  Size  From     To       Subject\n"
+            "1     248   W3TRM-1  ALL      Welcome to OYK Packet Node\n"
+            "KR4OYK-1> ");
+        g_timeout_add(180, +[](gpointer p) -> gboolean {
+            auto* tw = static_cast<GtkTermWindowState*>(p);
+            gtk_capture_window_png(tw->win, "terminal");
+            gtk_widget_destroy(tw->win);
+            return FALSE;
+        }, ts);
+    }
     gtk_widget_show_all(ts->win);
 }
 
@@ -1192,6 +1210,9 @@ void on_approve_files_clicked(GtkWidget*, gpointer user_data) {
     populate_incoming_store(st->engine, inc_store);
     populate_approved_store(st->engine, app_store);
     gtk_widget_show_all(dlg);
+
+    GtkSimpleCapCtx cap_ctx{dlg, "files", GTK_RESPONSE_CLOSE, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
 
     while (true) {
         gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
@@ -3939,6 +3960,12 @@ bool Gtk2UI::run(int& argc, char**& argv) {
                     on_theme_clicked(nullptr, app);
                     return TRUE;
                 case 6:
+                    on_local_terminal_clicked(nullptr, app);
+                    return TRUE;
+                case 7:
+                    on_approve_files_clicked(nullptr, app);
+                    return TRUE;
+                case 8:
                     on_exit_clicked(nullptr, app);
                     return FALSE;
                 default:

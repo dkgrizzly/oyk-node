@@ -145,7 +145,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${T
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
-FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme)
+FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
 PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android)
 
 for f in "${TMP_CAP}"/*.ansi; do
@@ -166,9 +166,16 @@ for f in "${TMP_CAP}"/*.bmp; do
     PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
-for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png; do
+for f in "${TMP_CAP}"/gtk_*.png; do
     [[ -e "$f" ]] || continue
-    cp -f "$f" "${OUT_IMG_DIR}/"
+    base="$(basename "$f")"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 720 520
+done
+
+for f in "${TMP_CAP}"/android_*.png; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 520 520
 done
 
 port_label() {
@@ -196,8 +203,44 @@ flow_title() {
         ban)        echo "8. Ban / Unban Callsign Dialog" ;;
         exit)       echo "9. Auto-Learned Peers Exit / Bootloader Prompt" ;;
         theme)      echo "10. Theme Settings Dialog" ;;
+        terminal)   echo "11. Local Packet Terminal (/bbs Session)" ;;
+        files)      echo "12. File Manager / Pending & Approved BBS Files" ;;
     esac
 }
+
+flow_short() {
+    case "$1" in
+        main)       echo "1. Console" ;;
+        settings)   echo "2. Settings" ;;
+        add_iface)  echo "3. Add Iface" ;;
+        edit_iface) echo "4. Edit Iface" ;;
+        peers)      echo "5. Peers" ;;
+        edit_peer)  echo "6. Edit Peer" ;;
+        terminate)  echo "7. Terminate" ;;
+        ban)        echo "8. Ban/Unban" ;;
+        exit)       echo "9. Exit/Boot" ;;
+        theme)      echo "10. Theme" ;;
+        terminal)   echo "11. Terminal" ;;
+        files)      echo "12. Files" ;;
+    esac
+}
+
+for port in "${PORTS[@]}"; do
+    sheet_args=()
+    for flow in "${FLOWS[@]}"; do
+        img="${OUT_IMG_DIR}/${port}_${flow}.png"
+        if [[ -f "${img}" ]]; then
+            sheet_args+=("$(flow_short "${flow}"):${img}")
+        fi
+    done
+    if [[ ${#sheet_args[@]} -gt 0 ]]; then
+        PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --contact-sheet \
+            "${OUT_IMG_DIR}/${port}_contact_sheet.png" \
+            "$(port_label "${port}")" \
+            4 320 200 \
+            "${sheet_args[@]}"
+    fi
+done
 
 {
     cat <<'HEADER'
@@ -206,11 +249,22 @@ flow_title() {
 
 # OYK-Node UI Gallery
 
-Automated screenshots generated across all six operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
+Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **Teensy 4.1 TinyTMUX**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+
+## Port Contact Sheets
 
 HEADER
+    for port in "${PORTS[@]}"; do
+        sheet="${port}_contact_sheet.png"
+        if [[ -f "${OUT_IMG_DIR}/${sheet}" ]]; then
+            echo "### $(port_label "${port}")"
+            echo ""
+            echo "![$(port_label "${port}") — Contact Sheet](images/ui-gallery/${sheet})"
+            echo ""
+        fi
+    done
     for flow in "${FLOWS[@]}"; do
         echo "## $(flow_title "${flow}")"
         echo ""
