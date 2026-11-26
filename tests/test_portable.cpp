@@ -11,6 +11,9 @@
 #include "oyk_printer.hpp"
 #include "../ports/dos/dos_usb.hpp"
 #include "../ports/dos/dos_video.hpp"
+#ifndef __DOS__
+  #include "../ports/windows/win_service.hpp"
+#endif
 
 #include <assert.h>
 #include <stdio.h>
@@ -1818,6 +1821,32 @@ static void test_dos_ui_screen_flows() {
     delete[] sim_vram;
     printf("[PASS] test_dos_ui_screen_flows\n");
 }
+
+static void test_win_service_cmdline_builder() {
+    char buf[512];
+    /* Windows NT default binPath (no config override) */
+    assert(oyk_win_build_service_cmdline("C:\\OYK\\oykw64.exe", NULL, "--service", buf, sizeof(buf)) == 1);
+    assert(strcmp(buf, "\"C:\\OYK\\oykw64.exe\" --service") == 0);
+
+    /* Windows 9x RunServices command with empty config path */
+    assert(oyk_win_build_service_cmdline("C:\\OYK\\oykw32.exe", "", "--headless", buf, sizeof(buf)) == 1);
+    assert(strcmp(buf, "\"C:\\OYK\\oykw32.exe\" --headless") == 0);
+
+    /* Paths containing spaces with --config carried into registry entry */
+    assert(oyk_win_build_service_cmdline("C:\\Program Files\\OYK\\oykw32.exe",
+                                         "C:\\Program Data\\OYK\\node.cfg",
+                                         "--service",
+                                         buf,
+                                         sizeof(buf)) == 1);
+    assert(strcmp(buf, "\"C:\\Program Files\\OYK\\oykw32.exe\" --service --config \"C:\\Program Data\\OYK\\node.cfg\"") == 0);
+
+    /* Invalid / undersized arguments */
+    assert(oyk_win_build_service_cmdline("", NULL, "--service", buf, sizeof(buf)) == 0);
+    assert(oyk_win_build_service_cmdline("C:\\oykw32.exe", NULL, "", buf, sizeof(buf)) == 0);
+    char tiny[12];
+    assert(oyk_win_build_service_cmdline("C:\\OYK\\oykw64.exe", NULL, "--service", tiny, sizeof(tiny)) == 0);
+    printf("[PASS] test_win_service_cmdline_builder\n");
+}
 #endif
 
 int oyk_run_portable_tests() {
@@ -1837,6 +1866,7 @@ int oyk_run_portable_tests() {
     test_portable_same_interface_policy();
 #ifndef __DOS__
     test_dos_ui_screen_flows();
+    test_win_service_cmdline_builder();
 #endif
     return 0;
 }

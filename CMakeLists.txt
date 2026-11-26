@@ -208,15 +208,18 @@ if(BUILD_WINDOWS_PORT)
                         -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
                         -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                         "${_win64_res}"
                         -o "${_win64_exe}"
-                        -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32
+                        -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
                 DEPENDS
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
@@ -257,15 +260,18 @@ if(BUILD_WINDOWS_PORT)
                         -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows"
                         -I "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_yapp.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_rig.cpp"
                         "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_printer.cpp"
                         "${_win32_res}"
                         -o "${_win32_exe}"
-                        -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32
+                        -mwindows -static -lwsock32 -luser32 -lgdi32 -lcomdlg32 -ladvapi32
                 DEPENDS
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_main.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.cpp"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/win_service.hpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.cpp"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/compat/oyk_portable.hpp"
@@ -352,10 +358,12 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
+        ports/windows/win_service.cpp
     )
     target_include_directories(oyk_portable_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/dos
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/windows
     )
     set_target_properties(oyk_portable_tests PROPERTIES
         CXX_STANDARD 98

@@ -27,6 +27,7 @@
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
 #include "resource.h"
+#include "win_service.hpp"
 
 #if defined(_WIN32) || defined(_WIN64)
   #define OYK_DLG_RET         INT_PTR CALLBACK
@@ -127,6 +128,9 @@ struct WinTelnetClient {
 
 static HINSTANCE g_hinst = NULL;
 static HWND g_hwnd_main = NULL;
+static int g_win_headless = 0;
+static int g_win_shutdown_drained = 0;
+static void drain_win_shutdown();
 static HWND g_ctl_header = NULL;
 static HWND g_ctl_badge = NULL;
 static HWND g_ctl_ifaces = NULL;
@@ -3531,6 +3535,15 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CLOSE: {
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_headless) {
+                if (g_node.auto_learned_peer_count() > 0) {
+                    g_node.discard_auto_learned_peers();
+                }
+                DestroyWindow(hwnd);
+                return 0;
+            }
+#endif
             if (g_node.auto_learned_peer_count() > 0) {
                 int act = static_cast<int>(DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EXIT_PEERS),
                                                      hwnd, (DLGPROC)ExitPeersDlgProc));
@@ -3582,6 +3595,21 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(hwnd, 2);
             PostQuitMessage(0);
             return 0;
+#ifdef WM_QUERYENDSESSION
+        case WM_QUERYENDSESSION:
+            return TRUE;
+#endif
+#ifdef WM_ENDSESSION
+        case WM_ENDSESSION:
+            if (wp) {
+                if (g_node.auto_learned_peer_count() > 0) {
+                    g_node.discard_auto_learned_peers();
+                }
+                drain_win_shutdown();
+                WSACleanup();
+            }
+            return 0;
+#endif
     }
     return DefWindowProc(hwnd, msg, wp, lp);
 }
@@ -3722,6 +3750,8 @@ static int has_pending_shutdown_drain() {
 }
 
 static void drain_win_shutdown() {
+    if (g_win_shutdown_drained) return;
+    g_win_shutdown_drained = 1;
     g_node.begin_shutdown();
 
     /* Politely sign off any Telnet clients still sitting at the login prompt */
@@ -3787,6 +3817,9 @@ struct WinCliOpts {
     char override_alias[16];
     oyk_u16 override_port;
     int headless;
+    int install_svc;
+    int uninstall_svc;
+    int service_mode;
     int show_help;
     char error[96];
 };
@@ -3855,6 +3888,13 @@ static int parse_win_cli(const char* cmdline, WinCliOpts* opts) {
             opts->override_port = static_cast<oyk_u16>(pv);
         } else if (strcmp(a, "--headless") == 0) {
             opts->headless = 1;
+        } else if (strcmp(a, "-i") == 0 || strcmp(a, "--install") == 0) {
+            opts->install_svc = 1;
+        } else if (strcmp(a, "-u") == 0 || strcmp(a, "--uninstall") == 0) {
+            opts->uninstall_svc = 1;
+        } else if (strcmp(a, "--service") == 0) {
+            opts->service_mode = 1;
+            opts->headless = 1;
         } else if (a[0] != '-' && !opts->config_path[0]) {
             /* Backward-compatible bare config path argument */
             strncpy(opts->config_path, a, sizeof(opts->config_path) - 1);
@@ -3863,93 +3903,92 @@ static int parse_win_cli(const char* cmdline, WinCliOpts* opts) {
             return 0;
         }
     }
+    if (opts->install_svc && opts->uninstall_svc) {
+        strcpy(opts->error, "Cannot specify both --install and --uninstall");
+        return 0;
+    }
     return 1;
 }
 
 static void show_win_usage() {
-    MessageBox(NULL,
-               "OYK Amateur Radio Packet Node (Windows)\n\n"
-               "Options:\n"
-               "  -c, --config <path>      Load configuration file\n"
-               "      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n"
-               "      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n"
-               "      --port <UDP_PORT>    Override first AXUDP bind port\n"
-               "      --headless           Run without showing GUI window\n"
-               "  -h, --help               Show this help",
-               "OYK Packet Node - Usage",
-               MB_OK | MB_ICONINFORMATION);
+    static const char kUsage[] =
+        "OYK Amateur Radio Packet Node (Windows)\n\n"
+        "Options:\n"
+        "  -c, --config <path>      Load configuration file\n"
+        "      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n"
+        "      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n"
+        "      --port <UDP_PORT>    Override first AXUDP bind port\n"
+        "      --headless           Run without showing GUI window\n"
+        "  -i, --install            Install auto-start service (SCM on NT, RunServices on 9x)\n"
+        "  -u, --uninstall          Remove auto-start service registration\n"
+        "      --service            Run under Windows NT Service Control Manager\n"
+        "  -h, --help               Show this help";
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    oyk_win_report_message("OYK Packet Node - Usage", kUsage, 0);
+#else
+    MessageBox(NULL, kUsage, "OYK Packet Node - Usage", MB_OK | MB_ICONINFORMATION);
+#endif
 }
 
-int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
-    g_hinst = hinst;
-
-    static WinCliOpts cli;
-    if (!parse_win_cli(cmdline, &cli)) {
-        MessageBox(NULL, cli.error, "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
-        show_win_usage();
-        return 1;
-    }
-    if (cli.show_help) {
-        show_win_usage();
+static int win_init_runtime(HINSTANCE hinst, HINSTANCE hprev, const WinCliOpts* cli,
+                            int nshow, char* err, size_t err_sz) {
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(1, 1), &wsa) != 0) {
+        strncpy(err, "Failed to initialize Winsock 1.1.", err_sz - 1);
+        err[err_sz - 1] = '\0';
         return 0;
     }
 
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(1, 1), &wsa) != 0) {
-        MessageBox(NULL, "Failed to initialize Winsock 1.1.", "OYK Packet Node", MB_OK | MB_ICONSTOP);
-        return 1;
-    }
-
     static OykConfig cfg;
-    char cfg_path[128], err[96];
+    char cfg_path[128];
     cfg_path[0] = '\0';
-    if (cli.config_path[0]) {
-        strncpy(cfg_path, cli.config_path, sizeof(cfg_path) - 1);
+    if (cli->config_path[0]) {
+        strncpy(cfg_path, cli->config_path, sizeof(cfg_path) - 1);
         cfg_path[sizeof(cfg_path) - 1] = '\0';
     } else {
         resolve_win_config(cfg_path, sizeof(cfg_path));
     }
 
     if (cfg_path[0]) {
-        if (!oyk_config_load(cfg_path, &cfg, err, sizeof(err))) {
-            MessageBox(NULL, err, "OYK Config Error", MB_OK | MB_ICONSTOP);
+        if (!oyk_config_load(cfg_path, &cfg, err, static_cast<int>(err_sz))) {
             WSACleanup();
-            return 1;
+            return 0;
         }
     } else {
         oyk_config_init_default(&cfg);
     }
 
-    if (cli.override_call[0]) {
-        if (!oyk_parse_callsign_with_default_ssid(cli.override_call, cfg.callsign.ssid, &cfg.callsign)) {
-            MessageBox(NULL, "Invalid --callsign value.", "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+    if (cli->override_call[0]) {
+        if (!oyk_parse_callsign_with_default_ssid(cli->override_call, cfg.callsign.ssid, &cfg.callsign)) {
+            strncpy(err, "Invalid --callsign value.", err_sz - 1);
+            err[err_sz - 1] = '\0';
             WSACleanup();
-            return 1;
+            return 0;
         }
     }
-    if (cli.override_alias[0]) {
-        if (!oyk_parse_callsign(cli.override_alias, &cfg.alias)) {
-            MessageBox(NULL, "Invalid --alias value.", "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+    if (cli->override_alias[0]) {
+        if (!oyk_parse_callsign(cli->override_alias, &cfg.alias)) {
+            strncpy(err, "Invalid --alias value.", err_sz - 1);
+            err[err_sz - 1] = '\0';
             WSACleanup();
-            return 1;
+            return 0;
         }
     }
-    if (cli.override_port > 0 && cfg.iface_count > 0) {
+    if (cli->override_port > 0 && cfg.iface_count > 0) {
         int updated = 0;
         for (int i = 0; i < cfg.iface_count; ++i) {
             if (win_strieq(cfg.ifaces[i].type, "axudp")) {
-                cfg.ifaces[i].port = cli.override_port;
+                cfg.ifaces[i].port = cli->override_port;
                 updated = 1;
                 break;
             }
         }
-        if (!updated) cfg.ifaces[0].port = cli.override_port;
+        if (!updated) cfg.ifaces[0].port = cli->override_port;
     }
 
-    if (!g_node.init(&cfg, win_tx_callback, NULL, err, sizeof(err))) {
-        MessageBox(NULL, err, "OYK Init Error", MB_OK | MB_ICONSTOP);
+    if (!g_node.init(&cfg, win_tx_callback, NULL, err, static_cast<int>(err_sz))) {
         WSACleanup();
-        return 1;
+        return 0;
     }
 
     g_node.set_printer_callback(win_printer_callback, NULL);
@@ -3974,11 +4013,134 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 520,
         NULL, NULL, hinst, NULL);
+    if (!g_hwnd_main) {
+        strncpy(err, "Failed to create main node window.", err_sz - 1);
+        err[err_sz - 1] = '\0';
+        drain_win_shutdown();
+        WSACleanup();
+        return 0;
+    }
 
-    if (!cli.headless) {
+    if (!cli->headless) {
         ShowWindow(g_hwnd_main, nshow);
         UpdateWindow(g_hwnd_main);
     }
+    return 1;
+}
+
+static int win_run_message_loop() {
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
+        if (g_lterm_hwnd && IsDialogMessage(g_lterm_hwnd, &msg)) {
+            continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    return static_cast<int>(msg.wParam);
+}
+
+#if defined(_WIN32) && !defined(OYK_WIN16)
+static WinCliOpts g_svc_cli;
+static HINSTANCE  g_svc_hinst = NULL;
+
+static int win_svc_init_cb(int argc, char* argv[], char* err, size_t err_sz) {
+    (void)argc;
+    (void)argv;
+    g_win_headless = 1;
+    g_hinst = g_svc_hinst;
+    return win_init_runtime(g_svc_hinst, NULL, &g_svc_cli, SW_HIDE, err, err_sz);
+}
+
+static void win_svc_loop_cb(void) {
+    win_run_message_loop();
+    drain_win_shutdown();
+    WSACleanup();
+}
+
+static void win_svc_stop_cb(void) {
+    if (g_hwnd_main) {
+        PostMessage(g_hwnd_main, WM_CLOSE, 0, 0);
+    }
+}
+#endif
+
+int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
+    g_hinst = hinst;
+
+    static WinCliOpts cli;
+    if (!parse_win_cli(cmdline, &cli)) {
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        oyk_win_report_message("OYK Command-Line Error", cli.error, 1);
+#else
+        MessageBox(NULL, cli.error, "OYK Command-Line Error", MB_OK | MB_ICONSTOP);
+#endif
+        show_win_usage();
+        return 1;
+    }
+    if (cli.show_help) {
+        show_win_usage();
+        return 0;
+    }
+
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    if (cli.install_svc) {
+        static char svc_msg[512];
+        int ok = oyk_win_service_install(cli.config_path, svc_msg, sizeof(svc_msg));
+        oyk_win_report_message("OYK Service Install", svc_msg, ok ? 0 : 1);
+        return ok ? 0 : 1;
+    }
+    if (cli.uninstall_svc) {
+        static char svc_msg[512];
+        int ok = oyk_win_service_uninstall(svc_msg, sizeof(svc_msg));
+        oyk_win_report_message("OYK Service Uninstall", svc_msg, ok ? 0 : 1);
+        return ok ? 0 : 1;
+    }
+    if (cli.service_mode) {
+        static char svc_err[256];
+        g_svc_hinst = hinst;
+        g_svc_cli = cli;
+        g_svc_cli.headless = 1;
+        svc_err[0] = '\0';
+        int rc = oyk_win_service_run_nt(win_svc_init_cb, win_svc_loop_cb,
+                                        win_svc_stop_cb, svc_err, sizeof(svc_err));
+        if (rc != 0 && svc_err[0]) {
+            oyk_win_report_message("OYK Service Error", svc_err, 1);
+        }
+        return rc;
+    }
+#else
+    if (cli.install_svc || cli.uninstall_svc || cli.service_mode) {
+        MessageBox(NULL,
+                   "Windows service mode requires 32-bit or 64-bit Windows.",
+                   "OYK Service",
+                   MB_OK | MB_ICONSTOP);
+        return 1;
+    }
+#endif
+
+    g_win_headless = cli.headless;
+
+    char err[128];
+    err[0] = '\0';
+    if (!win_init_runtime(hinst, hprev, &cli, nshow, err, sizeof(err))) {
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        if (cli.headless) {
+            oyk_win_report_message("OYK Startup Error", err, 1);
+        } else {
+            MessageBox(NULL, err, "OYK Startup Error", MB_OK | MB_ICONSTOP);
+        }
+#else
+        MessageBox(NULL, err, "OYK Startup Error", MB_OK | MB_ICONSTOP);
+#endif
+        return 1;
+    }
+
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    if (cli.headless && !oyk_win_is_nt()) {
+        oyk_win_register_9x_service(1);
+    }
+#endif
 
 #if defined(_WIN32) && !defined(OYK_WIN16)
     {
@@ -4005,16 +4167,15 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 #endif
 
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0) > 0) {
-        if (g_lterm_hwnd && IsDialogMessage(g_lterm_hwnd, &msg)) {
-            continue;
-        }
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    int exit_code = win_run_message_loop();
+
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    if (cli.headless && !oyk_win_is_nt()) {
+        oyk_win_register_9x_service(0);
     }
+#endif
 
     drain_win_shutdown();
     WSACleanup();
-    return static_cast<int>(msg.wParam);
+    return exit_code;
 }

@@ -23,12 +23,15 @@ LD  = wlink
 WIN_INC = -I$(WATCOM_DIR)/h -I$(WATCOM_DIR)/h/nt
 CFLAGS  = -3s -os -bt=nt -wx -zq $(WIN_INC) -I../compat
 
-OBJS = win_main32.obj oyk_portable32.obj oyk_yapp32.obj oyk_rig32.obj oyk_printer32.obj
+OBJS = win_main32.obj win_service32.obj oyk_portable32.obj oyk_yapp32.obj oyk_rig32.obj oyk_printer32.obj
 
 all: oykw32.exe
 
-win_main32.obj: win_main.cpp resource.h ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
+win_main32.obj: win_main.cpp win_service.hpp resource.h ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
     $(CC) $(CFLAGS) -fo=win_main32.obj win_main.cpp
+
+win_service32.obj: win_service.cpp win_service.hpp
+    $(CC) $(CFLAGS) -fo=win_service32.obj win_service.cpp
 
 oyk_portable32.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS) -fo=oyk_portable32.obj ../compat/oyk_portable.cpp
@@ -46,7 +49,7 @@ oyk_win32.res: oyk_win.rc resource.h
     $(RC) -bt=nt -q -r -i=$(WATCOM_DIR)/h/nt -fo=oyk_win32.res oyk_win.rc
 
 oykw32.exe: $(OBJS) oyk_win32.res
-    $(LD) system nt_win name oykw32.exe file { $(OBJS) } library wsock32.lib,comdlg32.lib resource oyk_win32.res
+    $(LD) system nt_win name oykw32.exe file { $(OBJS) } library wsock32.lib,comdlg32.lib,advapi32.lib resource oyk_win32.res
 
 clean: .SYMBOLIC
 !ifdef __UNIX__
