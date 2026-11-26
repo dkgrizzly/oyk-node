@@ -101,8 +101,12 @@ void append_iface_lines(const radio::RadioInterfaceConfig& iface, std::vector<st
     lines.push_back(std::string("allow_inbound = ") + (iface.allow_inbound ? "true" : "false"));
     const bool out_allowed = (iface.type == "telnet") ? false : iface.allow_outbound;
     lines.push_back(std::string("allow_outbound = ") + (out_allowed ? "true" : "false"));
+    const bool same_allowed = (iface.type == "telnet") ? false : iface.allow_same_interface;
+    lines.push_back(std::string("allow_same_interface = ") + (same_allowed ? "true" : "false"));
     for (const auto& [k, v] : iface.params) {
-        if (k == "allow_inbound" || k == "allow_outbound" || k == "inbound" || k == "outbound") continue;
+        if (k == "allow_inbound" || k == "allow_outbound" ||
+            k == "allow_same_interface" || k == "same_interface" ||
+            k == "inbound" || k == "outbound") continue;
         lines.push_back(k + " = " + v);
     }
 }
@@ -623,13 +627,18 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
-                if (current_iface->type == "telnet") current_iface->allow_outbound = false;
+                if (current_iface->type == "telnet") {
+                    current_iface->allow_outbound = false;
+                    current_iface->allow_same_interface = false;
+                }
             } else if (key == "description") {
                 current_iface->description = val;
             } else if (key == "allow_inbound" || key == "inbound") {
                 current_iface->allow_inbound = parse_bool(val, true);
             } else if (key == "allow_outbound" || key == "outbound") {
                 current_iface->allow_outbound = (current_iface->type == "telnet") ? false : parse_bool(val, true);
+            } else if (key == "allow_same_interface" || key == "same_interface") {
+                current_iface->allow_same_interface = (current_iface->type == "telnet") ? false : parse_bool(val, false);
             } else if (key == "peer") {
                 if (!val.empty()) {
                     current_iface->peers.push_back(val);

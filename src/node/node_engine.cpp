@@ -1674,6 +1674,16 @@ void NodeEngine::start_outbound_connect(Session& inbound_sess,
         log_msg(LOG_WARNING, "Blocked outbound connect on " + port_id + " (allow_outbound=false)");
         return;
     }
+    if (inbound_sess.mode() != SessionMode::LocalTerminal &&
+        !inbound_sess.interface_id().empty() &&
+        to_lower(inbound_sess.interface_id()) == to_lower(port_id) &&
+        iface_cfg && !iface_cfg->allow_same_interface) {
+        auto ev = inbound_sess.queue_text(
+            "Connection refused: same-interface forwarding on interface '" + port_id + "' is disabled.\r" + prompt_string());
+        queue_session_frames(inbound_sess, ev.tx_frames, pending);
+        log_msg(LOG_WARNING, "Blocked same-interface connect on " + port_id + " (allow_same_interface=false)");
+        return;
+    }
 
     std::string peer_ep;
     if (const auto* peer = find_peer_locked(port_id, *target)) {
@@ -1965,6 +1975,7 @@ bool iface_cfg_equal(const radio::RadioInterfaceConfig& a,
            a.description == b.description &&
            a.allow_inbound == b.allow_inbound &&
            a.allow_outbound == b.allow_outbound &&
+           a.allow_same_interface == b.allow_same_interface &&
            a.params == b.params &&
            a.peers == b.peers;
 }
@@ -2003,6 +2014,7 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
             }
             if (ic.type == "telnet") {
                 ic.allow_outbound = false;
+                ic.allow_same_interface = false;
             }
         }
         if (!radio::validate_iface_and_peer_addresses(new_cfg.interfaces, new_cfg.peers, result.error)) {

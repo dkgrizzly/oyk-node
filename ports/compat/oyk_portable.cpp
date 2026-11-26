@@ -1004,6 +1004,7 @@ void oyk_config_init_default(OykConfig* cfg) {
     cfg->ifaces[0].port = 10093;
     cfg->ifaces[0].block_inbound = 0;
     cfg->ifaces[0].block_outbound = 0;
+    cfg->ifaces[0].allow_same_interface = 0;
 }
 
 static void resolve_cfg_subpath(const char* base_cfg_path, const char* raw, char* out, size_t out_sz) {
@@ -1372,6 +1373,7 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                     cur_if->baud = 9600;
                     cur_if->block_inbound = 0;
                     cur_if->block_outbound = 0;
+                    cur_if->allow_same_interface = 0;
                     section = 2;
                     cur_peer = NULL;
                 } else {
@@ -1479,7 +1481,10 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
         } else if (section == 2 && cur_if) {
             if (stricmp_ascii(k, "type") == 0) {
                 safe_copy(cur_if->type, sizeof(cur_if->type), v);
-                if (stricmp_ascii(cur_if->type, "telnet") == 0) cur_if->block_outbound = 1;
+                if (stricmp_ascii(cur_if->type, "telnet") == 0) {
+                    cur_if->block_outbound = 1;
+                    cur_if->allow_same_interface = 0;
+                }
             } else if (stricmp_ascii(k, "description") == 0) {
                 safe_copy(cur_if->description, sizeof(cur_if->description), v);
             } else if (stricmp_ascii(k, "host") == 0 || stricmp_ascii(k, "bind_host") == 0) {
@@ -1503,6 +1508,11 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                     (stricmp_ascii(cur_if->type, "telnet") == 0)
                         ? 1
                         : ((stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1));
+            } else if (stricmp_ascii(k, "allow_same_interface") == 0 || stricmp_ascii(k, "same_interface") == 0) {
+                cur_if->allow_same_interface = static_cast<oyk_u8>(
+                    (stricmp_ascii(cur_if->type, "telnet") == 0)
+                        ? 0
+                        : ((stricmp_ascii(v, "true") == 0 || strcmp(v, "1") == 0 || stricmp_ascii(v, "yes") == 0) ? 1 : 0));
             } else if (stricmp_ascii(k, "auto_learn") == 0) {
                 cur_if->no_auto_learn = (stricmp_ascii(v, "false") == 0 || strcmp(v, "0") == 0 ||
                                          stricmp_ascii(v, "no") == 0 || stricmp_ascii(v, "off") == 0) ? 1 : 0;
@@ -1745,11 +1755,13 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
         cfg->ifaces[0].port = 10093;
         cfg->ifaces[0].block_inbound = 0;
         cfg->ifaces[0].block_outbound = 0;
+        cfg->ifaces[0].allow_same_interface = 0;
     }
 
     for (int i = 0; i < cfg->iface_count; ++i) {
         if (stricmp_ascii(cfg->ifaces[i].type, "telnet") == 0) {
             cfg->ifaces[i].block_outbound = 1;
+            cfg->ifaces[i].allow_same_interface = 0;
         }
         if (stricmp_ascii(cfg->ifaces[i].type, "axudp") == 0 ||
             stricmp_ascii(cfg->ifaces[i].type, "axip") == 0) {
@@ -1813,6 +1825,8 @@ static void write_portable_iface_section(FILE* fp, const OykIfaceConfig* ic, con
     fprintf(fp, "allow_inbound = %s%s", ic->block_inbound ? "false" : "true", nl);
     fprintf(fp, "allow_outbound = %s%s",
             (stricmp_ascii(ic->type, "telnet") == 0 || ic->block_outbound) ? "false" : "true", nl);
+    fprintf(fp, "allow_same_interface = %s%s",
+            (stricmp_ascii(ic->type, "telnet") != 0 && ic->allow_same_interface) ? "true" : "false", nl);
     if (ic->no_auto_learn) {
         fprintf(fp, "auto_learn = false%s", nl);
     }
@@ -2061,6 +2075,7 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
     for (int i = 0; i < iface_count_; ++i) {
         if (stricmp_ascii(cfg_.ifaces[i].type, "telnet") == 0) {
             cfg_.ifaces[i].block_outbound = 1;
+            cfg_.ifaces[i].allow_same_interface = 0;
         }
         ifaces_[i].cfg = cfg_.ifaces[i];
         ifaces_[i].running = 0;
@@ -5056,6 +5071,78 @@ void OykPortableNode::handle_normal_command(OykSession* sess, const char* raw_li
         send_disc(sess);
         sess->state = OYK_SESS_FREE;
         return;
+    } else if (((cmd[0] == 'C' || cmd[0] == 'c') && (cmd[1] == ' ' || cmd[1] == '\t')) ||
+               ((strlen(cmd) > 8) && (cmd[7] == ' ' || cmd[7] == '\t') &&
+                (cmd[0] == 'C' || cmd[0] == 'c') && (cmd[1] == 'O' || cmd[1] == 'o') &&
+                (cmd[2] == 'N' || cmd[2] == 'n') && (cmd[3] == 'N' || cmd[3] == 'n') &&
+                (cmd[4] == 'E' || cmd[4] == 'e') && (cmd[5] == 'C' || cmd[5] == 'c') &&
+                (cmd[6] == 'T' || cmd[6] == 't'))) {
+        const char* rest = (cmd[1] == ' ' || cmd[1] == '\t') ? (cmd + 2) : (cmd + 8);
+        while (*rest == ' ' || *rest == '\t') ++rest;
+        char port_tok[24], call_tok[24];
+        port_tok[0] = '\0';
+        call_tok[0] = '\0';
+        int pi = 0;
+        while (*rest && *rest != ' ' && *rest != '\t' && pi + 1 < static_cast<int>(sizeof(port_tok))) {
+            port_tok[pi++] = *rest++;
+        }
+        port_tok[pi] = '\0';
+        while (*rest == ' ' || *rest == '\t') ++rest;
+        int ci = 0;
+        while (*rest && *rest != ' ' && *rest != '\t' && ci + 1 < static_cast<int>(sizeof(call_tok))) {
+            call_tok[ci++] = *rest++;
+        }
+        call_tok[ci] = '\0';
+        if (!port_tok[0] || !call_tok[0]) {
+            send_text(sess, "Usage: CONNECT <port> <callsign>\r");
+        } else {
+            int tidx = -1;
+            for (int ii = 0; ii < iface_count_; ++ii) {
+                if (stricmp_ascii(ifaces_[ii].cfg.id, port_tok) == 0) {
+                    tidx = ii;
+                    break;
+                }
+            }
+            if (tidx < 0) {
+                int pnum = atoi(port_tok);
+                if (pnum >= 1 && pnum <= iface_count_) tidx = pnum - 1;
+            }
+            if (tidx < 0) {
+                char msg[64];
+                sprintf(msg, "Unknown port '%s'.\r", port_tok);
+                send_text(sess, msg);
+            } else if (ifaces_[tidx].cfg.block_outbound ||
+                       stricmp_ascii(ifaces_[tidx].cfg.type, "telnet") == 0) {
+                char msg[112];
+                sprintf(msg, "Connection refused: outbound connections on interface '%s' are disabled.\r",
+                        ifaces_[tidx].cfg.id);
+                send_text(sess, msg);
+                char wmsg[88];
+                sprintf(wmsg, "Blocked outbound connect on %s (allow_outbound=false)", ifaces_[tidx].cfg.id);
+                log_message(OYK_LOG_WARNING, wmsg);
+            } else if (!can_forward_between_ifaces(sess->iface_idx, tidx)) {
+                char msg[112];
+                sprintf(msg, "Connection refused: same-interface forwarding on interface '%s' is disabled.\r",
+                        ifaces_[tidx].cfg.id);
+                send_text(sess, msg);
+                char wmsg[96];
+                sprintf(wmsg, "Blocked same-interface connect on %s (allow_same_interface=false)",
+                        ifaces_[tidx].cfg.id);
+                log_message(OYK_LOG_WARNING, wmsg);
+            } else {
+                OykCallsign tc;
+                if (!oyk_parse_callsign(call_tok, &tc)) {
+                    char msg[64];
+                    sprintf(msg, "Invalid callsign '%s'.\r", call_tok);
+                    send_text(sess, msg);
+                } else {
+                    char tcs[16], msg[80];
+                    oyk_format_callsign(&tc, tcs, sizeof(tcs));
+                    sprintf(msg, "*** Connecting to %s via %s...\r", tcs, ifaces_[tidx].cfg.id);
+                    send_text(sess, msg);
+                }
+            }
+        }
     } else {
         send_text(sess, "Unknown command. Type HELP.\r");
     }
@@ -5086,6 +5173,16 @@ void OykPortableNode::set_accept_incoming(int allow) {
                 allow ? "Incoming connections ALLOWED" : "Incoming connections DENIED");
 }
 
+int OykPortableNode::can_forward_between_ifaces(int src_iface_idx, int dst_iface_idx) const {
+    if (dst_iface_idx < 0 || dst_iface_idx >= iface_count_) return 0;
+    if (src_iface_idx >= 0 && src_iface_idx == dst_iface_idx &&
+        (!ifaces_[dst_iface_idx].cfg.allow_same_interface ||
+         stricmp_ascii(ifaces_[dst_iface_idx].cfg.type, "telnet") == 0)) {
+        return 0;
+    }
+    return 1;
+}
+
 static int portable_iface_eq(const OykIfaceConfig* a, const OykIfaceConfig* b) {
     if (strcmp(a->id, b->id) != 0) return 0;
     if (stricmp_ascii(a->type, b->type) != 0) return 0;
@@ -5099,6 +5196,7 @@ static int portable_iface_eq(const OykIfaceConfig* a, const OykIfaceConfig* b) {
     if (a->server_mode != b->server_mode) return 0;
     if (a->block_inbound != b->block_inbound) return 0;
     if (a->block_outbound != b->block_outbound) return 0;
+    if (a->allow_same_interface != b->allow_same_interface) return 0;
     if (a->peer_count != b->peer_count) return 0;
     for (int i = 0; i < a->peer_count; ++i) {
         if (strcmp(a->peers[i].callsign, b->peers[i].callsign) != 0 ||
@@ -5157,6 +5255,7 @@ int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
     for (int i = 0; i < next_cfg.iface_count; ++i) {
         if (stricmp_ascii(next_cfg.ifaces[i].type, "telnet") == 0) {
             next_cfg.ifaces[i].block_outbound = 1;
+            next_cfg.ifaces[i].allow_same_interface = 0;
         }
         if (stricmp_ascii(next_cfg.ifaces[i].type, "axudp") == 0 ||
             stricmp_ascii(next_cfg.ifaces[i].type, "axip") == 0) {

@@ -48,6 +48,7 @@ struct RadioInterfaceConfig {
     std::string description; // Human-readable label
     bool allow_inbound = true;
     bool allow_outbound = true;
+    bool allow_same_interface = false;
     std::map<std::string, std::string> params;
     std::vector<std::string> peers; // Optional peer specs (driver-defined)
 };

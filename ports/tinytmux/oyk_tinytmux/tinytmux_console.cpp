@@ -1038,19 +1038,19 @@ static oyk_u8 tmux_cycle_lpol(oyk_u8 cur, int dir) {
 int TinyTmuxConsole::wizard_step_field_count() const {
     if (wiz_step_ == 1) return 2;
     if (wiz_step_ == 2) {
-        if (wiz_drv_ == 0) return 7;
-        if (wiz_drv_ == 1 || wiz_drv_ == 4) return 6;
+        if (wiz_drv_ == 0) return 8;
+        if (wiz_drv_ == 1 || wiz_drv_ == 4) return 7;
         if (wiz_drv_ == 6) return 3;
-        return 5;
+        return 6;
     }
     return 0;
 }
 
 int TinyTmuxConsole::edit_iface_field_count() const {
-    if (wiz_drv_ == 0) return 10;
-    if (wiz_drv_ == 1 || wiz_drv_ == 4) return 9;
+    if (wiz_drv_ == 0) return 11;
+    if (wiz_drv_ == 1 || wiz_drv_ == 4) return 10;
     if (wiz_drv_ == 6) return 6;
-    return 8;
+    return 9;
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::open_add_iface_wizard() {
@@ -1101,7 +1101,8 @@ OYK_FLASHMEM void TinyTmuxConsole::open_edit_iface_dialog(int edit_idx) {
     wiz_flags_ = static_cast<oyk_u8>(
         (ic.block_inbound ? 0U : 1U) |
         ((wiz_drv_ == 6 || ic.block_outbound) ? 0U : 2U) |
-        ((static_cast<oyk_u8>(ic.learned_peer_policy) & 0x07U) << 2));
+        ((static_cast<oyk_u8>(ic.learned_peer_policy) & 0x07U) << 2) |
+        ((wiz_drv_ != 6 && ic.allow_same_interface) ? 0x20U : 0U));
     if (strieq_ci(ic.type, "ppp") || strieq_ci(ic.type, "kiss-serial") ||
         strieq_ci(ic.type, "usb-cdc-serial")) {
         con_str_copy(wiz_ep_, sizeof(wiz_ep_), ic.device[0] ? ic.device : "ser0");
@@ -1164,6 +1165,7 @@ OYK_FLASHMEM void TinyTmuxConsole::commit_iface_fields(int slot) {
     con_str_copy(ic.description, sizeof(ic.description), wiz_desc_);
     ic.block_inbound = (wiz_flags_ & 1U) ? 0 : 1;
     ic.block_outbound = (wiz_drv_ == 6 || (wiz_flags_ & 2U) == 0U) ? 1 : 0;
+    ic.allow_same_interface = (wiz_drv_ != 6 && (wiz_flags_ & 0x20U) != 0U) ? 1 : 0;
     ic.learned_peer_policy = (wiz_drv_ == 6) ? OYK_LEARN_INHERIT : static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U);
 
     if (strieq_ci(ic.type, "usb-cdc-net")) {
@@ -1236,7 +1238,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
     char buf[192];
-    const int top = 3, left = 6, h = 18, w = 68;
+    const int top = 3, left = 6, h = 19, w = 68;
     draw_dec_box(top, left, h, w, "Add Interface", 1);
 
     /* Top-right progress indicator on caption border */
@@ -1322,9 +1324,17 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
         if (wiz_drv_ == 6) {
             sprintf(buf, "\033[%d;%dHAllow Outbound : [OFF] (disabled for telnet)", r, left + 3);
             write_str(buf);
+            ++r;
+            sprintf(buf, "\033[%d;%dHSame-Iface Fwd : [OFF] (disabled for telnet)", r, left + 3);
+            write_str(buf);
         } else {
+            const int asame = (wiz_flags_ & 0x20U) ? 1 : 0;
             sprintf(buf, "\033[%d;%dHAllow Outbound : %s %-12.12s \033[0m",
                     r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", aout ? "[ON]" : "[OFF]");
+            write_str(buf);
+            ++r; ++fi;
+            sprintf(buf, "\033[%d;%dHSame-Iface Fwd : %s %-12.12s \033[0m",
+                    r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", asame ? "[ON]" : "[OFF]");
             write_str(buf);
             ++r; ++fi;
             sprintf(buf, "\033[%d;%dHLearned Policy : %s < %s > \033[0m",
@@ -1359,10 +1369,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
                     wiz_peer_[0] ? wiz_peer_ : "(auto-learn)");
             write_str(buf);
         }
-        sprintf(buf, "\033[%d;%dHDirections   : In=%s  Out=%s  Learn=%s",
+        sprintf(buf, "\033[%d;%dHPolicy       : In=%s  Out=%s  SameIf=%s  Learn=%s",
                 top + 10, left + 3,
                 ain ? "ON" : "OFF",
-                (wiz_drv_ == 6) ? "OFF(locked)" : (aout ? "ON" : "OFF"),
+                (wiz_drv_ == 6) ? "OFF" : (aout ? "ON" : "OFF"),
+                (wiz_drv_ == 6) ? "OFF" : ((wiz_flags_ & 0x20U) ? "ON" : "OFF"),
                 (wiz_drv_ == 6) ? "n/a" : oyk_format_learned_policy(lpol));
         write_str(buf);
         sprintf(buf, "\033[%d;%dH%sPress Finish to add this interface to your Settings draft.\033[0m",
@@ -1371,17 +1382,17 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
     }
 
     if (wiz_err_[0]) {
-        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 14, left + 2, sgr_warn(), wiz_err_);
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 15, left + 2, sgr_warn(), wiz_err_);
         write_str(buf);
     }
 
-    draw_dec_hdiv(top + 15, left, w);
+    draw_dec_hdiv(top + 16, left, w);
 
     int fcnt = wizard_step_field_count();
     int on_bar = (wiz_step_ == 0 || wiz_step_ == 3 || wiz_focus_ == fcnt);
     const char* next_lbl = (wiz_step_ == 3) ? "[ Finish ]" : "[ Next > ]";
     sprintf(buf, "\033[%d;%dH%s %s \033[0m  %s %s \033[0m  %s [ Cancel ] \033[0m  %s",
-            top + 16, left + 2,
+            top + 17, left + 2,
             (wiz_step_ == 0) ? "" : ((on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar()),
             (wiz_step_ == 0) ? "          " : "[ < Back ]",
             (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar(),
@@ -1393,7 +1404,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
     char buf[192];
-    const int top = 3, left = 6, h = 18, w = 68;
+    const int top = 3, left = 6, h = 19, w = 68;
     draw_dec_box(top, left, h, w, "Edit Interface", 1);
 
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
@@ -1452,9 +1463,17 @@ OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
     if (wiz_drv_ == 6) {
         sprintf(buf, "\033[%d;%dHAllow Outbound : [OFF] (disabled for telnet)", r, left + 3);
         write_str(buf);
+        ++r;
+        sprintf(buf, "\033[%d;%dHSame-Iface Fwd : [OFF] (disabled for telnet)", r, left + 3);
+        write_str(buf);
     } else {
+        const int asame = (wiz_flags_ & 0x20U) ? 1 : 0;
         sprintf(buf, "\033[%d;%dHAllow Outbound : %s %-12.12s \033[0m",
                 r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", aout ? "[ON]" : "[OFF]");
+        write_str(buf);
+        ++r; ++fi;
+        sprintf(buf, "\033[%d;%dHSame-Iface Fwd : %s %-12.12s \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", asame ? "[ON]" : "[OFF]");
         write_str(buf);
         ++r; ++fi;
         sprintf(buf, "\033[%d;%dHLearned Policy : %s < %s > \033[0m",
@@ -1463,16 +1482,16 @@ OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
     }
 
     if (wiz_err_[0]) {
-        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 14, left + 2, sgr_warn(), wiz_err_);
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 15, left + 2, sgr_warn(), wiz_err_);
         write_str(buf);
     }
 
-    draw_dec_hdiv(top + 15, left, w);
+    draw_dec_hdiv(top + 16, left, w);
 
     int fcnt = edit_iface_field_count();
     int on_bar = (wiz_focus_ == fcnt);
     sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
-            top + 16, left + 2,
+            top + 17, left + 2,
             (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
             (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
     write_str(buf);
@@ -2256,10 +2275,11 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_edit_iface_key(int key) {
         if (key == ' ' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
             if (rel == 0) wiz_flags_ ^= 1U;
             else if (rel == 1 && wiz_drv_ != 6) wiz_flags_ ^= 2U;
-            else if (rel == 2 && wiz_drv_ != 6) {
+            else if (rel == 2 && wiz_drv_ != 6) wiz_flags_ ^= 0x20U;
+            else if (rel == 3 && wiz_drv_ != 6) {
                 oyk_u8 lp = tmux_cycle_lpol(static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U),
                                             (key == TMUX_KEY_LEFT) ? -1 : 1);
-                wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x03U) | ((lp & 0x07U) << 2));
+                wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x23U) | ((lp & 0x07U) << 2));
             }
             render();
         } else if (key == '\r' || key == '\n') {
@@ -2407,10 +2427,11 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
             if (key == ' ' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
                 if (rel == 0) wiz_flags_ ^= 1U;
                 else if (rel == 1 && wiz_drv_ != 6) wiz_flags_ ^= 2U;
-                else if (rel == 2 && wiz_drv_ != 6) {
+                else if (rel == 2 && wiz_drv_ != 6) wiz_flags_ ^= 0x20U;
+                else if (rel == 3 && wiz_drv_ != 6) {
                     oyk_u8 lp = tmux_cycle_lpol(static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U),
                                                 (key == TMUX_KEY_LEFT) ? -1 : 1);
-                    wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x03U) | ((lp & 0x07U) << 2));
+                    wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x23U) | ((lp & 0x07U) << 2));
                 }
                 render();
             } else if (key == '\r' || key == '\n') {

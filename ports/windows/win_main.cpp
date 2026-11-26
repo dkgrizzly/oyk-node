@@ -2155,6 +2155,7 @@ static void win_build_iface_config(int drv,
                                    const char* peer_b,
                                    int allow_in,
                                    int allow_out,
+                                   int allow_same,
                                    int lpol_idx,
                                    const OykIfaceConfig* prev_ic,
                                    OykIfaceConfig* out_ic) {
@@ -2164,6 +2165,7 @@ static void win_build_iface_config(int drv,
     strncpy(out_ic->description, desc_b, sizeof(out_ic->description) - 1);
     out_ic->block_inbound = allow_in ? 0 : 1;
     out_ic->block_outbound = (drv == 4 || !allow_out) ? 1 : 0;
+    out_ic->allow_same_interface = (drv != 4 && allow_same) ? 1 : 0;
     out_ic->learned_peer_policy = (drv == 4 || lpol_idx < 0 || lpol_idx > 4)
                                       ? OYK_LEARN_INHERIT
                                       : static_cast<oyk_u8>(lpol_idx);
@@ -2236,12 +2238,15 @@ static void sync_win_wiz_ui(HWND hdlg) {
         if (g_wiz_drv == 4) {
             CheckDlgButton(hdlg, IDC_AIF_OUT, 0);
             EnableWindow(GetDlgItem(hdlg, IDC_AIF_OUT), FALSE);
+            CheckDlgButton(hdlg, IDC_AIF_SAME, 0);
+            EnableWindow(GetDlgItem(hdlg, IDC_AIF_SAME), FALSE);
         } else {
             EnableWindow(GetDlgItem(hdlg, IDC_AIF_OUT), TRUE);
+            EnableWindow(GetDlgItem(hdlg, IDC_AIF_SAME), TRUE);
         }
     } else {
         SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Review interface settings before committing:");
-        char id_b[24], desc_b[64], host_b[48], port_b[16], mask_b[24], peer_b[64], sum[480];
+        char id_b[24], desc_b[64], host_b[48], port_b[16], mask_b[24], peer_b[64], sum[540];
         GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
         GetDlgItemText(hdlg, IDC_AIF_DESC, desc_b, sizeof(desc_b));
         GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
@@ -2250,30 +2255,32 @@ static void sync_win_wiz_ui(HWND hdlg) {
         GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
         int ain = IsDlgButtonChecked(hdlg, IDC_AIF_IN) ? 1 : 0;
         int aout = (g_wiz_drv != 4 && IsDlgButtonChecked(hdlg, IDC_AIF_OUT)) ? 1 : 0;
+        int asame = (g_wiz_drv != 4 && IsDlgButtonChecked(hdlg, IDC_AIF_SAME)) ? 1 : 0;
         int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_LPOL, CB_GETCURSEL, 0, 0));
         const char* lp_s = oyk_format_learned_policy(static_cast<oyk_u8>(lpol >= 0 ? lpol : 0));
         if (g_wiz_drv == 2) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nSerial Device: %s\r\nBaud Rate:     %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nSerial Device: %s\r\nBaud Rate:     %s\r\nAllow In/Out:  %s / %s\r\nSame-Iface:    %s\r\nLearned Pol:   %s",
                     drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
-                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
+                    ain ? "true" : "false", aout ? "true" : "false", asame ? "true" : "false", lp_s);
         } else if (g_wiz_drv == 1) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nSame-Iface:    %s\r\nLearned Pol:   %s",
                     drv, id_b, desc_b[0] ? desc_b : "(none)", host_b,
                     mask_b[0] ? mask_b : "(any)", peer_b[0] ? peer_b : "(auto-learn)",
-                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
+                    ain ? "true" : "false", aout ? "true" : "false", asame ? "true" : "false", lp_s);
         } else if (g_wiz_drv == 0) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nUDP Port:      %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nUDP Port:      %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nSame-Iface:    %s\r\nLearned Pol:   %s",
                     drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
                     mask_b[0] ? mask_b : "(any)", peer_b[0] ? peer_b : "(auto-learn)",
-                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
+                    ain ? "true" : "false", aout ? "true" : "false", asame ? "true" : "false", lp_s);
         } else {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nHost / IP:     %s\r\nTCP Port:      %s\r\nAllow In/Out:  %s / %s",
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nHost / IP:     %s\r\nTCP Port:      %s\r\nAllow In/Out:  %s / %s\r\nSame-Iface:    %s",
                     drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
-                    ain ? "true" : "false", (g_wiz_drv == 4) ? "false (disabled)" : (aout ? "true" : "false"));
+                    ain ? "true" : "false", (g_wiz_drv == 4) ? "false (disabled)" : (aout ? "true" : "false"),
+                    (g_wiz_drv == 4) ? "false (disabled)" : (asame ? "true" : "false"));
         }
         SetDlgItemText(hdlg, IDC_AIF_SUMMARY, sum);
     }
@@ -2298,6 +2305,7 @@ static void sync_win_wiz_ui(HWND hdlg) {
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_PEER),   show_peer ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_IN),     show_s2 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_OUT),    show_s2 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_SAME),   show_s2 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_LPOL), show_lpol ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_LPOL),   show_lpol ? SW_SHOW : SW_HIDE);
 
@@ -2323,6 +2331,7 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             win_fill_lpol_combo(GetDlgItem(hdlg, IDC_AIF_LPOL), 0);
             CheckDlgButton(hdlg, IDC_AIF_IN, BST_CHECKED);
             CheckDlgButton(hdlg, IDC_AIF_OUT, BST_CHECKED);
+            CheckDlgButton(hdlg, IDC_AIF_SAME, 0);
             SetWindowText(hdlg, "Add Interface");
             g_wiz_step = 0;
             g_wiz_drv = 0;
@@ -2429,9 +2438,10 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
                 int ain = IsDlgButtonChecked(hdlg, IDC_AIF_IN) ? 1 : 0;
                 int aout = IsDlgButtonChecked(hdlg, IDC_AIF_OUT) ? 1 : 0;
+                int asame = IsDlgButtonChecked(hdlg, IDC_AIF_SAME) ? 1 : 0;
                 int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_LPOL, CB_GETCURSEL, 0, 0));
                 win_build_iface_config(g_wiz_drv, id_b, desc_b, host_b, port_b, mask_b, peer_b,
-                                       ain, aout, lpol, NULL, &g_add_if_out);
+                                       ain, aout, asame, lpol, NULL, &g_add_if_out);
                 g_add_if_ok = 1;
                 EndDialog(hdlg, IDOK);
                 return TRUE;
@@ -2462,8 +2472,11 @@ static void sync_win_edit_iface_ui(HWND hdlg, int drv) {
     if (drv == 4) {
         CheckDlgButton(hdlg, IDC_EIF_OUT, 0);
         EnableWindow(GetDlgItem(hdlg, IDC_EIF_OUT), FALSE);
+        CheckDlgButton(hdlg, IDC_EIF_SAME, 0);
+        EnableWindow(GetDlgItem(hdlg, IDC_EIF_SAME), FALSE);
     } else {
         EnableWindow(GetDlgItem(hdlg, IDC_EIF_OUT), TRUE);
+        EnableWindow(GetDlgItem(hdlg, IDC_EIF_SAME), TRUE);
     }
 }
 
@@ -2493,6 +2506,7 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_EIF_ERR, "");
             CheckDlgButton(hdlg, IDC_EIF_IN, ic.block_inbound ? 0 : BST_CHECKED);
             CheckDlgButton(hdlg, IDC_EIF_OUT, (g_edit_if_drv == 4 || ic.block_outbound) ? 0 : BST_CHECKED);
+            CheckDlgButton(hdlg, IDC_EIF_SAME, (g_edit_if_drv != 4 && ic.allow_same_interface) ? BST_CHECKED : 0);
             win_fill_lpol_combo(GetDlgItem(hdlg, IDC_EIF_LPOL), static_cast<int>(ic.learned_peer_policy));
             if (g_edit_if_drv == 2) {
                 char bb[16];
@@ -2529,6 +2543,7 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     SetDlgItemText(hdlg, IDC_EIF_MASK, "");
                     SetDlgItemText(hdlg, IDC_EIF_PEER, "");
                     CheckDlgButton(hdlg, IDC_EIF_OUT, (g_edit_if_drv != 4) ? BST_CHECKED : 0);
+                    CheckDlgButton(hdlg, IDC_EIF_SAME, 0);
                     SetDlgItemText(hdlg, IDC_EIF_ERR, "");
                     sync_win_edit_iface_ui(hdlg, g_edit_if_drv);
                 }
@@ -2587,9 +2602,10 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         : NULL;
                 int ain = IsDlgButtonChecked(hdlg, IDC_EIF_IN) ? 1 : 0;
                 int aout = IsDlgButtonChecked(hdlg, IDC_EIF_OUT) ? 1 : 0;
+                int asame = IsDlgButtonChecked(hdlg, IDC_EIF_SAME) ? 1 : 0;
                 int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_EIF_LPOL, CB_GETCURSEL, 0, 0));
                 win_build_iface_config(g_edit_if_drv, id_b, desc_b, host_b, port_b, mask_b, peer_b,
-                                       ain, aout, lpol, prev, &g_add_if_out);
+                                       ain, aout, asame, lpol, prev, &g_add_if_out);
                 g_add_if_ok = 1;
                 EndDialog(hdlg, IDOK);
                 return TRUE;

@@ -1788,6 +1788,7 @@ struct DosAddWizState {
     char peer[32];
     int allow_in;
     int allow_out;
+    int allow_same;
     oyk_u8 lpol;
     char err[64];
 };
@@ -1814,12 +1815,14 @@ static void dos_iface_apply_driver_defaults(int drv,
                                             char* peer,
                                             int* allow_in,
                                             int* allow_out,
+                                            int* allow_same,
                                             oyk_u8* lpol) {
     const char* t = DOS_IFACE_TYPES[drv];
     mask[0] = '\0';
     peer[0] = '\0';
     *allow_in = 1;
     *allow_out = (drv == 4) ? 0 : 1;
+    *allow_same = 0;
     *lpol = OYK_LEARN_INHERIT;
     if (strcmp(t, "kiss-serial") == 0) {
         strcpy(ep, "COM1");
@@ -1850,6 +1853,7 @@ static void dos_build_iface_config(int drv,
                                    const char* peer,
                                    int allow_in,
                                    int allow_out,
+                                   int allow_same,
                                    oyk_u8 lpol,
                                    const OykIfaceConfig* prev_ic,
                                    OykIfaceConfig* out_ic) {
@@ -1859,6 +1863,7 @@ static void dos_build_iface_config(int drv,
     strncpy(out_ic->description, desc, sizeof(out_ic->description) - 1);
     out_ic->block_inbound = allow_in ? 0 : 1;
     out_ic->block_outbound = (drv == 4 || !allow_out) ? 1 : 0;
+    out_ic->allow_same_interface = (drv != 4 && allow_same) ? 1 : 0;
     out_ic->learned_peer_policy = (drv == 4) ? OYK_LEARN_INHERIT : lpol;
     if (drv == 1 || drv == 2) {
         strncpy(out_ic->device, ep, sizeof(out_ic->device) - 1);
@@ -1903,10 +1908,10 @@ static void dos_build_iface_config(int drv,
 static int dos_wiz_field_count(const DosAddWizState* st) {
     if (st->step == 1) return 2;
     if (st->step == 2) {
-        if (st->drv == 0) return 7;
-        if (st->drv == 3) return 6;
+        if (st->drv == 0) return 8;
+        if (st->drv == 3) return 7;
         if (st->drv == 4) return 3;
-        return 5;
+        return 6;
     }
     return 0;
 }
@@ -1915,7 +1920,7 @@ static void dos_wiz_apply_defaults(const OykConfig* draft, DosAddWizState* st) {
     oyk_derive_default_iface_id(draft, DOS_IFACE_TYPES[st->drv], st->id, sizeof(st->id));
     st->desc[0] = '\0';
     dos_iface_apply_driver_defaults(st->drv, st->ep, st->port, st->mask, st->peer,
-                                    &st->allow_in, &st->allow_out, &st->lpol);
+                                    &st->allow_in, &st->allow_out, &st->allow_same, &st->lpol);
     st->last_drv = st->drv;
 }
 
@@ -1982,7 +1987,7 @@ static int dos_wiz_try_advance(const OykConfig* draft, DosAddWizState* st, OykIf
     }
     if (st->step == 3) {
         dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->mask, st->peer,
-                               st->allow_in, st->allow_out, st->lpol, NULL, out_ic);
+                               st->allow_in, st->allow_out, st->allow_same, st->lpol, NULL, out_ic);
         return 1;
     }
     return 0;
@@ -2000,7 +2005,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
 
-    const int top = 3, left = 6, h = 18, w = 68;
+    const int top = 3, left = 6, h = 19, w = 68;
     oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
     oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
@@ -2088,9 +2093,14 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 ++r; ++fi;
                 if (st.drv == 4) {
                     vid_puts(r, left + 3, fill_at, "Allow Outbound : [OFF] (disabled for telnet)", 46);
+                    ++r;
+                    vid_puts(r, left + 3, fill_at, "Same-Iface Fwd : [OFF] (disabled for telnet)", 46);
                 } else {
                     vid_puts(r, left + 3, fill_at, "Allow Outbound : ", 17);
                     vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_out ? "[ON]" : "[OFF]", 16);
+                    ++r; ++fi;
+                    vid_puts(r, left + 3, fill_at, "Same-Iface Fwd : ", 17);
+                    vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_same ? "[ON]" : "[OFF]", 16);
                     ++r; ++fi;
                     vid_puts(r, left + 3, fill_at, "Learned Policy : ", 17);
                     vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, lplbl, 24);
@@ -2117,9 +2127,10 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                     sprintf(row, "Static Peer  : %-46.46s", st.peer[0] ? st.peer : "(auto-learn)");
                     vid_puts(top + 9, left + 3, fill_at, row, w - 6);
                 }
-                sprintf(row, "Directions   : In=%s  Out=%s  Learn=%s",
+                sprintf(row, "Policy       : In=%s  Out=%s  SameIf=%s  Learn=%s",
                         st.allow_in ? "ON" : "OFF",
-                        (st.drv == 4) ? "OFF(locked)" : (st.allow_out ? "ON" : "OFF"),
+                        (st.drv == 4) ? "OFF" : (st.allow_out ? "ON" : "OFF"),
+                        (st.drv == 4) ? "OFF" : (st.allow_same ? "ON" : "OFF"),
                         (st.drv == 4) ? "n/a" : oyk_format_learned_policy(st.lpol));
                 vid_puts(top + 10, left + 3, fill_at, row, w - 6);
                 vid_puts(top + 12, left + 3, ttl_at,
@@ -2127,21 +2138,21 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             }
 
             if (st.err[0]) {
-                vid_puts(top + 14, left + 2, err_at, st.err, w - 4);
+                vid_puts(top + 15, left + 2, err_at, st.err, w - 4);
             }
-            dos_vid_hdiv(g_vid, top + 15, left, w, bdr_at);
+            dos_vid_hdiv(g_vid, top + 16, left, w, bdr_at);
 
             int fcnt = dos_wiz_field_count(&st);
             int on_bar = (st.step == 0 || st.step == 3 || st.focus == fcnt);
             if (st.step > 0) {
-                vid_puts(top + 16, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
+                vid_puts(top + 17, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
             } else {
-                vid_puts(top + 16, left + 2, fill_at, "  < Back  ", 10);
+                vid_puts(top + 17, left + 2, fill_at, "  < Back  ", 10);
             }
-            vid_puts(top + 16, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
+            vid_puts(top + 17, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
                      (st.step == 3) ? "[ Finish ]" : "[ Next > ]", 10);
-            vid_puts(top + 16, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 16, left + 38, fill_at,
+            vid_puts(top + 17, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 17, left + 38, fill_at,
                      (st.step > 0) ? "PgUp/F3/Ctrl+B:Back" : "Up/Dn/1-5:Pick", w - 40);
             dos_vid_flush(g_vid);
         }
@@ -2177,7 +2188,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                         int rel = st.focus - tbase;
                         if (rel == 0) st.allow_in = !st.allow_in;
                         else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
-                        else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
+                        else if (rel == 2 && st.drv != 4) st.allow_same = !st.allow_same;
+                        else if (rel == 3 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
                     }
                 }
             }
@@ -2233,7 +2245,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                     int rel = st.focus - tbase;
                     if (rel == 0) st.allow_in = !st.allow_in;
                     else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
-                    else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
+                    else if (rel == 2 && st.drv != 4) st.allow_same = !st.allow_same;
+                    else if (rel == 3 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
                 } else if (ch == '\r' || ch == '\n') {
                     if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
                 }
@@ -2283,6 +2296,7 @@ struct DosEditIfaceState {
     char peer[32];
     int allow_in;
     int allow_out;
+    int allow_same;
     oyk_u8 lpol;
     char err[64];
 };
@@ -2339,14 +2353,14 @@ static int dos_edit_try_save(const OykConfig* draft,
         }
     }
     dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->mask, st->peer,
-                           st->allow_in, st->allow_out, st->lpol, &draft->ifaces[edit_idx], out_ic);
+                           st->allow_in, st->allow_out, st->allow_same, st->lpol, &draft->ifaces[edit_idx], out_ic);
     return 1;
 }
 
 static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIfaceConfig* out_ic) {
     if (edit_idx < 0 || edit_idx >= draft->iface_count) return 0;
 
-    const int top = 3, left = 6, h = 18, w = 68;
+    const int top = 3, left = 6, h = 19, w = 68;
     oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
     oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
@@ -2365,6 +2379,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
     strncpy(st.desc, ic.description, sizeof(st.desc) - 1);
     st.allow_in = ic.block_inbound ? 0 : 1;
     st.allow_out = (st.drv == 4 || ic.block_outbound) ? 0 : 1;
+    st.allow_same = (st.drv != 4 && ic.allow_same_interface) ? 1 : 0;
     st.lpol = ic.learned_peer_policy;
     if (st.drv == 1 || st.drv == 2) {
         strncpy(st.ep, ic.device[0] ? ic.device : ((st.drv == 2) ? "USBCOM1" : "COM1"), sizeof(st.ep) - 1);
@@ -2424,23 +2439,28 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             ++r; ++fi;
             if (st.drv == 4) {
                 vid_puts(r, left + 3, fill_at, "Allow Outbound : [OFF] (disabled for telnet)", 46);
+                ++r;
+                vid_puts(r, left + 3, fill_at, "Same-Iface Fwd : [OFF] (disabled for telnet)", 46);
             } else {
                 vid_puts(r, left + 3, fill_at, "Allow Outbound : ", 17);
                 vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_out ? "[ON]" : "[OFF]", 16);
+                ++r; ++fi;
+                vid_puts(r, left + 3, fill_at, "Same-Iface Fwd : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_same ? "[ON]" : "[OFF]", 16);
                 ++r; ++fi;
                 vid_puts(r, left + 3, fill_at, "Learned Policy : ", 17);
                 vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, lp_lbl, 24);
             }
 
             if (st.err[0]) {
-                vid_puts(top + 14, left + 2, err_at, st.err, w - 4);
+                vid_puts(top + 15, left + 2, err_at, st.err, w - 4);
             }
-            dos_vid_hdiv(g_vid, top + 15, left, w, bdr_at);
+            dos_vid_hdiv(g_vid, top + 16, left, w, bdr_at);
 
             int on_bar = (st.focus == fcnt);
-            vid_puts(top + 16, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
-            vid_puts(top + 16, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 16, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
+            vid_puts(top + 17, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
+            vid_puts(top + 17, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 17, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
             dos_vid_flush(g_vid);
         }
 
@@ -2456,7 +2476,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
                 if (st.focus == 0) {
                     st.drv = (ext == 75) ? ((st.drv + 4) % 5) : ((st.drv + 1) % 5);
                     dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.mask, st.peer,
-                                                    &st.allow_in, &st.allow_out, &st.lpol);
+                                                    &st.allow_in, &st.allow_out, &st.allow_same, &st.lpol);
                     st.err[0] = '\0';
                 } else if (st.focus == fcnt) {
                     st.btn = (st.btn == 0) ? 1 : 0;
@@ -2464,7 +2484,8 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
                     int rel = st.focus - tbase;
                     if (rel == 0) st.allow_in = !st.allow_in;
                     else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
-                    else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
+                    else if (rel == 2 && st.drv != 4) st.allow_same = !st.allow_same;
+                    else if (rel == 3 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
                 }
             }
             continue;
@@ -2486,7 +2507,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             if (ch == ' ') {
                 st.drv = (st.drv + 1) % 5;
                 dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.mask, st.peer,
-                                                &st.allow_in, &st.allow_out, &st.lpol);
+                                                &st.allow_in, &st.allow_out, &st.allow_same, &st.lpol);
                 st.err[0] = '\0';
             } else if (ch == '\r' || ch == '\n') {
                 if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
@@ -2498,7 +2519,8 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
                 int rel = st.focus - tbase;
                 if (rel == 0) st.allow_in = !st.allow_in;
                 else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
-                else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
+                else if (rel == 2 && st.drv != 4) st.allow_same = !st.allow_same;
+                else if (rel == 3 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
             } else if (ch == '\r' || ch == '\n') {
                 if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
             }

@@ -180,9 +180,10 @@ struct OykIfaceConfig {
     oyk_u32 baud;
     oyk_u8 kiss_port;
     int server_mode;
-    oyk_u8 block_inbound;       /* 0 = allow (default), 1 = deny */
-    oyk_u8 block_outbound;      /* 0 = allow (default for non-telnet), 1 = deny (forced 1 for telnet) */
-    oyk_u8 no_auto_learn;       /* 0 = auto-learn enabled on non-telnet, 1 = disabled */
+    oyk_u8 block_inbound;        /* 0 = allow (default), 1 = deny */
+    oyk_u8 block_outbound;       /* 0 = allow (default for non-telnet), 1 = deny (forced 1 for telnet) */
+    oyk_u8 allow_same_interface; /* 0 = block same-iface forwarding (default), 1 = allow */
+    oyk_u8 no_auto_learn;        /* 0 = auto-learn enabled on non-telnet, 1 = disabled */
     oyk_u8 learned_peer_policy; /* OYK_LEARN_INHERIT .. OYK_LEARN_BOTH */
     int peer_count;
     OykPeerEntry peers[OYK_MAX_PEERS];
@@ -522,6 +523,7 @@ public:
     void set_accept_incoming(int allow);
     int accept_incoming() const { return accept_incoming_; }
     int manual_deny_incoming() const { return manual_deny_incoming_; }
+    int can_forward_between_ifaces(int src_iface_idx, int dst_iface_idx) const;
     int apply_config(const OykConfig* new_cfg, int save_to_disk, OykConfigApplyResult* res_out);
     int auto_learned_peer_count() const;
     int persist_auto_learned_peers(char* err_out, size_t err_sz);
