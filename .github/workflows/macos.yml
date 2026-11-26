@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
+name: macOS Build & UI Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  macos-universal:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure & Build Universal (.app + tests)
+        run: |
+          cmake -S . -B build-macos \
+            -DBUILD_MACOS_PORT=ON \
+            -DOYK_MACOS_PORTABLE_CORE=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build build-macos -j
+
+      - name: Run Host & macOS Bridge Tests
+        run: ctest --test-dir build-macos --output-on-failure
+
+      - name: Package Universal DMG & Capture macOS UI Screenshots
+        run: |
+          mkdir -p dist-macos /tmp/macos_caps
+          APP_BUNDLE="$(find build-macos -maxdepth 3 -name 'OYK Node.app' | head -n 1)"
+          if [ -n "$APP_BUNDLE" ]; then
+            hdiutil create -volname "OYK Node" -srcfolder "$APP_BUNDLE" -ov -format UDZO dist-macos/OYK-Node-macOS-Universal.dmg
+            OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR=/tmp/macos_caps "$APP_BUNDLE/Contents/MacOS/OYK Node" || true
+            ls -lh /tmp/macos_caps
+          fi
+
+      - name: Upload macOS DMG & Captures
+        uses: actions/upload-artifact@v4
+        with:
+          name: oyk-node-macos-universal
+          path: |
+            dist-macos/*.dmg
+            /tmp/macos_caps/*.png

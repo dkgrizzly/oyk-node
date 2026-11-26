@@ -56,7 +56,8 @@ Example in a forked C++ file:
 - **Build & verify**: Run `cmake --build build -j && ctest --test-dir build --output-on-failure` after changes.
 - **Portable core (`ports/compat/`)**: Must remain strict C++98 with zero STL, zero exceptions, zero RTTI, and 16-bit-safe integer widths (`sizeof(int) == 2`).
 - **Config line endings**: Config I/O must accept `CRLF`, `CR`, and `LF`, write `CRLF` by default on MS-DOS/Windows and `LF` on POSIX, preserve original line endings on write-back, and let `node.cfg`'s first line ending override mixed line endings without changing AX.25/KISS/Telnet wire protocols.
-- **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_WIN16_PORT`, `BUILD_WINDOWS_PORT`, `BUILD_TINYTMUX_PORT`, and `BUILD_PICO_PORT` `OFF` by default; `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
+- **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_MSDOS_GFX_PORT`, `BUILD_WIN16_PORT`, `BUILD_WINDOWS_PORT`, `BUILD_TINYTMUX_PORT`, `BUILD_PICO_PORT`, and `BUILD_MACCLASSIC_PORT` `OFF` by default (`BUILD_MACOS_PORT` defaults `OFF` outside Apple hosts and `ON` on `APPLE`); `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
+- **Shared GUI & TUI middleware**: Keep cross-port menu schemas, screen titles, table columns, wizard validation rules, exit prompts, and theme controllers in `ports/compat/oyk_gui.*` (`oyk_gui_theme.cpp` for portable builds) alongside `ports/compat/oyk_tui.*` and `ports/compat/oyk_term.*` so GTK+ 2.0, Windows, Classic Macintosh, and macOS stay synchronized.
 
 ## 5. Cross-Port Feature Parity & UI Consistency
 
@@ -76,7 +77,7 @@ Example in a forked C++ file:
 
 ## 6. UI Gallery Maintenance
 
-- **Keep screenshots synchronized with UI tests**: Whenever UI flow unit tests, dialogs, wizards, or operator screens are added or modified across any port (`tests/test_ncurses_ui.py`, `tests/test_portable.cpp`, `tests/test_tinytmux.cpp`, `tests/test_pico.cpp`, `src/ui/gtk2_ui.cpp`, `ports/windows/win_main.cpp`, or `ports/android/app/src/test/java/com/kr4oyk/oyknode/OykUiGalleryTest.kt`), update the corresponding UI capture hooks and regenerate `docs/user/ui-gallery.md` and `docs/user/images/ui-gallery/*.png` before committing.
+- **Keep screenshots synchronized with UI tests**: Whenever UI flow unit tests, dialogs, wizards, or operator screens are added or modified across any port (`tests/test_ncurses_ui.py`, `tests/test_portable.cpp`, `tests/test_tinytmux.cpp`, `tests/test_pico.cpp`, `src/ui/gtk2_ui.cpp`, `ports/windows/win_main.cpp`, `ports/macclassic/mac_ui.cpp`, `ports/macos/macos_main.mm`, or `ports/android/app/src/test/java/com/kr4oyk/oyknode/OykUiGalleryTest.kt`), update the corresponding UI capture hooks and regenerate `docs/user/ui-gallery.md` and `docs/user/images/ui-gallery/*.png` before committing.
 - **Regeneration & parity check command**: Run `./scripts/generate_ui_gallery.sh` (which runs `scripts/check_tui_parity.py` across all TUI captures, `Xvfb` for GTK+ 2.0, Wine for Windows, and Robolectric for Android) and visually inspect representative PNG outputs and per-port contact sheets side-by-side before committing.
 
 ## 7. Secrets, Credentials & Privileged Information

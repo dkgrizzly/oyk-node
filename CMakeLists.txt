@@ -17,8 +17,14 @@ option(BUILD_MSDOS_PORT    "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP
 option(BUILD_MSDOS_GFX_PORT "Add target to build 386+ graphical MS-DOS (OpenWatcom + VBE/VGA/EGA) executable" OFF)
 option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) executable" OFF)
 option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
-option(BUILD_TINYTMUX_PORT "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
-option(BUILD_PICO_PORT     "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
+option(BUILD_TINYTMUX_PORT   "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
+option(BUILD_PICO_PORT       "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
+option(BUILD_MACCLASSIC_PORT "Add targets to build Classic Macintosh (68k + PPC Fat) via Retro68" OFF)
+if(APPLE)
+    option(BUILD_MACOS_PORT "Build native macOS AppKit port (PowerPC, Intel, Apple Silicon)" ON)
+else()
+    option(BUILD_MACOS_PORT "Build native macOS AppKit port (PowerPC, Intel, Apple Silicon)" OFF)
+endif()
 set(MTCP_DIR "$ENV{HOME}/mTCP" CACHE PATH "Path to Michael Brutman's mTCP source tree (for BUILD_MSDOS_PORT)")
 set(FREEDOS_BOOT_IMG "" CACHE FILEPATH "Path to FreeDOS/MS-DOS boot floppy/disk image for QEMU DOS unit tests")
 
@@ -410,6 +416,14 @@ if(BUILD_PICO_PORT)
     add_custom_target(oyk-pico DEPENDS ${_pico_board_targets})
 endif()
 
+if(BUILD_MACCLASSIC_PORT)
+    add_subdirectory(ports/macclassic)
+endif()
+
+if(BUILD_MACOS_PORT)
+    add_subdirectory(ports/macos)
+endif()
+
 if(BUILD_TESTS AND NOT WIN32)
     enable_testing()
 
@@ -474,6 +488,38 @@ if(BUILD_TESTS AND NOT WIN32)
     )
     target_compile_options(oyk_gui_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME oyk_gui_tests COMMAND oyk_gui_tests)
+
+    # Host C++98 tests for the dual-core macOS AppKit bridge & OykPortableNode transport layer
+    add_executable(oyk_macos_bridge_tests
+        tests/test_macos_bridge.cpp
+        ports/macos/macos_engine_bridge.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
+        ports/compat/oyk_gui_theme.cpp
+    )
+    target_compile_definitions(oyk_macos_bridge_tests PRIVATE OYK_MACOS_USE_PORTABLE=1)
+    target_include_directories(oyk_macos_bridge_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/macos
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+    )
+    set_target_properties(oyk_macos_bridge_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_macos_bridge_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_macos_bridge_tests COMMAND oyk_macos_bridge_tests)
+
+    if(BUILD_MACCLASSIC_PORT AND EXISTS "$ENV{HOME}/minivmac/minivmac-plus-bg")
+        add_test(NAME oyk_macclassic_tests
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/macclassic/run_minivmac_test.sh --unit-tests
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endif()
 
     # Strict C++98 host verification of Teensy 4.1 / IMXRT1060 (TinyTMUX) PSRAM, FS hooks, USB Host, PPP, Ethernet bridge & VT100 console
     add_executable(oyk_tinytmux_tests
