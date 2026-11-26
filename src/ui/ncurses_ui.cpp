@@ -2045,14 +2045,16 @@ void NcursesUI::modal_settings(int initial_tab) {
     static const char* TAB_NAMES[7] = {
         "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
-    static const char* NODE_LABELS[7] = {
+    static const char* NODE_LABELS[9] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
         "Info Message",
         "Allow Incoming (Default)",
         "Learned Peer Policy",
-        "New User Welcome"
+        "New User Welcome",
+        "Interfaces File",
+        "Peers File"
     };
     static const char* BBS_LABELS[9] = {
         "Enable Packet BBS",
@@ -2091,7 +2093,7 @@ void NcursesUI::modal_settings(int initial_tab) {
     };
 
     auto tab_item_count = [&](int t) -> int {
-        if (t == 0) return 7;
+        if (t == 0) return 9;
         if (t == 1) return 9;
         if (t == 2) return 6;
         if (t == 3) return static_cast<int>(draft.interfaces.size());
@@ -2118,6 +2120,8 @@ void NcursesUI::modal_settings(int initial_tab) {
                 case 4: return draft.accept_incoming_default ? "[ON]" : "[OFF]";
                 case 5: return node::learned_peer_policy_to_string(draft.learned_peer_policy);
                 case 6: return draft.new_user_welcome.empty() ? "(use default)" : draft.new_user_welcome;
+                case 7: return draft.interfaces_file;
+                case 8: return draft.peers_file;
                 default: return "";
             }
         }
@@ -2227,12 +2231,19 @@ void NcursesUI::modal_settings(int initial_tab) {
 
         if (tab != 3 && tab != 4) {
             for (int i = 0; i < cnt && i < content_h; ++i) {
+                std::string fval = tab_field_value(tab, i);
+                bool dim_inline = (tab == 0 && (i == 7 || i == 8) && fval.empty());
                 std::ostringstream row;
                 row << std::left << std::setw(25) << tab_field_label(tab, i)
-                    << ": " << tab_field_value(tab, i);
+                    << ": " << (dim_inline ? std::string() : fval);
                 if (i == sel[tab]) wattron(win, A_REVERSE | A_BOLD);
                 mvwaddnstr(win, 3 + i, 2, clip(row.str(), w - 4).c_str(), w - 4);
                 if (i == sel[tab]) wattroff(win, A_REVERSE | A_BOLD);
+                if (dim_inline && 29 < w - 4) {
+                    wattron(win, ((i == sel[tab]) ? (A_REVERSE | A_DIM) : A_DIM));
+                    mvwaddnstr(win, 3 + i, 29, "<inline>", w - 31);
+                    wattroff(win, ((i == sel[tab]) ? (A_REVERSE | A_DIM) : A_DIM));
+                }
             }
         } else if (tab == 3) {
             wattron(win, A_BOLD | A_UNDERLINE);
@@ -2530,6 +2541,8 @@ void NcursesUI::modal_settings(int initial_tab) {
                 else if (f == 2) val = draft.welcome_text;
                 else if (f == 3) val = draft.info_text;
                 else if (f == 6) val = draft.new_user_welcome;
+                else if (f == 7) val = draft.interfaces_file;
+                else if (f == 8) val = draft.peers_file;
             } else if (tab == 1) {
                 if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
                 else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
@@ -2574,6 +2587,10 @@ void NcursesUI::modal_settings(int initial_tab) {
                     draft.info_text = val;
                 } else if (f == 6) {
                     draft.new_user_welcome = val;
+                } else if (f == 7) {
+                    draft.interfaces_file = val;
+                } else if (f == 8) {
+                    draft.peers_file = val;
                 }
             } else if (tab == 1) {
                 if (f == 1) {

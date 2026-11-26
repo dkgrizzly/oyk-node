@@ -1372,6 +1372,147 @@ static void test_portable_iface_directions_netmask_and_dmr() {
     printf("[PASS] test_portable_iface_directions_netmask_and_dmr\n");
 }
 
+static void tp_write_str(const char* path, const char* txt) {
+    FILE* f = fopen(path, "wb");
+    assert(f != NULL);
+    fwrite(txt, 1, strlen(txt), f);
+    fclose(f);
+}
+
+static void tp_read_str(const char* path, char* buf, size_t cap) {
+    FILE* f = fopen(path, "rb");
+    assert(f != NULL);
+    size_t n = fread(buf, 1, cap - 1, f);
+    buf[n] = '\0';
+    fclose(f);
+}
+
+static void test_portable_config_include_storage_modes() {
+    char* buf1 = new char[8192];
+    char* buf2 = new char[8192];
+    char* buf3 = new char[8192];
+    OykConfig* cfg = new OykConfig();
+    char err[96];
+    assert(buf1 && buf2 && buf3 && cfg);
+
+    /* 1. All inline */
+    tp_write_str("ti_m1.cfg",
+        "[node]\ncallsign = KR4OYK-7\n\n"
+        "[interface axudp0]\ntype = axudp\nbind_port = 10093\n\n"
+        "[peer p0]\ncallsign = W1AW-7\ninterface = axudp0\nhost = 127.0.0.1\n");
+    assert(oyk_config_load("ti_m1.cfg", cfg, err, sizeof(err)));
+    assert(cfg->interfaces_file[0] == '\0' && cfg->peers_file[0] == '\0');
+    assert(cfg->iface_count == 1 && cfg->peer_count == 1);
+    assert(oyk_config_save(cfg, "ti_m1.cfg"));
+    tp_read_str("ti_m1.cfg", buf1, 8192);
+    assert(strstr(buf1, "[interface axudp0]") != NULL);
+    assert(strstr(buf1, "[peer p0]") != NULL);
+    remove("ti_m1.cfg");
+
+    /* 2. Separate peers only (consolidating mixed inline + external peers) */
+    tp_write_str("ti_m2.cfg",
+        "[node]\ncallsign = KR4OYK-7\npeers = tp_m2.cfg\n\n"
+        "[interface axudp0]\ntype = axudp\nbind_port = 10093\n\n"
+        "[peer pinl]\ncallsign = N0INL-1\ninterface = axudp0\nhost = 10.0.0.2\n");
+    tp_write_str("tp_m2.cfg",
+        "[peer pext]\ncallsign = N0EXT-2\ninterface = axudp0\nhost = 10.0.0.3\n");
+    assert(oyk_config_load("ti_m2.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 1 && cfg->peer_count == 2);
+    assert(cfg->interfaces_file[0] == '\0' && strcmp(cfg->peers_file, "tp_m2.cfg") == 0);
+    assert(oyk_config_save(cfg, "ti_m2.cfg"));
+    tp_read_str("ti_m2.cfg", buf1, 8192);
+    tp_read_str("tp_m2.cfg", buf2, 8192);
+    assert(strstr(buf1, "[interface axudp0]") != NULL && strstr(buf1, "[peer ") == NULL);
+    assert(strstr(buf2, "[peer pinl]") != NULL && strstr(buf2, "[peer pext]") != NULL);
+    assert(strstr(buf2, "[interface ") == NULL);
+    assert(oyk_config_load("ti_m2.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 1 && cfg->peer_count == 2);
+    remove("ti_m2.cfg");
+    remove("tp_m2.cfg");
+
+    /* 3. Separate interfaces only (consolidating mixed inline + external ifaces) */
+    tp_write_str("ti_m3.cfg",
+        "[node]\ncallsign = KR4OYK-7\ninterfaces = tf_m3.cfg\n\n"
+        "[interface iinl]\ntype = axudp\nbind_port = 10093\n\n"
+        "[peer p0]\ncallsign = W1AW-7\ninterface = iinl\nhost = 127.0.0.1\n");
+    tp_write_str("tf_m3.cfg",
+        "[interface iext]\ntype = telnet\nbind_port = 8010\n");
+    assert(oyk_config_load("ti_m3.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 2 && cfg->peer_count == 1);
+    assert(strcmp(cfg->interfaces_file, "tf_m3.cfg") == 0 && cfg->peers_file[0] == '\0');
+    assert(oyk_config_save(cfg, "ti_m3.cfg"));
+    tp_read_str("ti_m3.cfg", buf1, 8192);
+    tp_read_str("tf_m3.cfg", buf2, 8192);
+    assert(strstr(buf1, "[peer p0]") != NULL && strstr(buf1, "[interface ") == NULL);
+    assert(strstr(buf2, "[interface iinl]") != NULL && strstr(buf2, "[interface iext]") != NULL);
+    assert(strstr(buf2, "[peer ") == NULL);
+    assert(oyk_config_load("ti_m3.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 2 && cfg->peer_count == 1);
+    remove("ti_m3.cfg");
+    remove("tf_m3.cfg");
+
+    /* 4. Both separate (missing files load empty, created on save) */
+    remove("tf_m4.cfg");
+    remove("tp_m4.cfg");
+    tp_write_str("ti_m4.cfg",
+        "[node]\ncallsign = KR4OYK-7\ninterfaces = tf_m4.cfg\npeers = tp_m4.cfg\n");
+    assert(oyk_config_load("ti_m4.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 0 && cfg->peer_count == 0);
+    cfg->iface_count = 1;
+    memset(&cfg->ifaces[0], 0, sizeof(cfg->ifaces[0]));
+    strcpy(cfg->ifaces[0].id, "axudp0");
+    strcpy(cfg->ifaces[0].type, "axudp");
+    strcpy(cfg->ifaces[0].host, "0.0.0.0");
+    cfg->ifaces[0].port = 10093;
+    cfg->peer_count = 1;
+    memset(&cfg->peers[0], 0, sizeof(cfg->peers[0]));
+    strcpy(cfg->peers[0].id, "rem0");
+    strcpy(cfg->peers[0].callsign, "R3MOT-7");
+    strcpy(cfg->peers[0].interface_id, "axudp0");
+    strcpy(cfg->peers[0].host, "12.34.56.78");
+    cfg->peers[0].allow_inbound = 1;
+    cfg->peers[0].allow_outbound = 1;
+    assert(oyk_config_save(cfg, "ti_m4.cfg"));
+    tp_read_str("ti_m4.cfg", buf1, 8192);
+    tp_read_str("tf_m4.cfg", buf2, 8192);
+    tp_read_str("tp_m4.cfg", buf3, 8192);
+    assert(strstr(buf1, "[interface ") == NULL && strstr(buf1, "[peer ") == NULL);
+    assert(strstr(buf2, "[interface axudp0]") != NULL && strstr(buf2, "[peer ") == NULL);
+    assert(strstr(buf3, "[peer rem0]") != NULL && strstr(buf3, "[interface ") == NULL);
+    assert(oyk_config_load("ti_m4.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 1 && cfg->peer_count == 1);
+    remove("ti_m4.cfg");
+    remove("tf_m4.cfg");
+    remove("tp_m4.cfg");
+
+    /* 5. Both combined into the same external file (and verify reload doesn't duplicate) */
+    tp_write_str("ti_m5.cfg",
+        "[node]\ncallsign = KR4OYK-7\ninterfaces = tc_m5.cfg\npeers = tc_m5.cfg\n\n"
+        "[interface i0]\ntype = axudp\nbind_port = 10093\n"
+        "[peer p0]\ncallsign = K1A-1\ninterface = i0\nhost = 127.0.0.1\n");
+    tp_write_str("tc_m5.cfg",
+        "[interface i1]\ntype = telnet\nbind_port = 8010\n"
+        "[peer p1]\ncallsign = K1B-2\ninterface = i0\nhost = 127.0.0.2\n");
+    assert(oyk_config_load("ti_m5.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 2 && cfg->peer_count == 2);
+    assert(oyk_config_save(cfg, "ti_m5.cfg"));
+    tp_read_str("ti_m5.cfg", buf1, 8192);
+    tp_read_str("tc_m5.cfg", buf2, 8192);
+    assert(strstr(buf1, "[interface ") == NULL && strstr(buf1, "[peer ") == NULL);
+    assert(strstr(buf2, "[interface i0]") != NULL && strstr(buf2, "[interface i1]") != NULL);
+    assert(strstr(buf2, "[peer p0]") != NULL && strstr(buf2, "[peer p1]") != NULL);
+    assert(oyk_config_load("ti_m5.cfg", cfg, err, sizeof(err)));
+    assert(cfg->iface_count == 2 && cfg->peer_count == 2);
+    remove("ti_m5.cfg");
+    remove("tc_m5.cfg");
+
+    delete cfg;
+    delete[] buf3;
+    delete[] buf2;
+    delete[] buf1;
+    printf("[PASS] test_portable_config_include_storage_modes\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1385,6 +1526,7 @@ int oyk_run_portable_tests() {
     test_format_peer_spec();
     test_portable_peer_sections_and_auto_learn();
     test_portable_iface_directions_netmask_and_dmr();
+    test_portable_config_include_storage_modes();
     return 0;
 }
 

@@ -2770,14 +2770,16 @@ static void run_dos_settings(int initial_tab) {
     static const char* TAB_NAMES[7] = {
         " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Printer "
     };
-    static const char* NODE_LABELS[7] = {
+    static const char* NODE_LABELS[9] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
         "Info Message",
         "Allow Incoming (Default)",
         "Learned Peer Policy",
-        "New User Welcome"
+        "New User Welcome",
+        "Interfaces File",
+        "Peers File"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS",
@@ -2832,7 +2834,7 @@ static void run_dos_settings(int initial_tab) {
         dos_pump_network();
         g_node.tick();
 
-        int cnt = (tab == 0) ? 7 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
+        int cnt = (tab == 0) ? 9 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
         if (cnt <= 0) sel[tab] = 0;
         else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
 
@@ -2867,6 +2869,10 @@ static void run_dos_settings(int initial_tab) {
                         else if (i == 6) {
                             if (draft.new_user_welcome[0]) { strncpy(val, draft.new_user_welcome, 46); val[46] = '\0'; }
                             else strcpy(val, "(use default)");
+                        } else if (i == 7) {
+                            strncpy(val, draft.interfaces_file, 46); val[46] = '\0';
+                        } else if (i == 8) {
+                            strncpy(val, draft.peers_file, 46); val[46] = '\0';
                         }
                     } else if (tab == 1) {
                         if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
@@ -2901,6 +2907,9 @@ static void run_dos_settings(int initial_tab) {
                     }
                     sprintf(row, " %-29.29s: %-46.46s", labels[i], val);
                     vid_puts(3 + i, 1, (i == sel[tab]) ? sel_at : fill_at, row, 78);
+                    if (tab == 0 && (i == 7 || i == 8) && val[0] == '\0' && g_vid && g_vid->is_color) {
+                        vid_puts(3 + i, 33, (i == sel[tab]) ? sel_at : dos_vid_attr(g_vid, 0x18U, 0x07U), "<inline>", 8);
+                    }
                 }
             } else if (tab == 3) {
                 vid_puts(3, 1, hdr_at, " #  ID          Type         Endpoint / Device             Peers", 78);
@@ -3141,6 +3150,8 @@ static void run_dos_settings(int initial_tab) {
                 else if (f == 2) { strncpy(ed, draft.welcome_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 3) { strncpy(ed, draft.info_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 6) { strncpy(ed, draft.new_user_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 7) { strncpy(ed, draft.interfaces_file, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 8) { strncpy(ed, draft.peers_file, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) sprintf(ed, "%u", static_cast<unsigned int>(draft.bbs_ssid));
                 else if (f == 2 && draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, ed, sizeof(ed));
@@ -3176,6 +3187,8 @@ static void run_dos_settings(int initial_tab) {
                 else if (f == 2) { strncpy(draft.welcome_text, ed, sizeof(draft.welcome_text) - 1); draft.welcome_text[sizeof(draft.welcome_text) - 1] = '\0'; }
                 else if (f == 3) { strncpy(draft.info_text, ed, sizeof(draft.info_text) - 1); draft.info_text[sizeof(draft.info_text) - 1] = '\0'; }
                 else if (f == 6) { strncpy(draft.new_user_welcome, ed, sizeof(draft.new_user_welcome) - 1); draft.new_user_welcome[sizeof(draft.new_user_welcome) - 1] = '\0'; }
+                else if (f == 7) { strncpy(draft.interfaces_file, ed, sizeof(draft.interfaces_file) - 1); draft.interfaces_file[sizeof(draft.interfaces_file) - 1] = '\0'; }
+                else if (f == 8) { strncpy(draft.peers_file, ed, sizeof(draft.peers_file) - 1); draft.peers_file[sizeof(draft.peers_file) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) { int sv = atoi(ed); if (sv >= 0 && sv <= 15) draft.bbs_ssid = static_cast<oyk_u8>(sv); else strcpy(fb, "SSID must be 0..15."); }
                 else if (f == 2) { if (!ed[0]) memset(&draft.bbs_callsign, 0, sizeof(draft.bbs_callsign)); else if (!oyk_parse_callsign_with_default_ssid(ed, draft.bbs_ssid, &draft.bbs_callsign)) strcpy(fb, "Invalid BBS callsign."); }

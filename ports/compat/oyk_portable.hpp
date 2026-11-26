@@ -201,6 +201,8 @@ struct OykConfig {
     char info_text[80];
     char source_path[128];
     char banlist_path[128];
+    char interfaces_file[64];
+    char peers_file[64];
     char log_path[96];
     oyk_u32 console_level;
     int rotate_daily;
@@ -450,6 +452,8 @@ void oyk_config_init_default(OykConfig* cfg);
 int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_sz);
 int oyk_config_save(const OykConfig* cfg, const char* path);
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
+void oyk_config_resolve_interfaces(const OykConfig* cfg, char* out, size_t out_sz);
+void oyk_config_resolve_peers(const OykConfig* cfg, char* out, size_t out_sz);
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,

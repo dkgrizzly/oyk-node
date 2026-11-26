@@ -3186,6 +3186,219 @@ void test_iface_directions_netmask_and_dmr_id() {
     std::cout << "[PASS] test_iface_directions_netmask_and_dmr_id\n";
 }
 
+void test_config_include_storage_modes() {
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "oyk_cfg_includes_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    auto read_all = [](const fs::path& p) {
+        std::ifstream ifs(p, std::ios::binary);
+        assert(ifs.is_open());
+        std::ostringstream oss;
+        oss << ifs.rdbuf();
+        return oss.str();
+    };
+    auto write_all = [](const fs::path& p, const std::string& s) {
+        fs::create_directories(p.parent_path());
+        std::ofstream ofs(p, std::ios::binary | std::ios::trunc);
+        assert(ofs.is_open());
+        ofs << s;
+    };
+
+    std::string err;
+
+    // 1. All inline (no interfaces= / peers=)
+    {
+        const fs::path np = tmp / "m1_node.cfg";
+        write_all(np,
+                  "[node]\ncallsign = KR4OYK-7\n\n"
+                  "[interface axudp0]\ntype = axudp\nbind_port = 10093\n\n"
+                  "[peer p0]\ncallsign = W1AW-7\ninterface = axudp0\nhost = 127.0.0.1\n");
+        node::NodeConfig cfg;
+        assert(node::NodeConfig::load_from_file(np.string(), cfg, err));
+        assert(cfg.interfaces_file.empty());
+        assert(cfg.peers_file.empty());
+        assert(cfg.interfaces.size() == 1);
+        assert(cfg.peers.size() == 1);
+
+        radio::RadioInterfaceConfig kcfg;
+        kcfg.id = "kiss0";
+        kcfg.type = "kiss-serial";
+        cfg.interfaces.push_back(kcfg);
+        radio::PeerConfig p1;
+        p1.id = "p1";
+        p1.callsign = "K1XYZ-5";
+        p1.interface_id = "kiss0";
+        cfg.peers.push_back(p1);
+        assert(cfg.save_to_file(np.string()));
+
+        const std::string saved = read_all(np);
+        assert(saved.find("[interface axudp0]") != std::string::npos);
+        assert(saved.find("[interface kiss0]") != std::string::npos);
+        assert(saved.find("[peer p0]") != std::string::npos);
+        assert(saved.find("[peer p1]") != std::string::npos);
+        assert(saved.find("interfaces =") == std::string::npos);
+        assert(saved.find("peers =") == std::string::npos);
+    }
+
+    // 2. Separate peers only (consolidating mixed inline + external peer sections)
+    {
+        const fs::path np = tmp / "m2_node.cfg";
+        const fs::path pp = tmp / "m2_peers.cfg";
+        write_all(np,
+                  "[node]\ncallsign = KR4OYK-7\npeers = m2_peers.cfg\n\n"
+                  "[interface axudp0]\ntype = axudp\nbind_port = 10093\n\n"
+                  "[peer pinline]\ncallsign = N0INL-1\ninterface = axudp0\nhost = 10.0.0.2\n");
+        write_all(pp,
+                  "[peer pext]\ncallsign = N0EXT-2\ninterface = axudp0\nhost = 10.0.0.3\n");
+        node::NodeConfig cfg;
+        assert(node::NodeConfig::load_from_file(np.string(), cfg, err));
+        assert(cfg.interfaces.size() == 1);
+        assert(cfg.peers.size() == 2);
+        assert(cfg.interfaces_file.empty());
+        assert(cfg.peers_file == "m2_peers.cfg");
+        assert(cfg.save_to_file(np.string()));
+
+        const std::string n_saved = read_all(np);
+        const std::string p_saved = read_all(pp);
+        assert(n_saved.find("peers = m2_peers.cfg") != std::string::npos);
+        assert(n_saved.find("[interface axudp0]") != std::string::npos);
+        assert(n_saved.find("[peer ") == std::string::npos);
+        assert(p_saved.find("[peer pinline]") != std::string::npos);
+        assert(p_saved.find("[peer pext]") != std::string::npos);
+        assert(p_saved.find("[interface ") == std::string::npos);
+
+        node::NodeConfig reloaded;
+        assert(node::NodeConfig::load_from_file(np.string(), reloaded, err));
+        assert(reloaded.interfaces.size() == 1);
+        assert(reloaded.peers.size() == 2);
+    }
+
+    // 3. Separate interfaces only (consolidating mixed inline + external interface sections)
+    {
+        const fs::path np = tmp / "m3_node.cfg";
+        const fs::path ip = tmp / "m3_ifaces.cfg";
+        write_all(np,
+                  "[node]\ncallsign = KR4OYK-7\ninterfaces = m3_ifaces.cfg\n\n"
+                  "[interface iinline]\ntype = axudp\nbind_port = 10093\n\n"
+                  "[peer p0]\ncallsign = W1AW-7\ninterface = iinline\nhost = 127.0.0.1\n");
+        write_all(ip,
+                  "[interface iext]\ntype = telnet\nbind_port = 8010\n");
+        node::NodeConfig cfg;
+        assert(node::NodeConfig::load_from_file(np.string(), cfg, err));
+        assert(cfg.interfaces.size() == 2);
+        assert(cfg.peers.size() == 1);
+        assert(cfg.interfaces_file == "m3_ifaces.cfg");
+        assert(cfg.peers_file.empty());
+        assert(cfg.save_to_file(np.string()));
+
+        const std::string n_saved = read_all(np);
+        const std::string i_saved = read_all(ip);
+        assert(n_saved.find("interfaces = m3_ifaces.cfg") != std::string::npos);
+        assert(n_saved.find("[peer p0]") != std::string::npos);
+        assert(n_saved.find("[interface ") == std::string::npos);
+        assert(i_saved.find("[interface iinline]") != std::string::npos);
+        assert(i_saved.find("[interface iext]") != std::string::npos);
+        assert(i_saved.find("[peer ") == std::string::npos);
+
+        node::NodeConfig reloaded;
+        assert(node::NodeConfig::load_from_file(np.string(), reloaded, err));
+        assert(reloaded.interfaces.size() == 2);
+        assert(reloaded.peers.size() == 1);
+    }
+
+    // 4. Both separate (including non-existent files created on first save)
+    {
+        const fs::path np = tmp / "m4_node.cfg";
+        const fs::path ip = tmp / "sub" / "m4_ifaces.cfg";
+        const fs::path pp = tmp / "sub" / "m4_peers.cfg";
+        write_all(np,
+                  "[node]\ncallsign = KR4OYK-7\n"
+                  "interfaces = sub/m4_ifaces.cfg\n"
+                  "peers = sub/m4_peers.cfg\n");
+        node::NodeConfig cfg;
+        assert(node::NodeConfig::load_from_file(np.string(), cfg, err));
+        assert(cfg.interfaces.empty()); // non-empty interfaces_file suppresses default axudp0
+        assert(cfg.peers.empty());
+
+        radio::RadioInterfaceConfig ic;
+        ic.id = "axudp0";
+        ic.type = "axudp";
+        cfg.interfaces.push_back(ic);
+        radio::PeerConfig pc;
+        pc.id = "remote0";
+        pc.callsign = "R3MOT-7";
+        pc.interface_id = "axudp0";
+        pc.host = "12.34.56.78";
+        cfg.peers.push_back(pc);
+        assert(cfg.save_to_file(np.string()));
+
+        const std::string n_saved = read_all(np);
+        const std::string i_saved = read_all(ip);
+        const std::string p_saved = read_all(pp);
+        assert(n_saved.find("[interface ") == std::string::npos);
+        assert(n_saved.find("[peer ") == std::string::npos);
+        assert(i_saved.find("[interface axudp0]") != std::string::npos);
+        assert(i_saved.find("[peer ") == std::string::npos);
+        assert(p_saved.find("[peer remote0]") != std::string::npos);
+        assert(p_saved.find("[interface ") == std::string::npos);
+
+        node::NodeConfig reloaded;
+        assert(node::NodeConfig::load_from_file(np.string(), reloaded, err));
+        assert(reloaded.interfaces.size() == 1);
+        assert(reloaded.peers.size() == 1);
+    }
+
+    // 5. Both combined in the same external file (and verify reload doesn't duplicate)
+    {
+        const fs::path np = tmp / "m5_node.cfg";
+        const fs::path cp = tmp / "m5_shared.cfg";
+        write_all(np,
+                  "[node]\ncallsign = KR4OYK-7\n"
+                  "interfaces = m5_shared.cfg\n"
+                  "peers = m5_shared.cfg\n\n"
+                  "[interface inline0]\ntype = axudp\nbind_port = 10093\n"
+                  "[peer inlinep0]\ncallsign = K1A-1\ninterface = inline0\nhost = 127.0.0.1\n");
+        write_all(cp,
+                  "[interface ext0]\ntype = telnet\nbind_port = 8010\n"
+                  "[peer extp0]\ncallsign = K1B-2\ninterface = inline0\nhost = 127.0.0.2\n");
+        node::NodeConfig cfg;
+        assert(node::NodeConfig::load_from_file(np.string(), cfg, err));
+        assert(cfg.interfaces.size() == 2);
+        assert(cfg.peers.size() == 2);
+        assert(cfg.save_to_file(np.string()));
+
+        const std::string n_saved = read_all(np);
+        const std::string c_saved = read_all(cp);
+        assert(n_saved.find("[interface ") == std::string::npos);
+        assert(n_saved.find("[peer ") == std::string::npos);
+        assert(c_saved.find("[interface inline0]") != std::string::npos);
+        assert(c_saved.find("[interface ext0]") != std::string::npos);
+        assert(c_saved.find("[peer inlinep0]") != std::string::npos);
+        assert(c_saved.find("[peer extp0]") != std::string::npos);
+
+        node::NodeConfig reloaded;
+        assert(node::NodeConfig::load_from_file(np.string(), reloaded, err));
+        assert(reloaded.interfaces.size() == 2);
+        assert(reloaded.peers.size() == 2);
+    }
+
+    // 6. Verify example configs/node.cfg + configs/interfaces.cfg + configs/peers.cfg load cleanly
+    {
+        const fs::path repo_cfg = fs::path(__FILE__).parent_path().parent_path() / "configs" / "node.cfg";
+        node::NodeConfig ex_cfg;
+        assert(node::NodeConfig::load_from_file(repo_cfg.string(), ex_cfg, err));
+        assert(ex_cfg.interfaces_file == "interfaces.cfg");
+        assert(ex_cfg.peers_file == "peers.cfg");
+        assert(ex_cfg.interfaces.size() == 1);
+        assert(ex_cfg.interfaces[0].id == "axudp0");
+        assert(ex_cfg.peers.empty());
+    }
+
+    fs::remove_all(tmp);
+    std::cout << "[PASS] test_config_include_storage_modes\n";
+}
+
 } // namespace
 
 int main() {
@@ -3214,6 +3427,7 @@ int main() {
     test_derive_default_iface_id_node();
     test_peer_sections_acl_migration_and_auto_learn();
     test_iface_directions_netmask_and_dmr_id();
+    test_config_include_storage_modes();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

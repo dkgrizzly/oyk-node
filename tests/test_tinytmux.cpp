@@ -833,7 +833,7 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[1;2B"), 6);
     assert(con->current_settings_sel() == 2);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
-    assert(con->current_settings_sel() == 7);
+    assert(con->current_settings_sel() == 9);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H"), 3);
     assert(con->current_settings_sel() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOC"), 3);
