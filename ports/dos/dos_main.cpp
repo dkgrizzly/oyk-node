@@ -3238,6 +3238,234 @@ static void run_dos_settings(int initial_tab) {
     vid_clear(0x07);
 }
 
+static void run_dos_terminate_dialog() {
+    if (g_node.total_active_connections() == 0) {
+        strcpy(g_status_line, "No active connections to terminate.");
+        return;
+    }
+    const int top = 4, left = 8, h = 16, w = 64;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+
+    int sel = 0, dirty = 1;
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        oyk_u32 sids[OYK_MAX_SESSIONS];
+        int sslot[OYK_MAX_SESSIONS];
+        int scnt = 0;
+        for (int i = 0; i < g_node.max_sessions() && scnt < OYK_MAX_SESSIONS; ++i) {
+            if (g_node.session_slot(i).state == OYK_SESS_CONNECTED) {
+                sids[scnt] = g_node.session_slot(i).id;
+                sslot[scnt] = i;
+                ++scnt;
+            }
+        }
+        if (scnt == 0) {
+            strcpy(g_status_line, "All active connections have closed.");
+            return;
+        }
+        if (sel >= scnt) sel = scnt - 1;
+
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, 32, ttl_at, "Terminate Active Connection");
+            vid_puts(top + 2, left + 2, hdr_at, "ID    Callsign    Port       State", w - 4);
+            int list_h = h - 6;
+            for (int r = 0; r < list_h && r < scnt; ++r) {
+                const OykSession& s = g_node.session_slot(sslot[r]);
+                char cs[16], id_s[10], row[64];
+                oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
+                sprintf(id_s, "#%lu", static_cast<unsigned long>(s.id));
+                const char* ifid = (s.iface_idx >= 0) ? g_node.iface(s.iface_idx).cfg.id : "local";
+                sprintf(row, "%-5s %-11.11s %-10.10s %-28.28s", id_s, cs, ifid, "[CONNECTED]");
+                vid_puts(top + 3 + r, left + 2, (r == sel) ? sel_at : fill_at, row, w - 4);
+            }
+            dos_vid_hdiv(g_vid, top + h - 3, left, w, bdr_at);
+            vid_puts(top + h - 2, left + 2, bar_at, "Up/Down: select | Enter: terminate | Esc: cancel", w - 4);
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72 && sel > 0) --sel;
+            else if (ext == 80 && sel + 1 < scnt) ++sel;
+        } else if (ch == 27) {
+            return;
+        } else if (ch == '\r' || ch == '\n') {
+            g_node.terminate_session(sids[sel], g_status_line, sizeof(g_status_line));
+            return;
+        }
+    }
+}
+
+static void run_dos_ban_dialog() {
+    const int top = 2, left = 3, h = 21, w = 74;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 hdr_at  = dos_vid_list_hdr_attr(g_vid);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 inp_at  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+    oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+
+    char call_in[12], lift_in[20], reason_in[48], fb[72];
+    call_in[0] = '\0';
+    strcpy(lift_in, "permanent");
+    strcpy(reason_in, "Banned by sysop.");
+    fb[0] = '\0';
+    int hard_ban = 0, appeal_ok = 1, focus = 0, unban_sel = 0, confirm_pop = 0, dirty = 1;
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        int bcnt = g_node.ban_count();
+        if (bcnt == 0) {
+            if (focus == 4) focus = 0;
+            unban_sel = 0;
+            confirm_pop = 0;
+        } else if (unban_sel >= bcnt) {
+            unban_sel = bcnt - 1;
+        }
+
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, 38, ttl_at, "Ban / Unban Callsign (banlist.cfg)");
+
+            vid_puts(top + 2, left + 2, fill_at, "Callsign: ", 10);
+            vid_puts(top + 2, left + 12, (focus == 0 && !confirm_pop) ? sel_at : inp_at, call_in, 12);
+            vid_puts(top + 3, left + 2, fill_at, "Lift At : ", 10);
+            vid_puts(top + 3, left + 12, (focus == 1 && !confirm_pop) ? sel_at : inp_at, lift_in, 16);
+            vid_puts(top + 3, left + 30, fill_at, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
+            vid_puts(top + 4, left + 2, fill_at, "Reason  : ", 10);
+            vid_puts(top + 4, left + 12, (focus == 2 && !confirm_pop) ? sel_at : inp_at, reason_in, 56);
+
+            char opts[64];
+            sprintf(opts, "Options : [%c] Hard Ban (H)   [%c] Appeal Allowed (A)",
+                    hard_ban ? 'X' : ' ', appeal_ok ? 'X' : ' ');
+            vid_puts(top + 5, left + 2, (focus == 3 && !confirm_pop) ? sel_at : fill_at, opts, 66);
+
+            char hdr[32];
+            sprintf(hdr, "Active Bans (%d):", bcnt);
+            vid_puts(top + 7, left + 2, fill_at, hdr, 30);
+            vid_puts(top + 8, left + 2, hdr_at, "Callsign   Type  Lift At          Reason", w - 4);
+            const int list_h = 7;
+            if (bcnt == 0) {
+                vid_puts(top + 9, left + 4, fill_at, "(none)", 20);
+            } else {
+                int off = (unban_sel >= list_h) ? (unban_sel - list_h + 1) : 0;
+                for (int i = 0; i < list_h && (off + i) < bcnt; ++i) {
+                    const OykBanEntry& e = g_node.ban_entry(off + i);
+                    char row[72];
+                    sprintf(row, "%-10.10s %-5s %-16.16s %-34.34s",
+                            e.key, (e.flags & OYK_BAN_HARD_BAN) ? "HARD" : "SOFT",
+                            e.lift_at, e.reason);
+                    vid_puts(top + 9 + i, left + 2,
+                             (focus == 4 && !confirm_pop && (off + i) == unban_sel) ? sel_at : fill_at,
+                             row, w - 4);
+                }
+            }
+            if (fb[0]) vid_puts(top + h - 3, left + 2, err_at, fb, w - 4);
+            dos_vid_hdiv(g_vid, top + h - 2, left, w, bdr_at);
+            const char* help = (focus == 4)
+                                   ? "Up/Down: pick | Enter: UNBAN (confirm) | Tab: next | Esc: close"
+                                   : ((focus == 3)
+                                          ? "H: hard/soft | A: appeal | Enter: BAN | Tab: next | Esc: close"
+                                          : "Enter: BAN | Tab: next field | Esc: close");
+            vid_puts(top + h - 1, left + 2, bar_at, help, w - 4);
+
+            if (confirm_pop && bcnt > 0) {
+                char msg[42];
+                dos_vid_box(g_vid, 9, 17, 6, 46, bdr_at, fill_at, 1);
+                dos_vid_title(g_vid, 9, 19, 18, ttl_at, "Confirm Unban");
+                sprintf(msg, "Unban callsign %s?", g_node.ban_entry(unban_sel).key);
+                vid_puts(11, 19, fill_at, msg, 42);
+                vid_puts(12, 19, sel_at, "[Y] Yes   [N] No", 20);
+            }
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (!confirm_pop && focus == 4) {
+                if (ext == 72 && unban_sel > 0) --unban_sel;
+                else if (ext == 80 && unban_sel + 1 < bcnt) ++unban_sel;
+            }
+            continue;
+        }
+        if (confirm_pop) {
+            if (ch == 'y' || ch == 'Y') {
+                g_node.unban_callsign(g_node.ban_entry(unban_sel).key, fb, sizeof(fb));
+                strncpy(g_status_line, fb, sizeof(g_status_line) - 1);
+                g_status_line[sizeof(g_status_line) - 1] = '\0';
+                confirm_pop = 0;
+            } else if (ch == 'n' || ch == 'N' || ch == 27) {
+                confirm_pop = 0;
+            }
+            continue;
+        }
+        if (ch == 27) return;
+        if (ch == '\t') {
+            focus = (focus + 1) % (bcnt > 0 ? 5 : 4);
+            continue;
+        }
+        if (focus == 4) {
+            if (ch == '\r' || ch == '\n') confirm_pop = 1;
+            continue;
+        }
+        if (ch == '\r' || ch == '\n') {
+            if (!call_in[0]) {
+                strcpy(fb, "Enter a callsign first.");
+            } else {
+                oyk_u32 flags = (hard_ban ? OYK_BAN_HARD_BAN : 0UL) |
+                                (appeal_ok ? OYK_BAN_APPEAL_ALLOWED : 0UL);
+                if (g_node.ban_callsign(call_in, flags,
+                                        reason_in[0] ? reason_in : "Banned by sysop.",
+                                        lift_in[0] ? lift_in : "permanent",
+                                        fb, sizeof(fb))) {
+                    call_in[0] = '\0';
+                    strcpy(lift_in, "permanent");
+                    strncpy(g_status_line, fb, sizeof(g_status_line) - 1);
+                    g_status_line[sizeof(g_status_line) - 1] = '\0';
+                }
+            }
+            continue;
+        }
+        if (focus == 3) {
+            if (ch == 'h' || ch == 'H') hard_ban = !hard_ban;
+            else if (ch == 'a' || ch == 'A') appeal_ok = !appeal_ok;
+            continue;
+        }
+        char* tgt = (focus == 0) ? call_in : ((focus == 1) ? lift_in : reason_in);
+        size_t cap = (focus == 0) ? sizeof(call_in) : ((focus == 1) ? sizeof(lift_in) : sizeof(reason_in));
+        if (ch == 8 || ch == 127) {
+            size_t n = strlen(tgt);
+            if (n > 0) tgt[n - 1] = '\0';
+        } else if (ch >= 32 && ch < 127) {
+            size_t n = strlen(tgt);
+            if (n + 1 < cap) {
+                char c = static_cast<char>(ch);
+                if (focus == 0 && c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+                tgt[n] = c;
+                tgt[n + 1] = '\0';
+            }
+        }
+    }
+}
+
 static void run_dos_menu_action(int chosen, int* running) {
     if (chosen == 0) {
         g_node.set_accept_incoming(1);
@@ -3256,32 +3484,9 @@ static void run_dos_menu_action(int chosen, int* running) {
     } else if (chosen == 6) {
         run_dos_settings(4);
     } else if (chosen == 7) {
-        char id_buf[12];
-        prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
-        if (id_buf[0]) {
-            g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
-                                     g_status_line, sizeof(g_status_line));
-        }
+        run_dos_terminate_dialog();
     } else if (chosen == 8) {
-        char call_buf[16];
-        prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
-        if (call_buf[0] == '-' && call_buf[1]) {
-            char confirm_p[48], yn[4];
-            sprintf(confirm_p, "Unban %s? [Y/N]: ", call_buf + 1);
-            prompt_line(confirm_p, yn, sizeof(yn));
-            if (yn[0] == 'y' || yn[0] == 'Y') {
-                g_node.unban_callsign(call_buf + 1, g_status_line, sizeof(g_status_line));
-            } else {
-                strcpy(g_status_line, "Unban cancelled.");
-            }
-        } else if (call_buf[0]) {
-            char lift_buf[32];
-            prompt_line("Lift [permanent, 30m, 12h, 7d, YYYY-MM-DD]: ", lift_buf, sizeof(lift_buf));
-            g_node.ban_callsign(call_buf, OYK_BAN_APPEAL_ALLOWED,
-                                "Banned by DOS sysop.",
-                                lift_buf[0] ? lift_buf : "permanent",
-                                g_status_line, sizeof(g_status_line));
-        }
+        run_dos_ban_dialog();
     } else if (chosen == 9) {
         if (confirm_dos_exit()) {
             *running = 0;

@@ -354,6 +354,10 @@ void TinyTmuxConsole::render() {
         render_edit_peer_dialog();
     } else if (prompt_kind_ == PROMPT_CONFIRM_FORMAT) {
         render_confirm_format_modal();
+    } else if (prompt_kind_ == PROMPT_TERMINATE_SID) {
+        render_terminate_dialog();
+    } else if (prompt_kind_ == PROMPT_BAN_CALLSIGN) {
+        render_ban_dialog();
     } else if (prompt_kind_ != PROMPT_NONE) {
         render_prompt_overlay();
     }
@@ -368,7 +372,10 @@ void TinyTmuxConsole::render() {
           wiz_focus_ < ((wiz_drv_ == 0 || wiz_drv_ == 4) ? 6 : ((wiz_drv_ == 1) ? 6 : 5))) ||
          (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER &&
           (wiz_focus_ == 0 || wiz_focus_ == 1 || wiz_focus_ == 2 || wiz_focus_ == 4 || wiz_focus_ == 5)) ||
+         (prompt_kind_ == PROMPT_BAN_CALLSIGN && !wiz_btn_ && wiz_focus_ <= 2) ||
          (prompt_kind_ != PROMPT_NONE &&
+          prompt_kind_ != PROMPT_TERMINATE_SID &&
+          prompt_kind_ != PROMPT_BAN_CALLSIGN &&
           prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD &&
           prompt_kind_ != PROMPT_SETTINGS_EDIT_IFACE &&
           prompt_kind_ != PROMPT_SETTINGS_EDIT_PEER))) {
@@ -1005,9 +1012,10 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
         if (auto_cnt > 0) {
             sprintf(buf, "\033[5;8H%d auto-learned peer(s) were added this session.", auto_cnt);
             write_str(buf);
-            write_str("\033[7;8HSave them to config, discard them, or review in Peers before reboot?");
-            write_str("\033[9;8H[S] Save & Bootloader        [D] Discard & Bootloader");
-            write_str("\033[11;8H[R] Review Peers             [N / Esc] Cancel");
+            write_str("\033[7;8HSave them to config, discard them, or review in Peers");
+            write_str("\033[8;8Hbefore entering HalfKay bootloader?");
+            write_str("\033[10;8H[S] Save & Bootloader        [D] Discard & Bootloader");
+            write_str("\033[12;8H[R] Review Peers             [N / Esc] Cancel");
         } else {
             if (active > 0) {
                 sprintf(buf, "\033[5;8HEnter HalfKay bootloader? (%d active connection(s))", active);
@@ -1776,6 +1784,256 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_edit_peer_key(int key) {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::open_terminate_dialog() {
+    if (!node_ || node_->total_active_connections() == 0) {
+        strcpy(status_line_, "No active connections to terminate.");
+        render();
+        return;
+    }
+    prompt_kind_ = PROMPT_TERMINATE_SID;
+    wiz_edit_idx_ = 0;
+    render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_terminate_dialog() {
+    char buf[192];
+    const int top = 4, left = 8, h = 16, w = 64;
+    draw_dec_box(top, left, h, w, "Terminate Active Connection", 1);
+    sprintf(buf, "\033[%d;%dH%s %-5s %-11s %-10s %-30s \033[0m",
+            top + 2, left + 2, sgr_list_hdr(), "ID", "Callsign", "Port", "State");
+    write_str(buf);
+
+    int row = 0;
+    const int list_h = h - 6;
+    for (int i = 0; i < node_->max_sessions() && row < list_h; ++i) {
+        const OykSession& s = node_->session_slot(i);
+        if (s.state == OYK_SESS_CONNECTED) {
+            char cs[16], id_s[16];
+            oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
+            sprintf(id_s, "#%lu", static_cast<unsigned long>(s.id));
+            const char* ifid = (s.iface_idx >= 0) ? node_->iface(s.iface_idx).cfg.id : "local";
+            sprintf(buf, "\033[%d;%dH%s %-5s %-11.11s %-10.10s %-30.30s \033[0m",
+                    top + 3 + row, left + 2,
+                    (row == wiz_edit_idx_) ? sgr_sel() : "",
+                    id_s, cs, ifid, "[CONNECTED]");
+            write_str(buf);
+            ++row;
+        }
+    }
+    if (row == 0) {
+        sprintf(buf, "\033[%d;%dH(no active connections)", top + 4, left + 4);
+        write_str(buf);
+    }
+    draw_dec_hdiv(top + h - 3, left, w);
+    sprintf(buf, "\033[%d;%dHUp/Down: select | Enter: terminate | Esc: cancel",
+            top + h - 2, left + 2);
+    write_str(buf);
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_terminate_key(int key) {
+    oyk_u32 sids[OYK_MAX_SESSIONS];
+    int scnt = 0;
+    for (int i = 0; i < node_->max_sessions() && scnt < OYK_MAX_SESSIONS; ++i) {
+        if (node_->session_slot(i).state == OYK_SESS_CONNECTED) {
+            sids[scnt++] = node_->session_slot(i).id;
+        }
+    }
+    if (scnt == 0 || key == 27) {
+        if (scnt == 0) strcpy(status_line_, "All active connections have closed.");
+        prompt_kind_ = PROMPT_NONE;
+        render();
+        return;
+    }
+    if (wiz_edit_idx_ >= scnt) wiz_edit_idx_ = scnt - 1;
+    if (key == TMUX_KEY_UP && wiz_edit_idx_ > 0) {
+        --wiz_edit_idx_;
+        render();
+    } else if (key == TMUX_KEY_DOWN && wiz_edit_idx_ + 1 < scnt) {
+        ++wiz_edit_idx_;
+        render();
+    } else if (key == '\r' || key == '\n') {
+        char msg[96];
+        node_->terminate_session(sids[wiz_edit_idx_], msg, sizeof(msg));
+        con_str_copy(status_line_, sizeof(status_line_), msg);
+        prompt_kind_ = PROMPT_NONE;
+        render();
+    }
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::open_ban_dialog() {
+    prompt_kind_ = PROMPT_BAN_CALLSIGN;
+    ban_call_tmp_[0] = '\0';
+    strcpy(wiz_id_, "permanent");
+    strcpy(wiz_desc_, "Banned by sysop.");
+    wiz_flags_ = 0x02U; /* Appeal Allowed default on, Hard Ban default off */
+    wiz_focus_ = 0;
+    wiz_edit_idx_ = 0;
+    wiz_btn_ = 0; /* confirm unban inactive */
+    wiz_err_[0] = '\0';
+    render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_ban_dialog() {
+    char buf[192];
+    const int top = 2, left = 3, h = 21, w = 74;
+    draw_dec_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1);
+
+    sprintf(buf, "\033[%d;%dHCallsign: %s %-12.12s \033[0m",
+            top + 2, left + 2, (wiz_focus_ == 0 && !wiz_btn_) ? sgr_sel() : sgr_menubar(), ban_call_tmp_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHLift At : %s %-15.15s \033[0m  (permanent, 30m, 12h, 7d, YYYY-MM-DD)",
+            top + 3, left + 2, (wiz_focus_ == 1 && !wiz_btn_) ? sgr_sel() : sgr_menubar(), wiz_id_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHReason  : %s %-56.56s \033[0m",
+            top + 4, left + 2, (wiz_focus_ == 2 && !wiz_btn_) ? sgr_sel() : sgr_menubar(), wiz_desc_);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%sOptions : [%c] Hard Ban (H)   [%c] Appeal Allowed (A)     \033[0m",
+            top + 5, left + 2,
+            (wiz_focus_ == 3 && !wiz_btn_) ? sgr_sel() : "",
+            (wiz_flags_ & 1U) ? 'X' : ' ',
+            (wiz_flags_ & 2U) ? 'X' : ' ');
+    write_str(buf);
+
+    int bcnt = node_->ban_count();
+    sprintf(buf, "\033[%d;%dHActive Bans (%d):", top + 7, left + 2, bcnt);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%s %-10s %-5s %-16s %-34s \033[0m",
+            top + 8, left + 2, sgr_list_hdr(), "Callsign", "Type", "Lift At", "Reason");
+    write_str(buf);
+
+    const int list_h = 7;
+    if (bcnt == 0) {
+        sprintf(buf, "\033[%d;%dH(none)", top + 9, left + 4);
+        write_str(buf);
+    } else {
+        int off = (wiz_edit_idx_ >= list_h) ? (wiz_edit_idx_ - list_h + 1) : 0;
+        for (int i = 0; i < list_h && (off + i) < bcnt; ++i) {
+            const OykBanEntry& e = node_->ban_entry(off + i);
+            int hi = (wiz_focus_ == 4 && !wiz_btn_ && (off + i) == wiz_edit_idx_);
+            sprintf(buf, "\033[%d;%dH%s %-10.10s %-5s %-16.16s %-34.34s \033[0m",
+                    top + 9 + i, left + 2, hi ? sgr_sel() : "",
+                    e.key, (e.flags & OYK_BAN_HARD_BAN) ? "HARD" : "SOFT",
+                    e.lift_at, e.reason);
+            write_str(buf);
+        }
+    }
+
+    if (wiz_err_[0]) {
+        sprintf(buf, "\033[%d;%dH%s %-68.68s \033[0m", top + h - 3, left + 2, sgr_warn(), wiz_err_);
+        write_str(buf);
+    }
+    draw_dec_hdiv(top + h - 2, left, w);
+    const char* help = (wiz_focus_ == 4)
+                           ? "Up/Down: pick | Enter: UNBAN (confirm) | Tab: next | Esc: close"
+                           : ((wiz_focus_ == 3)
+                                  ? "H: hard/soft | A: appeal | Enter: BAN | Tab: next | Esc: close"
+                                  : "Enter: BAN | Tab: next field | Esc: close");
+    sprintf(buf, "\033[%d;%dH%-68.68s", top + h - 1, left + 2, help);
+    write_str(buf);
+
+    if (wiz_btn_ && bcnt > 0 && wiz_edit_idx_ >= 0 && wiz_edit_idx_ < bcnt) {
+        draw_dec_box(9, 17, 6, 46, "Confirm Unban", 1);
+        sprintf(buf, "\033[11;19HUnban callsign %-24.24s", node_->ban_entry(wiz_edit_idx_).key);
+        write_str(buf);
+        write_str("\033[12;19H[Y] Yes   [N] No");
+    }
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_ban_key(int key) {
+    int bcnt = node_->ban_count();
+    if (bcnt == 0) {
+        if (wiz_focus_ == 4) wiz_focus_ = 0;
+        wiz_edit_idx_ = 0;
+        wiz_btn_ = 0;
+    } else if (wiz_edit_idx_ >= bcnt) {
+        wiz_edit_idx_ = bcnt - 1;
+    }
+
+    if (wiz_btn_) {
+        if (key == 'y' || key == 'Y') {
+            char msg[96];
+            node_->unban_callsign(node_->ban_entry(wiz_edit_idx_).key, msg, sizeof(msg));
+            con_str_copy(wiz_err_, sizeof(wiz_err_), msg);
+            con_str_copy(status_line_, sizeof(status_line_), msg);
+            wiz_btn_ = 0;
+        } else if (key == 'n' || key == 'N' || key == 27) {
+            wiz_btn_ = 0;
+        }
+        render();
+        return;
+    }
+
+    if (key == 27) {
+        prompt_kind_ = PROMPT_NONE;
+        render();
+        return;
+    }
+    if (key == '\t') {
+        wiz_focus_ = (wiz_focus_ + 1) % (bcnt > 0 ? 5 : 4);
+        render();
+        return;
+    }
+    if (wiz_focus_ == 4) {
+        if (key == TMUX_KEY_UP && wiz_edit_idx_ > 0) {
+            --wiz_edit_idx_;
+            render();
+        } else if (key == TMUX_KEY_DOWN && wiz_edit_idx_ + 1 < bcnt) {
+            ++wiz_edit_idx_;
+            render();
+        } else if (key == '\r' || key == '\n') {
+            wiz_btn_ = 1;
+            render();
+        }
+        return;
+    }
+
+    if (key == '\r' || key == '\n') {
+        if (!ban_call_tmp_[0]) {
+            strcpy(wiz_err_, "Enter a callsign first.");
+        } else {
+            oyk_u32 flags = ((wiz_flags_ & 1U) ? OYK_BAN_HARD_BAN : 0UL) |
+                            ((wiz_flags_ & 2U) ? OYK_BAN_APPEAL_ALLOWED : 0UL);
+            char msg[96];
+            if (node_->ban_callsign(ban_call_tmp_, flags,
+                                    wiz_desc_[0] ? wiz_desc_ : "Banned by sysop.",
+                                    wiz_id_[0] ? wiz_id_ : "permanent", msg, sizeof(msg))) {
+                ban_call_tmp_[0] = '\0';
+                strcpy(wiz_id_, "permanent");
+                con_str_copy(wiz_err_, sizeof(wiz_err_), msg);
+                con_str_copy(status_line_, sizeof(status_line_), msg);
+            } else {
+                sprintf(wiz_err_, "Error: %.46s", msg);
+            }
+        }
+        render();
+        return;
+    }
+
+    if (wiz_focus_ == 3) {
+        if (key == 'h' || key == 'H') wiz_flags_ ^= 1U;
+        else if (key == 'a' || key == 'A') wiz_flags_ ^= 2U;
+        render();
+        return;
+    }
+
+    char* target = (wiz_focus_ == 0) ? ban_call_tmp_ : ((wiz_focus_ == 1) ? wiz_id_ : wiz_desc_);
+    size_t cap = (wiz_focus_ == 0) ? 12U : ((wiz_focus_ == 1) ? sizeof(wiz_id_) : sizeof(wiz_desc_));
+    if (key == 8 || key == 127) {
+        size_t n = strlen(target);
+        if (n > 0) target[n - 1] = '\0';
+        render();
+    } else if (key >= 0x20 && key < 0x7F) {
+        size_t n = strlen(target);
+        if (n + 1 < cap) {
+            char ch = static_cast<char>(key);
+            if (wiz_focus_ == 0 && ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 32);
+            target[n] = ch;
+            target[n + 1] = '\0';
+        }
+        render();
+    }
+}
+
 void TinyTmuxConsole::render_prompt_overlay() {
     char buf[192];
     const int top = 9, left = 6, h = 6, w = 68;
@@ -1943,55 +2201,6 @@ void TinyTmuxConsole::commit_prompt() {
     prompt_kind_ = PROMPT_NONE;
     prompt_buf_[0] = '\0';
     prompt_len_ = 0;
-
-    if (pk == PROMPT_TERMINATE_SID) {
-        oyk_u32 sid = static_cast<oyk_u32>(strtoul(val, NULL, 10));
-        char msg[96];
-        if (sid > 0 && node_->terminate_session(sid, msg, sizeof(msg))) {
-            con_str_copy(status_line_, sizeof(status_line_), msg);
-        } else {
-            sprintf(status_line_, "Session #%lu not found.", static_cast<unsigned long>(sid));
-        }
-        render();
-        return;
-    }
-
-    if (pk == PROMPT_BAN_CALLSIGN) {
-        if (!val[0]) { render(); return; }
-        con_str_copy(ban_call_tmp_, sizeof(ban_call_tmp_), val);
-        begin_prompt(PROMPT_BAN_ACTION, "Action: [B]an, [H]ardban, or [U]nban:", "B");
-        return;
-    }
-
-    if (pk == PROMPT_BAN_ACTION) {
-        con_str_copy(ban_action_tmp_, sizeof(ban_action_tmp_), val);
-        if (val[0] == 'u' || val[0] == 'U') {
-            char msg[96];
-            if (node_->unban_callsign(ban_call_tmp_, msg, sizeof(msg))) {
-                con_str_copy(status_line_, sizeof(status_line_), msg);
-            } else {
-                sprintf(status_line_, "Callsign %s not found in banlist.", ban_call_tmp_);
-            }
-            render();
-            return;
-        }
-        begin_prompt(PROMPT_BAN_REASON, "Ban reason:", "Sysop ban");
-        return;
-    }
-
-    if (pk == PROMPT_BAN_REASON) {
-        int hard = (ban_action_tmp_[0] == 'h' || ban_action_tmp_[0] == 'H') ? 1 : 0;
-        oyk_u32 flags = hard ? OYK_BAN_HARD_BAN : OYK_BAN_APPEAL_ALLOWED;
-        char msg[96];
-        if (node_->ban_callsign(ban_call_tmp_, flags, val[0] ? val : "Sysop ban",
-                                "permanent", msg, sizeof(msg))) {
-            con_str_copy(status_line_, sizeof(status_line_), msg);
-        } else {
-            strcpy(status_line_, "Failed to add ban.");
-        }
-        render();
-        return;
-    }
 
     if (pk == PROMPT_CONFIRM_FORMAT) {
         if (strcmp(val, "FORMAT") == 0) {
@@ -2479,6 +2688,14 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
 }
 
 void TinyTmuxConsole::handle_prompt_key(int key) {
+    if (prompt_kind_ == PROMPT_TERMINATE_SID) {
+        handle_terminate_key(key);
+        return;
+    }
+    if (prompt_kind_ == PROMPT_BAN_CALLSIGN) {
+        handle_ban_key(key);
+        return;
+    }
     if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
         handle_add_wizard_key(key);
         return;
@@ -2541,9 +2758,9 @@ void TinyTmuxConsole::handle_console_key(int key) {
     } else if (key == 'e' || key == 'E') {
         open_settings(4);
     } else if (key == 't' || key == 'T') {
-        begin_prompt(PROMPT_TERMINATE_SID, "Terminate session ID (Esc=cancel):", "");
+        open_terminate_dialog();
     } else if (key == 'b' || key == 'B') {
-        begin_prompt(PROMPT_BAN_CALLSIGN, "Callsign to Ban / Unban (Esc=cancel):", "");
+        open_ban_dialog();
     } else if (key == 'p' || key == 'P') {
         view_ = TMUX_VIEW_PSRAM;
         render();
