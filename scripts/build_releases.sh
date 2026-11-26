@@ -20,7 +20,7 @@ Options:
   --targets <csv>    Comma-separated subset of targets to build:
                      linux-ncurses,linux-gtk,win64,win32,win16,dos,dos-gfx,teensy41,
                      pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
-                     android-playstore,android-sideload
+                     macclassic,android-playstore,android-sideload
   --skip-src         Do not generate source release archives
   -h, --help         Show this help
 EOF
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -577,6 +577,23 @@ for pico_board in pico_w pico2_w waveshare_core2350b pimoroni_pga2350; do
         fi
     fi
 done
+
+# 4c. Classic Macintosh (System 6.0.8 - Mac OS 9.2.2 Fat Binary via Retro68)
+RETRO68_DIR="${RETRO68_PREFIX:-${HOME}/opt/Retro68}"
+if target_requested "macclassic"; then
+    if [[ -x "${RETRO68_DIR}/bin/m68k-apple-macos-g++" && -x "${RETRO68_DIR}/bin/powerpc-apple-macos-g++" ]]; then
+        echo "Building Classic Macintosh 68k + PowerPC Fat Binary..."
+        BUILD_MC="${TMP_WORK}/build-macclassic"
+        make -C "${ROOT_DIR}/ports/macclassic" RETRO68_PREFIX="${RETRO68_DIR}" BUILD_DIR="${BUILD_MC}" all >/dev/null
+        st="$(stage_binary_tree "macclassic" "macclassic")"
+        cp "${ROOT_DIR}/ports/macclassic/README.md" "${st}/MACCLASSIC-README.md"
+        cp "${BUILD_MC}/OYKNode-Fat.bin" "${BUILD_MC}/OYKNode-Fat.dsk" "${st}/"
+        package_zip "macclassic"
+        PACKAGED+=("oyknode-${VER}-macclassic.zip")
+    else
+        SKIPPED+=("macclassic (Retro68 toolchain not found in ${RETRO68_DIR})")
+    fi
+fi
 
 # 5. Android (Play Store & Sideload flavors, packaged when ports/android is present and signed)
 APKSIGNER_BIN=""

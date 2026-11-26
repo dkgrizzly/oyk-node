@@ -35,6 +35,9 @@ void oyk_imxrt_closedir(void* dir_handle);
 #else
 #define OYK_MKDIR(p) ((void)(p), -1)
 #endif
+#elif defined(OYK_TARGET_MACCLASSIC)
+#include <sys/stat.h>
+#define OYK_MKDIR(p) ((void)(p), -1)
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -3359,6 +3362,8 @@ static int oyk_list_dir_entries(const char* dir_path, OykDirEnt* out, int max_ou
 #else
     (void)dir_path;
 #endif
+#elif defined(OYK_TARGET_MACCLASSIC)
+    (void)dir_path;
 #else
     DIR* d = opendir(dir_path);
     if (!d) return 0;
@@ -3414,6 +3419,10 @@ static int oyk_is_regular_file(const char* path) {
     if (stat(path, &st) != 0) return 0;
     return S_ISREG(st.st_mode) ? 1 : 0;
 #endif
+#elif defined(OYK_TARGET_MACCLASSIC)
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISREG(st.st_mode) ? 1 : 0;
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;
@@ -3441,6 +3450,10 @@ static int oyk_is_directory(const char* path) {
     if (stat(path, &st) != 0) return 0;
     return S_ISDIR(st.st_mode) ? 1 : 0;
 #endif
+#elif defined(OYK_TARGET_MACCLASSIC)
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
 #else
     struct stat st;
     if (lstat(path, &st) != 0) return 0;

@@ -5,7 +5,7 @@
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, and **Classic Macintosh**.
 
 ## Port Contact Sheets
 
@@ -41,6 +41,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — Contact Sheet](images/ui-gallery/android_contact_sheet.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — Contact Sheet](images/ui-gallery/macclassic_bw_contact_sheet.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — Contact Sheet](images/ui-gallery/macclassic_color_contact_sheet.png)
+
 ## 1. Operator Console (Main View)
 
 ### POSIX ncurses
@@ -74,6 +82,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 1. Operator Console (Main View)](images/ui-gallery/android_main.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 1. Operator Console (Main View)](images/ui-gallery/macclassic_bw_main.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 1. Operator Console (Main View)](images/ui-gallery/macclassic_color_main.png)
 
 ## 2. Settings — Node Tab
 
@@ -109,6 +125,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 2. Settings — Node Tab](images/ui-gallery/android_settings.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 2. Settings — Node Tab](images/ui-gallery/macclassic_bw_settings.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 2. Settings — Node Tab](images/ui-gallery/macclassic_color_settings.png)
+
 ## 3. Add Interface Wizard
 
 ### POSIX ncurses
@@ -142,6 +166,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 3. Add Interface Wizard](images/ui-gallery/android_add_iface.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 3. Add Interface Wizard](images/ui-gallery/macclassic_bw_add_iface.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 3. Add Interface Wizard](images/ui-gallery/macclassic_color_add_iface.png)
 
 ## 4. Edit Interface (Single-View Dialog)
 
@@ -177,6 +209,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/android_edit_iface.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/macclassic_bw_edit_iface.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/macclassic_color_edit_iface.png)
+
 ## 5. Settings — Peers Tab
 
 ### POSIX ncurses
@@ -210,6 +250,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 5. Settings — Peers Tab](images/ui-gallery/android_peers.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 5. Settings — Peers Tab](images/ui-gallery/macclassic_bw_peers.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 5. Settings — Peers Tab](images/ui-gallery/macclassic_color_peers.png)
 
 ## 6. Edit / Add Peer Dialog
 
@@ -245,6 +293,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 6. Edit / Add Peer Dialog](images/ui-gallery/android_edit_peer.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 6. Edit / Add Peer Dialog](images/ui-gallery/macclassic_bw_edit_peer.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 6. Edit / Add Peer Dialog](images/ui-gallery/macclassic_color_edit_peer.png)
+
 ## 7. Terminate Connection Modal
 
 ### POSIX ncurses
@@ -278,6 +334,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 7. Terminate Connection Modal](images/ui-gallery/android_terminate.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 7. Terminate Connection Modal](images/ui-gallery/macclassic_bw_terminate.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 7. Terminate Connection Modal](images/ui-gallery/macclassic_color_terminate.png)
 
 ## 8. Ban / Unban Callsign Dialog
 
@@ -313,6 +377,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/android_ban.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/macclassic_bw_ban.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/macclassic_color_ban.png)
+
 ## 9. Auto-Learned Peers Exit / Bootloader Prompt
 
 ### POSIX ncurses
@@ -346,6 +418,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/android_exit.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/macclassic_bw_exit.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/macclassic_color_exit.png)
 
 ## 10. Theme Settings Dialog
 
@@ -381,6 +461,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 10. Theme Settings Dialog](images/ui-gallery/android_theme.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 10. Theme Settings Dialog](images/ui-gallery/macclassic_bw_theme.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 10. Theme Settings Dialog](images/ui-gallery/macclassic_color_theme.png)
+
 ## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
 
 ### POSIX ncurses
@@ -415,6 +503,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/android_terminal.png)
 
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/macclassic_bw_terminal.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/macclassic_color_terminal.png)
+
 ## 12. File Manager / Pending & Approved BBS Files
 
 ### POSIX ncurses
@@ -448,4 +544,12 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Android (Material 3 / Jetpack Compose)
 
 ![Android (Material 3 / Jetpack Compose) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/android_files.png)
+
+### Classic Macintosh (System 6.0.8 B&W 512x342)
+
+![Classic Macintosh (System 6.0.8 B&W 512x342) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/macclassic_bw_files.png)
+
+### Classic Macintosh (Color QuickDraw 640x480)
+
+![Classic Macintosh (Color QuickDraw 640x480) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/macclassic_color_files.png)
 

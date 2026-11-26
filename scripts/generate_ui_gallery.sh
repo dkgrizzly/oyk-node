@@ -139,6 +139,21 @@ else
     echo "Warning: Android Gradle wrapper, Java, or Android SDK unavailable; skipping Android capture." >&2
 fi
 
+echo "[7/7] Capturing Classic Macintosh (68k/PPC) screens under Mini vMac..."
+RETRO68_DIR="${RETRO68_PREFIX:-${HOME}/opt/Retro68}"
+MC_RUNNER="${ROOT_DIR}/ports/macclassic/run_minivmac_test.sh"
+if [[ -x "${RETRO68_DIR}/bin/m68k-apple-macos-g++" && -x "${MC_RUNNER}" && -x "${HOME}/minivmac/minivmac-plus-bg" ]]; then
+    if [[ ! -f "${ROOT_DIR}/ports/macclassic/build_macclassic/OYKNode-Fat.bin" ]]; then
+        make -C "${ROOT_DIR}/ports/macclassic" RETRO68_PREFIX="${RETRO68_DIR}" all >/dev/null
+    fi
+    "${MC_RUNNER}" --capture-bw "${TMP_CAP}" || echo "Warning: Classic Mac B&W capture failed." >&2
+    if [[ -x "${HOME}/minivmac/minivmac-ii" && -f "${HOME}/minivmac/MacII.ROM" ]]; then
+        "${MC_RUNNER}" --capture-color "${TMP_CAP}" || echo "Warning: Classic Mac Color capture failed." >&2
+    fi
+else
+    echo "Warning: Retro68 or Mini vMac binaries unavailable; skipping Classic Macintosh capture." >&2
+fi
+
 echo "Validating cross-TUI layout parity..."
 PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
 
@@ -146,7 +161,7 @@ echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
-PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android)
+PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -185,9 +200,11 @@ port_label() {
         dos_gfx)  echo "MS-DOS 386+ Graphical (VBE/VGA/EGA)" ;;
         tinytmux) echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
         pico)     echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
-        gtk)      echo "X11 GTK+ 2.0" ;;
-        win)      echo "Windows GUI (Wine / Win32/64)" ;;
-        android)  echo "Android (Material 3 / Jetpack Compose)" ;;
+        gtk)              echo "X11 GTK+ 2.0" ;;
+        win)              echo "Windows GUI (Wine / Win32/64)" ;;
+        android)          echo "Android (Material 3 / Jetpack Compose)" ;;
+        macclassic_bw)    echo "Classic Macintosh (System 6.0.8 B&W 512x342)" ;;
+        macclassic_color) echo "Classic Macintosh (Color QuickDraw 640x480)" ;;
     esac
 }
 
@@ -251,7 +268,7 @@ done
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, and **Android**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, and **Classic Macintosh**.
 
 ## Port Contact Sheets
 

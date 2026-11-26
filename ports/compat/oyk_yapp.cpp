@@ -15,6 +15,9 @@
 #include <direct.h>
 #define OYK_YAPP_MKDIR(p) mkdir(p)
 #define OYK_YAPP_SEP      '\\'
+#elif defined(OYK_TARGET_MACCLASSIC)
+#define OYK_YAPP_MKDIR(p) ((void)(p), -1)
+#define OYK_YAPP_SEP      ':'
 #else
 #include <sys/stat.h>
 #define OYK_YAPP_MKDIR(p) mkdir((p), 0755)

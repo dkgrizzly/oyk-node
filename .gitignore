@@ -21,6 +21,8 @@ incoming/
 ports/dos/freedos/
 ports/dos/mtcp_inc/
 ports/dos/mtcp_inc_stamp
+ports/macclassic/build_macclassic/
+build_macos/
 ports/android/.gradle/
 ports/android/local.properties
 ports/android/build/
