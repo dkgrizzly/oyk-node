@@ -3399,6 +3399,118 @@ void test_config_include_storage_modes() {
     std::cout << "[PASS] test_config_include_storage_modes\n";
 }
 
+void test_same_interface_forwarding_policy() {
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "oyk_same_iface_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    const fs::path cfg_path = tmp / "same_iface.cfg";
+    {
+        std::ofstream ofs(cfg_path);
+        ofs << "[node]\n"
+            << "callsign = K7SAME-7\n"
+            << "logpath = " << (tmp / "logs").string() << "\n"
+            << "banlist = " << (tmp / "banlist.cfg").string() << "\n\n"
+            << "[interface ax0]\n"
+            << "type = axudp\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n\n"
+            << "[interface ax1]\n"
+            << "type = axudp\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "allow_same_interface = true\n\n"
+            << "[interface tel0]\n"
+            << "type = telnet\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "allow_same_interface = true\n";
+    }
+
+    node::NodeConfig cfg;
+    std::string err;
+    assert(node::NodeConfig::load_from_file(cfg_path, cfg, err));
+    assert(cfg.interfaces.size() == 3);
+    assert(!cfg.interfaces[0].allow_same_interface);
+    assert(cfg.interfaces[1].allow_same_interface);
+    assert(!cfg.interfaces[2].allow_same_interface);
+
+    const fs::path saved_path = tmp / "same_iface_saved.cfg";
+    assert(cfg.save_to_file(saved_path));
+    node::NodeConfig reloaded;
+    assert(node::NodeConfig::load_from_file(saved_path, reloaded, err));
+    assert(reloaded.interfaces.size() == 3);
+    assert(!reloaded.interfaces[0].allow_same_interface);
+    assert(reloaded.interfaces[1].allow_same_interface);
+    assert(!reloaded.interfaces[2].allow_same_interface);
+
+    node::NodeEngine engine(cfg);
+    assert(engine.start(err));
+    auto* ax0 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("ax0"));
+    auto* ax1 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("ax1"));
+    assert(ax0 && ax1);
+    const uint16_t p0 = ax0->bound_port();
+    const uint16_t p1 = ax1->bound_port();
+    assert(p0 > 0 && p1 > 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    TestAxudpClient dst0(ax25::Callsign("W2DST", 0), p0);
+    assert(ax0->add_peer("W2DST", "127.0.0.1", dst0.local_port()));
+    TestAxudpClient dst1(ax25::Callsign("W2DST", 0), p1);
+    assert(ax1->add_peer("W2DST", "127.0.0.1", dst1.local_port()));
+
+    // Remote client on ax0 (allow_same_interface=false): C ax0 blocked, C ax1 allowed
+    TestAxudpClient src0(ax25::Callsign("W2SRC", 0), p0);
+    src0.send(ax25::Frame::make_sabm(cfg.callsign, src0.call()));
+    auto ua0 = src0.recv();
+    assert(ua0.has_value() && ua0->type() == ax25::FrameType::UA);
+    uint8_t src0_vr = 0;
+    (void)src0.recv_all_text(cfg.callsign, src0_vr);
+
+    std::string same_cmd = "C ax0 W2DST\r";
+    src0.send(ax25::Frame::make_i(cfg.callsign, src0.call(), 0, src0_vr,
+                                  std::vector<uint8_t>(same_cmd.begin(), same_cmd.end())));
+    std::string denied = src0.recv_all_text(cfg.callsign, src0_vr, 200);
+    assert(denied.find("same-interface forwarding") != std::string::npos);
+    assert(!dst0.recv(150).has_value());
+
+    std::string cross_cmd = "C ax1 W2DST\r";
+    src0.send(ax25::Frame::make_i(cfg.callsign, src0.call(), 1, src0_vr,
+                                  std::vector<uint8_t>(cross_cmd.begin(), cross_cmd.end())));
+    auto cross_sabm = dst1.recv(1000);
+    assert(cross_sabm.has_value() && cross_sabm->type() == ax25::FrameType::SABM);
+    dst1.send(ax25::Frame::make_ua(cfg.callsign, dst1.call()));
+    std::string conn1 = src0.recv_all_text(cfg.callsign, src0_vr, 200);
+    assert(conn1.find("Connected to W2DST") != std::string::npos);
+
+    dst1.send(ax25::Frame::make_disc(cfg.callsign, dst1.call()));
+    auto ua_disc = dst1.recv();
+    assert(ua_disc.has_value() && ua_disc->type() == ax25::FrameType::UA);
+    (void)src0.recv_all_text(cfg.callsign, src0_vr, 150);
+    src0.send(ax25::Frame::make_disc(cfg.callsign, src0.call()));
+    (void)src0.recv();
+
+    // Remote client on ax1 (allow_same_interface=true): C ax1 allowed
+    TestAxudpClient src1(ax25::Callsign("W2SRC2", 0), p1);
+    src1.send(ax25::Frame::make_sabm(cfg.callsign, src1.call()));
+    auto ua1 = src1.recv();
+    assert(ua1.has_value() && ua1->type() == ax25::FrameType::UA);
+    uint8_t src1_vr = 0;
+    (void)src1.recv_all_text(cfg.callsign, src1_vr);
+
+    src1.send(ax25::Frame::make_i(cfg.callsign, src1.call(), 0, src1_vr,
+                                  std::vector<uint8_t>(cross_cmd.begin(), cross_cmd.end())));
+    auto same_sabm = dst1.recv(1000);
+    assert(same_sabm.has_value() && same_sabm->type() == ax25::FrameType::SABM);
+    dst1.send(ax25::Frame::make_ua(cfg.callsign, dst1.call()));
+    std::string conn2 = src1.recv_all_text(cfg.callsign, src1_vr, 200);
+    assert(conn2.find("Connected to W2DST") != std::string::npos);
+
+    engine.stop();
+    fs::remove_all(tmp);
+    std::cout << "[PASS] test_same_interface_forwarding_policy\n";
+}
+
 } // namespace
 
 int main() {
@@ -3428,6 +3540,7 @@ int main() {
     test_peer_sections_acl_migration_and_auto_learn();
     test_iface_directions_netmask_and_dmr_id();
     test_config_include_storage_modes();
+    test_same_interface_forwarding_policy();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

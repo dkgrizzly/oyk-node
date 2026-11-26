@@ -694,7 +694,7 @@ static void test_usb_host_radiofoundry_cdc_net_and_acm() {
 }
 
 struct ConsoleCap {
-    char buf[32768];
+    char buf[131072];
     size_t len;
 };
 
@@ -1195,7 +1195,7 @@ static void test_terminal_inquiry_and_ui_modals() {
 
     /* Navigate back Step 4 -> 3 -> 2 -> 1 ('b', Ctrl+B, Ctrl+B), switch driver to 1 (axudp), advance to Finish */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("b\x02\x02" "1\r\r\r"), 9);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("b\x02\x02" "1\r\r\r"), 7);
     assert(strstr(cap->buf, "axudp1") != NULL);
     assert(strstr(cap->buf, "Review interface configuration") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);

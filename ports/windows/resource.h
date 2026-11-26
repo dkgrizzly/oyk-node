@@ -200,6 +200,7 @@
 #define IDC_AIF_OUT         585
 #define IDC_AIF_L_LPOL      586
 #define IDC_AIF_LPOL        587
+#define IDC_AIF_SAME        588
 
 /* Single-View Edit Interface Dialog */
 #define IDD_EDIT_IFACE      590
@@ -219,6 +220,7 @@
 #define IDC_EIF_OUT         604
 #define IDC_EIF_L_LPOL      605
 #define IDC_EIF_LPOL        606
+#define IDC_EIF_SAME        607
 
 /* Peers Tab & Edit Peer Dialog */
 #define IDC_SET_L_PEER      610

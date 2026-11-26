@@ -1684,6 +1684,7 @@ radio::RadioInterfaceConfig gtk_build_iface_config(
     const std::string& peer,
     bool allow_in,
     bool allow_out,
+    bool allow_same,
     const std::string& learn_pol,
     const radio::RadioInterfaceConfig* prev) {
     radio::RadioInterfaceConfig ic;
@@ -1693,6 +1694,7 @@ radio::RadioInterfaceConfig gtk_build_iface_config(
     ic.description = desc;
     ic.allow_inbound = allow_in;
     ic.allow_outbound = (type_s == "telnet") ? false : allow_out;
+    ic.allow_same_interface = (type_s == "telnet") ? false : allow_same;
     if (type_s == "axudp") {
         ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
         ic.params["bind_port"] = port.empty() ? "10093" : port;
@@ -1813,7 +1815,7 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl1, nullptr);
 
     /* Page 2: Driver Settings */
-    GtkWidget* tbl2 = gtk_table_new(9, 2, FALSE);
+    GtkWidget* tbl2 = gtk_table_new(10, 2, FALSE);
     gtk_table_set_row_spacings(GTK_TABLE(tbl2), 6);
     gtk_table_set_col_spacings(GTK_TABLE(tbl2), 10);
     GtkWidget* l_mode = gtk_label_new("KISS-TCP Mode:");
@@ -1875,6 +1877,10 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out), TRUE);
     gtk_table_attach(GTK_TABLE(tbl2), chk_out, 0, 2, 7, 8, GTK_FILL, GTK_FILL, 0, 0);
 
+    GtkWidget* chk_same = gtk_check_button_new_with_label("Allow same-interface forwarding");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_same), FALSE);
+    gtk_table_attach(GTK_TABLE(tbl2), chk_same, 0, 2, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
+
     GtkWidget* l_lpol = gtk_label_new("Learned Peer Policy:");
     gtk_misc_set_alignment(GTK_MISC(l_lpol), 0.0f, 0.5f);
     GtkWidget* cb_lpol = gtk_combo_box_new_text();
@@ -1882,8 +1888,8 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
         gtk_combo_box_append_text(GTK_COMBO_BOX(cb_lpol), p);
     }
     gtk_combo_box_set_active(GTK_COMBO_BOX(cb_lpol), 0);
-    gtk_table_attach(GTK_TABLE(tbl2), l_lpol, 0, 1, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(tbl2), cb_lpol, 1, 2, 8, 9,
+    gtk_table_attach(GTK_TABLE(tbl2), l_lpol, 0, 1, 9, 10, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), cb_lpol, 1, 2, 9, 10,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl2, nullptr);
 
@@ -1979,8 +1985,11 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
             if (is_tel) {
                 gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out), FALSE);
                 gtk_widget_set_sensitive(chk_out, FALSE);
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_same), FALSE);
+                gtk_widget_set_sensitive(chk_same, FALSE);
             } else {
                 gtk_widget_set_sensitive(chk_out, TRUE);
+                gtk_widget_set_sensitive(chk_same, TRUE);
             }
             gtk_widget_grab_focus(e_host);
         } else {
@@ -2014,9 +2023,11 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
             }
             const bool a_in = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE;
             const bool a_out = (t != "telnet") && (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE);
+            const bool a_same = (t != "telnet") && (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_same)) != FALSE);
             gchar* lpr = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_lpol));
             oss << "Allow Inbound: " << (a_in ? "true" : "false") << "\n"
-                << "Allow Outbound:" << (a_out ? "true" : (t == "telnet" ? "false (disabled)" : "false")) << "\n";
+                << "Allow Outbound:" << (a_out ? "true" : (t == "telnet" ? "false (disabled)" : "false")) << "\n"
+                << "Same-Iface Fwd:" << (a_same ? "true" : (t == "telnet" ? "false (disabled)" : "false")) << "\n";
             if (t != "telnet") oss << "Learned Policy:" << (lpr ? lpr : "inherit") << "\n";
             if (lpr) g_free(lpr);
             gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(sum_tv)),
@@ -2125,6 +2136,7 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
                 gtk_entry_get_text(GTK_ENTRY(e_peer)),
                 gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE,
                 gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE,
+                gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_same)) != FALSE,
                 lpol,
                 nullptr);
             ctx->ifaces->push_back(std::move(ic));
@@ -2151,6 +2163,7 @@ struct GtkEditIfaceWidgets {
     GtkWidget* e_peer = nullptr;
     GtkWidget* chk_in = nullptr;
     GtkWidget* chk_out = nullptr;
+    GtkWidget* chk_same = nullptr;
     GtkWidget* l_lpol = nullptr;
     GtkWidget* cb_lpol = nullptr;
     int drv_idx = 0;
@@ -2171,6 +2184,7 @@ void sync_gtk_edit_iface_fields(GtkEditIfaceWidgets* w) {
         gtk_entry_set_text(GTK_ENTRY(w->e_peer), "");
         gtk_combo_box_set_active(GTK_COMBO_BOX(w->cb_mode), 0);
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_out), (t != "telnet") ? TRUE : FALSE);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_same), FALSE);
     }
 
     if (t == "kiss-serial") {
@@ -2209,8 +2223,11 @@ void sync_gtk_edit_iface_fields(GtkEditIfaceWidgets* w) {
     if (is_tel) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_out), FALSE);
         gtk_widget_set_sensitive(w->chk_out, FALSE);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_same), FALSE);
+        gtk_widget_set_sensitive(w->chk_same, FALSE);
     } else {
         gtk_widget_set_sensitive(w->chk_out, TRUE);
+        gtk_widget_set_sensitive(w->chk_same, TRUE);
     }
 }
 
@@ -2242,7 +2259,7 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     gtk_misc_set_alignment(GTK_MISC(lbl_prompt), 0.0f, 0.5f);
     gtk_box_pack_start(GTK_BOX(outer), lbl_prompt, FALSE, FALSE, 0);
 
-    GtkWidget* tbl = gtk_table_new(12, 2, FALSE);
+    GtkWidget* tbl = gtk_table_new(13, 2, FALSE);
     gtk_table_set_row_spacings(GTK_TABLE(tbl), 6);
     gtk_table_set_col_spacings(GTK_TABLE(tbl), 10);
     gtk_box_pack_start(GTK_BOX(outer), tbl, TRUE, TRUE, 0);
@@ -2303,6 +2320,10 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ew.chk_out),
                                  (ew.drv_idx == 4) ? FALSE : (src.allow_outbound ? TRUE : FALSE));
 
+    ew.chk_same = gtk_check_button_new_with_label("Allow same-interface forwarding");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ew.chk_same),
+                                 (ew.drv_idx == 4) ? FALSE : (src.allow_same_interface ? TRUE : FALSE));
+
     ew.l_lpol = gtk_label_new("Learned Peer Policy:");
     gtk_misc_set_alignment(GTK_MISC(ew.l_lpol), 0.0f, 0.5f);
     ew.cb_lpol = gtk_combo_box_new_text();
@@ -2353,7 +2374,8 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     attach_w(8, ew.l_peer, ew.e_peer);
     gtk_table_attach(GTK_TABLE(tbl), ew.chk_in, 0, 2, 9, 10, GTK_FILL, GTK_FILL, 0, 0);
     gtk_table_attach(GTK_TABLE(tbl), ew.chk_out, 0, 2, 10, 11, GTK_FILL, GTK_FILL, 0, 0);
-    attach_w(11, ew.l_lpol, ew.cb_lpol);
+    gtk_table_attach(GTK_TABLE(tbl), ew.chk_same, 0, 2, 11, 12, GTK_FILL, GTK_FILL, 0, 0);
+    attach_w(12, ew.l_lpol, ew.cb_lpol);
 
     GtkWidget* lbl_err = gtk_label_new("");
     gtk_misc_set_alignment(GTK_MISC(lbl_err), 0.0f, 0.5f);
@@ -2425,6 +2447,7 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
             gtk_entry_get_text(GTK_ENTRY(ew.e_peer)),
             gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ew.chk_in)) != FALSE,
             gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ew.chk_out)) != FALSE,
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ew.chk_same)) != FALSE,
             lpol,
             &src);
         (*ctx->ifaces)[static_cast<std::size_t>(edit_idx)] = std::move(ic);

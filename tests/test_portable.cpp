@@ -1513,6 +1513,120 @@ static void test_portable_config_include_storage_modes() {
     printf("[PASS] test_portable_config_include_storage_modes\n");
 }
 
+static int txlog_contains(const MockTxLog* log, const char* needle) {
+    for (int i = 0; i < log->count; ++i) {
+        if (oyk_frame_type(&log->frames[i]) == OYK_FT_I && log->frames[i].info_len > 0) {
+            char tmp[280];
+            size_t n = log->frames[i].info_len;
+            if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+            memcpy(tmp, log->frames[i].info, n);
+            tmp[n] = '\0';
+            if (strstr(tmp, needle) != NULL) return 1;
+        }
+    }
+    return 0;
+}
+
+static void test_portable_same_interface_policy() {
+    const char* p1 = "tsame1.cfg";
+    const char* p2 = "tsame2.cfg";
+    tp_write_str(p1,
+                 "[node]\n"
+                 "callsign = K7SAME-7\n\n"
+                 "[interface ax0]\n"
+                 "type = axudp\n"
+                 "bind_host = 127.0.0.1\n"
+                 "bind_port = 10093\n\n"
+                 "[interface ax1]\n"
+                 "type = axudp\n"
+                 "bind_host = 127.0.0.1\n"
+                 "bind_port = 10094\n"
+                 "allow_same_interface = true\n\n"
+                 "[interface tel0]\n"
+                 "type = telnet\n"
+                 "bind_host = 127.0.0.1\n"
+                 "bind_port = 8010\n"
+                 "allow_same_interface = true\n\n"
+                 "[peer p0]\n"
+                 "callsign = W2DST\n"
+                 "interface = ax0\n"
+                 "host = 127.0.0.1\n"
+                 "port = 10099\n\n"
+                 "[peer p1]\n"
+                 "callsign = W2DST\n"
+                 "interface = ax1\n"
+                 "host = 127.0.0.1\n"
+                 "port = 10100\n");
+
+    OykConfig* cfg = new OykConfig();
+    OykConfig* reloaded = new OykConfig();
+    MockTxLog* txlog = new MockTxLog();
+    OykPortableNode* node = new OykPortableNode();
+    OykFrame* f = new OykFrame();
+    char err[96];
+    assert(cfg && reloaded && txlog && node && f);
+
+    assert(oyk_config_load(p1, cfg, err, sizeof(err)) == 1);
+    assert(cfg->iface_count == 3);
+    assert(cfg->ifaces[0].allow_same_interface == 0);
+    assert(cfg->ifaces[1].allow_same_interface == 1);
+    assert(cfg->ifaces[2].allow_same_interface == 0);
+
+    assert(oyk_config_save(cfg, p2) == 1);
+    assert(oyk_config_load(p2, reloaded, err, sizeof(err)) == 1);
+    assert(reloaded->iface_count == 3);
+    assert(reloaded->ifaces[0].allow_same_interface == 0);
+    assert(reloaded->ifaces[1].allow_same_interface == 1);
+    assert(reloaded->ifaces[2].allow_same_interface == 0);
+
+    memset(txlog, 0, sizeof(*txlog));
+    assert(node->init(cfg, mock_tx, txlog, err, sizeof(err)) == 1);
+    assert(node->can_forward_between_ifaces(0, 0) == 0);
+    assert(node->can_forward_between_ifaces(0, 1) == 1);
+    assert(node->can_forward_between_ifaces(1, 1) == 1);
+    assert(node->can_forward_between_ifaces(-1, 0) == 1);
+
+    /* Remote session on ax0: CONNECT ax0 blocked, CONNECT ax1 permitted */
+    memset(f, 0, sizeof(*f));
+    f->dst = cfg->callsign;
+    assert(oyk_parse_callsign("W2SRC", &f->src) == 1);
+    f->is_command = 1;
+    f->control = 0x3FU;
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+
+    memset(f, 0, sizeof(*f));
+    f->dst = cfg->callsign;
+    assert(oyk_parse_callsign("W2SRC", &f->src) == 1);
+    f->is_command = 1;
+    f->control = 0x00U;
+    f->has_pid = 1;
+    f->pid = 0xF0U;
+    const char* same_cmd = "CONNECT ax0 W2DST\r";
+    f->info_len = static_cast<oyk_u16>(strlen(same_cmd));
+    memcpy(f->info, same_cmd, f->info_len);
+    txlog->count = 0;
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+    assert(txlog_contains(txlog, "same-interface forwarding") == 1);
+
+    const char* cross_cmd = "CONNECT ax1 W2DST\r";
+    f->control = 0x02U; /* N(S)=1 */
+    f->info_len = static_cast<oyk_u16>(strlen(cross_cmd));
+    memcpy(f->info, cross_cmd, f->info_len);
+    txlog->count = 0;
+    node->on_rx_frame(0, f, 0x7F000001UL, 10093, 0);
+    assert(txlog_contains(txlog, "same-interface forwarding") == 0);
+    assert(txlog_contains(txlog, "Connecting to W2DST via ax1") == 1);
+
+    delete f;
+    delete node;
+    delete txlog;
+    delete reloaded;
+    delete cfg;
+    remove(p1);
+    remove(p2);
+    printf("[PASS] test_portable_same_interface_policy\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1527,6 +1641,7 @@ int oyk_run_portable_tests() {
     test_portable_peer_sections_and_auto_learn();
     test_portable_iface_directions_netmask_and_dmr();
     test_portable_config_include_storage_modes();
+    test_portable_same_interface_policy();
     return 0;
 }
 
