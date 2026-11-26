@@ -56,7 +56,7 @@ Example in a forked C++ file:
 - **Build & verify**: Run `cmake --build build -j && ctest --test-dir build --output-on-failure` after changes.
 - **Portable core (`ports/compat/`)**: Must remain strict C++98 with zero STL, zero exceptions, zero RTTI, and 16-bit-safe integer widths (`sizeof(int) == 2`).
 - **Config line endings**: Config I/O must accept `CRLF`, `CR`, and `LF`, write `CRLF` by default on MS-DOS/Windows and `LF` on POSIX, preserve original line endings on write-back, and let `node.cfg`'s first line ending override mixed line endings without changing AX.25/KISS/Telnet wire protocols.
-- **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_WIN16_PORT`, `BUILD_WINDOWS_PORT`, and `BUILD_TINYTMUX_PORT` `OFF` by default; `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
+- **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_WIN16_PORT`, `BUILD_WINDOWS_PORT`, `BUILD_TINYTMUX_PORT`, and `BUILD_PICO_PORT` `OFF` by default; `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
 
 ## 5. Cross-Port Feature Parity & UI Consistency
 

@@ -19,6 +19,7 @@ Options:
   --out-dir <dir>    Destination directory for release archives (default: ./dist)
   --targets <csv>    Comma-separated subset of targets to build:
                      linux-ncurses,linux-gtk,win64,win32,win16,dos,teensy41,
+                     pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
                      android-playstore,android-sideload
   --skip-src         Do not generate source release archives
   -h, --help         Show this help
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos teensy41 android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -323,6 +324,33 @@ if [[ -x "${ROOT_DIR}/ports/android/gradlew" && -d "${ANDROID_SDK}" ]] && comman
     HAS_ANDROID=1
 fi
 
+PICO_SDK_FOUND="${PICO_SDK_PATH:-}"
+if [[ -z "${PICO_SDK_FOUND}" ]]; then
+    for cand in "${HOME}"/.pico-sdk/sdk/* "${HOME}/pico-sdk"; do
+        if [[ -f "${cand}/pico_sdk_init.cmake" && -d "${cand}/lib/cyw43-driver/src" && -d "${cand}/lib/lwip/src" ]]; then
+            PICO_SDK_FOUND="${cand}"
+            break
+        fi
+    done
+    if [[ -z "${PICO_SDK_FOUND}" && -f "${HOME}/pico-sdk/pico_sdk_init.cmake" ]]; then
+        PICO_SDK_FOUND="${HOME}/pico-sdk"
+    fi
+fi
+PICO_ARM_GCC=""
+for gcand in "${HOME}"/.pico-sdk/toolchain/*/bin/arm-none-eabi-gcc; do
+    if [[ -x "${gcand}" ]]; then
+        PICO_ARM_GCC="${gcand}"
+        break
+    fi
+done
+if [[ -z "${PICO_ARM_GCC}" ]]; then
+    PICO_ARM_GCC="$(command -v arm-none-eabi-gcc || true)"
+fi
+HAS_PICO=0
+if [[ -n "${PICO_SDK_FOUND}" && -n "${PICO_ARM_GCC}" ]] && command -v cmake >/dev/null 2>&1; then
+    HAS_PICO=1
+fi
+
 # 1. Host CMake / MinGW builds in an isolated temporary build directory
 CMAKE_TARGETS=()
 if target_requested "linux-ncurses"; then
@@ -476,6 +504,38 @@ if target_requested "teensy41"; then
         SKIPPED+=("teensy41 (Arduino / Teensyduino toolchain not found)")
     fi
 fi
+
+# 4b. Raspberry Pi Pico (RP2040 / RP2350) UF2 boards
+PICO_CMAKE_BIN="$(command -v cmake || true)"
+for pc in "${HOME}"/.pico-sdk/cmake/*/bin/cmake; do
+    [[ -x "${pc}" ]] && PICO_CMAKE_BIN="${pc}" && break
+done
+PICO_NINJA_ARG=()
+for pn in "${HOME}"/.pico-sdk/ninja/*/ninja; do
+    [[ -x "${pn}" ]] && PICO_NINJA_ARG=("-G" "Ninja" "-DCMAKE_MAKE_PROGRAM=${pn}") && break
+done
+
+for pico_board in pico_w pico2_w waveshare_core2350b pimoroni_pga2350; do
+    if target_requested "${pico_board}"; then
+        if [[ "${HAS_PICO}" -eq 1 && -n "${PICO_CMAKE_BIN}" ]]; then
+            echo "Building Raspberry Pi Pico firmware (${pico_board})..."
+            BUILD_PICO="${TMP_WORK}/build-${pico_board}"
+            "${PICO_CMAKE_BIN}" -S "${ROOT_DIR}/ports/pico" -B "${BUILD_PICO}" \
+                "${PICO_NINJA_ARG[@]}" \
+                "-DPICO_BOARD=${pico_board}" \
+                "-DPICO_SDK_PATH=${PICO_SDK_FOUND}" >/dev/null
+            "${PICO_CMAKE_BIN}" --build "${BUILD_PICO}" -j
+            st="$(stage_binary_tree "${pico_board}" "tinytmux")"
+            cp "${ROOT_DIR}/ports/pico/node_pico.cfg" "${st}/configs/"
+            cp "${ROOT_DIR}/ports/pico/README.md" "${st}/PICO-README.md"
+            cp "${BUILD_PICO}/oyk-pico-${pico_board}.uf2" "${st}/"
+            package_zip "${pico_board}"
+            PACKAGED+=("oyknode-${VER}-${pico_board}.zip")
+        else
+            SKIPPED+=("${pico_board} (Pico SDK or arm-none-eabi-gcc not found)")
+        fi
+    fi
+done
 
 # 5. Android (Play Store & Sideload flavors, packaged when ports/android is present)
 if target_requested "android-playstore"; then
