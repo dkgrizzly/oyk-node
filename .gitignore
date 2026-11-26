@@ -22,6 +22,9 @@ ports/dos/freedos/
 ports/dos/mtcp_inc/
 ports/dos/mtcp_inc_stamp
 ports/macclassic/build_macclassic/
+ports/gsos/build_gsos/
+ports/amiga/build_amiga/
+ports/atarist/build_atarist/
 build_macos/
 ports/android/.gradle/
 ports/android/local.properties

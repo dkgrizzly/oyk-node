@@ -154,7 +154,7 @@ else
     echo "Warning: Retro68 or Mini vMac binaries unavailable; skipping Classic Macintosh capture." >&2
 fi
 
-echo "[8/8] Capturing modern macOS (Cocoa) screens..."
+echo "[8/9] Capturing modern macOS (Cocoa) screens..."
 if [[ "$(uname -s)" == "Darwin" ]]; then
     MACOS_APP=""
     for cand in "${ROOT_DIR}/build-macos" "${ROOT_DIR}/build"; do
@@ -182,6 +182,19 @@ else
     done
 fi
 
+echo "[9/9] Capturing Apple IIGS GS/OS Super Hi-Res screens under GSplus..."
+VBCC_DIR="${VBCC:-${HOME}/opt/vbcc}"
+GSOS_DIR="${OYK_GSPLUS_DIR:-${HOME}/gsplus}"
+GSOS_RUNNER="${ROOT_DIR}/ports/gsos/run_gsplus_test.sh"
+if [[ -x "${VBCC_DIR}/bin/vc" && -x "${GSOS_RUNNER}" && -x "${GSOS_DIR}/gsplus/gsplus" && -f "${GSOS_DIR}/ROM.01" && -f "${GSOS_DIR}/System.Disk.po" ]]; then
+    if [[ ! -f "${ROOT_DIR}/ports/gsos/build_gsos/OYKNODE.SYS16" ]]; then
+        make -C "${ROOT_DIR}/ports/gsos" VBCC_PREFIX="${VBCC_DIR}" all >/dev/null
+    fi
+    "${GSOS_RUNNER}" --capture "${TMP_CAP}" || echo "Warning: GS/OS capture failed." >&2
+else
+    echo "Warning: vbcc or GSplus unavailable; skipping Apple IIGS GS/OS capture." >&2
+fi
+
 echo "Validating cross-TUI layout parity..."
 PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
 
@@ -189,7 +202,7 @@ echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
-PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos)
+PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos gsos)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -241,6 +254,7 @@ port_label() {
         macclassic_bw)    echo "Classic Macintosh (System 6.0.8 B&W 512x342)" ;;
         macclassic_color) echo "Classic Macintosh (Color QuickDraw 640x480)" ;;
         macos)            echo "macOS (Cocoa / Universal ARM64 + Intel + PowerPC)" ;;
+        gsos)             echo "Apple IIGS GS/OS (QuickDraw II 640x200)" ;;
     esac
 }
 
@@ -304,7 +318,7 @@ done
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, and **macOS**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, and **Apple IIGS GS/OS**.
 
 ## Port Contact Sheets
 

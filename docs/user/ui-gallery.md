@@ -5,7 +5,7 @@
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, and **macOS**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, and **Apple IIGS GS/OS**.
 
 ## Port Contact Sheets
 
@@ -49,6 +49,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — Contact Sheet](images/ui-gallery/macclassic_color_contact_sheet.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — Contact Sheet](images/ui-gallery/gsos_contact_sheet.png)
+
 ## 1. Operator Console (Main View)
 
 ### POSIX ncurses
@@ -90,6 +94,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 1. Operator Console (Main View)](images/ui-gallery/macclassic_color_main.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 1. Operator Console (Main View)](images/ui-gallery/gsos_main.png)
 
 ## 2. Settings — Node Tab
 
@@ -133,6 +141,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 2. Settings — Node Tab](images/ui-gallery/macclassic_color_settings.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 2. Settings — Node Tab](images/ui-gallery/gsos_settings.png)
+
 ## 3. Add Interface Wizard
 
 ### POSIX ncurses
@@ -174,6 +186,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 3. Add Interface Wizard](images/ui-gallery/macclassic_color_add_iface.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 3. Add Interface Wizard](images/ui-gallery/gsos_add_iface.png)
 
 ## 4. Edit Interface (Single-View Dialog)
 
@@ -217,6 +233,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/macclassic_color_edit_iface.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/gsos_edit_iface.png)
+
 ## 5. Settings — Peers Tab
 
 ### POSIX ncurses
@@ -258,6 +278,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 5. Settings — Peers Tab](images/ui-gallery/macclassic_color_peers.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 5. Settings — Peers Tab](images/ui-gallery/gsos_peers.png)
 
 ## 6. Edit / Add Peer Dialog
 
@@ -301,6 +325,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 6. Edit / Add Peer Dialog](images/ui-gallery/macclassic_color_edit_peer.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 6. Edit / Add Peer Dialog](images/ui-gallery/gsos_edit_peer.png)
+
 ## 7. Terminate Connection Modal
 
 ### POSIX ncurses
@@ -342,6 +370,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 7. Terminate Connection Modal](images/ui-gallery/macclassic_color_terminate.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 7. Terminate Connection Modal](images/ui-gallery/gsos_terminate.png)
 
 ## 8. Ban / Unban Callsign Dialog
 
@@ -385,6 +417,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/macclassic_color_ban.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/gsos_ban.png)
+
 ## 9. Auto-Learned Peers Exit / Bootloader Prompt
 
 ### POSIX ncurses
@@ -426,6 +462,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/macclassic_color_exit.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/gsos_exit.png)
 
 ## 10. Theme Settings Dialog
 
@@ -469,6 +509,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 10. Theme Settings Dialog](images/ui-gallery/macclassic_color_theme.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 10. Theme Settings Dialog](images/ui-gallery/gsos_theme.png)
+
 ## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
 
 ### POSIX ncurses
@@ -511,6 +555,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/macclassic_color_terminal.png)
 
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/gsos_terminal.png)
+
 ## 12. File Manager / Pending & Approved BBS Files
 
 ### POSIX ncurses
@@ -552,4 +600,8 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Classic Macintosh (Color QuickDraw 640x480)
 
 ![Classic Macintosh (Color QuickDraw 640x480) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/macclassic_color_files.png)
+
+### Apple IIGS GS/OS (QuickDraw II 640x200)
+
+![Apple IIGS GS/OS (QuickDraw II 640x200) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/gsos_files.png)
 

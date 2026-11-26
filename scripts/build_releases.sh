@@ -20,7 +20,7 @@ Options:
   --targets <csv>    Comma-separated subset of targets to build:
                      linux-ncurses,linux-gtk,win64,win32,win16,dos,dos-gfx,teensy41,
                      pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
-                     macclassic,android-playstore,android-sideload
+                     macclassic,gsos,android-playstore,android-sideload
   --skip-src         Do not generate source release archives
   -h, --help         Show this help
 EOF
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic gsos android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -592,6 +592,23 @@ if target_requested "macclassic"; then
         PACKAGED+=("oyknode-${VER}-macclassic.zip")
     else
         SKIPPED+=("macclassic (Retro68 toolchain not found in ${RETRO68_DIR})")
+    fi
+fi
+
+# 4d. Apple IIGS GS/OS (65C816 S16 via vbcc)
+VBCC_DIR="${VBCC:-${HOME}/opt/vbcc}"
+if target_requested "gsos"; then
+    if [[ -x "${VBCC_DIR}/bin/vc" ]]; then
+        echo "Building Apple IIGS GS/OS 65C816 S16 binary..."
+        BUILD_GS="${TMP_WORK}/build-gsos"
+        make -C "${ROOT_DIR}/ports/gsos" VBCC_PREFIX="${VBCC_DIR}" BUILD_DIR="${BUILD_GS}" all >/dev/null
+        st="$(stage_binary_tree "gsos" "gsos")"
+        cp "${ROOT_DIR}/ports/gsos/README.md" "${st}/GSOS-README.md"
+        cp "${BUILD_GS}/OYKNODE.SYS16" "${BUILD_GS}/OYKTEST.SYS16" "${st}/"
+        package_zip "gsos"
+        PACKAGED+=("oyknode-${VER}-gsos.zip")
+    else
+        SKIPPED+=("gsos (vbcc 65816 toolchain not found in ${VBCC_DIR})")
     fi
 fi
 

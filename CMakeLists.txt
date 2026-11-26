@@ -20,6 +20,7 @@ option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95
 option(BUILD_TINYTMUX_PORT   "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
 option(BUILD_PICO_PORT       "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
 option(BUILD_MACCLASSIC_PORT "Add targets to build Classic Macintosh (68k + PPC Fat) via Retro68" OFF)
+option(BUILD_GSOS_PORT       "Add targets to build Apple IIGS GS/OS (65C816 S16) via vbcc" OFF)
 if(APPLE)
     option(BUILD_MACOS_PORT "Build native macOS AppKit port (PowerPC, Intel, Apple Silicon)" ON)
 else()
@@ -420,6 +421,10 @@ if(BUILD_MACCLASSIC_PORT)
     add_subdirectory(ports/macclassic)
 endif()
 
+if(BUILD_GSOS_PORT)
+    add_subdirectory(ports/gsos)
+endif()
+
 if(BUILD_MACOS_PORT)
     add_subdirectory(ports/macos)
 endif()
@@ -517,6 +522,39 @@ if(BUILD_TESTS AND NOT WIN32)
     if(BUILD_MACCLASSIC_PORT AND EXISTS "$ENV{HOME}/minivmac/minivmac-plus-bg")
         add_test(NAME oyk_macclassic_tests
             COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/macclassic/run_minivmac_test.sh --unit-tests
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endif()
+
+    # Host C++98 verification of Apple IIGS GS/OS core, config EOLs, QuickDraw II theme preview, and terminal helpers
+    set_source_files_properties(
+        ports/gsos/gsos_core.c
+        ports/gsos/gsos_net.c
+        ports/gsos/gsos_capture.c
+        ports/gsos/gsos_ui.c
+        PROPERTIES LANGUAGE CXX
+    )
+    add_executable(oyk_gsos_tests
+        tests/test_gsos.cpp
+        ports/gsos/gsos_core.c
+        ports/gsos/gsos_net.c
+        ports/gsos/gsos_capture.c
+        ports/gsos/gsos_ui.c
+    )
+    target_include_directories(oyk_gsos_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/gsos
+    )
+    set_target_properties(oyk_gsos_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_gsos_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_gsos_tests COMMAND oyk_gsos_tests)
+
+    if(BUILD_GSOS_PORT AND EXISTS "$ENV{HOME}/gsplus/gsplus/gsplus" AND EXISTS "$ENV{HOME}/gsplus/ROM.01")
+        add_test(NAME oyk_gsos_emulator_tests
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/gsos/run_gsplus_test.sh --unit-tests
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
     endif()
