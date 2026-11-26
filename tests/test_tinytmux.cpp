@@ -1447,6 +1447,28 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */
+    /* 9a. Mouse support: VT100 never gets mouse enable; xterm-256 already got ?1000h/?1006h;
+     * verify SGR click on 'Node' opens Menu, wheel/click/X10 right-click work cleanly. */
+    {
+        TinyTmuxConsole* vt_con = new TinyTmuxConsole;
+        ConsoleCap* vt_cap = new ConsoleCap;
+        vt_cap->len = 0; vt_cap->buf[0] = '\0';
+        vt_con->init(node, console_tx_cap, vt_cap);
+        vt_con->on_usb_connect();
+        assert(strstr(vt_cap->buf, "\033[?1000h") == NULL); /* Plain VT100 must NOT enable mouse */
+        delete vt_cap;
+        delete vt_con;
+    }
+    cap->len = 0; cap->buf[0] = '\0';
+    /* Return to console cleanly then test SGR + X10 mouse interactions */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;4;1M"), 9); /* Left click ' Node ' */
+    assert(con->view_mode() == TMUX_VIEW_MENU);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<65;10;5M"), 10); /* Wheel down in menu */
+    assert(con->view_mode() == TMUX_VIEW_MENU);
+    const unsigned char x10_rclick[6] = { 0x1B, '[', 'M', 32 + 2, 32 + 10, 32 + 5 };
+    con->feed_input(x10_rclick, 6); /* X10 right-click closes menu */
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
     const int base_bl = tinytmux_board_sim_bootloader_count();
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
@@ -1456,6 +1478,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     tmux_save_capture("exit", con, cap);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);
+    assert(strstr(cap->buf, "\033[?1006l\033[?1000l") != NULL);
     con->tick(3600UL);
     assert(tinytmux_board_sim_bootloader_count() == base_bl + 1);
     assert(strstr(cap->buf, "73 de KR4OYK-7") != NULL);

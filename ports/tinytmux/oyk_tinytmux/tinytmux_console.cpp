@@ -65,7 +65,7 @@ TinyTmuxConsole::TinyTmuxConsole()
       wiz_edit_idx_(-1), wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
       lterm_sid_(0), lterm_is_local_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
-      esc_state_(ESC_IDLE), esc_len_(0), esc_start_ms_(0),
+      esc_state_(ESC_IDLE), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_start_ms_(0),
       last_marchc_redraw_ms_(0),
       bootloader_pending_(0), bootloader_start_ms_(0), storage_sel_(0) {
     esc_buf_[0] = '\0';
@@ -143,10 +143,18 @@ const char* TinyTmuxConsole::term_type_label() const {
 
 void TinyTmuxConsole::on_usb_connect() {
     term_type_ = TMUX_TERM_VT100;
+    mouse_enabled_ = 0;
     reset_escape();
     /* Asynchronous DA1 + DA2 inquiry; safe fallback stays in VT100 if terminal ignores queries. */
     write_str("\033[c\033[>c");
     render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::disable_mouse() {
+    if (mouse_enabled_) {
+        mouse_enabled_ = 0;
+        write_str("\033[?1006l\033[?1000l");
+    }
 }
 
 static const char* tmux_format_sgr_colors(int slot, oyk_u32 fg_rgb, oyk_u32 bg_rgb,
@@ -3398,6 +3406,7 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_bootloader_key(int key) {
     oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
     sprintf(notice, "\r*** Node %s going offline for firmware upgrade. Expect a delay before reconnect.\r", call_s);
     node_->begin_shutdown_with_notice(notice);
+    disable_mouse();
     bootloader_pending_ = 1;
     bootloader_start_ms_ = now_ms_;
     render();
@@ -3468,6 +3477,7 @@ void TinyTmuxConsole::handle_lterm_key(int key) {
 void TinyTmuxConsole::reset_escape() {
     esc_state_ = ESC_IDLE;
     esc_len_ = 0;
+    x10_len_ = 0;
     esc_buf_[0] = '\0';
 }
 
@@ -3530,11 +3540,126 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_da_csi() {
     }
     if (cand > term_type_) {
         term_type_ = cand;
+        if (term_type_ >= TMUX_TERM_VT340 && !mouse_enabled_) {
+            mouse_enabled_ = 1;
+            write_str("\033[?1000h\033[?1006h");
+        }
         render();
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int kind) {
+    if (!node_) return;
+    /* kind: 0=left, 2=right, 4=wheel_up, 5=wheel_down */
+    if (prompt_kind_ != PROMPT_NONE) {
+        if (kind == 4) dispatch_key(TMUX_KEY_UP);
+        else if (kind == 5) dispatch_key(TMUX_KEY_DOWN);
+        else if (kind == 2) dispatch_key(27);
+        else if (kind == 0 && prompt_kind_ == PROMPT_THEME_SETTINGS) {
+            if (row1 == 4 && col1 >= 14 && col1 <= 38) {
+                dispatch_key((col1 < 25) ? TMUX_KEY_LEFT : TMUX_KEY_RIGHT);
+            } else if (row1 == 21 && col1 >= 34 && col1 <= 53) {
+                dispatch_key('s');
+            } else if (row1 == 21 && col1 >= 54) {
+                dispatch_key(27);
+            }
+        }
+        return;
+    }
+
+    if (kind == 4 || kind == 5) {
+        if (view_ == TMUX_VIEW_MENU || view_ == TMUX_VIEW_SETTINGS ||
+            view_ == TMUX_VIEW_FILES || view_ == TMUX_VIEW_STORAGE) {
+            dispatch_key((kind == 4) ? TMUX_KEY_UP : TMUX_KEY_DOWN);
+        }
+        return;
+    }
+
+    if (kind == 2) {
+        if (view_ == TMUX_VIEW_CONSOLE) dispatch_key(TMUX_KEY_F10);
+        else dispatch_key(27);
+        return;
+    }
+
+    if (kind != 0) return;
+
+    if (view_ == TMUX_VIEW_CONSOLE) {
+        if (row1 == 1) {
+            if (col1 <= 9 || col1 >= 69) dispatch_key(TMUX_KEY_F10);
+            else if (col1 >= 49 && col1 <= 68) dispatch_key('\t');
+        } else if (row1 == 2 && col1 >= 61) {
+            dispatch_key(node_->accept_incoming() ? 'd' : 'a');
+        }
+    } else if (view_ == TMUX_VIEW_MENU) {
+        static const int ITEM_ROWS[14] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18 };
+        if (row1 < 2 || row1 > 19 || col1 < 2 || col1 > 37) {
+            dispatch_key(27);
+            return;
+        }
+        for (int i = 0; i < 14; ++i) {
+            if (row1 == ITEM_ROWS[i]) {
+                menu_sel_ = i;
+                dispatch_key('\r');
+                break;
+            }
+        }
+    } else if (view_ == TMUX_VIEW_SETTINGS) {
+        static const int TAB_LENS[7] = { 8, 7, 8, 10, 9, 7, 7 }; /* " 1:Node " .. " 7:Prn " */
+        if (row1 == 3) {
+            int tx = 5;
+            for (int t = 0; t < 7; ++t) {
+                if (col1 >= tx && col1 < tx + TAB_LENS[t]) {
+                    settings_tab_ = t;
+                    render();
+                    break;
+                }
+                tx += TAB_LENS[t] + 1;
+            }
+        } else if (row1 == 21) {
+            if (col1 >= 52) dispatch_key(27);
+            else if (col1 >= 38) dispatch_key('s');
+        } else {
+            int row_base = (settings_tab_ == 3 || settings_tab_ == 4) ? 6 : 5;
+            int cnt = settings_tab_item_count(settings_tab_);
+            if (row1 >= row_base && row1 < row_base + cnt && row1 < 18) {
+                int idx = row1 - row_base;
+                if (idx == settings_sel_[settings_tab_]) {
+                    dispatch_key('\r');
+                } else {
+                    settings_sel_[settings_tab_] = idx;
+                    render();
+                }
+            }
+        }
+    } else if (view_ == TMUX_VIEW_BOOTLOADER && !bootloader_pending_) {
+        if (row1 == 12 && col1 >= 8 && col1 <= 34) dispatch_key('s');
+        else if (row1 == 12 && col1 >= 36) dispatch_key('d');
+        else if (row1 == 13 && col1 >= 8 && col1 <= 34) dispatch_key('r');
+        else if (row1 == 13 && col1 >= 36) dispatch_key(27);
+    }
+}
+
 void TinyTmuxConsole::process_csi_final(char final_ch) {
+    if ((final_ch == 'M' || final_ch == 'm') && esc_buf_[0] == '<') {
+        if (final_ch == 'm') return; /* Ignore release */
+        const char* p = esc_buf_ + 1;
+        int btn = atoi(p);
+        const char* s1 = strchr(p, ';');
+        if (!s1) return;
+        int col1 = atoi(s1 + 1);
+        const char* s2 = strchr(s1 + 1, ';');
+        if (!s2) return;
+        int row1 = atoi(s2 + 1);
+        int kind = -1;
+        if (btn == 64 || (btn & 0x43) == 64) kind = 4;
+        else if (btn == 65 || (btn & 0x43) == 65) kind = 5;
+        else if ((btn & 64) == 0) {
+            if ((btn & 3) == 0) kind = 0;
+            else if ((btn & 3) == 2) kind = 2;
+        }
+        if (kind >= 0) handle_mouse_event(row1, col1, kind);
+        return;
+    }
     switch (final_ch) {
         case 'A': dispatch_key(TMUX_KEY_UP); break;
         case 'B': dispatch_key(TMUX_KEY_DOWN); break;
@@ -3664,6 +3789,9 @@ void TinyTmuxConsole::feed_input(const oyk_u8* data, size_t len) {
                     esc_start_ms_ = now_ms_;
                 } else if (esc_len_ == 0 && b == '[') {
                     esc_state_ = ESC_CSI_LINUX;
+                } else if (esc_len_ == 0 && b == 'M') {
+                    esc_state_ = ESC_CSI_MOUSE_X10;
+                    x10_len_ = 0;
                 } else if (b >= 0x20U && b <= 0x3FU) {
                     if (esc_len_ < static_cast<int>(sizeof(esc_buf_) - 1)) {
                         esc_buf_[esc_len_++] = static_cast<char>(b);
@@ -3696,6 +3824,22 @@ void TinyTmuxConsole::feed_input(const oyk_u8* data, size_t len) {
                     char ch = static_cast<char>(b);
                     reset_escape();
                     process_ss3_final(ch);
+                }
+                break;
+
+            case ESC_CSI_MOUSE_X10:
+                x10_buf_[x10_len_++] = b;
+                if (x10_len_ >= 3) {
+                    int cb = static_cast<int>(x10_buf_[0]) - 32;
+                    int col1 = static_cast<int>(x10_buf_[1]) - 32;
+                    int row1 = static_cast<int>(x10_buf_[2]) - 32;
+                    reset_escape();
+                    int kind = -1;
+                    if (cb == 64 || (cb & 0x43) == 64) kind = 4;
+                    else if (cb == 65 || (cb & 0x43) == 65) kind = 5;
+                    else if ((cb & 3) == 0) kind = 0;
+                    else if ((cb & 3) == 2) kind = 2;
+                    if (kind >= 0) handle_mouse_event(row1, col1, kind);
                 }
                 break;
         }

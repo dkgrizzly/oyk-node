@@ -64,8 +64,8 @@ CFG_DEF        = -DCFG_H="oyk_mtcp.cfg"
 CFLAGS_MTCP     = $(CPU) -ml -os -zm -zt32 -bt=dos -zq -DOYK_DOS_HAS_MTCP=1 $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
 CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
 
-NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj
-TEST_OBJS = test_dos.obj test_portable_dos.obj dos_usb.obj dos_video.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj
+NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj
+TEST_OBJS = test_dos.obj test_portable_dos.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj
 
 MTCP_OBJS = &
     mtcp_packet.obj &
@@ -104,6 +104,9 @@ dos_usb.obj: dos_usb.cpp dos_usb.hpp ../compat/oyk_portable.hpp
 
 dos_video.obj: dos_video.cpp dos_video.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=dos_video.obj dos_video.cpp
+
+dos_mouse.obj: dos_mouse.cpp dos_mouse.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=dos_mouse.obj dos_mouse.cpp
 
 ems.obj: ems.cpp ems.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=ems.obj ems.cpp

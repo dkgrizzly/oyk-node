@@ -369,13 +369,33 @@ static void test_pico_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
 
+    /* 8c. Mouse verification: VT100 must NOT enable mouse, xterm-256 enables ?1000h/?1006h,
+     * SGR left click + wheel + X10 right-click navigate menus cleanly. */
+    {
+        PicoConsole* vt_con = new PicoConsole;
+        PicoCapture* vt_cap = new PicoCapture;
+        vt_con->init(node, net, pico_cap_tx, vt_cap);
+        vt_con->on_usb_connect();
+        assert(strstr(vt_cap->buf, "\033[?1000h") == NULL);
+        delete vt_cap;
+        delete vt_con;
+    }
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;4;1M"), 9); /* Click ' Node ' */
+    assert(con->view_mode() == PICO_VIEW_MENU);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<65;8;5M"), 10); /* Wheel down */
+    assert(con->view_mode() == PICO_VIEW_MENU);
+    const unsigned char x10_rclick[6] = { 0x1B, '[', 'M', 32 + 2, 32 + 8, 32 + 5 };
+    con->feed_input(x10_rclick, 6);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
     /* 9. Auto-Learned Peers BOOTSEL modal */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
     assert(con->view_mode() == PICO_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "Auto-Learned Peers") != NULL);
     pico_save_capture("exit", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);
+    assert(strstr(cap->buf, "\033[?1006l\033[?1000l") != NULL);
     con->tick(1900UL);
 
     delete cap;

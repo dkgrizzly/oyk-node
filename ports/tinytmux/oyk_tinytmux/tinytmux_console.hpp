@@ -103,7 +103,8 @@ private:
         ESC_GOT_ESC,
         ESC_CSI,
         ESC_CSI_LINUX,
-        ESC_SS3
+        ESC_SS3,
+        ESC_CSI_MOUSE_X10
     };
 
     void write_str(const char* s);
@@ -112,6 +113,8 @@ private:
     void process_csi_final(char final_ch);
     void process_ss3_final(char ch);
     void handle_da_csi();
+    void handle_mouse_event(int row1, int col1, int kind);
+    void disable_mouse();
 
     const OykConfig* active_theme_cfg() const;
     const char* sgr_border() const;
@@ -246,6 +249,9 @@ private:
     EscState esc_state_;
     char esc_buf_[48];
     int esc_len_;
+    oyk_u8 x10_buf_[3];
+    int x10_len_;
+    oyk_u8 mouse_enabled_;
     oyk_u32 esc_start_ms_;
     oyk_u32 last_marchc_redraw_ms_;
     int bootloader_pending_;

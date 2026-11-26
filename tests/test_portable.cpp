@@ -11,6 +11,7 @@
 #include "oyk_printer.hpp"
 #include "../ports/dos/dos_usb.hpp"
 #include "../ports/dos/dos_video.hpp"
+#include "../ports/dos/dos_mouse.hpp"
 #if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
   #include "../ports/dos/dos_xms.hpp"
   #include "../ports/dos/dos_font8x16.hpp"
@@ -1698,6 +1699,37 @@ static void test_portable_theme_config_and_cloning() {
     printf("[PASS] test_portable_theme_config_and_cloning\n");
 }
 
+static void test_dos_mouse_sim_events() {
+    OykDosMouse m;
+    /* Without hardware TSR on host / headless QEMU, init gracefully reports 0 */
+    int hw = oyk_dos_mouse_init(&m, 0, 640, 200, 8, 8);
+    (void)hw;
+
+    OykDosMouseEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.kind = OYK_MOUSE_DOWN;
+    ev.row = 0; ev.col = 3;
+    ev.button = OYK_MOUSE_BTN_LEFT;
+    oyk_dos_mouse_push_sim(&m, &ev);
+
+    OykDosMouseEvent wh;
+    memset(&wh, 0, sizeof(wh));
+    wh.kind = OYK_MOUSE_WHEEL;
+    wh.row = 10; wh.col = 20;
+    wh.wheel_delta = -1;
+    oyk_dos_mouse_push_sim(&m, &wh);
+
+    OykDosMouseEvent out;
+    assert(oyk_dos_mouse_poll(&m, 100UL, &out) == 1);
+    assert(out.kind == OYK_MOUSE_DOWN && out.row == 0 && out.col == 3 && out.button == OYK_MOUSE_BTN_LEFT);
+    assert(oyk_dos_mouse_poll(&m, 120UL, &out) == 1);
+    assert(out.kind == OYK_MOUSE_WHEEL && out.wheel_delta == -1);
+    assert(oyk_dos_mouse_poll(&m, 130UL, &out) == 0);
+
+    oyk_dos_mouse_shutdown(&m);
+    printf("[PASS] test_dos_mouse_sim_events\n");
+}
+
 #if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
 static void test_dos_gfx_renderer_and_smooth_scroll() {
     assert(oyk_dos_is_386_or_newer() == 1);
@@ -2107,6 +2139,7 @@ int oyk_run_portable_tests() {
     test_portable_config_include_storage_modes();
     test_portable_same_interface_policy();
     test_portable_theme_config_and_cloning();
+    test_dos_mouse_sim_events();
 #if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
     test_dos_gfx_renderer_and_smooth_scroll();
 #endif

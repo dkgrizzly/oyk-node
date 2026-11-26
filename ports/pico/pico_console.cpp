@@ -100,7 +100,7 @@ PicoConsole::PicoConsole()
       prompt_len_(0), wiz_edit_idx_(0), wiz_step_(0), wiz_drv_(0),
       wiz_last_drv_(0), wiz_focus_(0), wiz_btn_(0), wiz_flags_(0),
       lterm_sid_(0), lterm_is_local_(0), lterm_line_count_(0), lterm_input_len_(0),
-      esc_state_(0), esc_len_(0), esc_ms_(0), last_ms_(0) {
+      esc_state_(0), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_ms_(0), last_ms_(0) {
     memset(settings_sel_, 0, sizeof(settings_sel_));
     memset(files_sel_, 0, sizeof(files_sel_));
     memset(pending_files_, 0, sizeof(pending_files_));
@@ -299,10 +299,19 @@ void PicoConsole::draw_hdiv(int row, int col, int w) {
 
 void PicoConsole::on_usb_connect() {
     term_type_ = PICO_TERM_VT100;
+    mouse_enabled_ = 0;
     esc_state_ = 0;
     esc_len_ = 0;
+    x10_len_ = 0;
     write_str("\033[c\033[>c");
     render();
+}
+
+void PicoConsole::disable_mouse() {
+    if (mouse_enabled_) {
+        mouse_enabled_ = 0;
+        write_str("\033[?1006l\033[?1000l");
+    }
 }
 
 void PicoConsole::render() {
@@ -1617,7 +1626,114 @@ void PicoConsole::tick(oyk_u32 now_ms) {
     }
 }
 
+void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
+    if (!node_) return;
+    if (prompt_kind_ != PICO_PROMPT_NONE) {
+        if (kind == 4) handle_key_code(PK_UP);
+        else if (kind == 5) handle_key_code(PK_DOWN);
+        else if (kind == 2) handle_key_code(PK_ESC);
+        else if (kind == 0 && prompt_kind_ == PICO_PROMPT_THEME) {
+            if (row1 == 4 && col1 >= 14 && col1 <= 38) {
+                handle_key_code((col1 < 25) ? PK_LEFT : PK_RIGHT);
+            } else if (row1 == 21 && col1 >= 34 && col1 <= 53) {
+                handle_key_code('s');
+            } else if (row1 == 21 && col1 >= 54) {
+                handle_key_code(PK_ESC);
+            }
+        }
+        return;
+    }
+
+    if (kind == 4 || kind == 5) {
+        if (view_ == PICO_VIEW_MENU || view_ == PICO_VIEW_SETTINGS ||
+            view_ == PICO_VIEW_FILES || view_ == PICO_VIEW_STORAGE) {
+            handle_key_code((kind == 4) ? PK_UP : PK_DOWN);
+        }
+        return;
+    }
+
+    if (kind == 2) {
+        if (view_ == PICO_VIEW_CONSOLE) handle_key_code(PK_F10);
+        else handle_key_code(PK_ESC);
+        return;
+    }
+
+    if (kind != 0) return;
+
+    if (view_ == PICO_VIEW_CONSOLE) {
+        if (row1 == 1) {
+            if (col1 <= 9 || col1 >= 69) handle_key_code(PK_F10);
+            else if (col1 >= 49 && col1 <= 68) handle_key_code(PK_TAB);
+        } else if (row1 == 2 && col1 >= 55) {
+            handle_key_code(node_->accept_incoming() ? 'd' : 'a');
+        }
+    } else if (view_ == PICO_VIEW_MENU) {
+        static const int kItemRows[14] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18 };
+        if (row1 < 2 || row1 > 19 || col1 < 2 || col1 > 37) {
+            handle_key_code(PK_ESC);
+            return;
+        }
+        for (int i = 0; i < 14; ++i) {
+            if (row1 == kItemRows[i]) {
+                menu_sel_ = i;
+                handle_key_code(PK_ENTER);
+                break;
+            }
+        }
+    } else if (view_ == PICO_VIEW_SETTINGS) {
+        static const int kTabLens[7] = { 8, 7, 8, 10, 9, 7, 7 };
+        if (row1 == 3) {
+            int tx = 5;
+            for (int t = 0; t < 7; ++t) {
+                if (col1 >= tx && col1 < tx + kTabLens[t]) {
+                    settings_tab_ = t;
+                    render();
+                    break;
+                }
+                tx += kTabLens[t] + 1;
+            }
+        } else if (row1 == 21) {
+            if (col1 >= 52) handle_key_code(PK_ESC);
+            else if (col1 >= 38) handle_key_code('s');
+        } else {
+            int row_base = (settings_tab_ == 3 || settings_tab_ == 4) ? 6 : 5;
+            int cnt = settings_tab_item_count(settings_tab_);
+            if (row1 >= row_base && row1 < row_base + cnt && row1 < 18) {
+                int idx = row1 - row_base;
+                if (idx == settings_sel_[settings_tab_]) {
+                    handle_key_code(PK_ENTER);
+                } else {
+                    settings_sel_[settings_tab_] = idx;
+                    render();
+                }
+            }
+        }
+    } else if (view_ == PICO_VIEW_BOOTLOADER && !bootloader_pending_) {
+        if (row1 == 11 && col1 >= 8 && col1 <= 34) handle_key_code('s');
+        else if (row1 == 11 && col1 >= 36) handle_key_code('d');
+        else if (row1 == 12 && col1 >= 8 && col1 <= 34) handle_key_code('r');
+        else if (row1 == 12 && col1 >= 36) handle_key_code(PK_ESC);
+    }
+}
+
 void PicoConsole::handle_char(oyk_u8 ch, oyk_u32 now_ms) {
+    if (esc_state_ == 4) {
+        x10_buf_[x10_len_++] = ch;
+        if (x10_len_ >= 3U) {
+            int cb = static_cast<int>(x10_buf_[0]) - 32;
+            int col1 = static_cast<int>(x10_buf_[1]) - 32;
+            int row1 = static_cast<int>(x10_buf_[2]) - 32;
+            esc_state_ = 0;
+            x10_len_ = 0;
+            int kind = -1;
+            if (cb == 64 || (cb & 0x43) == 64) kind = 4;
+            else if (cb == 65 || (cb & 0x43) == 65) kind = 5;
+            else if ((cb & 3) == 0) kind = 0;
+            else if ((cb & 3) == 2) kind = 2;
+            if (kind >= 0) handle_mouse_event(row1, col1, kind);
+        }
+        return;
+    }
     if (esc_state_ == 0) {
         if (ch == 0x1BU) {
             esc_state_ = 1; esc_len_ = 0; esc_ms_ = now_ms;
@@ -1637,6 +1753,11 @@ void PicoConsole::handle_char(oyk_u8 ch, oyk_u32 now_ms) {
         handle_key_code(static_cast<int>(ch));
         return;
     }
+    if (esc_state_ == 2 && esc_len_ == 0 && ch == 'M') {
+        esc_state_ = 4;
+        x10_len_ = 0;
+        return;
+    }
     if (esc_len_ + 1 < sizeof(esc_buf_)) {
         esc_buf_[esc_len_++] = static_cast<char>(ch);
         esc_buf_[esc_len_] = '\0';
@@ -1652,12 +1773,36 @@ void PicoConsole::handle_char(oyk_u8 ch, oyk_u32 now_ms) {
     }
     if ((ch >= '@' && ch <= '~')) {
         esc_state_ = 0;
+        if ((ch == 'M' || ch == 'm') && esc_buf_[0] == '<') {
+            if (ch == 'm') return;
+            const char* p = esc_buf_ + 1;
+            int btn = atoi(p);
+            const char* s1 = strchr(p, ';');
+            if (!s1) return;
+            int col1 = atoi(s1 + 1);
+            const char* s2 = strchr(s1 + 1, ';');
+            if (!s2) return;
+            int row1 = atoi(s2 + 1);
+            int kind = -1;
+            if (btn == 64 || (btn & 0x43) == 64) kind = 4;
+            else if (btn == 65 || (btn & 0x43) == 65) kind = 5;
+            else if ((btn & 64) == 0) {
+                if ((btn & 3) == 0) kind = 0;
+                else if ((btn & 3) == 2) kind = 2;
+            }
+            if (kind >= 0) handle_mouse_event(row1, col1, kind);
+            return;
+        }
         if (ch == 'c' && (esc_buf_[0] == '?' || esc_buf_[0] == '>')) {
             if (esc_buf_[0] == '?') {
                 if (strstr(esc_buf_, ";22") != NULL) term_type_ = PICO_TERM_VT340;
                 else if (term_type_ < PICO_TERM_VT220) term_type_ = PICO_TERM_VT220;
             } else {
                 term_type_ = PICO_TERM_XTERM256;
+            }
+            if (term_type_ >= PICO_TERM_VT340 && !mouse_enabled_) {
+                mouse_enabled_ = 1;
+                write_str("\033[?1000h\033[?1006h");
             }
             render();
             return;
@@ -1878,12 +2023,15 @@ void PicoConsole::handle_bootloader_key(int key) {
         if (key == 'e' || key == 'E' || key == 'r' || key == 'R') { open_settings(4); return; }
         if (key == 's' || key == 'S') {
             node_->persist_auto_learned_peers(NULL, 0);
+            disable_mouse();
             bootloader_pending_ = 1; bootloader_ms_ = last_ms_; render();
         } else if (key == 'd' || key == 'D') {
             node_->discard_auto_learned_peers();
+            disable_mouse();
             bootloader_pending_ = 1; bootloader_ms_ = last_ms_; render();
         }
     } else if (key == 'y' || key == 'Y' || key == PK_ENTER) {
+        disable_mouse();
         bootloader_pending_ = 1; bootloader_ms_ = last_ms_; render();
     }
 }

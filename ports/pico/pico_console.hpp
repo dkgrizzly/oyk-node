@@ -103,6 +103,8 @@ private:
 
     void handle_char(oyk_u8 ch, oyk_u32 now_ms);
     void handle_key_code(int key);
+    void handle_mouse_event(int row1, int col1, int kind);
+    void disable_mouse();
     void handle_console_key(int key);
     void handle_menu_key(int key);
     void handle_settings_key(int key);
@@ -196,6 +198,9 @@ private:
     int esc_state_;
     char esc_buf_[24];
     size_t esc_len_;
+    oyk_u8 x10_buf_[3];
+    oyk_u8 x10_len_;
+    oyk_u8 mouse_enabled_;
     oyk_u32 esc_ms_;
     oyk_u32 last_ms_;
 };

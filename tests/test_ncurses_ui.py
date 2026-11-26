@@ -460,6 +460,14 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
+            # 8c. Mouse support: X10 click on " Node " (row 0, col 3) opens Node menu,
+            # wheel down selects item 2, right-click closes menu cleanly.
+            os.write(master_fd, b"\x1b[M" + bytes([32 + 0, 32 + 4, 32 + 1]))
+            drain_and_wait(master_fd, scr, "[A] Allow Incoming")
+            os.write(master_fd, b"\x1b[M" + bytes([32 + 65, 32 + 5, 32 + 5]))
+            os.write(master_fd, b"\x1b[M" + bytes([32 + 2, 32 + 5, 32 + 5]))
+            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
+
             # 9. Auto-Learned Peers Exit Modal + verify 73 de KR4OYK-7 stdout sign-off
             os.write(master_fd, b"q")
             drain_and_wait(master_fd, scr, "Auto-Learned Peers")

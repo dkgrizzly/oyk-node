@@ -115,8 +115,11 @@ struct CursesGuard {
         curs_set(0);
         set_escdelay(25);
         timeout(200);
+        mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, nullptr);
+        mouseinterval(0);
     }
     ~CursesGuard() {
+        mousemask(0, nullptr);
         curs_set(1);
         endwin();
     }
@@ -253,6 +256,30 @@ void NcursesUI::run() {
 
         int ch = getch();
         if (ch == ERR || ch == KEY_RESIZE) {
+            continue;
+        }
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int r = 0, c = 0;
+                getmaxyx(stdscr, r, c);
+                (void)r;
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) {
+                    open_node_menu(should_exit);
+                } else if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) {
+                    if (mev.y == 0 && mev.x <= 8) {
+                        open_node_menu(should_exit);
+                    } else if (mev.y == 0 && c > 28 && mev.x >= c - 13) {
+                        open_node_menu(should_exit);
+                    } else if (mev.y == 0 && c > 28 && mev.x >= c - 36) {
+                        modal_local_terminal();
+                    } else if (mev.y == 1 && mev.x >= std::max(0, c - 20)) {
+                        engine_.set_accept_incoming(!snap.accept_incoming);
+                        set_status(!snap.accept_incoming ? "New incoming connections are now ALLOWED."
+                                                         : "New incoming connections are now DENIED.");
+                    }
+                }
+            }
             continue;
         }
 
@@ -652,6 +679,30 @@ void NcursesUI::open_node_menu(bool& should_exit) {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                int lx = mev.x - wx;
+                if (mev.bstate & BUTTON4_PRESSED) {
+                    sel = (sel + 10) % 11;
+                } else {
+#ifdef BUTTON5_PRESSED
+                    if (mev.bstate & BUTTON5_PRESSED) { sel = (sel + 1) % 11; continue; }
+#endif
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                    if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) {
+                        if (ly < 0 || ly >= h || lx < 0 || lx >= w) break;
+                        for (int i = 0; i < 11; ++i) {
+                            if (ly == ITEM_ROWS[i]) { chosen = i; break; }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
             sel = (sel + 10) % 11;
@@ -879,6 +930,50 @@ void NcursesUI::modal_theme() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                int lx = mev.x - wx;
+                if (mev.bstate & BUTTON4_PRESSED) {
+                    role_sel = (role_sel + static_cast<int>(kThemeRoleCount) - 1) % static_cast<int>(kThemeRoleCount);
+                    continue;
+                }
+#ifdef BUTTON5_PRESSED
+                if (mev.bstate & BUTTON5_PRESSED) {
+                    role_sel = (role_sel + 1) % static_cast<int>(kThemeRoleCount);
+                    continue;
+                }
+#endif
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) {
+                    if (ly == 2 && lx >= 10 && lx <= 36) {
+                        ch = (lx < 22) ? KEY_LEFT : KEY_RIGHT;
+                    } else if (ly >= 6 && ly < 6 + vis_rows && (scroll + ly - 6) < static_cast<int>(kThemeRoleCount)) {
+                        int idx = scroll + (ly - 6);
+                        if ((mev.bstate & BUTTON1_DOUBLE_CLICKED) || idx == role_sel) {
+                            role_sel = idx;
+                            ch = '\r';
+                        } else {
+                            role_sel = idx;
+                            continue;
+                        }
+                    } else if (ly == h - 2 && lx >= 40 && lx <= 56) {
+                        ch = 's';
+                    } else if (ly == h - 2 && lx >= 57) {
+                        ch = 27;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 27) break;
         if (ch == KEY_UP) {
             role_sel = (role_sel + static_cast<int>(kThemeRoleCount) - 1) % static_cast<int>(kThemeRoleCount);
@@ -1079,6 +1174,34 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                if (mev.bstate & BUTTON4_PRESSED) { if (sel > 0) --sel; continue; }
+#ifdef BUTTON5_PRESSED
+                if (mev.bstate & BUTTON5_PRESSED) { if (sel + 1 < static_cast<int>(entries.size())) ++sel; continue; }
+#endif
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
+                    ly >= 3 && ly < 3 + list_h && (top + ly - 3) < static_cast<int>(entries.size())) {
+                    int idx = top + (ly - 3);
+                    if ((mev.bstate & BUTTON1_DOUBLE_CLICKED) || idx == sel) {
+                        sel = idx;
+                        ch = '\r';
+                    } else {
+                        sel = idx;
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 27) break;
         if (ch == KEY_UP && sel > 0) {
             --sel;
@@ -1643,6 +1766,38 @@ void NcursesUI::modal_terminate_connection() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                if (mev.bstate & BUTTON4_PRESSED) { if (sel > 0) --sel; continue; }
+#ifdef BUTTON5_PRESSED
+                if (mev.bstate & BUTTON5_PRESSED) {
+                    if (sel + 1 < static_cast<int>(snap.active_sessions.size())) ++sel;
+                    continue;
+                }
+#endif
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) &&
+                    ly >= 3 && ly < 3 + list_h &&
+                    (offset + ly - 3) < static_cast<int>(snap.active_sessions.size())) {
+                    int idx = offset + (ly - 3);
+                    if ((mev.bstate & BUTTON1_DOUBLE_CLICKED) || idx == sel) {
+                        sel = idx;
+                        ch = '\r';
+                    } else {
+                        sel = idx;
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 27) break;
         if (ch == KEY_UP && sel > 0) {
             --sel;
@@ -2704,6 +2859,54 @@ void NcursesUI::modal_settings(int initial_tab) {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                int lx = mev.x - wx;
+                if (mev.bstate & BUTTON4_PRESSED) { if (sel[tab] > 0) --sel[tab]; continue; }
+#ifdef BUTTON5_PRESSED
+                if (mev.bstate & BUTTON5_PRESSED) { if (sel[tab] + 1 < cnt) ++sel[tab]; continue; }
+#endif
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED)) {
+                    if (ly == 1) {
+                        int tx = 2;
+                        for (int t = 0; t < 7; ++t) {
+                            int tlen = static_cast<int>(std::string(" ").size() + std::string(TAB_NAMES[t]).size() + 1);
+                            if (lx >= tx && lx < tx + tlen) { tab = t; break; }
+                            tx += tlen + 1;
+                        }
+                        continue;
+                    }
+                    int row_base = (tab == 3 || tab == 4) ? 4 : 3;
+                    int list_scroll = (tab == 3) ? if_scroll : ((tab == 4) ? peer_scroll : 0);
+                    int list_h = (tab == 3 || tab == 4) ? std::max(1, content_h - 1) : content_h;
+                    if (ly >= row_base && ly < row_base + list_h) {
+                        int idx = list_scroll + (ly - row_base);
+                        if (idx >= 0 && idx < cnt) {
+                            if ((mev.bstate & BUTTON1_DOUBLE_CLICKED) || idx == sel[tab]) {
+                                sel[tab] = idx;
+                                ch = (tab == 3 || tab == 4) ? 'e' : '\r';
+                            } else {
+                                sel[tab] = idx;
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 27) break;
 
         if (ch == '\t' || ch == KEY_RIGHT) {
@@ -4280,6 +4483,25 @@ bool NcursesUI::modal_confirm_exit() {
 
             int ch = wgetch(win);
             if (ch == ERR) continue;
+            if (ch == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    int wy = 0, wx = 0;
+                    getbegyx(win, wy, wx);
+                    int ly = mev.y - wy;
+                    int lx = mev.x - wx;
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { act = AutoExitAct::Cancel; break; }
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && ly == 6) {
+                        int bx = 3;
+                        for (int i = 0; i < 4; ++i) {
+                            int bl = static_cast<int>(std::string(BTNS[i]).size());
+                            if (lx >= bx && lx < bx + bl) { focus = i; ch = '\r'; break; }
+                            bx += bl + 2;
+                        }
+                    }
+                }
+                if (ch != '\r') continue;
+            }
             if (ch == KEY_LEFT || ch == KEY_BTAB) focus = (focus + 3) % 4;
             else if (ch == KEY_RIGHT || ch == '\t') focus = (focus + 1) % 4;
             else if (ch == 27 || ch == 'c' || ch == 'C') { act = AutoExitAct::Cancel; break; }
@@ -4377,6 +4599,21 @@ bool NcursesUI::modal_confirm_exit() {
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                int lx = mev.x - wx;
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) { confirmed = false; break; }
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && ly == 5) {
+                    if (lx >= bx && lx < bx + static_cast<int>(yes_lbl.size())) { confirmed = true; break; }
+                    if (lx >= bx + static_cast<int>(yes_lbl.size()) + 4) { confirmed = false; break; }
+                }
+            }
+            continue;
+        }
         if (ch == KEY_LEFT || ch == KEY_RIGHT || ch == '\t' || ch == KEY_BTAB) {
             focus = 1 - focus;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {

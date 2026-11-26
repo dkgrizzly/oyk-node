@@ -410,6 +410,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
+        ports/dos/dos_mouse.cpp
         ports/dos/ems.cpp
         ports/dos/dos_xms.cpp
         ports/dos/dos_font8x16.cpp

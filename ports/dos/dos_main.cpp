@@ -21,6 +21,7 @@
 #include "../compat/oyk_printer.hpp"
 #include "dos_usb.hpp"
 #include "dos_video.hpp"
+#include "dos_mouse.hpp"
 #include "ems.hpp"
 #ifdef OYK_DOS_GFX_BUILD
 #include "dos_xms.hpp"
@@ -184,6 +185,7 @@ static void dos_pump_network();
 /* ==================== Direct 80x25 Text Video RAM UI (Dirty-Diff, Zero Snow-Blank) ==================== */
 
 static OykDosVideo* g_vid = NULL;
+static OykDosMouse g_mouse;
 #ifdef OYK_DOS_GFX_BUILD
 static OykDosGfx* g_gfx = NULL;
 static oyk_u16* g_gfx_vram = NULL;
@@ -191,6 +193,33 @@ static oyk_u16* g_gfx_scroll_tmp = NULL;
 static int g_gfx_video_req = OYK_GFX_MODE_NONE;
 static int g_gfx_last_log_count = -1;
 #endif
+
+/* Returns: 0=idle, 1=keyboard key in *out_ch, 2=mouse action/wheel in *out_mev */
+static int dos_poll_input(int* out_ch, OykDosMouseEvent* out_mev) {
+    if (out_ch) *out_ch = 0;
+    if (out_mev) memset(out_mev, 0, sizeof(*out_mev));
+    OykDosMouseEvent mev;
+    if (oyk_dos_mouse_poll(&g_mouse, dos_ticks_now(), &mev)) {
+#ifdef OYK_DOS_GFX_BUILD
+        if (g_gfx && g_gfx_vram && g_mouse.available) {
+            dos_gfx_set_cursor(g_gfx, g_mouse.cur_px_x, g_mouse.cur_px_y, 1);
+            if (mev.kind == OYK_MOUSE_MOVE) {
+                dos_gfx_present(g_gfx, g_gfx_vram, 0);
+                return 0;
+            }
+        }
+#endif
+        if (mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK || mev.kind == OYK_MOUSE_WHEEL) {
+            if (out_mev) *out_mev = mev;
+            return 2;
+        }
+    }
+    if (kbhit()) {
+        if (out_ch) *out_ch = getch();
+        return 1;
+    }
+    return 0;
+}
 
 static void vid_puts(int row, int col, oyk_u8 attr, const char* s, int max_w) {
     if (g_vid) dos_vid_puts(g_vid, row, col, attr, s, max_w);
@@ -895,9 +924,26 @@ static int confirm_dos_exit() {
                          "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc", w - 4);
                 vid_flush();
             }
-            if (!kbhit()) continue;
+            int ch = 0;
+            OykDosMouseEvent mev;
+            int inp = dos_poll_input(&ch, &mev);
+            if (inp == 0) continue;
             dirty = 1;
-            int ch = getch();
+            if (inp == 2) {
+                if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                    act = 3; break;
+                }
+                if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) && mev.row == top + 6) {
+                    int bx = left + 3;
+                    for (int i = 0; i < 4; ++i) {
+                        int bl = static_cast<int>(strlen(BTNS[i]));
+                        if (mev.col >= bx && mev.col < bx + bl) { act = i; break; }
+                        bx += bl + 2;
+                    }
+                    if (act < 4) break;
+                }
+                continue;
+            }
             if (ch == 0 || ch == 0xE0) {
                 int ext = getch();
                 if (ext == 75) focus = (focus + 3) % 4;
@@ -980,9 +1026,21 @@ static int confirm_dos_exit() {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                confirmed = 0; break;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) && mev.row == top + 5) {
+                if (mev.col >= left + 13 && mev.col < left + 27) { confirmed = 1; break; }
+                if (mev.col >= left + 30 && mev.col < left + 45) { confirmed = 0; break; }
+            }
+            continue;
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 75 || ext == 77) focus = 1 - focus; /* Left / Right */
@@ -1237,8 +1295,38 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
-        int ch = getch();
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                if (mev.wheel_delta < 0 && sel > 0) { --sel; dirty = 1; }
+                else if (mev.wheel_delta > 0 && sel + 1 < count) { ++sel; dirty = 1; }
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
+                (mev.button & OYK_MOUSE_BTN_LEFT) &&
+                mev.row >= list_y && mev.row < list_y + list_h &&
+                mev.col > panel_x && mev.col < panel_x + panel_w - 1) {
+                int idx = top + (mev.row - list_y);
+                if (idx >= 0 && idx < count) {
+                    if (mev.kind == OYK_MOUSE_DBLCLICK || idx == sel) {
+                        sel = idx;
+                        ch = '\r';
+                    } else {
+                        sel = idx;
+                        dirty = 1;
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72 && sel > 0) { --sel; dirty = 1; }                              /* Up */
@@ -3191,9 +3279,46 @@ static void run_dos_settings(int initial_tab) {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                if (mev.wheel_delta < 0 && sel[tab] > 0) --sel[tab];
+                else if (mev.wheel_delta > 0 && sel[tab] + 1 < cnt) ++sel[tab];
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
+                (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (mev.row == 1) {
+                    int tx = 1;
+                    for (int t = 0; t < 7; ++t) {
+                        int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
+                        if (mev.col >= tx && mev.col < tx + tlen) { tab = t; break; }
+                        tx += tlen + 1;
+                    }
+                    continue;
+                }
+                int row_base = (tab == 3 || tab == 4) ? 4 : 3;
+                if (mev.row >= row_base && mev.row < row_base + cnt) {
+                    int idx = mev.row - row_base;
+                    if (mev.kind == OYK_MOUSE_DBLCLICK || idx == sel[tab]) {
+                        sel[tab] = idx;
+                        ch = (tab == 3 || tab == 4) ? 'e' : '\r';
+                    } else {
+                        sel[tab] = idx;
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72 && sel[tab] > 0) --sel[tab];             /* Up */
@@ -3497,9 +3622,36 @@ static void run_dos_terminate_dialog() {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                if (mev.wheel_delta < 0 && sel > 0) --sel;
+                else if (mev.wheel_delta > 0 && sel + 1 < scnt) ++sel;
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return;
+            if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
+                (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                int list_h = h - 6;
+                if (mev.row >= top + 3 && mev.row < top + 3 + list_h &&
+                    mev.col >= left + 2 && mev.col < left + w - 2) {
+                    int r = mev.row - (top + 3);
+                    if (r < scnt) {
+                        if (mev.kind == OYK_MOUSE_DBLCLICK || r == sel) {
+                            sel = r;
+                            ch = '\r';
+                        } else {
+                            sel = r;
+                            continue;
+                        }
+                    } else continue;
+                } else continue;
+            } else continue;
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72 && sel > 0) --sel;
@@ -3770,9 +3922,52 @@ static void run_dos_theme_dialog() {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                role_sel = (mev.wheel_delta < 0)
+                    ? ((role_sel + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT)
+                    : ((role_sel + 1) % OYK_THEME_COLOR_COUNT);
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
+                (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (mev.row == 4 && mev.col >= 13 && mev.col <= 38) {
+                    int ci = 0;
+                    for (int i = 0; i < n_names; ++i) {
+                        if (strcmp(names[i], active) == 0) { ci = i; break; }
+                    }
+                    ci = (mev.col < 25) ? ((ci + n_names - 1) % n_names) : ((ci + 1) % n_names);
+                    strncpy(active, names[ci], sizeof(active) - 1);
+                    active[sizeof(active) - 1] = '\0';
+                    sprintf(fb, "Previewing '%s' (press S/F2 to save or Esc to revert).", active);
+                    continue;
+                }
+                if (mev.row >= 8 && mev.row < 8 + vis_rows && (scroll + mev.row - 8) < OYK_THEME_COLOR_COUNT) {
+                    int idx = scroll + (mev.row - 8);
+                    if (mev.kind == OYK_MOUSE_DBLCLICK || idx == role_sel) {
+                        role_sel = idx;
+                        ch = '\r';
+                    } else {
+                        role_sel = idx;
+                        continue;
+                    }
+                } else if (mev.row == 21 && mev.col >= 35 && mev.col <= 52) {
+                    ch = 's';
+                } else if (mev.row == 21 && mev.col >= 53 && mev.col <= 68) {
+                    ch = 27;
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72) role_sel = (role_sel + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT;
@@ -3929,9 +4124,25 @@ static void open_dos_node_menu(int* running) {
             vid_flush();
         }
 
-        if (!kbhit()) continue;
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
         dirty = 1;
-        int ch = getch();
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                sel = (mev.wheel_delta < 0) ? ((sel + 10) % 11) : ((sel + 1) % 11);
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (mev.row < 1 || mev.row >= 16 || mev.col < 1 || mev.col > 34) break;
+                for (int i = 0; i < 11; ++i) {
+                    if (mev.row == ITEM_ROWS[i]) { chosen = i; break; }
+                }
+            }
+            continue;
+        }
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72) sel = (sel + 10) % 11;      /* Up arrow */
@@ -4289,8 +4500,10 @@ int main(int argc, char* argv[]) {
             sprintf(g_status_line, "GFX:%s (16-col) | Press F10/M for Node menu.",
                     dos_gfx_mode_name(g_gfx->mode));
         }
+        oyk_dos_mouse_init(&g_mouse, 1, g_gfx->width, g_gfx->height, g_gfx->char_w, g_gfx->char_h);
 #else
         dos_vid_init(g_vid);
+        oyk_dos_mouse_init(&g_mouse, 0, 640, 200, 8, 8);
 #endif
 
         int running = 1;
@@ -4307,8 +4520,26 @@ int main(int argc, char* argv[]) {
             dos_pump_network();
             g_node.tick();
 
-            if (kbhit()) {
-                int ch = getch();
+            int ch = 0;
+            OykDosMouseEvent mev;
+            int inp = dos_poll_input(&ch, &mev);
+            if (inp == 2) {
+                if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                    open_dos_node_menu(&running);
+                } else if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                    if (mev.row == 0 && mev.col <= 8) {
+                        open_dos_node_menu(&running);
+                    } else if (mev.row == 0 && mev.col >= 44 && mev.col <= 64) {
+                        run_dos_local_terminal();
+                    } else if (mev.row == 0 && mev.col >= 66) {
+                        open_dos_node_menu(&running);
+                    } else if (mev.row == 1 && mev.col >= 61) {
+                        run_dos_menu_action(g_node.accept_incoming() ? 1 : 0, &running);
+                    }
+                }
+                render_dos_screen();
+                last_sig = dos_screen_signature();
+            } else if (inp == 1) {
                 if (ch == 0 || ch == 0xE0) {
                     int ext = getch();
                     if (ext == 68) { /* F10 */
@@ -4387,6 +4618,7 @@ int main(int argc, char* argv[]) {
     oyk_dos_pktdrv_shutdown(&g_pktdrv);
     g_ems.shutdown();
     if (!headless && g_vid) {
+        oyk_dos_mouse_shutdown(&g_mouse);
         dos_vid_shutdown(g_vid);
         delete g_vid;
         g_vid = NULL;
