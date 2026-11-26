@@ -149,52 +149,86 @@ void TinyTmuxConsole::on_usb_connect() {
     render();
 }
 
+static const char* tmux_format_sgr_colors(int slot, oyk_u32 fg_rgb, oyk_u32 bg_rgb,
+                                          int use_bg, int bold, TinyTmuxTermType tt) {
+    static char bufs[8][32];
+    char* b = bufs[slot & 7];
+    if (tt >= TMUX_TERM_XTERM256) {
+        int fg = oyk_rgb_to_xterm256(fg_rgb);
+        if (use_bg) {
+            int bg = oyk_rgb_to_xterm256(bg_rgb);
+            sprintf(b, "\033[%s38;5;%d;48;5;%dm", bold ? "1;" : "", fg, bg);
+        } else {
+            sprintf(b, "\033[%s38;5;%dm", bold ? "1;" : "", fg);
+        }
+        return b;
+    }
+    int fg16 = oyk_rgb_to_ansi16(fg_rgb);
+    int fgc = (fg16 < 8) ? (30 + fg16) : (82 + fg16);
+    if (use_bg) {
+        int bg16 = oyk_rgb_to_ansi16(bg_rgb);
+        int bgc = (bg16 < 8) ? (40 + bg16) : (92 + bg16);
+        sprintf(b, "\033[%s%d;%dm", bold ? "1;" : "", fgc, bgc);
+    } else {
+        sprintf(b, "\033[%s%dm", bold ? "1;" : "", fgc);
+    }
+    return b;
+}
+
 const char* TinyTmuxConsole::sgr_border() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[38;5;38m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[36m";
-    return "";
+    if (term_type_ < TMUX_TERM_VT220) return "";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(0, tc.colors[OYK_TR_BORDER], tc.colors[OYK_TR_BG], 0, 0, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_title() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;38;5;81m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;36m";
-    return "\033[1m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[1m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(1, tc.colors[OYK_TR_ACCENT], tc.colors[OYK_TR_BG], 0, 1, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_header() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;24m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;37;44m";
-    return "\033[1m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[1m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(2, tc.colors[OYK_TR_HEADER_FG], tc.colors[OYK_TR_HEADER_BG], 1, 1, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_menubar() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[30;48;5;252m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[30;47m";
-    return "\033[7m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[7m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(3, tc.colors[OYK_TR_BUTTON_FG], tc.colors[OYK_TR_BUTTON_BG], 1, 0, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_menusel() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;25m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;37;44m";
-    return "\033[7m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[7m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(4, tc.colors[OYK_TR_SELECTION_FG], tc.colors[OYK_TR_SELECTION_BG], 1, 1, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_list_hdr() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;97;48;5;238m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;97;100m";
-    return "\033[1;7m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[1;7m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(5, tc.colors[OYK_TR_PANEL_FG], tc.colors[OYK_TR_PANEL_BG], 1, 1, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_sel() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;30;48;5;45m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;30;46m";
-    return "\033[7m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[7m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(6, tc.colors[OYK_TR_SELECTION_FG], tc.colors[OYK_TR_SELECTION_BG], 1, 1, term_type_);
 }
 
 const char* TinyTmuxConsole::sgr_warn() const {
-    if (term_type_ >= TMUX_TERM_XTERM256) return "\033[1;38;5;220m";
-    if (term_type_ >= TMUX_TERM_VT340) return "\033[1;33m";
-    return "\033[1m";
+    if (term_type_ < TMUX_TERM_VT220) return "\033[1m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    return tmux_format_sgr_colors(7, tc.colors[OYK_TR_WARN], tc.colors[OYK_TR_BG], 0, 1, term_type_);
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::draw_dec_box(int row, int col, int h, int w,
@@ -358,6 +392,8 @@ void TinyTmuxConsole::render() {
         render_terminate_dialog();
     } else if (prompt_kind_ == PROMPT_BAN_CALLSIGN) {
         render_ban_dialog();
+    } else if (prompt_kind_ == PROMPT_THEME_SETTINGS) {
+        render_theme_dialog();
     } else if (prompt_kind_ != PROMPT_NONE) {
         render_prompt_overlay();
     }
@@ -373,9 +409,11 @@ void TinyTmuxConsole::render() {
          (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER &&
           (wiz_focus_ == 0 || wiz_focus_ == 1 || wiz_focus_ == 2 || wiz_focus_ == 4 || wiz_focus_ == 5)) ||
          (prompt_kind_ == PROMPT_BAN_CALLSIGN && !wiz_btn_ && wiz_focus_ <= 2) ||
+         (prompt_kind_ == PROMPT_THEME_SETTINGS && wiz_btn_ != 0) ||
          (prompt_kind_ != PROMPT_NONE &&
           prompt_kind_ != PROMPT_TERMINATE_SID &&
           prompt_kind_ != PROMPT_BAN_CALLSIGN &&
+          prompt_kind_ != PROMPT_THEME_SETTINGS &&
           prompt_kind_ != PROMPT_SETTINGS_ADD_WIZARD &&
           prompt_kind_ != PROMPT_SETTINGS_EDIT_IFACE &&
           prompt_kind_ != PROMPT_SETTINGS_EDIT_PEER))) {
@@ -498,7 +536,7 @@ void TinyTmuxConsole::render_console() {
 }
 
 void TinyTmuxConsole::render_menu() {
-    static const char* ITEMS[13] = {
+    static const char* ITEMS[14] = {
         " [A] Allow Incoming Connections   ",
         " [D] Deny Incoming Connections    ",
         " [L] Local Terminal...            ",
@@ -506,6 +544,7 @@ void TinyTmuxConsole::render_menu() {
         " [R] Radio Control...             ",
         " [S] Settings...                  ",
         " [E] Peers...                     ",
+        " [H] Theme...                     ",
         " [T] Terminate Connection...      ",
         " [B] Ban / Unban Callsign...      ",
         " [P] PSRAM Diagnostics...         ",
@@ -513,12 +552,12 @@ void TinyTmuxConsole::render_menu() {
         " [U] Enter HalfKay Bootloader     ",
         " [X] Close Menu                   "
     };
-    static const int ITEM_ROWS[13] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 };
+    static const int ITEM_ROWS[14] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18 };
 
-    draw_dec_box(2, 2, 17, 36, "Node Menu", 0);
+    draw_dec_box(2, 2, 18, 36, "Node Menu", 0);
     draw_dec_hdiv(5, 2, 36);
-    draw_dec_hdiv(16, 2, 36);
-    for (int i = 0; i < 13; ++i) {
+    draw_dec_hdiv(17, 2, 36);
+    for (int i = 0; i < 14; ++i) {
         char row[80];
         sprintf(row, "\033[%d;3H%s%.34s\033[0m",
                 ITEM_ROWS[i], (i == menu_sel_) ? sgr_menusel() : "", ITEMS[i]);
@@ -653,7 +692,7 @@ void TinyTmuxConsole::render_rig() {
 }
 
 int TinyTmuxConsole::settings_tab_item_count(int tab) const {
-    if (tab == 0) return 10;
+    if (tab == 0) return 11;
     if (tab == 1) return 8;
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
@@ -666,11 +705,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
     static const char* TAB_NAMES[7] = {
         "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
-    static const char* NODE_LABELS[10] = {
+    static const char* NODE_LABELS[11] = {
         "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
         "Allow Incoming (Default)", "Allow Logging to Flash",
         "Learned Peer Policy", "New User Welcome",
-        "Interfaces File", "Peers File"
+        "Interfaces File", "Peers File", "Themes File"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS", "BBS SSID (0-15)", "Callsign Override", "BBS Alias",
@@ -719,7 +758,8 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 6) strcpy(val, oyk_format_learned_policy(draft_.learned_peer_policy));
                 else if (i == 7) { if (draft_.new_user_welcome[0]) { strncpy(val, draft_.new_user_welcome, 44); val[44] = '\0'; } else strcpy(val, "(use default)"); }
                 else if (i == 8) { strncpy(val, draft_.interfaces_file, 44); val[44] = '\0'; }
-                else { strncpy(val, draft_.peers_file, 44); val[44] = '\0'; }
+                else if (i == 9) { strncpy(val, draft_.peers_file, 44); val[44] = '\0'; }
+                else { strncpy(val, draft_.themes_file, 44); val[44] = '\0'; }
             } else if (settings_tab_ == 1) {
                 if (i == 0) strcpy(val, draft_.bbs_enabled ? "[ON]" : "[OFF]");
                 else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft_, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft_.bbs_ssid), cs); }
@@ -751,7 +791,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_settings() {
                 else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft_.printer_level));
                 else strcpy(val, draft_.printer_condensed ? "[ON]" : "[OFF]");
             }
-            if (settings_tab_ == 0 && (i == 8 || i == 9) && val[0] == '\0' && term_type_ >= TMUX_TERM_VT340) {
+            if (settings_tab_ == 0 && (i == 8 || i == 9 || i == 10) && val[0] == '\0' && term_type_ >= TMUX_TERM_VT340) {
                 sprintf(buf, "\033[%d;2H%s %-29.29s : \033[2m<inline>\033[22m                                    \033[0m",
                         4 + i, (i == settings_sel_[settings_tab_]) ? sgr_sel() : "", labels[i]);
             } else {
@@ -2034,6 +2074,214 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_ban_key(int key) {
     }
 }
 
+OYK_FLASHMEM void TinyTmuxConsole::open_theme_dialog() {
+    if (!node_) return;
+    draft_ = node_->config();
+    prompt_kind_ = PROMPT_THEME_SETTINGS;
+    wiz_edit_idx_ = 0; /* selected role */
+    wiz_focus_ = 0;    /* scroll offset */
+    wiz_btn_ = 0;      /* 0=browse, 1=editing hex */
+    wiz_id_[0] = '\0';
+    wiz_err_[0] = '\0';
+    con_str_copy(wiz_desc_, sizeof(wiz_desc_),
+                 draft_.theme_name[0] ? draft_.theme_name : "dark");
+    render();
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::render_theme_dialog() {
+    char buf[192];
+    const int top = 2, left = 3, h = 21, w = 74;
+    draw_dec_box(top, left, h, w, "Theme Settings", 1);
+
+    const char* active = wiz_desc_[0] ? wiz_desc_ : "dark";
+    OykThemeConfig pal;
+    con_str_copy(draft_.theme_name, sizeof(draft_.theme_name), active);
+    oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
+
+    sprintf(buf, "\033[%d;%dHTheme  : < %-18.18s > (%s)",
+            top + 1, left + 2, active,
+            oyk_theme_is_builtin(active) ? "Built-in (not saved)" : "Custom");
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHEditing built-in dark/light clones custom-dark or custom-light.",
+            top + 2, left + 2);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dH%s %-16s %-13s %-8s Preview \033[0m",
+            top + 4, left + 2, sgr_list_hdr(), "Role", "Key", "Color");
+    write_str(buf);
+
+    const int vis_rows = 10;
+    if (wiz_edit_idx_ < wiz_focus_) wiz_focus_ = wiz_edit_idx_;
+    if (wiz_edit_idx_ >= wiz_focus_ + vis_rows) wiz_focus_ = wiz_edit_idx_ - vis_rows + 1;
+
+    for (int r = 0; r < vis_rows && (wiz_focus_ + r) < OYK_THEME_COLOR_COUNT; ++r) {
+        int idx = wiz_focus_ + r;
+        char hx[12];
+        oyk_theme_format_hex(pal.colors[idx], hx, sizeof(hx));
+        sprintf(buf, "\033[%d;%dH%s %-16.16s %-13.13s %-8.8s\033[0m ",
+                top + 5 + r, left + 2,
+                (idx == wiz_edit_idx_) ? sgr_sel() : "",
+                oyk_theme_role_label(idx), oyk_theme_role_key(idx), hx);
+        write_str(buf);
+        if (term_type_ >= TMUX_TERM_VT220) {
+            write_str(tmux_format_sgr_colors(6, pal.colors[idx], pal.colors[idx], 1, 0, term_type_));
+            write_str("    \033[0m");
+        } else {
+            write_str("[##]");
+        }
+    }
+
+    draw_dec_hdiv(top + 16, left, w);
+    if (wiz_btn_) {
+        sprintf(buf, "\033[%d;%dH%s (#RRGGBB): %s %-12.12s \033[0m",
+                top + 17, left + 2, oyk_theme_role_key(wiz_edit_idx_),
+                sgr_sel(), wiz_id_);
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s Enter:Apply Hex | Esc:Back \033[0m",
+                top + 18, left + 2, sgr_menubar());
+        write_str(buf);
+        if (term_type_ >= TMUX_TERM_VT220) {
+            int cx = left + 2 + static_cast<int>(strlen(oyk_theme_role_key(wiz_edit_idx_))) + 12 +
+                     static_cast<int>(strlen(wiz_id_));
+            sprintf(buf, "\033[%d;%dH", top + 17, cx);
+            write_str(buf);
+        }
+    } else {
+        sprintf(buf, "\033[%d;%dH%-68.68s", top + 17, left + 2,
+                wiz_err_[0] ? wiz_err_ : "Lt/Rt:Switch  Enter:Edit #RRGGBB  X:Del Custom");
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s Enter:Edit  Lt/Rt:Theme  X:Del  S/F2:Save & Apply  Esc:Cancel \033[0m",
+                top + 18, left + 2, sgr_menubar());
+        write_str(buf);
+    }
+}
+
+OYK_FLASHMEM void TinyTmuxConsole::handle_theme_key(int key) {
+    const char* names[OYK_MAX_THEMES + 2];
+    int n_names = 0;
+    names[n_names++] = "dark";
+    names[n_names++] = "light";
+    for (int ti = 0; ti < draft_.theme_count && ti < OYK_MAX_THEMES; ++ti) {
+        if (!oyk_theme_is_builtin(draft_.themes[ti].name)) {
+            names[n_names++] = draft_.themes[ti].name;
+        }
+    }
+
+    if (wiz_btn_) {
+        if (key == 27) {
+            wiz_btn_ = 0;
+            render();
+            return;
+        }
+        if (key == '\r' || key == '\n') {
+            oyk_u32 new_rgb = 0;
+            if (!oyk_theme_parse_hex(wiz_id_, &new_rgb)) {
+                strcpy(wiz_err_, "Invalid #RRGGBB hex color.");
+                wiz_btn_ = 0;
+                render();
+                return;
+            }
+            if (oyk_theme_is_builtin(wiz_desc_)) {
+                if (draft_.theme_count >= OYK_MAX_THEMES) {
+                    strcpy(wiz_err_, "Maximum custom themes reached.");
+                    wiz_btn_ = 0;
+                    render();
+                    return;
+                }
+                OykThemeConfig base_pal;
+                con_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
+                oyk_theme_resolve_effective(&draft_, 0, 1, &base_pal);
+                int dark_b = (strcmp(wiz_desc_, "light") == 0 || strcmp(wiz_desc_, "LIGHT") == 0) ? 0 : 1;
+                char cname[24];
+                oyk_theme_make_clone_name(&draft_, dark_b, cname, sizeof(cname));
+                OykThemeConfig* nt = &draft_.themes[draft_.theme_count++];
+                *nt = base_pal;
+                nt->is_dark_base = dark_b ? 1 : 0;
+                con_str_copy(nt->name, sizeof(nt->name), cname);
+                con_str_copy(wiz_desc_, sizeof(wiz_desc_), nt->name);
+            }
+            for (int ti = 0; ti < draft_.theme_count; ++ti) {
+                if (strcmp(draft_.themes[ti].name, wiz_desc_) == 0) {
+                    draft_.themes[ti].colors[wiz_edit_idx_] = new_rgb;
+                    break;
+                }
+            }
+            sprintf(wiz_err_, "Updated %s (%s).", wiz_desc_, oyk_theme_role_key(wiz_edit_idx_));
+            wiz_btn_ = 0;
+            render();
+            return;
+        }
+        if ((key == 8 || key == 127)) {
+            size_t n = strlen(wiz_id_);
+            if (n > 0) wiz_id_[n - 1] = '\0';
+            render();
+        } else if (key >= 0x20 && key < 0x7F) {
+            size_t n = strlen(wiz_id_);
+            if (n + 1 < sizeof(wiz_id_)) {
+                wiz_id_[n] = static_cast<char>(key);
+                wiz_id_[n + 1] = '\0';
+            }
+            render();
+        }
+        return;
+    }
+
+    if (key == 27) {
+        prompt_kind_ = PROMPT_NONE;
+        render();
+    } else if (key == TMUX_KEY_UP) {
+        wiz_edit_idx_ = (wiz_edit_idx_ + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT;
+        render();
+    } else if (key == TMUX_KEY_DOWN) {
+        wiz_edit_idx_ = (wiz_edit_idx_ + 1) % OYK_THEME_COLOR_COUNT;
+        render();
+    } else if (key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+        int ci = 0;
+        for (int i = 0; i < n_names; ++i) {
+            if (strcmp(names[i], wiz_desc_) == 0) { ci = i; break; }
+        }
+        ci = (key == TMUX_KEY_RIGHT) ? ((ci + 1) % n_names) : ((ci + n_names - 1) % n_names);
+        con_str_copy(wiz_desc_, sizeof(wiz_desc_), names[ci]);
+        sprintf(wiz_err_, "Selected '%.14s' (S/F2 to save & apply).", wiz_desc_);
+        render();
+    } else if (key == 'x' || key == 'X') {
+        if (oyk_theme_is_builtin(wiz_desc_)) {
+            strcpy(wiz_err_, "Built-in themes cannot be deleted.");
+        } else {
+            for (int ti = 0; ti < draft_.theme_count; ++ti) {
+                if (strcmp(draft_.themes[ti].name, wiz_desc_) == 0) {
+                    for (int k = ti; k + 1 < draft_.theme_count; ++k) draft_.themes[k] = draft_.themes[k + 1];
+                    --draft_.theme_count;
+                    break;
+                }
+            }
+            strcpy(wiz_desc_, "dark");
+            strcpy(wiz_err_, "Deleted custom theme; reverted to dark.");
+        }
+        render();
+    } else if (key == '\r' || key == '\n') {
+        OykThemeConfig pal;
+        con_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
+        oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
+        oyk_theme_format_hex(pal.colors[wiz_edit_idx_], wiz_id_, sizeof(wiz_id_));
+        wiz_btn_ = 1;
+        render();
+    } else if (key == 's' || key == 'S' || key == TMUX_KEY_F2) {
+        con_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
+        OykConfigApplyResult res;
+        node_->apply_config(&draft_, 1, &res);
+        node_->set_storage_is_flash(tinytmux_fs_is_flash_storage());
+        if (res.applied) {
+            sprintf(status_line_, "Theme '%s' %s.", wiz_desc_,
+                    res.saved_to_disk ? "saved & applied" : "applied (memory only)");
+            prompt_kind_ = PROMPT_NONE;
+            render();
+        } else {
+            sprintf(wiz_err_, "Apply failed: %.38s", res.error);
+            render();
+        }
+    }
+}
+
 void TinyTmuxConsole::render_prompt_overlay() {
     char buf[192];
     const int top = 9, left = 6, h = 6, w = 68;
@@ -2118,8 +2366,10 @@ OYK_FLASHMEM void TinyTmuxConsole::edit_current_settings_field() {
             begin_prompt(PROMPT_SETTINGS_VALUE, "New User Welcome:", draft_.new_user_welcome);
         } else if (idx == 8) {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Interfaces File (blank=inline):", draft_.interfaces_file);
-        } else {
+        } else if (idx == 9) {
             begin_prompt(PROMPT_SETTINGS_VALUE, "Peers File (blank=inline):", draft_.peers_file);
+        } else {
+            begin_prompt(PROMPT_SETTINGS_VALUE, "Themes File (blank=inline):", draft_.themes_file);
         }
     } else if (settings_tab_ == 1) {
         if (idx == 0) { draft_.bbs_enabled = draft_.bbs_enabled ? 0 : 1; render(); }
@@ -2227,6 +2477,7 @@ void TinyTmuxConsole::commit_prompt() {
             else if (idx == 7) con_str_copy(draft_.new_user_welcome, sizeof(draft_.new_user_welcome), val);
             else if (idx == 8) con_str_copy(draft_.interfaces_file, sizeof(draft_.interfaces_file), val);
             else if (idx == 9) con_str_copy(draft_.peers_file, sizeof(draft_.peers_file), val);
+            else if (idx == 10) con_str_copy(draft_.themes_file, sizeof(draft_.themes_file), val);
         } else if (settings_tab_ == 1) {
             if (idx == 1) { long v = strtol(val, NULL, 10); if (v >= 0 && v <= 15) draft_.bbs_ssid = static_cast<oyk_u8>(v); }
             else if (idx == 2) { if (!val[0]) memset(&draft_.bbs_callsign, 0, sizeof(draft_.bbs_callsign)); else oyk_parse_callsign(val, &draft_.bbs_callsign); }
@@ -2696,6 +2947,10 @@ void TinyTmuxConsole::handle_prompt_key(int key) {
         handle_ban_key(key);
         return;
     }
+    if (prompt_kind_ == PROMPT_THEME_SETTINGS) {
+        handle_theme_key(key);
+        return;
+    }
     if (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD) {
         handle_add_wizard_key(key);
         return;
@@ -2757,6 +3012,8 @@ void TinyTmuxConsole::handle_console_key(int key) {
         open_settings(0);
     } else if (key == 'e' || key == 'E') {
         open_settings(4);
+    } else if (key == 'h' || key == 'H') {
+        open_theme_dialog();
     } else if (key == 't' || key == 'T') {
         open_terminate_dialog();
     } else if (key == 'b' || key == 'B') {
@@ -2783,19 +3040,19 @@ void TinyTmuxConsole::handle_menu_key(int key) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
     } else if (key == TMUX_KEY_UP) {
-        menu_sel_ = (menu_sel_ + 12) % 13;
+        menu_sel_ = (menu_sel_ + 13) % 14;
         render();
     } else if (key == TMUX_KEY_DOWN) {
-        menu_sel_ = (menu_sel_ + 1) % 13;
+        menu_sel_ = (menu_sel_ + 1) % 14;
         render();
     } else if (key == TMUX_KEY_HOME) {
         menu_sel_ = 0;
         render();
     } else if (key == TMUX_KEY_END) {
-        menu_sel_ = 12;
+        menu_sel_ = 13;
         render();
     } else if (key == '\r' || key == '\n') {
-        static const int KEYS[13] = { 'a', 'd', 'l', 'f', 'r', 's', 'e', 't', 'b', 'p', 'g', 'u', 'x' };
+        static const int KEYS[14] = { 'a', 'd', 'l', 'f', 'r', 's', 'e', 'h', 't', 'b', 'p', 'g', 'u', 'x' };
         int k = KEYS[menu_sel_];
         view_ = TMUX_VIEW_CONSOLE;
         if (k == 'x') render();
@@ -2803,7 +3060,7 @@ void TinyTmuxConsole::handle_menu_key(int key) {
     } else if (key == 'a' || key == 'A' || key == 'd' || key == 'D' ||
                key == 'l' || key == 'L' || key == 'f' || key == 'F' ||
                key == 'r' || key == 'R' || key == 's' || key == 'S' ||
-               key == 'e' || key == 'E' ||
+               key == 'e' || key == 'E' || key == 'h' || key == 'H' ||
                key == 't' || key == 'T' || key == 'b' || key == 'B' ||
                key == 'p' || key == 'P' || key == 'u' || key == 'U' ||
                key == 'g' || key == 'G') {

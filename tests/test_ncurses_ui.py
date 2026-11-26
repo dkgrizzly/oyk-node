@@ -449,6 +449,14 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
+            # 8b. Theme Settings Modal
+            os.write(master_fd, b"h")
+            drain_and_wait(master_fd, scr, "Theme Settings")
+            drain_quiet(master_fd, scr, 0.15)
+            save_cap(cap_dir, "theme", scr)
+            os.write(master_fd, b"\x1b")
+            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
+
             # 9. Auto-Learned Peers Exit Modal + verify 73 de KR4OYK-7 stdout sign-off
             os.write(master_fd, b"q")
             drain_and_wait(master_fd, scr, "Auto-Learned Peers")

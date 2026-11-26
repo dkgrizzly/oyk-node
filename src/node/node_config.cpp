@@ -134,6 +134,16 @@ void append_peer_lines(const radio::PeerConfig& peer, std::vector<std::string>& 
     lines.push_back("allow_outbound = " + std::string(peer.allow_outbound ? "true" : "false"));
 }
 
+void append_theme_lines(const ui::ThemeConfig& theme, std::vector<std::string>& lines) {
+    if (ui::is_builtin_theme_name(theme.name)) return;
+    lines.push_back("");
+    lines.push_back("[theme " + theme.name + "]");
+    lines.push_back("base = " + std::string(theme.is_dark_base ? "dark" : "light"));
+    for (std::size_t i = 0; i < ui::kThemeRoleCount; ++i) {
+        lines.push_back(std::string(ui::kThemeRoleKeys[i]) + " = " + ui::format_hex_rgb(theme.colors[i]));
+    }
+}
+
 bool write_cfg_file_with_dirs(const std::string& target,
                               const std::vector<std::string>& lines,
                               core::LineEnding eol) {
@@ -171,6 +181,10 @@ std::string NodeConfig::resolved_interfaces_path() const {
 
 std::string NodeConfig::resolved_peers_path() const {
     return resolve_cfg_subpath(source_path, peers_file);
+}
+
+std::string NodeConfig::resolved_themes_path() const {
+    return resolve_cfg_subpath(source_path, themes_file);
 }
 
 ax25::Callsign NodeConfig::resolved_bbs_callsign() const {
@@ -295,22 +309,44 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                            const std::string& file_tag,
                            bool allow_node_sections,
                            bool allow_iface_sections,
-                           bool allow_peer_sections) -> bool {
+                           bool allow_peer_sections,
+                           bool allow_theme_sections) -> bool {
         std::string current_section;
         radio::RadioInterfaceConfig* current_iface = nullptr;
         radio::PeerConfig* current_peer = nullptr;
+        ui::ThemeConfig* current_theme = nullptr;
 
         auto lines = core::split_lines_any_eol(chunk_bytes);
         int line_num = 0;
         for (std::string raw_line : lines) {
             ++line_num;
-            auto hash_pos = raw_line.find('#');
-            if (hash_pos != std::string::npos) {
-                raw_line = raw_line.substr(0, hash_pos);
-            }
-            auto semi_pos = raw_line.find(';');
-            if (semi_pos != std::string::npos) {
-                raw_line = raw_line.substr(0, semi_pos);
+            const auto eq_pos = raw_line.find('=');
+            for (std::size_t ci = 0; ci < raw_line.size(); ++ci) {
+                if (raw_line[ci] == ';') {
+                    raw_line = raw_line.substr(0, ci);
+                    break;
+                }
+                if (raw_line[ci] == '#') {
+                    bool is_hex_after_eq = (eq_pos != std::string::npos && ci > eq_pos &&
+                                            ci + 7 <= raw_line.size());
+                    if (is_hex_after_eq) {
+                        for (std::size_t k = 1; k <= 6; ++k) {
+                            if (!std::isxdigit(static_cast<unsigned char>(raw_line[ci + k]))) {
+                                is_hex_after_eq = false;
+                                break;
+                            }
+                        }
+                        if (is_hex_after_eq && ci + 7 < raw_line.size() &&
+                            !std::isspace(static_cast<unsigned char>(raw_line[ci + 7])) &&
+                            raw_line[ci + 7] != '#' && raw_line[ci + 7] != ';') {
+                            is_hex_after_eq = false;
+                        }
+                    }
+                    if (!is_hex_after_eq) {
+                        raw_line = raw_line.substr(0, ci);
+                        break;
+                    }
+                }
             }
 
             std::string line = trim(raw_line);
@@ -330,6 +366,7 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                     current_section = (lower_sec == "radio") ? "rig" : lower_sec;
                     current_iface = nullptr;
                     current_peer = nullptr;
+                    current_theme = nullptr;
                 } else if (lower_sec.rfind("interface", 0) == 0) {
                     std::string rest = trim(sec.substr(9));
                     if (!rest.empty() && rest.front() == ':') {
@@ -344,10 +381,12 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                         current_section = "skip";
                         current_iface = nullptr;
                         current_peer = nullptr;
+                        current_theme = nullptr;
                         continue;
                     }
                     current_section = "interface";
                     current_peer = nullptr;
+                    current_theme = nullptr;
                     current_iface = nullptr;
                     const std::string rl = to_lower(rest);
                     for (auto& ex : cfg.interfaces) {
@@ -380,10 +419,12 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                         current_section = "skip";
                         current_iface = nullptr;
                         current_peer = nullptr;
+                        current_theme = nullptr;
                         continue;
                     }
                     current_section = "peer";
                     current_iface = nullptr;
+                    current_theme = nullptr;
                     current_peer = nullptr;
                     const std::string rl = to_lower(rest);
                     for (auto& ex : cfg.peers) {
@@ -399,6 +440,44 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                         peer.id = rest;
                         cfg.peers.push_back(std::move(peer));
                         current_peer = &cfg.peers.back();
+                    }
+                } else if (lower_sec.rfind("theme", 0) == 0 &&
+                           (lower_sec.size() == 5 || lower_sec[5] == ':' ||
+                            std::isspace(static_cast<unsigned char>(lower_sec[5])))) {
+                    std::string rest = trim(sec.substr(5));
+                    if (!rest.empty() && rest.front() == ':') {
+                        rest = trim(rest.substr(1));
+                    }
+                    if (rest.empty()) {
+                        error_out = file_tag + " line " + std::to_string(line_num) +
+                                    ": theme section requires a name (e.g. [theme custom-dark])";
+                        return false;
+                    }
+                    if (!allow_theme_sections || ui::is_builtin_theme_name(rest)) {
+                        current_section = "skip";
+                        current_iface = nullptr;
+                        current_peer = nullptr;
+                        current_theme = nullptr;
+                        continue;
+                    }
+                    current_section = "theme";
+                    current_iface = nullptr;
+                    current_peer = nullptr;
+                    current_theme = nullptr;
+                    const std::string rl = to_lower(rest);
+                    for (auto& ex : cfg.themes) {
+                        if (to_lower(ex.name) == rl) {
+                            ex = ui::builtin_dark_theme();
+                            ex.name = rest;
+                            current_theme = &ex;
+                            break;
+                        }
+                    }
+                    if (!current_theme) {
+                        ui::ThemeConfig tc = ui::builtin_dark_theme();
+                        tc.name = rest;
+                        cfg.themes.push_back(std::move(tc));
+                        current_theme = &cfg.themes.back();
                     }
                 } else {
                     error_out = file_tag + " line " + std::to_string(line_num) +
@@ -474,6 +553,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.interfaces_file = val;
             } else if (key == "peers" || key == "peers_file") {
                 cfg.peers_file = val;
+            } else if (key == "theme") {
+                cfg.theme_name = val;
+            } else if (key == "themes" || key == "themes_file") {
+                cfg.themes_file = val;
             } else if (key == "accept_incoming") {
                 cfg.accept_incoming_default = parse_bool(val, true);
             } else if (key == "allow_flash_logging" || key == "allow_logging_to_flash") {
@@ -687,43 +770,53 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "allow_outbound" || key == "outbound") {
                 current_peer->allow_outbound = parse_bool(val, true);
             }
+        } else if (current_section == "theme" && current_theme != nullptr) {
+            if (key == "base") {
+                const bool light = (to_lower(val) == "light");
+                current_theme->is_dark_base = !light;
+            } else if (auto ridx = ui::theme_role_index(key)) {
+                uint32_t rgb = 0;
+                if (!ui::parse_hex_rgb(val, rgb)) {
+                    error_out = file_tag + " line " + std::to_string(line_num) +
+                                ": invalid #RRGGBB color '" + val + "' in [theme " +
+                                current_theme->name + "]";
+                    return false;
+                }
+                current_theme->colors[*ridx] = rgb;
+            }
         }
         }
         return true;
     };
 
-    if (!parse_chunk(raw_bytes, "Config", true, true, true)) {
+    if (!parse_chunk(raw_bytes, "Config", true, true, true, true)) {
         return false;
     }
 
     const std::string if_path = cfg.resolved_interfaces_path();
     const std::string pr_path = cfg.resolved_peers_path();
-    const bool same_inc = !if_path.empty() && !pr_path.empty() && same_normalized_cfg_path(if_path, pr_path);
+    const std::string th_path = cfg.resolved_themes_path();
 
-    if (same_inc) {
-        if (!same_normalized_cfg_path(if_path, path)) {
-            std::string inc_bytes;
-            if (core::read_file_binary(if_path, inc_bytes)) {
-                if (!parse_chunk(inc_bytes, if_path, false, true, true)) {
-                    return false;
-                }
-            }
+    std::vector<std::string> ext_files;
+    auto push_ext = [&](const std::string& p) {
+        if (p.empty() || same_normalized_cfg_path(p, path)) return;
+        for (const auto& ex : ext_files) {
+            if (same_normalized_cfg_path(ex, p)) return;
         }
-    } else {
-        if (!if_path.empty() && !same_normalized_cfg_path(if_path, path)) {
-            std::string inc_bytes;
-            if (core::read_file_binary(if_path, inc_bytes)) {
-                if (!parse_chunk(inc_bytes, if_path, false, true, false)) {
-                    return false;
-                }
-            }
-        }
-        if (!pr_path.empty() && !same_normalized_cfg_path(pr_path, path)) {
-            std::string inc_bytes;
-            if (core::read_file_binary(pr_path, inc_bytes)) {
-                if (!parse_chunk(inc_bytes, pr_path, false, false, true)) {
-                    return false;
-                }
+        ext_files.push_back(p);
+    };
+    push_ext(if_path);
+    push_ext(pr_path);
+    push_ext(th_path);
+
+    for (const auto& ext : ext_files) {
+        const bool want_if = !if_path.empty() && same_normalized_cfg_path(ext, if_path);
+        const bool want_pr = !pr_path.empty() && same_normalized_cfg_path(ext, pr_path);
+        const bool want_th = !th_path.empty() && same_normalized_cfg_path(ext, th_path);
+        std::string inc_bytes;
+        if (core::read_file_binary(ext, inc_bytes)) {
+            if (!parse_chunk(inc_bytes, ext, false, want_if, want_pr, want_th)) {
+                return false;
             }
         }
     }
@@ -823,6 +916,12 @@ bool NodeConfig::save_to_file(const std::string& path) const {
     if (!peers_file.empty()) {
         lines.push_back("peers = " + peers_file);
     }
+    if (!theme_name.empty()) {
+        lines.push_back("theme = " + theme_name);
+    }
+    if (!themes_file.empty()) {
+        lines.push_back("themes = " + themes_file);
+    }
 
     if (!logging.log_files.empty()) {
         lines.push_back("");
@@ -888,10 +987,10 @@ bool NodeConfig::save_to_file(const std::string& path) const {
 
     const std::string if_target = resolve_cfg_subpath(target, interfaces_file);
     const std::string pr_target = resolve_cfg_subpath(target, peers_file);
-    const bool same_inc = !if_target.empty() && !pr_target.empty() &&
-                          same_normalized_cfg_path(if_target, pr_target);
+    const std::string th_target = resolve_cfg_subpath(target, themes_file);
     const bool if_inline = if_target.empty() || same_normalized_cfg_path(if_target, target);
     const bool pr_inline = pr_target.empty() || same_normalized_cfg_path(pr_target, target);
+    const bool th_inline = th_target.empty() || same_normalized_cfg_path(th_target, target);
 
     if (if_inline) {
         for (const auto& iface : interfaces) {
@@ -903,43 +1002,55 @@ bool NodeConfig::save_to_file(const std::string& path) const {
             append_peer_lines(peer, lines);
         }
     }
+    if (th_inline) {
+        for (const auto& th : themes) {
+            append_theme_lines(th, lines);
+        }
+    }
 
     if (!write_cfg_file_with_dirs(target, lines, line_ending)) {
         return false;
     }
 
-    if (same_inc && !if_inline) {
-        std::vector<std::string> comb_lines;
-        comb_lines.push_back("# OYK Packet Node Interfaces and Peers");
-        for (const auto& iface : interfaces) {
-            append_iface_lines(iface, comb_lines);
+    std::vector<std::string> ext_targets;
+    auto push_ext_target = [&](const std::string& p) {
+        if (p.empty() || same_normalized_cfg_path(p, target)) return;
+        for (const auto& ex : ext_targets) {
+            if (same_normalized_cfg_path(ex, p)) return;
         }
-        for (const auto& peer : peers) {
-            append_peer_lines(peer, comb_lines);
-        }
-        if (!write_cfg_file_with_dirs(if_target, comb_lines, line_ending)) {
-            return false;
-        }
-    } else {
-        if (!if_inline) {
-            std::vector<std::string> if_lines;
-            if_lines.push_back("# OYK Packet Node Interfaces");
+        ext_targets.push_back(p);
+    };
+    push_ext_target(if_target);
+    push_ext_target(pr_target);
+    push_ext_target(th_target);
+
+    for (const auto& ext : ext_targets) {
+        const bool write_if = !if_inline && same_normalized_cfg_path(ext, if_target);
+        const bool write_pr = !pr_inline && same_normalized_cfg_path(ext, pr_target);
+        const bool write_th = !th_inline && same_normalized_cfg_path(ext, th_target);
+        std::vector<std::string> ext_lines;
+        std::string hdr = "# OYK Packet Node";
+        if (write_if) hdr += " Interfaces";
+        if (write_pr) hdr += " Peers";
+        if (write_th) hdr += " Themes";
+        ext_lines.push_back(hdr);
+        if (write_if) {
             for (const auto& iface : interfaces) {
-                append_iface_lines(iface, if_lines);
-            }
-            if (!write_cfg_file_with_dirs(if_target, if_lines, line_ending)) {
-                return false;
+                append_iface_lines(iface, ext_lines);
             }
         }
-        if (!pr_inline) {
-            std::vector<std::string> pr_lines;
-            pr_lines.push_back("# OYK Packet Node Peers");
+        if (write_pr) {
             for (const auto& peer : peers) {
-                append_peer_lines(peer, pr_lines);
+                append_peer_lines(peer, ext_lines);
             }
-            if (!write_cfg_file_with_dirs(pr_target, pr_lines, line_ending)) {
-                return false;
+        }
+        if (write_th) {
+            for (const auto& th : themes) {
+                append_theme_lines(th, ext_lines);
             }
+        }
+        if (!write_cfg_file_with_dirs(ext, ext_lines, line_ending)) {
+            return false;
         }
     }
 

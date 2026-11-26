@@ -16,6 +16,7 @@ BEGIN
         MENUITEM "&Radio Control...",            IDM_RIG_CONTROL
         MENUITEM "&Settings...",                 IDM_SETTINGS
         MENUITEM "&Peers...",                    IDM_PEERS
+        MENUITEM "T&heme...",                    IDM_THEME
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
         MENUITEM SEPARATOR
@@ -111,7 +112,7 @@ BEGIN
     DEFPUSHBUTTON   "Close", IDCANCEL, 268, 210, 56, 15
 END
 
-IDD_SETTINGS DIALOG 12, 12, 348, 224
+IDD_SETTINGS DIALOG 12, 12, 348, 238
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "OYK Node Settings"
 FONT 8, "MS Sans Serif"
@@ -125,7 +126,7 @@ BEGIN
     PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 230, 6, 42, 15
     PUSHBUTTON      "Printer", IDC_SET_TAB_PRN, 274, 6, 68, 15
 
-    GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 174
+    GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 188
 
     /* Tab 1: Node */
     LTEXT           "Node Callsign (CALL-SSID):", IDC_SET_L_CALL, 14, 36, 92, 10
@@ -144,7 +145,9 @@ BEGIN
     EDITTEXT        IDC_SET_IF_FILE, 110, 138, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
     LTEXT           "Peers File:", IDC_SET_L_PRFILE, 14, 158, 92, 10
     EDITTEXT        IDC_SET_PR_FILE, 110, 156, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    CHECKBOX        "Allow incoming connections by default", IDC_SET_ACCEPT, 14, 176, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Themes File:", IDC_SET_L_THFILE, 14, 176, 92, 10
+    EDITTEXT        IDC_SET_TH_FILE, 110, 174, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Allow incoming connections by default", IDC_SET_ACCEPT, 14, 194, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
 
     /* Tab 2: BBS */
     CHECKBOX        "Enable Packet BBS", IDC_SET_BBS_EN, 14, 38, 120, 11, BS_AUTOCHECKBOX | WS_TABSTOP
@@ -214,8 +217,27 @@ BEGIN
     EDITTEXT        IDC_SET_PRN_LVL, 100, 116, 64, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
     CHECKBOX        "Use 132-column condensed mode (MX-80 / ESC/P2)", IDC_SET_PRN_COND, 14, 138, 230, 11, BS_AUTOCHECKBOX | WS_TABSTOP
 
-    DEFPUSHBUTTON   "&Save && Apply", IDOK, 206, 202, 68, 15
-    PUSHBUTTON      "Cancel", IDCANCEL, 278, 202, 64, 15
+    DEFPUSHBUTTON   "&Save && Apply", IDOK, 206, 216, 68, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 278, 216, 64, 15
+END
+
+IDD_THEME DIALOG 20, 20, 320, 226
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Theme Settings"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Theme:", -1, 8, 10, 30, 10
+    COMBOBOX        IDC_TH_COMBO, 42, 8, 190, 90, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Delete Custom", IDC_TH_DEL, 238, 8, 74, 14
+    LTEXT           "Built-in dark/light/native are never saved; editing clones custom-dark/light.", IDC_TH_HINT, 8, 26, 304, 10
+    LISTBOX         IDC_TH_LIST, 8, 40, 304, 128, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Color (#RRGGBB):", -1, 8, 176, 58, 10
+    EDITTEXT        IDC_TH_HEX, 68, 174, 62, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CONTROL         "", IDC_TH_PREVIEW, "STATIC", SS_BLACKFRAME, 136, 174, 24, 13
+    PUSHBUTTON      "Pick Color...", IDC_TH_PICK, 166, 173, 68, 14
+    PUSHBUTTON      "Apply Color", IDC_TH_APPLY_COLOR, 240, 173, 72, 14
+    DEFPUSHBUTTON   "&Save && Apply", IDOK, 180, 204, 68, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 254, 204, 58, 15
 END
 
 IDD_RIG_CONTROL DIALOG 16, 16, 304, 178

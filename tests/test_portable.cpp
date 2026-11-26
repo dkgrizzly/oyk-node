@@ -1630,6 +1630,57 @@ static void test_portable_same_interface_policy() {
     printf("[PASS] test_portable_same_interface_policy\n");
 }
 
+static void test_portable_theme_config_and_cloning() {
+    OykConfig* cfg = new OykConfig();
+    OykConfig* reloaded = new OykConfig();
+    oyk_config_init_default(cfg);
+
+    assert(oyk_theme_is_builtin("dark") == 1);
+    assert(oyk_theme_is_builtin("light") == 1);
+    assert(oyk_theme_is_builtin("native") == 1);
+    assert(oyk_theme_is_builtin("custom-dark") == 0);
+
+    oyk_u32 parsed = 0;
+    assert(oyk_theme_parse_hex("#38bdf8", &parsed) == 1);
+    assert(parsed == 0x38BDF8UL);
+    assert(oyk_theme_parse_hex("bad", &parsed) == 0);
+
+    char name[24];
+    oyk_theme_make_clone_name(cfg, 1, name, sizeof(name));
+    assert(strcmp(name, "custom-dark") == 0);
+    oyk_theme_init_builtin(&cfg->themes[cfg->theme_count++], 0);
+    strcpy(cfg->themes[0].name, "custom-dark");
+    cfg->themes[0].colors[OYK_TR_ACCENT] = 0xFF8800UL;
+    oyk_theme_make_clone_name(cfg, 1, name, sizeof(name));
+    assert(strcmp(name, "custom-dark-2") == 0);
+    oyk_theme_make_clone_name(cfg, 0, name, sizeof(name));
+    assert(strcmp(name, "custom-light") == 0);
+
+    /* Inject built-in name into themes[] to verify oyk_config_save never writes built-ins */
+    oyk_theme_init_builtin(&cfg->themes[cfg->theme_count++], 1);
+    strcpy(cfg->theme_name, "custom-dark");
+    strcpy(cfg->themes_file, "tth.cfg");
+
+    const char* main_p = OYK_T_CFG_MIXED;
+    assert(oyk_config_save(cfg, main_p) == 1);
+    char th_p[64];
+    oyk_config_resolve_themes(cfg, th_p, sizeof(th_p));
+
+    char err[96];
+    assert(oyk_config_load(main_p, reloaded, err, sizeof(err)) == 1);
+    assert(strcmp(reloaded->theme_name, "custom-dark") == 0);
+    assert(strcmp(reloaded->themes_file, "tth.cfg") == 0);
+    assert(reloaded->theme_count == 1);
+    assert(strcmp(reloaded->themes[0].name, "custom-dark") == 0);
+    assert(reloaded->themes[0].colors[OYK_TR_ACCENT] == 0xFF8800UL);
+
+    remove(main_p);
+    remove(th_p);
+    delete reloaded;
+    delete cfg;
+    printf("[PASS] test_portable_theme_config_and_cloning\n");
+}
+
 #ifndef __DOS__
 static void dos_save_capture(const char* name, const oyk_u16* vram) {
     const char* dir = getenv("OYK_UI_CAPTURE_DIR");
@@ -1704,6 +1755,7 @@ static void test_dos_ui_screen_flows() {
     dos_vid_puts(v, 7, 7, fill, "Learn Policy   : < accept >", 40);
     dos_vid_puts(v, 8, 7, fill, "Interfaces File: interfaces.cfg", 40);
     dos_vid_puts(v, 9, 7, fill, "Peers File     : peers.cfg", 40);
+    dos_vid_puts(v, 10, 7, fill, "Themes File    : themes.cfg", 40);
     dos_vid_hdiv(v, 20, 4, 72, bdr);
     dos_vid_puts(v, 21, 6, bar, "[ S/F2 Save ]  [ Esc Cancel ]  1-7:Tab  Enter:Edit", 66);
     assert(dos_vid_flush(v) > 0);
@@ -1817,6 +1869,32 @@ static void test_dos_ui_screen_flows() {
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("exit", sim_vram);
 
+    /* 10. Theme Settings Modal */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
+    dos_vid_title(v, 2, 5, 18, bdr, "Theme Settings");
+    dos_vid_puts(v, 4, 5, fill, "Theme  : < dark               > (Built-in (not saved))", 68);
+    dos_vid_puts(v, 5, 5, fill, "Editing built-in clones custom-dark or custom-light.", 68);
+    dos_vid_puts(v, 7, 5, lhdr, "Role              Key            Color     Preview", 68);
+    {
+        OykThemeConfig dt;
+        oyk_theme_init_builtin(&dt, 0);
+        for (int r = 0; r < 10; ++r) {
+            char hx[12], row_s[60];
+            oyk_theme_format_hex(dt.colors[r], hx, sizeof(hx));
+            sprintf(row_s, "%-16.16s  %-13.13s  %-8.8s",
+                    oyk_theme_role_label(r), oyk_theme_role_key(r), hx);
+            dos_vid_puts(v, 8 + r, 5, (r == 0) ? sel : fill, row_s, 44);
+            oyk_u8 sw = static_cast<oyk_u8>((oyk_rgb_to_vga16(dt.colors[r]) << 4) | oyk_rgb_to_vga16(dt.colors[r]));
+            dos_vid_puts(v, 8 + r, 50, sw, "    ", 4);
+        }
+    }
+    dos_vid_hdiv(v, 19, 3, 74, bdr);
+    dos_vid_puts(v, 20, 5, fill, "Lt/Rt:Theme  Enter:Edit #RRGGBB  X:Del Custom  S/F2:Save", 68);
+    dos_vid_puts(v, 21, 5, bar,  "Enter:Edit  Lt/Rt:Theme  X:Del  S/F2:Save & Apply  Esc:Cancel", 68);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("theme", sim_vram);
+
     delete v;
     delete[] sim_vram;
     printf("[PASS] test_dos_ui_screen_flows\n");
@@ -1864,6 +1942,7 @@ int oyk_run_portable_tests() {
     test_portable_iface_directions_netmask_and_dmr();
     test_portable_config_include_storage_modes();
     test_portable_same_interface_policy();
+    test_portable_theme_config_and_cloning();
 #ifndef __DOS__
     test_dos_ui_screen_flows();
     test_win_service_cmdline_builder();

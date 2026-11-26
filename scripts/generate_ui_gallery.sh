@@ -125,7 +125,7 @@ fi
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
-FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit)
+FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme)
 PORTS=(ncurses dos tinytmux gtk win)
 
 for f in "${TMP_CAP}"/*.ansi; do
@@ -172,6 +172,7 @@ flow_title() {
         terminate)  echo "7. Terminate Connection Modal" ;;
         ban)        echo "8. Ban / Unban Callsign Dialog" ;;
         exit)       echo "9. Auto-Learned Peers Exit / Bootloader Prompt" ;;
+        theme)      echo "10. Theme Settings Dialog" ;;
     esac
 }
 
