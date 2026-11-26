@@ -67,4 +67,35 @@ int  oyk_term_count_wrapped_rows(const char* line, size_t line_len, int width);
 void oyk_term_input_slice(size_t input_len, int avail_w,
                           size_t* out_start, int* out_cursor_col);
 
+/* Terminal Ctrl+A escape-prefix hotkey command codes (Minicom / screen style). */
+enum OykTermCmd {
+    OYK_TCMD_NONE = 0,
+    OYK_TCMD_HELP,
+    OYK_TCMD_CONNECT,
+    OYK_TCMD_LOCAL,
+    OYK_TCMD_BBS,
+    OYK_TCMD_CHAT,
+    OYK_TCMD_DISCONNECT,
+    OYK_TCMD_YAPP_SEND,
+    OYK_TCMD_YAPP_ABORT,
+    OYK_TCMD_CYCLE_EOL,
+    OYK_TCMD_PORTS,
+    OYK_TCMD_CLEAR,
+    OYK_TCMD_REDRAW,
+    OYK_TCMD_CONSOLE,
+    OYK_TCMD_SEND_CTRL_A,
+    OYK_TCMD_CANCEL
+};
+
+struct OykTermHelpEntry {
+    const char* key_label;
+    const char* action;
+    const char* alt_key;
+};
+
+int oyk_term_decode_ctrl_a_cmd(int key);
+int oyk_term_eol_cycle_mode(OykTermEolParser* p);
+int oyk_term_help_count();
+const OykTermHelpEntry* oyk_term_help_entry(int idx);
+
 #endif /* OYK_TERM_HPP */

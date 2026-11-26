@@ -246,8 +246,55 @@ static void test_dos_mouse_sim_events() {
     printf("[PASS] test_dos_mouse_sim_events\n");
 }
 
+static void test_oyk_term_ctrl_a_hotkeys_and_help() {
+    assert(oyk_term_decode_ctrl_a_cmd('z') == OYK_TCMD_HELP);
+    assert(oyk_term_decode_ctrl_a_cmd('Z') == OYK_TCMD_HELP);
+    assert(oyk_term_decode_ctrl_a_cmd('?') == OYK_TCMD_HELP);
+    assert(oyk_term_decode_ctrl_a_cmd('h') == OYK_TCMD_HELP);
+    assert(oyk_term_decode_ctrl_a_cmd('c') == OYK_TCMD_CONNECT);
+    assert(oyk_term_decode_ctrl_a_cmd('l') == OYK_TCMD_LOCAL);
+    assert(oyk_term_decode_ctrl_a_cmd('b') == OYK_TCMD_BBS);
+    assert(oyk_term_decode_ctrl_a_cmd('t') == OYK_TCMD_CHAT);
+    assert(oyk_term_decode_ctrl_a_cmd('d') == OYK_TCMD_DISCONNECT);
+    assert(oyk_term_decode_ctrl_a_cmd('s') == OYK_TCMD_YAPP_SEND);
+    assert(oyk_term_decode_ctrl_a_cmd('k') == OYK_TCMD_YAPP_ABORT);
+    assert(oyk_term_decode_ctrl_a_cmd('e') == OYK_TCMD_CYCLE_EOL);
+    assert(oyk_term_decode_ctrl_a_cmd('p') == OYK_TCMD_PORTS);
+    assert(oyk_term_decode_ctrl_a_cmd('w') == OYK_TCMD_CLEAR);
+    assert(oyk_term_decode_ctrl_a_cmd('r') == OYK_TCMD_REDRAW);
+    assert(oyk_term_decode_ctrl_a_cmd('x') == OYK_TCMD_CONSOLE);
+    assert(oyk_term_decode_ctrl_a_cmd('q') == OYK_TCMD_CONSOLE);
+    assert(oyk_term_decode_ctrl_a_cmd('a') == OYK_TCMD_SEND_CTRL_A);
+    assert(oyk_term_decode_ctrl_a_cmd(0x01) == OYK_TCMD_SEND_CTRL_A);
+    assert(oyk_term_decode_ctrl_a_cmd(27) == OYK_TCMD_CANCEL);
+    assert(oyk_term_decode_ctrl_a_cmd('!') == OYK_TCMD_NONE);
+
+    OykTermEolParser eol;
+    oyk_term_eol_init(&eol, OYK_TERM_EOL_CR, 1);
+    assert(strcmp(oyk_term_eol_label(&eol), "CR") == 0);
+    assert(oyk_term_eol_cycle_mode(&eol) == OYK_TERM_EOL_CR);
+    assert(strcmp(oyk_term_eol_label(&eol), "CR*") == 0);
+    assert(oyk_term_eol_cycle_mode(&eol) == OYK_TERM_EOL_LF);
+    assert(strcmp(oyk_term_eol_label(&eol), "LF*") == 0);
+    assert(oyk_term_eol_cycle_mode(&eol) == OYK_TERM_EOL_CRLF);
+    assert(strcmp(oyk_term_eol_label(&eol), "CRLF*") == 0);
+    assert(oyk_term_eol_cycle_mode(&eol) == OYK_TERM_EOL_AUTO);
+    assert(strcmp(oyk_term_eol_label(&eol), "CR") == 0);
+
+    int hcnt = oyk_term_help_count();
+    assert(hcnt == 12);
+    for (int i = 0; i < hcnt; ++i) {
+        const OykTermHelpEntry* e = oyk_term_help_entry(i);
+        assert(e != NULL && e->key_label && e->key_label[0] && e->action && e->action[0]);
+    }
+    assert(oyk_term_help_entry(-1) == NULL);
+    assert(oyk_term_help_entry(hcnt) == NULL);
+    printf("[PASS] test_oyk_term_ctrl_a_hotkeys_and_help\n");
+}
+
 void oyk_run_portable_term_tests() {
     test_oyk_tui_layout_and_close_hit();
     test_oyk_term_eol_and_word_wrap();
     test_dos_mouse_sim_events();
+    test_oyk_term_ctrl_a_hotkeys_and_help();
 }

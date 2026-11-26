@@ -273,3 +273,55 @@ void oyk_term_input_slice(size_t input_len, int avail_w,
         if (out_cursor_col) *out_cursor_col = avail_w - 1;
     }
 }
+
+int oyk_term_decode_ctrl_a_cmd(int key) {
+    if (key == 27) return OYK_TCMD_CANCEL;
+    if (key == 0x01 || key == 'a' || key == 'A') return OYK_TCMD_SEND_CTRL_A;
+    if (key == 'z' || key == 'Z' || key == '?' || key == 'h' || key == 'H') return OYK_TCMD_HELP;
+    if (key == 'c' || key == 'C') return OYK_TCMD_CONNECT;
+    if (key == 'l' || key == 'L') return OYK_TCMD_LOCAL;
+    if (key == 'b' || key == 'B') return OYK_TCMD_BBS;
+    if (key == 't' || key == 'T') return OYK_TCMD_CHAT;
+    if (key == 'd' || key == 'D') return OYK_TCMD_DISCONNECT;
+    if (key == 's' || key == 'S') return OYK_TCMD_YAPP_SEND;
+    if (key == 'k' || key == 'K') return OYK_TCMD_YAPP_ABORT;
+    if (key == 'e' || key == 'E') return OYK_TCMD_CYCLE_EOL;
+    if (key == 'p' || key == 'P') return OYK_TCMD_PORTS;
+    if (key == 'w' || key == 'W') return OYK_TCMD_CLEAR;
+    if (key == 'r' || key == 'R') return OYK_TCMD_REDRAW;
+    if (key == 'x' || key == 'X' || key == 'q' || key == 'Q') return OYK_TCMD_CONSOLE;
+    return OYK_TCMD_NONE;
+}
+
+int oyk_term_eol_cycle_mode(OykTermEolParser* p) {
+    if (!p) return OYK_TERM_EOL_AUTO;
+    if (p->override_mode == OYK_TERM_EOL_AUTO) p->override_mode = OYK_TERM_EOL_CR;
+    else if (p->override_mode == OYK_TERM_EOL_CR) p->override_mode = OYK_TERM_EOL_LF;
+    else if (p->override_mode == OYK_TERM_EOL_LF) p->override_mode = OYK_TERM_EOL_CRLF;
+    else p->override_mode = OYK_TERM_EOL_AUTO;
+    return p->override_mode;
+}
+
+static const OykTermHelpEntry kOykTermHelpEntries[12] = {
+    { "Z / ?", "Show this hotkey help screen",      "" },
+    { "C",     "Connect to port / target...",       "F2" },
+    { "L",     "Quick-connect Local Node",          "" },
+    { "B",     "Quick-connect Local BBS",           "" },
+    { "T",     "Quick-connect Local CHAT",          "" },
+    { "D",     "Disconnect active session",         "F4" },
+    { "S",     "Send file via YAPP",                "F3" },
+    { "K",     "Abort YAPP file transfer",          "F6" },
+    { "E",     "Cycle wire EOL (AUTO/CR/LF/CRLF)",  "" },
+    { "P",     "List configured ports / interfaces", "" },
+    { "W / R", "Clear screen / Redraw & size",      "Ctrl+L" },
+    { "X / Q", "Return to Operator Console",        "F9/Tab" }
+};
+
+int oyk_term_help_count() {
+    return 12;
+}
+
+const OykTermHelpEntry* oyk_term_help_entry(int idx) {
+    if (idx < 0 || idx >= 12) return NULL;
+    return &kOykTermHelpEntries[idx];
+}
