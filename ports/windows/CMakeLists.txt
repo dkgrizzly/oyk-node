@@ -6,6 +6,7 @@
 
 add_executable(oyk-node-win WIN32
     win_main.cpp
+    win_service.cpp
     oyk_win.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_portable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../compat/oyk_yapp.cpp
@@ -25,6 +26,7 @@ target_link_libraries(oyk-node-win
         user32
         gdi32
         comdlg32
+        advapi32
 )
 
 if(MSVC)
