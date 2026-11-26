@@ -381,39 +381,39 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Android (Material 3 / Jetpack Compose) — 10. Theme Settings Dialog](images/ui-gallery/android_theme.png)
 
-## 11. Local Packet Terminal (/bbs Session)
+## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
 
 ### POSIX ncurses
 
-![POSIX ncurses — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/ncurses_terminal.png)
+![POSIX ncurses — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/ncurses_terminal.png)
 
 ### MS-DOS (80x25 Text)
 
-![MS-DOS (80x25 Text) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/dos_terminal.png)
+![MS-DOS (80x25 Text) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/dos_terminal.png)
 
 ### MS-DOS 386+ Graphical (VBE/VGA/EGA)
 
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/dos_gfx_terminal.png)
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/dos_gfx_terminal.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/tinytmux_terminal.png)
+![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/tinytmux_terminal.png)
 
 ### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
 
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/pico_terminal.png)
+![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/pico_terminal.png)
 
 ### X11 GTK+ 2.0
 
-![X11 GTK+ 2.0 — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/gtk_terminal.png)
+![X11 GTK+ 2.0 — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/gtk_terminal.png)
 
 ### Windows GUI (Wine / Win32/64)
 
-![Windows GUI (Wine / Win32/64) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/win_terminal.png)
+![Windows GUI (Wine / Win32/64) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/win_terminal.png)
 
 ### Android (Material 3 / Jetpack Compose)
 
-![Android (Material 3 / Jetpack Compose) — 11. Local Packet Terminal (/bbs Session)](images/ui-gallery/android_terminal.png)
+![Android (Material 3 / Jetpack Compose) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/android_terminal.png)
 
 ## 12. File Manager / Pending & Approved BBS Files
 

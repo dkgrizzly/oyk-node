@@ -203,7 +203,7 @@ flow_title() {
         ban)        echo "8. Ban / Unban Callsign Dialog" ;;
         exit)       echo "9. Auto-Learned Peers Exit / Bootloader Prompt" ;;
         theme)      echo "10. Theme Settings Dialog" ;;
-        terminal)   echo "11. Local Packet Terminal (/bbs Session)" ;;
+        terminal)   echo "11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)" ;;
         files)      echo "12. File Manager / Pending & Approved BBS Files" ;;
     esac
 }
