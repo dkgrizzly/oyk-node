@@ -127,6 +127,7 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
         need("Lt/Rt:Theme")
     elif flow == "terminal":
         need("LOCAL TERMINAL")
+        need("[EOL:", "EOL indicator")
     elif flow == "files":
         need("Pending Incoming")
 
