@@ -915,6 +915,17 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
                 error_out = "Unknown port '" + port_spec + "'";
                 return false;
             }
+            const radio::RadioInterfaceConfig* iface_cfg = nullptr;
+            for (const auto& ic : config_.interfaces) {
+                if (to_lower(ic.id) == to_lower(port_id)) {
+                    iface_cfg = &ic;
+                    break;
+                }
+            }
+            if (iface_cfg && (!iface_cfg->allow_outbound || to_lower(iface_cfg->type) == "telnet")) {
+                error_out = "Outbound connections on interface '" + port_id + "' are disabled";
+                return false;
+            }
             if (!parsed_target) {
                 error_out = "Invalid callsign '" + call_part + "'";
                 return false;
@@ -925,7 +936,12 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
                     return false;
                 }
                 if (endpoint.empty() && !peer->host.empty()) {
-                    endpoint = peer->host;
+                    const uint8_t dmr_pref = iface_cfg ? radio::dmr_prefix_for_iface(*iface_cfg) : static_cast<uint8_t>(12);
+                    std::string resolved_h;
+                    if (!radio::resolve_host_or_dmr_id(peer->host, dmr_pref, resolved_h)) {
+                        resolved_h = peer->host;
+                    }
+                    endpoint = resolved_h;
                     if (peer->port > 0) {
                         endpoint += ":" + std::to_string(peer->port);
                     }
@@ -1109,6 +1125,26 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                 auto ev = existing->on_frame(frame);
                 process_session_events(*existing, ev, pending, pending_cmds, pending_local);
             } else {
+                const radio::RadioInterfaceConfig* in_ic = nullptr;
+                for (const auto& ic : config_.interfaces) {
+                    if (to_lower(ic.id) == to_lower(meta.interface_id)) {
+                        in_ic = &ic;
+                        break;
+                    }
+                }
+                if (in_ic && !in_ic->allow_inbound) {
+                    log_msg(LOG_WARNING, "Denied incoming connection from " + frame.source.str() +
+                                         " on " + meta.interface_id + " (interface allow_inbound=false)");
+                    if (auto it = iface_by_id_.find(meta.interface_id); it != iface_by_id_.end()) {
+                        pending.push_back(PendingTx{
+                            it->second,
+                            ax25::Frame::make_dm(frame.source, frame.destination, frame.pf()),
+                            meta.peer_endpoint});
+                    }
+                    dispatch_tx(pending);
+                    dispatch_local_events(pending_local);
+                    return;
+                }
                 const auto* existing_peer = find_peer_locked(meta.interface_id, frame.source);
                 if (existing_peer && !existing_peer->allow_inbound) {
                     log_msg(LOG_WARNING, "Denied incoming connection from " + frame.source.str() +
@@ -1624,6 +1660,21 @@ void NodeEngine::start_outbound_connect(Session& inbound_sess,
         return;
     }
 
+    const radio::RadioInterfaceConfig* iface_cfg = nullptr;
+    for (const auto& ic : config_.interfaces) {
+        if (to_lower(ic.id) == to_lower(port_id)) {
+            iface_cfg = &ic;
+            break;
+        }
+    }
+    if (iface_cfg && (!iface_cfg->allow_outbound || to_lower(iface_cfg->type) == "telnet")) {
+        auto ev = inbound_sess.queue_text(
+            "Connection refused: outbound connections on interface '" + port_id + "' are disabled.\r" + prompt_string());
+        queue_session_frames(inbound_sess, ev.tx_frames, pending);
+        log_msg(LOG_WARNING, "Blocked outbound connect on " + port_id + " (allow_outbound=false)");
+        return;
+    }
+
     std::string peer_ep;
     if (const auto* peer = find_peer_locked(port_id, *target)) {
         if (!peer->allow_outbound) {
@@ -1635,7 +1686,12 @@ void NodeEngine::start_outbound_connect(Session& inbound_sess,
             return;
         }
         if (!peer->host.empty()) {
-            peer_ep = peer->host;
+            const uint8_t dmr_pref = iface_cfg ? radio::dmr_prefix_for_iface(*iface_cfg) : static_cast<uint8_t>(12);
+            std::string resolved_h;
+            if (!radio::resolve_host_or_dmr_id(peer->host, dmr_pref, resolved_h)) {
+                resolved_h = peer->host;
+            }
+            peer_ep = resolved_h;
             if (peer->port > 0) peer_ep += ":" + std::to_string(peer->port);
         }
     }
@@ -1907,6 +1963,8 @@ bool iface_cfg_equal(const radio::RadioInterfaceConfig& a,
     return a.id == b.id &&
            a.type == b.type &&
            a.description == b.description &&
+           a.allow_inbound == b.allow_inbound &&
+           a.allow_outbound == b.allow_outbound &&
            a.params == b.params &&
            a.peers == b.peers;
 }
@@ -1930,7 +1988,7 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
 
     {
         std::set<std::string> seen_ids;
-        for (const auto& ic : new_cfg.interfaces) {
+        for (auto& ic : new_cfg.interfaces) {
             if (ic.id.empty()) {
                 result.error = "Interface ID cannot be empty.";
                 return result;
@@ -1943,6 +2001,12 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
                 result.error = "Unsupported interface type '" + ic.type + "' for " + ic.id;
                 return result;
             }
+            if (ic.type == "telnet") {
+                ic.allow_outbound = false;
+            }
+        }
+        if (!radio::validate_iface_and_peer_addresses(new_cfg.interfaces, new_cfg.peers, result.error)) {
+            return result;
         }
     }
 

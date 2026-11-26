@@ -60,11 +60,16 @@ private:
     static bool parse_host_port(const std::string& spec, std::string& host, uint16_t& port);
     static std::string format_sockaddr(const sockaddr_in& addr);
     void parse_peer_spec(const std::string& spec);
+    bool ip_allowed_by_netmask(const sockaddr_in& addr) const noexcept;
     bool send_datagram(const std::vector<uint8_t>& datagram, const sockaddr_in& dest);
 
     std::string id_;
     std::string description_;
     std::string bind_host_ = "0.0.0.0";
+    std::string netmask_;
+    uint32_t bind_ip_net_ = 0;
+    uint32_t netmask_net_ = 0;
+    uint8_t dmr_prefix_ = 12;
     uint16_t configured_port_ = 10093;
     bool auto_learn_ = true;
 

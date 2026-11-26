@@ -2081,6 +2081,13 @@ OYK_DLG_RET EditPeerDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                                 reinterpret_cast<LPARAM>(iface_b));
                 }
                 GetDlgItemText(hdlg, IDC_EP_HOST, host_b, sizeof(host_b));
+                if (host_b[0] && oyk_is_all_digits(host_b)) {
+                    oyk_u32 did = 0;
+                    if (!oyk_parse_dmr_id(host_b, &did)) {
+                        SetDlgItemText(hdlg, IDC_EP_ERR, "Invalid DMR ID (allowed 1..16777214).");
+                        return TRUE;
+                    }
+                }
 
                 memset(&g_edit_peer_out, 0, sizeof(g_edit_peer_out));
                 strncpy(g_edit_peer_out.id, id_b, sizeof(g_edit_peer_out.id) - 1);
@@ -2130,18 +2137,36 @@ OYK_DLG_RET ExitPeersDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static void win_fill_lpol_combo(HWND hcb, int sel) {
+    static const char* const LPOLS[5] = {"inherit", "none", "inbound", "outbound", "both"};
+    for (int i = 0; i < 5; ++i) {
+        SendMessage(hcb, CB_ADDSTRING, 0, OYK_LPARAM_STR(LPOLS[i]));
+    }
+    if (sel < 0 || sel > 4) sel = 0;
+    SendMessage(hcb, CB_SETCURSEL, static_cast<WPARAM>(sel), 0);
+}
+
 static void win_build_iface_config(int drv,
                                    const char* id_b,
                                    const char* desc_b,
                                    const char* host_b,
                                    const char* port_b,
+                                   const char* mask_b,
                                    const char* peer_b,
+                                   int allow_in,
+                                   int allow_out,
+                                   int lpol_idx,
                                    const OykIfaceConfig* prev_ic,
                                    OykIfaceConfig* out_ic) {
     memset(out_ic, 0, sizeof(*out_ic));
     strncpy(out_ic->id, id_b, sizeof(out_ic->id) - 1);
     strcpy(out_ic->type, WIN_DRIVERS[drv].type);
     strncpy(out_ic->description, desc_b, sizeof(out_ic->description) - 1);
+    out_ic->block_inbound = allow_in ? 0 : 1;
+    out_ic->block_outbound = (drv == 4 || !allow_out) ? 1 : 0;
+    out_ic->learned_peer_policy = (drv == 4 || lpol_idx < 0 || lpol_idx > 4)
+                                      ? OYK_LEARN_INHERIT
+                                      : static_cast<oyk_u8>(lpol_idx);
 
     if (win_strieq(out_ic->type, "kiss-serial")) {
         strncpy(out_ic->device, host_b[0] ? host_b : "COM1", sizeof(out_ic->device) - 1);
@@ -2149,6 +2174,9 @@ static void win_build_iface_config(int drv,
         out_ic->baud = (bv > 0L) ? static_cast<oyk_u32>(bv) : 9600UL;
     } else {
         strncpy(out_ic->host, host_b[0] ? host_b : "0.0.0.0", sizeof(out_ic->host) - 1);
+        if ((drv == 0 || drv == 1) && mask_b && mask_b[0]) {
+            strncpy(out_ic->netmask, mask_b, sizeof(out_ic->netmask) - 1);
+        }
         long pv = atol(port_b);
         if (pv > 0L && pv <= 65535L) out_ic->port = static_cast<oyk_u16>(pv);
         else if (win_strieq(out_ic->type, "telnet")) out_ic->port = 8010;
@@ -2197,38 +2225,55 @@ static void sync_win_wiz_ui(HWND hdlg) {
     } else if (g_wiz_step == 1) {
         SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Enter a unique interface ID and optional description:");
     } else if (g_wiz_step == 2) {
-        if (g_wiz_drv == 0) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXUDP bind host, UDP port, and optional peer:");
-        else if (g_wiz_drv == 1) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXIP bind host and optional static peer:");
-        else if (g_wiz_drv == 2) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS serial COM port and baud rate:");
-        else if (g_wiz_drv == 3) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS-TCP host and TCP port:");
-        else SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure Telnet bind host and TCP port:");
+        if (g_wiz_drv == 0) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXUDP bind host/DMR, port, netmask, and policy:");
+        else if (g_wiz_drv == 1) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure AXIP bind host/DMR, netmask, and policy:");
+        else if (g_wiz_drv == 2) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS serial COM port, baud rate, and policy:");
+        else if (g_wiz_drv == 3) SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure KISS-TCP host, TCP port, and policy:");
+        else SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Configure Telnet bind host, TCP port, and inbound policy:");
 
-        SetDlgItemText(hdlg, IDC_AIF_L_HOST, (g_wiz_drv == 2) ? "Serial Device:" : ((g_wiz_drv == 3) ? "Host / IP:" : "Bind Host:"));
+        SetDlgItemText(hdlg, IDC_AIF_L_HOST, (g_wiz_drv == 2) ? "Serial Device:" : ((g_wiz_drv == 3) ? "Host / IP:" : ((g_wiz_drv == 4) ? "Bind Host:" : "Bind Host/DMR:")));
         SetDlgItemText(hdlg, IDC_AIF_L_PORT, (g_wiz_drv == 2) ? "Baud Rate:" : ((g_wiz_drv == 0) ? "UDP Port:" : "TCP Port:"));
+        if (g_wiz_drv == 4) {
+            CheckDlgButton(hdlg, IDC_AIF_OUT, 0);
+            EnableWindow(GetDlgItem(hdlg, IDC_AIF_OUT), FALSE);
+        } else {
+            EnableWindow(GetDlgItem(hdlg, IDC_AIF_OUT), TRUE);
+        }
     } else {
         SetDlgItemText(hdlg, IDC_AIF_PROMPT, "Review interface settings before committing:");
-        char id_b[24], desc_b[64], host_b[48], port_b[16], peer_b[64], sum[360];
+        char id_b[24], desc_b[64], host_b[48], port_b[16], mask_b[24], peer_b[64], sum[480];
         GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
         GetDlgItemText(hdlg, IDC_AIF_DESC, desc_b, sizeof(desc_b));
         GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
         GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+        GetDlgItemText(hdlg, IDC_AIF_MASK, mask_b, sizeof(mask_b));
         GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
+        int ain = IsDlgButtonChecked(hdlg, IDC_AIF_IN) ? 1 : 0;
+        int aout = (g_wiz_drv != 4 && IsDlgButtonChecked(hdlg, IDC_AIF_OUT)) ? 1 : 0;
+        int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_LPOL, CB_GETCURSEL, 0, 0));
+        const char* lp_s = oyk_format_learned_policy(static_cast<oyk_u8>(lpol >= 0 ? lpol : 0));
         if (g_wiz_drv == 2) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nSerial Device: %s\r\nBaud Rate:     %s",
-                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b);
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nSerial Device: %s\r\nBaud Rate:     %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
+                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
         } else if (g_wiz_drv == 1) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nStatic Peer:   %s",
-                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, peer_b[0] ? peer_b : "(auto-learn)");
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b,
+                    mask_b[0] ? mask_b : "(any)", peer_b[0] ? peer_b : "(auto-learn)",
+                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
         } else if (g_wiz_drv == 0) {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nUDP Port:      %s\r\nStatic Peer:   %s",
-                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b, peer_b[0] ? peer_b : "(auto-learn)");
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nBind Host:     %s\r\nUDP Port:      %s\r\nNetmask:       %s\r\nStatic Peer:   %s\r\nAllow In/Out:  %s / %s\r\nLearned Pol:   %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
+                    mask_b[0] ? mask_b : "(any)", peer_b[0] ? peer_b : "(auto-learn)",
+                    ain ? "true" : "false", aout ? "true" : "false", lp_s);
         } else {
             sprintf(sum,
-                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nHost / IP:     %s\r\nTCP Port:      %s",
-                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b);
+                    "Driver:        %s\r\nInterface ID:  %s\r\nDescription:   %s\r\nHost / IP:     %s\r\nTCP Port:      %s\r\nAllow In/Out:  %s / %s",
+                    drv, id_b, desc_b[0] ? desc_b : "(none)", host_b, port_b,
+                    ain ? "true" : "false", (g_wiz_drv == 4) ? "false (disabled)" : (aout ? "true" : "false"));
         }
         SetDlgItemText(hdlg, IDC_AIF_SUMMARY, sum);
     }
@@ -2242,12 +2287,19 @@ static void sync_win_wiz_ui(HWND hdlg) {
     int show_s2 = (g_wiz_step == 2) ? 1 : 0;
     int show_port = (show_s2 && g_wiz_drv != 1) ? 1 : 0;
     int show_peer = (show_s2 && (g_wiz_drv == 0 || g_wiz_drv == 1)) ? 1 : 0;
+    int show_lpol = (show_s2 && g_wiz_drv != 4) ? 1 : 0;
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_HOST), show_s2 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_HOST),   show_s2 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_PORT), show_port ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_PORT),   show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_MASK), show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_MASK),   show_peer ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_PEER), show_peer ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_PEER),   show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_IN),     show_s2 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_OUT),    show_s2 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_L_LPOL), show_lpol ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_AIF_LPOL),   show_lpol ? SW_SHOW : SW_HIDE);
 
     ShowWindow(GetDlgItem(hdlg, IDC_AIF_SUMMARY), (g_wiz_step == 3) ? SW_SHOW : SW_HIDE);
 
@@ -2268,6 +2320,9 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 sprintf(row, "%-12s %s", WIN_DRIVERS[i].type, WIN_DRIVERS[i].desc);
                 SendMessage(hlist, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
             }
+            win_fill_lpol_combo(GetDlgItem(hdlg, IDC_AIF_LPOL), 0);
+            CheckDlgButton(hdlg, IDC_AIF_IN, BST_CHECKED);
+            CheckDlgButton(hdlg, IDC_AIF_OUT, BST_CHECKED);
             SetWindowText(hdlg, "Add Interface");
             g_wiz_step = 0;
             g_wiz_drv = 0;
@@ -2300,7 +2355,11 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         SetDlgItemText(hdlg, IDC_AIF_DESC, "");
                         SetDlgItemText(hdlg, IDC_AIF_HOST, WIN_DRIVERS[g_wiz_drv].def_host);
                         SetDlgItemText(hdlg, IDC_AIF_PORT, WIN_DRIVERS[g_wiz_drv].def_port);
+                        SetDlgItemText(hdlg, IDC_AIF_MASK, "");
                         SetDlgItemText(hdlg, IDC_AIF_PEER, "");
+                        CheckDlgButton(hdlg, IDC_AIF_IN, BST_CHECKED);
+                        CheckDlgButton(hdlg, IDC_AIF_OUT, (g_wiz_drv != 4) ? BST_CHECKED : 0);
+                        SendDlgItemMessage(hdlg, IDC_AIF_LPOL, CB_SETCURSEL, 0, 0);
                         g_wiz_last_drv = g_wiz_drv;
                     }
                     g_wiz_step = 1;
@@ -2327,9 +2386,10 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     return TRUE;
                 }
                 if (g_wiz_step == 2) {
-                    char host_b[32], port_b[16];
+                    char host_b[32], port_b[16], mask_b[24];
                     GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
                     GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+                    GetDlgItemText(hdlg, IDC_AIF_MASK, mask_b, sizeof(mask_b));
                     if (!host_b[0]) {
                         SetDlgItemText(hdlg, IDC_AIF_ERR, "Host / Serial Device cannot be empty.");
                         SetFocus(GetDlgItem(hdlg, IDC_AIF_HOST));
@@ -2340,17 +2400,38 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                         SetFocus(GetDlgItem(hdlg, IDC_AIF_PORT));
                         return TRUE;
                     }
+                    if ((g_wiz_drv == 0 || g_wiz_drv == 1) && oyk_is_all_digits(host_b)) {
+                        oyk_u32 did = 0;
+                        if (!oyk_parse_dmr_id(host_b, &did)) {
+                            SetDlgItemText(hdlg, IDC_AIF_ERR, "Invalid DMR ID (allowed 1..16777214).");
+                            SetFocus(GetDlgItem(hdlg, IDC_AIF_HOST));
+                            return TRUE;
+                        }
+                    }
+                    if ((g_wiz_drv == 0 || g_wiz_drv == 1) && mask_b[0]) {
+                        oyk_u32 mip = 0;
+                        if (!oyk_parse_ipv4(mask_b, &mip)) {
+                            SetDlgItemText(hdlg, IDC_AIF_ERR, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+                            SetFocus(GetDlgItem(hdlg, IDC_AIF_MASK));
+                            return TRUE;
+                        }
+                    }
                     g_wiz_step = 3;
                     sync_win_wiz_ui(hdlg);
                     return TRUE;
                 }
-                char id_b[24], desc_b[64], host_b[32], port_b[16], peer_b[64];
+                char id_b[24], desc_b[64], host_b[32], port_b[16], mask_b[24], peer_b[64];
                 GetDlgItemText(hdlg, IDC_AIF_ID, id_b, sizeof(id_b));
                 GetDlgItemText(hdlg, IDC_AIF_DESC, desc_b, sizeof(desc_b));
                 GetDlgItemText(hdlg, IDC_AIF_HOST, host_b, sizeof(host_b));
                 GetDlgItemText(hdlg, IDC_AIF_PORT, port_b, sizeof(port_b));
+                GetDlgItemText(hdlg, IDC_AIF_MASK, mask_b, sizeof(mask_b));
                 GetDlgItemText(hdlg, IDC_AIF_PEER, peer_b, sizeof(peer_b));
-                win_build_iface_config(g_wiz_drv, id_b, desc_b, host_b, port_b, peer_b, NULL, &g_add_if_out);
+                int ain = IsDlgButtonChecked(hdlg, IDC_AIF_IN) ? 1 : 0;
+                int aout = IsDlgButtonChecked(hdlg, IDC_AIF_OUT) ? 1 : 0;
+                int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_AIF_LPOL, CB_GETCURSEL, 0, 0));
+                win_build_iface_config(g_wiz_drv, id_b, desc_b, host_b, port_b, mask_b, peer_b,
+                                       ain, aout, lpol, NULL, &g_add_if_out);
                 g_add_if_ok = 1;
                 EndDialog(hdlg, IDOK);
                 return TRUE;
@@ -2365,14 +2446,25 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static void sync_win_edit_iface_ui(HWND hdlg, int drv) {
-    SetDlgItemText(hdlg, IDC_EIF_L_HOST, (drv == 2) ? "Serial Device:" : ((drv == 3) ? "Host / IP:" : "Bind Host:"));
+    SetDlgItemText(hdlg, IDC_EIF_L_HOST, (drv == 2) ? "Serial Device:" : ((drv == 3) ? "Host / IP:" : ((drv == 4) ? "Bind Host:" : "Bind Host/DMR:")));
     SetDlgItemText(hdlg, IDC_EIF_L_PORT, (drv == 2) ? "Baud Rate:" : ((drv == 0) ? "UDP Port:" : "TCP Port:"));
     int show_port = (drv != 1) ? 1 : 0;
     int show_peer = (drv == 0 || drv == 1) ? 1 : 0;
+    int show_lpol = (drv != 4) ? 1 : 0;
     ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_PORT), show_port ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_EIF_PORT),   show_port ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_MASK), show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_MASK),   show_peer ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_PEER), show_peer ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hdlg, IDC_EIF_PEER),   show_peer ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_L_LPOL), show_lpol ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hdlg, IDC_EIF_LPOL),   show_lpol ? SW_SHOW : SW_HIDE);
+    if (drv == 4) {
+        CheckDlgButton(hdlg, IDC_EIF_OUT, 0);
+        EnableWindow(GetDlgItem(hdlg, IDC_EIF_OUT), FALSE);
+    } else {
+        EnableWindow(GetDlgItem(hdlg, IDC_EIF_OUT), TRUE);
+    }
 }
 
 OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -2399,17 +2491,22 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_EIF_ID, ic.id);
             SetDlgItemText(hdlg, IDC_EIF_DESC, ic.description);
             SetDlgItemText(hdlg, IDC_EIF_ERR, "");
+            CheckDlgButton(hdlg, IDC_EIF_IN, ic.block_inbound ? 0 : BST_CHECKED);
+            CheckDlgButton(hdlg, IDC_EIF_OUT, (g_edit_if_drv == 4 || ic.block_outbound) ? 0 : BST_CHECKED);
+            win_fill_lpol_combo(GetDlgItem(hdlg, IDC_EIF_LPOL), static_cast<int>(ic.learned_peer_policy));
             if (g_edit_if_drv == 2) {
                 char bb[16];
                 SetDlgItemText(hdlg, IDC_EIF_HOST, ic.device[0] ? ic.device : "COM1");
                 sprintf(bb, "%lu", static_cast<unsigned long>(ic.baud ? ic.baud : 9600UL));
                 SetDlgItemText(hdlg, IDC_EIF_PORT, bb);
+                SetDlgItemText(hdlg, IDC_EIF_MASK, "");
                 SetDlgItemText(hdlg, IDC_EIF_PEER, "");
             } else {
                 char pb[16], peer_s[64];
                 SetDlgItemText(hdlg, IDC_EIF_HOST, ic.host[0] ? ic.host : "0.0.0.0");
                 sprintf(pb, "%u", static_cast<unsigned int>(ic.port));
                 SetDlgItemText(hdlg, IDC_EIF_PORT, pb);
+                SetDlgItemText(hdlg, IDC_EIF_MASK, ic.netmask);
                 peer_s[0] = '\0';
                 if (ic.peer_count > 0 && (g_edit_if_drv == 0 || g_edit_if_drv == 1)) {
                     oyk_format_peer_spec(&ic.peers[0], peer_s, sizeof(peer_s));
@@ -2429,18 +2526,21 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     g_edit_if_drv = sel;
                     SetDlgItemText(hdlg, IDC_EIF_HOST, WIN_DRIVERS[g_edit_if_drv].def_host);
                     SetDlgItemText(hdlg, IDC_EIF_PORT, WIN_DRIVERS[g_edit_if_drv].def_port);
+                    SetDlgItemText(hdlg, IDC_EIF_MASK, "");
                     SetDlgItemText(hdlg, IDC_EIF_PEER, "");
+                    CheckDlgButton(hdlg, IDC_EIF_OUT, (g_edit_if_drv != 4) ? BST_CHECKED : 0);
                     SetDlgItemText(hdlg, IDC_EIF_ERR, "");
                     sync_win_edit_iface_ui(hdlg, g_edit_if_drv);
                 }
                 return TRUE;
             }
             if (id == IDOK) {
-                char id_b[24], desc_b[64], host_b[32], port_b[16], peer_b[64];
+                char id_b[24], desc_b[64], host_b[32], port_b[16], mask_b[24], peer_b[64];
                 GetDlgItemText(hdlg, IDC_EIF_ID, id_b, sizeof(id_b));
                 GetDlgItemText(hdlg, IDC_EIF_DESC, desc_b, sizeof(desc_b));
                 GetDlgItemText(hdlg, IDC_EIF_HOST, host_b, sizeof(host_b));
                 GetDlgItemText(hdlg, IDC_EIF_PORT, port_b, sizeof(port_b));
+                GetDlgItemText(hdlg, IDC_EIF_MASK, mask_b, sizeof(mask_b));
                 GetDlgItemText(hdlg, IDC_EIF_PEER, peer_b, sizeof(peer_b));
                 if (!id_b[0]) {
                     SetDlgItemText(hdlg, IDC_EIF_ERR, "Interface ID cannot be empty.");
@@ -2465,11 +2565,31 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     SetFocus(GetDlgItem(hdlg, IDC_EIF_PORT));
                     return TRUE;
                 }
+                if ((g_edit_if_drv == 0 || g_edit_if_drv == 1) && oyk_is_all_digits(host_b)) {
+                    oyk_u32 did = 0;
+                    if (!oyk_parse_dmr_id(host_b, &did)) {
+                        SetDlgItemText(hdlg, IDC_EIF_ERR, "Invalid DMR ID (allowed 1..16777214).");
+                        SetFocus(GetDlgItem(hdlg, IDC_EIF_HOST));
+                        return TRUE;
+                    }
+                }
+                if ((g_edit_if_drv == 0 || g_edit_if_drv == 1) && mask_b[0]) {
+                    oyk_u32 mip = 0;
+                    if (!oyk_parse_ipv4(mask_b, &mip)) {
+                        SetDlgItemText(hdlg, IDC_EIF_ERR, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+                        SetFocus(GetDlgItem(hdlg, IDC_EIF_MASK));
+                        return TRUE;
+                    }
+                }
                 const OykIfaceConfig* prev =
                     (g_edit_if_idx >= 0 && g_edit_if_idx < g_set_draft.iface_count)
                         ? &g_set_draft.ifaces[g_edit_if_idx]
                         : NULL;
-                win_build_iface_config(g_edit_if_drv, id_b, desc_b, host_b, port_b, peer_b, prev, &g_add_if_out);
+                int ain = IsDlgButtonChecked(hdlg, IDC_EIF_IN) ? 1 : 0;
+                int aout = IsDlgButtonChecked(hdlg, IDC_EIF_OUT) ? 1 : 0;
+                int lpol = static_cast<int>(SendDlgItemMessage(hdlg, IDC_EIF_LPOL, CB_GETCURSEL, 0, 0));
+                win_build_iface_config(g_edit_if_drv, id_b, desc_b, host_b, port_b, mask_b, peer_b,
+                                       ain, aout, lpol, prev, &g_add_if_out);
                 g_add_if_ok = 1;
                 EndDialog(hdlg, IDOK);
                 return TRUE;

@@ -1784,7 +1784,11 @@ struct DosAddWizState {
     char desc[32];
     char ep[32];
     char port[12];
+    char mask[16];
     char peer[32];
+    int allow_in;
+    int allow_out;
+    oyk_u8 lpol;
     char err[64];
 };
 
@@ -1803,9 +1807,20 @@ static int dos_strieq(const char* a, const char* b) {
     return (*a == '\0' && *b == '\0') ? 1 : 0;
 }
 
-static void dos_iface_apply_driver_defaults(int drv, char* ep, char* port, char* peer) {
+static void dos_iface_apply_driver_defaults(int drv,
+                                            char* ep,
+                                            char* port,
+                                            char* mask,
+                                            char* peer,
+                                            int* allow_in,
+                                            int* allow_out,
+                                            oyk_u8* lpol) {
     const char* t = DOS_IFACE_TYPES[drv];
+    mask[0] = '\0';
     peer[0] = '\0';
+    *allow_in = 1;
+    *allow_out = (drv == 4) ? 0 : 1;
+    *lpol = OYK_LEARN_INHERIT;
     if (strcmp(t, "kiss-serial") == 0) {
         strcpy(ep, "COM1");
         strcpy(port, "9600");
@@ -1821,24 +1836,39 @@ static void dos_iface_apply_driver_defaults(int drv, char* ep, char* port, char*
     }
 }
 
+static oyk_u8 dos_cycle_lpol(oyk_u8 cur, int dir) {
+    int v = (static_cast<int>(cur) + dir + 5) % 5;
+    return static_cast<oyk_u8>(v);
+}
+
 static void dos_build_iface_config(int drv,
                                    const char* id,
                                    const char* desc,
                                    const char* ep,
                                    const char* port,
+                                   const char* mask,
                                    const char* peer,
+                                   int allow_in,
+                                   int allow_out,
+                                   oyk_u8 lpol,
                                    const OykIfaceConfig* prev_ic,
                                    OykIfaceConfig* out_ic) {
     memset(out_ic, 0, sizeof(*out_ic));
     strncpy(out_ic->id, id, sizeof(out_ic->id) - 1);
     strncpy(out_ic->type, DOS_IFACE_TYPES[drv], sizeof(out_ic->type) - 1);
     strncpy(out_ic->description, desc, sizeof(out_ic->description) - 1);
+    out_ic->block_inbound = allow_in ? 0 : 1;
+    out_ic->block_outbound = (drv == 4 || !allow_out) ? 1 : 0;
+    out_ic->learned_peer_policy = (drv == 4) ? OYK_LEARN_INHERIT : lpol;
     if (drv == 1 || drv == 2) {
         strncpy(out_ic->device, ep, sizeof(out_ic->device) - 1);
         long bv = atol(port);
         out_ic->baud = (bv >= 300L) ? static_cast<oyk_u32>(bv) : ((drv == 2) ? 115200UL : 9600UL);
     } else {
         strncpy(out_ic->host, ep, sizeof(out_ic->host) - 1);
+        if ((drv == 0 || drv == 3) && mask && mask[0]) {
+            strncpy(out_ic->netmask, mask, sizeof(out_ic->netmask) - 1);
+        }
         long pv = atol(port);
         out_ic->port = (pv > 0L && pv <= 65535L)
                            ? static_cast<oyk_u16>(pv)
@@ -1872,14 +1902,20 @@ static void dos_build_iface_config(int drv,
 
 static int dos_wiz_field_count(const DosAddWizState* st) {
     if (st->step == 1) return 2;
-    if (st->step == 2) return (st->drv == 0) ? 3 : 2;
+    if (st->step == 2) {
+        if (st->drv == 0) return 7;
+        if (st->drv == 3) return 6;
+        if (st->drv == 4) return 3;
+        return 5;
+    }
     return 0;
 }
 
 static void dos_wiz_apply_defaults(const OykConfig* draft, DosAddWizState* st) {
     oyk_derive_default_iface_id(draft, DOS_IFACE_TYPES[st->drv], st->id, sizeof(st->id));
     st->desc[0] = '\0';
-    dos_iface_apply_driver_defaults(st->drv, st->ep, st->port, st->peer);
+    dos_iface_apply_driver_defaults(st->drv, st->ep, st->port, st->mask, st->peer,
+                                    &st->allow_in, &st->allow_out, &st->lpol);
     st->last_drv = st->drv;
 }
 
@@ -1923,13 +1959,30 @@ static int dos_wiz_try_advance(const OykConfig* draft, DosAddWizState* st, OykIf
             st->focus = 1;
             return 0;
         }
+        if ((st->drv == 0 || st->drv == 3) && oyk_is_all_digits(st->ep)) {
+            oyk_u32 did = 0;
+            if (!oyk_parse_dmr_id(st->ep, &did)) {
+                strcpy(st->err, "Invalid DMR ID (allowed 1..16777214).");
+                st->focus = 0;
+                return 0;
+            }
+        }
+        if ((st->drv == 0 || st->drv == 3) && st->mask[0]) {
+            oyk_u32 mip = 0;
+            if (!oyk_parse_ipv4(st->mask, &mip)) {
+                strcpy(st->err, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+                st->focus = 2;
+                return 0;
+            }
+        }
         st->step = 3;
         st->focus = 0;
         st->btn = 1;
         return 0;
     }
     if (st->step == 3) {
-        dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->peer, NULL, out_ic);
+        dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->mask, st->peer,
+                               st->allow_in, st->allow_out, st->lpol, NULL, out_ic);
         return 1;
     }
     return 0;
@@ -1947,7 +2000,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
 
-    const int top = 4, left = 6, h = 16, w = 68;
+    const int top = 3, left = 6, h = 18, w = 68;
     oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
     oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
@@ -1961,6 +2014,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
     memset(&st, 0, sizeof(st));
     st.last_drv = -1;
     st.btn = 1;
+    st.allow_in = 1;
+    st.allow_out = 1;
     int dirty = 1;
 
     while (!g_break_flag) {
@@ -1977,10 +2032,10 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             if (st.step == 1) {
                 prompt = "Enter a unique interface ID and optional description:";
             } else if (st.step == 2) {
-                if (st.drv == 1 || st.drv == 2) prompt = "Configure serial device and baud rate:";
-                else if (st.drv == 4) prompt = "Configure Telnet bind host IP and TCP port:";
-                else if (st.drv == 3) prompt = "Configure USB-CDC host IP and UDP port:";
-                else prompt = "Configure AXUDP bind host, UDP port, and optional peer:";
+                if (st.drv == 1 || st.drv == 2) prompt = "Configure serial device, baud rate, and policy:";
+                else if (st.drv == 4) prompt = "Configure Telnet bind host IP, TCP port, and policy:";
+                else if (st.drv == 3) prompt = "Configure USB-CDC host/DMR, port, netmask, and policy:";
+                else prompt = "Configure AXUDP bind host/DMR, port, netmask, and policy:";
             } else if (st.step == 3) {
                 prompt = "Review interface configuration before committing:";
             }
@@ -2004,18 +2059,41 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 vid_puts(top + 7, left + 3, fill_at, "Description  : ", 15);
                 vid_puts(top + 7, left + 18, (st.focus == 1) ? sel_at : inp_at, st.desc, 36);
             } else if (st.step == 2) {
-                char row[68];
+                char row[68], lplbl[24];
                 sprintf(row, "Interface    : %s (%s)", st.id, DOS_IFACE_TYPES[st.drv]);
-                vid_puts(top + 3, left + 3, fill_at, row, w - 6);
-                vid_puts(top + 5, left + 3, fill_at,
-                         (st.drv == 1 || st.drv == 2) ? "Serial Device: " : "Host / IP    : ", 15);
-                vid_puts(top + 5, left + 18, (st.focus == 0) ? sel_at : inp_at, st.ep, 36);
-                vid_puts(top + 7, left + 3, fill_at,
-                         (st.drv == 1 || st.drv == 2) ? "Baud Rate    : " : ((st.drv == 4) ? "TCP Port     : " : "UDP Port     : "), 15);
-                vid_puts(top + 7, left + 18, (st.focus == 1) ? sel_at : inp_at, st.port, 36);
+                vid_puts(top + 2, left + 3, fill_at, row, w - 6);
+                sprintf(lplbl, "< %s >", oyk_format_learned_policy(st.lpol));
+                int r = top + 4;
+                vid_puts(r, left + 3, fill_at,
+                         (st.drv == 1 || st.drv == 2) ? "Serial Device  : " : "Host / DMR ID  : ", 17);
+                vid_puts(r, left + 20, (st.focus == 0) ? sel_at : inp_at, st.ep, 36);
+                ++r;
+                vid_puts(r, left + 3, fill_at,
+                         (st.drv == 1 || st.drv == 2) ? "Baud Rate      : " : ((st.drv == 4) ? "TCP Port       : " : "UDP Port       : "), 17);
+                vid_puts(r, left + 20, (st.focus == 1) ? sel_at : inp_at, st.port, 36);
+                ++r;
+                int fi = 2;
+                if (st.drv == 0 || st.drv == 3) {
+                    vid_puts(r, left + 3, fill_at, "Netmask (opt)  : ", 17);
+                    vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.mask, 36);
+                    ++r; ++fi;
+                }
                 if (st.drv == 0) {
-                    vid_puts(top + 9, left + 3, fill_at, "Peer (opt)   : ", 15);
-                    vid_puts(top + 9, left + 18, (st.focus == 2) ? sel_at : inp_at, st.peer, 36);
+                    vid_puts(r, left + 3, fill_at, "Peer (opt)     : ", 17);
+                    vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.peer, 36);
+                    ++r; ++fi;
+                }
+                vid_puts(r, left + 3, fill_at, "Allow Inbound  : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_in ? "[ON]" : "[OFF]", 16);
+                ++r; ++fi;
+                if (st.drv == 4) {
+                    vid_puts(r, left + 3, fill_at, "Allow Outbound : [OFF] (disabled for telnet)", 46);
+                } else {
+                    vid_puts(r, left + 3, fill_at, "Allow Outbound : ", 17);
+                    vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_out ? "[ON]" : "[OFF]", 16);
+                    ++r; ++fi;
+                    vid_puts(r, left + 3, fill_at, "Learned Policy : ", 17);
+                    vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, lplbl, 24);
                 }
             } else {
                 char row[68];
@@ -2026,35 +2104,44 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 sprintf(row, "Description  : %-46.46s", st.desc[0] ? st.desc : "(none)");
                 vid_puts(top + 5, left + 3, fill_at, row, w - 6);
                 sprintf(row, "%s: %-46.46s",
-                        (st.drv == 1 || st.drv == 2) ? "Serial Device" : "Host / IP    ", st.ep);
+                        (st.drv == 1 || st.drv == 2) ? "Serial Device" : "Host / DMR   ", st.ep);
                 vid_puts(top + 6, left + 3, fill_at, row, w - 6);
                 sprintf(row, "%s: %-46.46s",
                         (st.drv == 1 || st.drv == 2) ? "Baud Rate    " : "Port         ", st.port);
                 vid_puts(top + 7, left + 3, fill_at, row, w - 6);
-                if (st.drv == 0) {
-                    sprintf(row, "Static Peer  : %-46.46s", st.peer[0] ? st.peer : "(auto-learn)");
+                if (st.drv == 0 || st.drv == 3) {
+                    sprintf(row, "Netmask      : %-46.46s", st.mask[0] ? st.mask : "(any)");
                     vid_puts(top + 8, left + 3, fill_at, row, w - 6);
                 }
-                vid_puts(top + 10, left + 3, ttl_at,
+                if (st.drv == 0) {
+                    sprintf(row, "Static Peer  : %-46.46s", st.peer[0] ? st.peer : "(auto-learn)");
+                    vid_puts(top + 9, left + 3, fill_at, row, w - 6);
+                }
+                sprintf(row, "Directions   : In=%s  Out=%s  Learn=%s",
+                        st.allow_in ? "ON" : "OFF",
+                        (st.drv == 4) ? "OFF(locked)" : (st.allow_out ? "ON" : "OFF"),
+                        (st.drv == 4) ? "n/a" : oyk_format_learned_policy(st.lpol));
+                vid_puts(top + 10, left + 3, fill_at, row, w - 6);
+                vid_puts(top + 12, left + 3, ttl_at,
                          "Select Finish to add this interface to Settings draft.", w - 6);
             }
 
             if (st.err[0]) {
-                vid_puts(top + 12, left + 2, err_at, st.err, w - 4);
+                vid_puts(top + 14, left + 2, err_at, st.err, w - 4);
             }
-            dos_vid_hdiv(g_vid, top + 13, left, w, bdr_at);
+            dos_vid_hdiv(g_vid, top + 15, left, w, bdr_at);
 
             int fcnt = dos_wiz_field_count(&st);
             int on_bar = (st.step == 0 || st.step == 3 || st.focus == fcnt);
             if (st.step > 0) {
-                vid_puts(top + 14, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
+                vid_puts(top + 16, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
             } else {
-                vid_puts(top + 14, left + 2, fill_at, "  < Back  ", 10);
+                vid_puts(top + 16, left + 2, fill_at, "  < Back  ", 10);
             }
-            vid_puts(top + 14, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
+            vid_puts(top + 16, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
                      (st.step == 3) ? "[ Finish ]" : "[ Next > ]", 10);
-            vid_puts(top + 14, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 14, left + 38, fill_at,
+            vid_puts(top + 16, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 16, left + 38, fill_at,
                      (st.step > 0) ? "PgUp/F3/Ctrl+B:Back" : "Up/Dn/1-5:Pick", w - 40);
             dos_vid_flush(g_vid);
         }
@@ -2081,9 +2168,17 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
                 int fcnt = dos_wiz_field_count(&st);
                 if (ext == 72) st.focus = (st.focus + fcnt) % (fcnt + 1);
                 else if (ext == 80) st.focus = (st.focus + 1) % (fcnt + 1);
-                else if (st.focus == fcnt) {
-                    if (ext == 75) st.btn = (st.btn + 2) % 3;
-                    else if (ext == 77) st.btn = (st.btn + 1) % 3;
+                else if (ext == 75 || ext == 77) {
+                    if (st.focus == fcnt) {
+                        if (ext == 75) st.btn = (st.btn + 2) % 3;
+                        else st.btn = (st.btn + 1) % 3;
+                    } else if (st.step == 2) {
+                        int tbase = (st.drv == 0) ? 4 : ((st.drv == 3) ? 3 : 2);
+                        int rel = st.focus - tbase;
+                        if (rel == 0) st.allow_in = !st.allow_in;
+                        else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
+                        else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
+                    }
                 }
             }
             continue;
@@ -2131,6 +2226,21 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             continue;
         }
 
+        if (st.step == 2) {
+            int tbase = (st.drv == 0) ? 4 : ((st.drv == 3) ? 3 : 2);
+            if (st.focus >= tbase) {
+                if (ch == ' ') {
+                    int rel = st.focus - tbase;
+                    if (rel == 0) st.allow_in = !st.allow_in;
+                    else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
+                    else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
+                } else if (ch == '\r' || ch == '\n') {
+                    if (dos_wiz_try_advance(draft, &st, out_ic)) return 1;
+                }
+                continue;
+            }
+        }
+
         char* target = NULL;
         size_t cap = 0;
         if (st.step == 1) {
@@ -2139,7 +2249,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
         } else {
             if (st.focus == 0) { target = st.ep; cap = sizeof(st.ep); }
             else if (st.focus == 1) { target = st.port; cap = sizeof(st.port); }
-            else { target = st.peer; cap = sizeof(st.peer); }
+            else if ((st.drv == 0 || st.drv == 3) && st.focus == 2) { target = st.mask; cap = sizeof(st.mask); }
+            else if (st.drv == 0 && st.focus == 3) { target = st.peer; cap = sizeof(st.peer); }
         }
 
         if (ch == '\r' || ch == '\n') {
@@ -2168,9 +2279,20 @@ struct DosEditIfaceState {
     char desc[32];
     char ep[32];
     char port[12];
+    char mask[16];
     char peer[32];
+    int allow_in;
+    int allow_out;
+    oyk_u8 lpol;
     char err[64];
 };
+
+static int dos_edit_field_count(int drv) {
+    if (drv == 0) return 10;
+    if (drv == 3) return 9;
+    if (drv == 4) return 6;
+    return 8;
+}
 
 static int dos_edit_try_save(const OykConfig* draft,
                              int edit_idx,
@@ -2200,15 +2322,31 @@ static int dos_edit_try_save(const OykConfig* draft,
         st->focus = 4;
         return 0;
     }
-    dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->peer,
-                           &draft->ifaces[edit_idx], out_ic);
+    if ((st->drv == 0 || st->drv == 3) && oyk_is_all_digits(st->ep)) {
+        oyk_u32 did = 0;
+        if (!oyk_parse_dmr_id(st->ep, &did)) {
+            strcpy(st->err, "Invalid DMR ID (allowed 1..16777214).");
+            st->focus = 3;
+            return 0;
+        }
+    }
+    if ((st->drv == 0 || st->drv == 3) && st->mask[0]) {
+        oyk_u32 mip = 0;
+        if (!oyk_parse_ipv4(st->mask, &mip)) {
+            strcpy(st->err, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+            st->focus = 5;
+            return 0;
+        }
+    }
+    dos_build_iface_config(st->drv, st->id, st->desc, st->ep, st->port, st->mask, st->peer,
+                           st->allow_in, st->allow_out, st->lpol, &draft->ifaces[edit_idx], out_ic);
     return 1;
 }
 
 static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIfaceConfig* out_ic) {
     if (edit_idx < 0 || edit_idx >= draft->iface_count) return 0;
 
-    const int top = 4, left = 6, h = 16, w = 68;
+    const int top = 3, left = 6, h = 18, w = 68;
     oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
     oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
@@ -2225,12 +2363,16 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
     }
     strncpy(st.id, ic.id, sizeof(st.id) - 1);
     strncpy(st.desc, ic.description, sizeof(st.desc) - 1);
+    st.allow_in = ic.block_inbound ? 0 : 1;
+    st.allow_out = (st.drv == 4 || ic.block_outbound) ? 0 : 1;
+    st.lpol = ic.learned_peer_policy;
     if (st.drv == 1 || st.drv == 2) {
         strncpy(st.ep, ic.device[0] ? ic.device : ((st.drv == 2) ? "USBCOM1" : "COM1"), sizeof(st.ep) - 1);
         sprintf(st.port, "%lu", static_cast<unsigned long>(ic.baud ? ic.baud : ((st.drv == 2) ? 115200UL : 9600UL)));
     } else {
         strncpy(st.ep, ic.host[0] ? ic.host : "0.0.0.0", sizeof(st.ep) - 1);
         sprintf(st.port, "%u", static_cast<unsigned int>(ic.port ? ic.port : ((st.drv == 4) ? 8010U : 10093U)));
+        strncpy(st.mask, ic.netmask, sizeof(st.mask) - 1);
         if (st.drv == 0 && ic.peer_count > 0) {
             oyk_format_peer_spec(&ic.peers[0], st.peer, sizeof(st.peer));
         }
@@ -2241,7 +2383,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
         dos_pump_network();
         g_node.tick();
 
-        int fcnt = (st.drv == 0) ? 6 : 5;
+        int fcnt = dos_edit_field_count(st.drv);
         if (st.focus > fcnt) st.focus = fcnt;
 
         if (dirty) {
@@ -2250,8 +2392,9 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Edit Interface");
             vid_puts(top + 1, left + 2, ttl_at, "Edit interface settings and select Save to update draft:", w - 4);
 
-            char drv_lbl[32];
+            char drv_lbl[32], lp_lbl[24];
             sprintf(drv_lbl, "< %s >", DOS_IFACE_TYPES[st.drv]);
+            sprintf(lp_lbl, "< %s >", oyk_format_learned_policy(st.lpol));
             vid_puts(top + 3, left + 3, fill_at, "Driver (Lt/Rt) : ", 17);
             vid_puts(top + 3, left + 20, (st.focus == 0) ? sel_at : inp_at, drv_lbl, 36);
             vid_puts(top + 4, left + 3, fill_at, "Interface ID   : ", 17);
@@ -2259,31 +2402,52 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             vid_puts(top + 5, left + 3, fill_at, "Description    : ", 17);
             vid_puts(top + 5, left + 20, (st.focus == 2) ? sel_at : inp_at, st.desc, 36);
             vid_puts(top + 6, left + 3, fill_at,
-                     (st.drv == 1 || st.drv == 2) ? "Serial Device  : " : "Host / IP      : ", 17);
+                     (st.drv == 1 || st.drv == 2) ? "Serial Device  : " : "Host / DMR ID  : ", 17);
             vid_puts(top + 6, left + 20, (st.focus == 3) ? sel_at : inp_at, st.ep, 36);
             vid_puts(top + 7, left + 3, fill_at,
                      (st.drv == 1 || st.drv == 2) ? "Baud Rate      : " : ((st.drv == 4) ? "TCP Port       : " : "UDP Port       : "), 17);
             vid_puts(top + 7, left + 20, (st.focus == 4) ? sel_at : inp_at, st.port, 36);
+            int r = top + 8;
+            int fi = 5;
+            if (st.drv == 0 || st.drv == 3) {
+                vid_puts(r, left + 3, fill_at, "Netmask (opt)  : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.mask, 36);
+                ++r; ++fi;
+            }
             if (st.drv == 0) {
-                vid_puts(top + 8, left + 3, fill_at, "Static Peer    : ", 17);
-                vid_puts(top + 8, left + 20, (st.focus == 5) ? sel_at : inp_at, st.peer, 36);
+                vid_puts(r, left + 3, fill_at, "Static Peer    : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.peer, 36);
+                ++r; ++fi;
+            }
+            vid_puts(r, left + 3, fill_at, "Allow Inbound  : ", 17);
+            vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_in ? "[ON]" : "[OFF]", 16);
+            ++r; ++fi;
+            if (st.drv == 4) {
+                vid_puts(r, left + 3, fill_at, "Allow Outbound : [OFF] (disabled for telnet)", 46);
+            } else {
+                vid_puts(r, left + 3, fill_at, "Allow Outbound : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, st.allow_out ? "[ON]" : "[OFF]", 16);
+                ++r; ++fi;
+                vid_puts(r, left + 3, fill_at, "Learned Policy : ", 17);
+                vid_puts(r, left + 20, (st.focus == fi) ? sel_at : inp_at, lp_lbl, 24);
             }
 
             if (st.err[0]) {
-                vid_puts(top + 12, left + 2, err_at, st.err, w - 4);
+                vid_puts(top + 14, left + 2, err_at, st.err, w - 4);
             }
-            dos_vid_hdiv(g_vid, top + 13, left, w, bdr_at);
+            dos_vid_hdiv(g_vid, top + 15, left, w, bdr_at);
 
             int on_bar = (st.focus == fcnt);
-            vid_puts(top + 14, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
-            vid_puts(top + 14, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 14, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
+            vid_puts(top + 16, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
+            vid_puts(top + 16, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
+            vid_puts(top + 16, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
             dos_vid_flush(g_vid);
         }
 
         if (!kbhit()) continue;
         dirty = 1;
         int ch = getch();
+        int tbase = (st.drv == 0) ? 7 : ((st.drv == 3) ? 6 : 5);
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
             if (ext == 72) st.focus = (st.focus + fcnt) % (fcnt + 1);
@@ -2291,10 +2455,16 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             else if (ext == 75 || ext == 77) {
                 if (st.focus == 0) {
                     st.drv = (ext == 75) ? ((st.drv + 4) % 5) : ((st.drv + 1) % 5);
-                    dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.peer);
+                    dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.mask, st.peer,
+                                                    &st.allow_in, &st.allow_out, &st.lpol);
                     st.err[0] = '\0';
                 } else if (st.focus == fcnt) {
                     st.btn = (st.btn == 0) ? 1 : 0;
+                } else if (st.focus >= tbase) {
+                    int rel = st.focus - tbase;
+                    if (rel == 0) st.allow_in = !st.allow_in;
+                    else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
+                    else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, (ext == 75) ? -1 : 1);
                 }
             }
             continue;
@@ -2315,8 +2485,20 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
         if (st.focus == 0) {
             if (ch == ' ') {
                 st.drv = (st.drv + 1) % 5;
-                dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.peer);
+                dos_iface_apply_driver_defaults(st.drv, st.ep, st.port, st.mask, st.peer,
+                                                &st.allow_in, &st.allow_out, &st.lpol);
                 st.err[0] = '\0';
+            } else if (ch == '\r' || ch == '\n') {
+                if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
+            }
+            continue;
+        }
+        if (st.focus >= tbase) {
+            if (ch == ' ') {
+                int rel = st.focus - tbase;
+                if (rel == 0) st.allow_in = !st.allow_in;
+                else if (rel == 1 && st.drv != 4) st.allow_out = !st.allow_out;
+                else if (rel == 2 && st.drv != 4) st.lpol = dos_cycle_lpol(st.lpol, 1);
             } else if (ch == '\r' || ch == '\n') {
                 if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
             }
@@ -2329,7 +2511,8 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
         else if (st.focus == 2) { target = st.desc; cap = sizeof(st.desc); }
         else if (st.focus == 3) { target = st.ep; cap = sizeof(st.ep); }
         else if (st.focus == 4) { target = st.port; cap = sizeof(st.port); }
-        else { target = st.peer; cap = sizeof(st.peer); }
+        else if ((st.drv == 0 || st.drv == 3) && st.focus == 5) { target = st.mask; cap = sizeof(st.mask); }
+        else if (st.drv == 0 && st.focus == 6) { target = st.peer; cap = sizeof(st.peer); }
 
         if (ch == '\r' || ch == '\n') {
             if (dos_edit_try_save(draft, edit_idx, &st, out_ic)) return 1;
@@ -2391,6 +2574,13 @@ static int dos_edit_peer_save(const OykConfig* draft,
             return 0;
         }
         pnum = static_cast<oyk_u16>(pv);
+    }
+    if (st->host[0] && oyk_is_all_digits(st->host)) {
+        oyk_u32 did = 0;
+        if (!oyk_parse_dmr_id(st->host, &did)) {
+            strcpy(st->err, "Invalid DMR ID (allowed 1..16777214).");
+            return 0;
+        }
     }
     memset(out_p, 0, sizeof(*out_p));
     strncpy(out_p->id, st->id, sizeof(out_p->id) - 1);

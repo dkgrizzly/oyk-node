@@ -218,7 +218,9 @@ private:
     char wiz_desc_[32];
     char wiz_ep_[32];
     char wiz_port_[12];
+    char wiz_mask_[16];
     char wiz_peer_[32];
+    oyk_u8 wiz_flags_; /* bit0:allow_in, bit1:allow_out, bits2..4:learned_policy */
     char wiz_err_[56];
 
     /* Persistent switchable local terminal state */

@@ -174,11 +174,14 @@ struct OykIfaceConfig {
     char type[16];       /* "axudp", "axip", "kiss-serial", "kiss-tcp", "telnet" */
     char description[40];
     char host[32];
+    char netmask[16];    /* Optional IPv4 netmask for axudp/axip (e.g. "255.0.0.0") */
     oyk_u16 port;
     char device[24];     /* e.g. "COM1" or "/dev/ttyS0" */
     oyk_u32 baud;
     oyk_u8 kiss_port;
     int server_mode;
+    oyk_u8 block_inbound;       /* 0 = allow (default), 1 = deny */
+    oyk_u8 block_outbound;      /* 0 = allow (default for non-telnet), 1 = deny (forced 1 for telnet) */
     oyk_u8 no_auto_learn;       /* 0 = auto-learn enabled on non-telnet, 1 = disabled */
     oyk_u8 learned_peer_policy; /* OYK_LEARN_INHERIT .. OYK_LEARN_BOTH */
     int peer_count;
@@ -407,6 +410,14 @@ void oyk_format_callsign(const OykCallsign* call, char* out, size_t out_sz);
 int oyk_callsign_eq(const OykCallsign* a, const OykCallsign* b);
 /* Parse dotted-quad IPv4 into network-byte-order oyk_u32; returns 1 on success. */
 int oyk_parse_ipv4(const char* text, oyk_u32* net_ip_out);
+/* RadioFoundry DMR ID (1..16777214) <-> IPv4 helpers. */
+int oyk_is_all_digits(const char* text);
+int oyk_parse_dmr_id(const char* text, oyk_u32* dmr_id_out);
+void oyk_dmr_id_to_ipv4(oyk_u32 dmr_id, oyk_u8 prefix_octet, char* out, size_t out_sz);
+oyk_u8 oyk_dmr_prefix_for_iface(const OykIfaceConfig* ic);
+int oyk_resolve_host_or_dmr_id(const char* spec, oyk_u8 prefix_octet,
+                               char* out, size_t out_sz, oyk_u32* net_ip_out);
+int oyk_ip_matches_netmask(oyk_u32 ip_net, oyk_u32 bind_net, oyk_u32 mask_net);
 /* Parse "CALLSIGN@ip:port", "CALLSIGN ip:port", or "ip:port" peer spec. */
 int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
                         oyk_u32* net_ip_out, oyk_u16* port_out, oyk_u16 default_port);

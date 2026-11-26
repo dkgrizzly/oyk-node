@@ -190,6 +190,12 @@
 #define IDC_AIF_ERR         579
 #define IDC_AIF_BACK        580
 #define IDC_AIF_NEXT        581
+#define IDC_AIF_L_MASK      582
+#define IDC_AIF_MASK        583
+#define IDC_AIF_IN          584
+#define IDC_AIF_OUT         585
+#define IDC_AIF_L_LPOL      586
+#define IDC_AIF_LPOL        587
 
 /* Single-View Edit Interface Dialog */
 #define IDD_EDIT_IFACE      590
@@ -203,6 +209,12 @@
 #define IDC_EIF_L_PEER      598
 #define IDC_EIF_PEER        599
 #define IDC_EIF_ERR         600
+#define IDC_EIF_L_MASK      601
+#define IDC_EIF_MASK        602
+#define IDC_EIF_IN          603
+#define IDC_EIF_OUT         604
+#define IDC_EIF_L_LPOL      605
+#define IDC_EIF_LPOL        606
 
 /* Peers Tab & Edit Peer Dialog */
 #define IDC_SET_L_PEER      610

@@ -360,10 +360,12 @@ void TinyTmuxConsole::render() {
     if (term_type_ >= TMUX_TERM_VT220 &&
         (view_ == TMUX_VIEW_LOCAL_TERM ||
          (prompt_kind_ == PROMPT_SETTINGS_ADD_WIZARD &&
-          (wiz_step_ == 1 || wiz_step_ == 2) &&
-          wiz_focus_ < wizard_step_field_count()) ||
+          (wiz_step_ == 1 ||
+           (wiz_step_ == 2 &&
+            wiz_focus_ < ((wiz_drv_ == 0 || wiz_drv_ == 4) ? 3 : ((wiz_drv_ == 1) ? 3 : 2))))) ||
          (prompt_kind_ == PROMPT_SETTINGS_EDIT_IFACE &&
-          wiz_focus_ >= 1 && wiz_focus_ < edit_iface_field_count()) ||
+          wiz_focus_ >= 1 &&
+          wiz_focus_ < ((wiz_drv_ == 0 || wiz_drv_ == 4) ? 6 : ((wiz_drv_ == 1) ? 6 : 5))) ||
          (prompt_kind_ == PROMPT_SETTINGS_EDIT_PEER &&
           (wiz_focus_ == 0 || wiz_focus_ == 1 || wiz_focus_ == 2 || wiz_focus_ == 4 || wiz_focus_ == 5)) ||
          (prompt_kind_ != PROMPT_NONE &&
@@ -1021,16 +1023,26 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
     }
 }
 
+static oyk_u8 tmux_cycle_lpol(oyk_u8 cur, int dir) {
+    return static_cast<oyk_u8>((static_cast<int>(cur) + dir + 5) % 5);
+}
+
 int TinyTmuxConsole::wizard_step_field_count() const {
     if (wiz_step_ == 1) return 2;
     if (wiz_step_ == 2) {
-        return (wiz_drv_ == 0) ? 3 : 2;
+        if (wiz_drv_ == 0) return 7;
+        if (wiz_drv_ == 1 || wiz_drv_ == 4) return 6;
+        if (wiz_drv_ == 6) return 3;
+        return 5;
     }
     return 0;
 }
 
 int TinyTmuxConsole::edit_iface_field_count() const {
-    return (wiz_drv_ == 0) ? 6 : 5;
+    if (wiz_drv_ == 0) return 10;
+    if (wiz_drv_ == 1 || wiz_drv_ == 4) return 9;
+    if (wiz_drv_ == 6) return 6;
+    return 8;
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::open_add_iface_wizard() {
@@ -1051,7 +1063,9 @@ OYK_FLASHMEM void TinyTmuxConsole::open_add_iface_wizard() {
     wiz_desc_[0] = '\0';
     wiz_ep_[0] = '\0';
     wiz_port_[0] = '\0';
+    wiz_mask_[0] = '\0';
     wiz_peer_[0] = '\0';
+    wiz_flags_ = 0x03U;
     render();
 }
 
@@ -1074,7 +1088,12 @@ OYK_FLASHMEM void TinyTmuxConsole::open_edit_iface_dialog(int edit_idx) {
     wiz_last_drv_ = wiz_drv_;
     con_str_copy(wiz_id_, sizeof(wiz_id_), ic.id);
     con_str_copy(wiz_desc_, sizeof(wiz_desc_), ic.description);
+    wiz_mask_[0] = '\0';
     wiz_peer_[0] = '\0';
+    wiz_flags_ = static_cast<oyk_u8>(
+        (ic.block_inbound ? 0U : 1U) |
+        ((wiz_drv_ == 6 || ic.block_outbound) ? 0U : 2U) |
+        ((static_cast<oyk_u8>(ic.learned_peer_policy) & 0x07U) << 2));
     if (strieq_ci(ic.type, "ppp") || strieq_ci(ic.type, "kiss-serial") ||
         strieq_ci(ic.type, "usb-cdc-serial")) {
         con_str_copy(wiz_ep_, sizeof(wiz_ep_), ic.device[0] ? ic.device : "ser0");
@@ -1083,6 +1102,7 @@ OYK_FLASHMEM void TinyTmuxConsole::open_edit_iface_dialog(int edit_idx) {
     } else {
         con_str_copy(wiz_ep_, sizeof(wiz_ep_), ic.host[0] ? ic.host : "0.0.0.0");
         sprintf(wiz_port_, "%u", static_cast<unsigned int>(ic.port));
+        con_str_copy(wiz_mask_, sizeof(wiz_mask_), ic.netmask);
         if (ic.peer_count > 0 && (wiz_drv_ == 0 || wiz_drv_ == 1)) {
             oyk_format_peer_spec(&ic.peers[0], wiz_peer_, sizeof(wiz_peer_));
         }
@@ -1096,7 +1116,9 @@ OYK_FLASHMEM void TinyTmuxConsole::wizard_apply_driver_defaults() {
         oyk_derive_default_iface_id(&draft_, t, wiz_id_, sizeof(wiz_id_));
         wiz_desc_[0] = '\0';
     }
+    wiz_mask_[0] = '\0';
     wiz_peer_[0] = '\0';
+    wiz_flags_ = static_cast<oyk_u8>(1U | ((wiz_drv_ == 6) ? 0U : 2U));
     if (strieq_ci(t, "usb-cdc-net")) {
         strcpy(wiz_ep_, "192.168.7.2");
         strcpy(wiz_port_, "10093");
@@ -1132,10 +1154,14 @@ OYK_FLASHMEM void TinyTmuxConsole::commit_iface_fields(int slot) {
     con_str_copy(ic.id, sizeof(ic.id), wiz_id_);
     con_str_copy(ic.type, sizeof(ic.type), TINYTMUX_DRIVERS[wiz_drv_].type);
     con_str_copy(ic.description, sizeof(ic.description), wiz_desc_);
+    ic.block_inbound = (wiz_flags_ & 1U) ? 0 : 1;
+    ic.block_outbound = (wiz_drv_ == 6 || (wiz_flags_ & 2U) == 0U) ? 1 : 0;
+    ic.learned_peer_policy = (wiz_drv_ == 6) ? OYK_LEARN_INHERIT : static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U);
 
     if (strieq_ci(ic.type, "usb-cdc-net")) {
         strcpy(ic.device, "usbh0");
         con_str_copy(ic.host, sizeof(ic.host), wiz_ep_[0] ? wiz_ep_ : "192.168.7.2");
+        if (wiz_mask_[0]) con_str_copy(ic.netmask, sizeof(ic.netmask), wiz_mask_);
         long pv = strtol(wiz_port_, NULL, 10);
         ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 10093U;
         ic.baud = 115200UL;
@@ -1153,6 +1179,9 @@ OYK_FLASHMEM void TinyTmuxConsole::commit_iface_fields(int slot) {
         if (strieq_ci(ic.type, "ppp")) ic.port = 10093U;
     } else {
         con_str_copy(ic.host, sizeof(ic.host), wiz_ep_[0] ? wiz_ep_ : "0.0.0.0");
+        if ((wiz_drv_ == 0 || wiz_drv_ == 1) && wiz_mask_[0]) {
+            con_str_copy(ic.netmask, sizeof(ic.netmask), wiz_mask_);
+        }
         long pv = strtol(wiz_port_, NULL, 10);
         if (strieq_ci(ic.type, "telnet")) {
             ic.port = (pv > 0 && pv <= 65535L) ? static_cast<oyk_u16>(pv) : 8023U;
@@ -1199,7 +1228,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
         "[##......] 1/4", "[####....] 2/4", "[######..] 3/4", "[########] 4/4"
     };
     char buf[192];
-    const int top = 4, left = 6, h = 16, w = 68;
+    const int top = 3, left = 6, h = 18, w = 68;
     draw_dec_box(top, left, h, w, "Add Interface", 1);
 
     /* Top-right progress indicator on caption border */
@@ -1211,16 +1240,20 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
     if (wiz_step_ == 1) {
         prompt_txt = "Enter a unique interface ID and optional description:";
     } else if (wiz_step_ == 2) {
-        if (wiz_drv_ == 0) prompt_txt = "Configure AXUDP bind host, UDP port, and optional peer:";
-        else if (wiz_drv_ == 1) prompt_txt = "Configure AXIP bind host IP and optional static peer:";
-        else if (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) prompt_txt = "Configure serial UART/USB device and baud rate:";
-        else if (wiz_drv_ == 4) prompt_txt = "Configure USB-CDC network host IP and UDP port:";
-        else prompt_txt = "Configure Telnet bind host IP and TCP port:";
+        if (wiz_drv_ == 0) prompt_txt = "Configure AXUDP bind host/DMR, port, netmask, and policy:";
+        else if (wiz_drv_ == 1) prompt_txt = "Configure AXIP bind host/DMR, netmask, and policy:";
+        else if (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) prompt_txt = "Configure serial UART/USB device, baud rate, and policy:";
+        else if (wiz_drv_ == 4) prompt_txt = "Configure USB-CDC host/DMR, port, netmask, and policy:";
+        else prompt_txt = "Configure Telnet bind host IP, TCP port, and policy:";
     } else if (wiz_step_ == 3) {
         prompt_txt = "Review interface configuration before committing:";
     }
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 1, left + 2, sgr_title(), prompt_txt);
     write_str(buf);
+
+    const int ain = (wiz_flags_ & 1U) ? 1 : 0;
+    const int aout = (wiz_drv_ != 6 && (wiz_flags_ & 2U)) ? 1 : 0;
+    const oyk_u8 lpol = static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U);
 
     if (wiz_step_ == 0) {
         sprintf(buf, "\033[%d;%dH%s %-2s %-15s %-44s \033[0m",
@@ -1243,29 +1276,52 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
         write_str(buf);
     } else if (wiz_step_ == 2) {
         const char* ep_lbl = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
-                                 ? "Serial Device"
-                                 : (wiz_drv_ == 4 ? "Host / IP    " : "Bind Host/IP ");
-        sprintf(buf, "\033[%d;%dHInterface    : %s (%s)", top + 3, left + 3, wiz_id_, drv);
+                                 ? "Serial Device  "
+                                 : (wiz_drv_ == 4 ? "Host / DMR ID  " : "Bind Host/DMR  ");
+        sprintf(buf, "\033[%d;%dHInterface    : %s (%s)", top + 2, left + 3, wiz_id_, drv);
         write_str(buf);
+        int r = top + 4;
+        int fi = 0;
         sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
-                top + 5, left + 3, ep_lbl, (wiz_focus_ == 0) ? sgr_menubar() : "", wiz_ep_);
+                r, left + 3, ep_lbl, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_ep_);
         write_str(buf);
-        if (wiz_drv_ == 1) {
-            sprintf(buf, "\033[%d;%dHPeer (opt)   : %s %-36.36s \033[0m",
-                    top + 7, left + 3, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_peer_);
+        ++r; ++fi;
+        if (wiz_drv_ != 1) {
+            const char* p_lbl = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
+                                    ? "Baud Rate      "
+                                    : (wiz_drv_ == 6 ? "TCP Port       " : "UDP Port       ");
+            sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
+                    r, left + 3, p_lbl, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_port_);
+            write_str(buf);
+            ++r; ++fi;
+        }
+        if (wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) {
+            sprintf(buf, "\033[%d;%dHNetmask (opt)  : %s %-36.36s \033[0m",
+                    r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_mask_);
+            write_str(buf);
+            ++r; ++fi;
+        }
+        if (wiz_drv_ == 0 || wiz_drv_ == 1) {
+            sprintf(buf, "\033[%d;%dHPeer (opt)     : %s %-36.36s \033[0m",
+                    r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_peer_);
+            write_str(buf);
+            ++r; ++fi;
+        }
+        sprintf(buf, "\033[%d;%dHAllow Inbound  : %s %-12.12s \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", ain ? "[ON]" : "[OFF]");
+        write_str(buf);
+        ++r; ++fi;
+        if (wiz_drv_ == 6) {
+            sprintf(buf, "\033[%d;%dHAllow Outbound : [OFF] (disabled for telnet)", r, left + 3);
             write_str(buf);
         } else {
-            const char* p_lbl = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5)
-                                    ? "Baud Rate    "
-                                    : (wiz_drv_ == 6 ? "TCP Port     " : "UDP Port     ");
-            sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
-                    top + 7, left + 3, p_lbl, (wiz_focus_ == 1) ? sgr_menubar() : "", wiz_port_);
+            sprintf(buf, "\033[%d;%dHAllow Outbound : %s %-12.12s \033[0m",
+                    r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", aout ? "[ON]" : "[OFF]");
             write_str(buf);
-            if (wiz_drv_ == 0) {
-                sprintf(buf, "\033[%d;%dHPeer (opt)   : %s %-36.36s \033[0m",
-                        top + 9, left + 3, (wiz_focus_ == 2) ? sgr_menubar() : "", wiz_peer_);
-                write_str(buf);
-            }
+            ++r; ++fi;
+            sprintf(buf, "\033[%d;%dHLearned Policy : %s < %s > \033[0m",
+                    r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", oyk_format_learned_policy(lpol));
+            write_str(buf);
         }
     } else {
         sprintf(buf, "\033[%d;%dHDriver       : %-46.46s", top + 3, left + 3, drv);
@@ -1276,7 +1332,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
                 wiz_desc_[0] ? wiz_desc_ : "(none)");
         write_str(buf);
         sprintf(buf, "\033[%d;%dH%s: %-46.46s", top + 6, left + 3,
-                (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? "Device       " : "Host / IP    ",
+                (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? "Device       " : "Host / DMR   ",
                 wiz_ep_);
         write_str(buf);
         if (wiz_drv_ != 1) {
@@ -1285,28 +1341,39 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
                     wiz_port_);
             write_str(buf);
         }
+        if (wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) {
+            sprintf(buf, "\033[%d;%dHNetmask      : %-46.46s", top + 8, left + 3,
+                    wiz_mask_[0] ? wiz_mask_ : "(any)");
+            write_str(buf);
+        }
         if (wiz_drv_ == 0 || wiz_drv_ == 1) {
-            sprintf(buf, "\033[%d;%dHStatic Peer  : %-46.46s", top + 8, left + 3,
+            sprintf(buf, "\033[%d;%dHStatic Peer  : %-46.46s", top + 9, left + 3,
                     wiz_peer_[0] ? wiz_peer_ : "(auto-learn)");
             write_str(buf);
         }
+        sprintf(buf, "\033[%d;%dHDirections   : In=%s  Out=%s  Learn=%s",
+                top + 10, left + 3,
+                ain ? "ON" : "OFF",
+                (wiz_drv_ == 6) ? "OFF(locked)" : (aout ? "ON" : "OFF"),
+                (wiz_drv_ == 6) ? "n/a" : oyk_format_learned_policy(lpol));
+        write_str(buf);
         sprintf(buf, "\033[%d;%dH%sPress Finish to add this interface to your Settings draft.\033[0m",
-                top + 10, left + 3, sgr_title());
+                top + 12, left + 3, sgr_title());
         write_str(buf);
     }
 
     if (wiz_err_[0]) {
-        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 12, left + 2, sgr_warn(), wiz_err_);
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 14, left + 2, sgr_warn(), wiz_err_);
         write_str(buf);
     }
 
-    draw_dec_hdiv(top + 13, left, w);
+    draw_dec_hdiv(top + 15, left, w);
 
     int fcnt = wizard_step_field_count();
     int on_bar = (wiz_step_ == 0 || wiz_step_ == 3 || wiz_focus_ == fcnt);
     const char* next_lbl = (wiz_step_ == 3) ? "[ Finish ]" : "[ Next > ]";
     sprintf(buf, "\033[%d;%dH%s %s \033[0m  %s %s \033[0m  %s [ Cancel ] \033[0m  %s",
-            top + 14, left + 2,
+            top + 16, left + 2,
             (wiz_step_ == 0) ? "" : ((on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar()),
             (wiz_step_ == 0) ? "          " : "[ < Back ]",
             (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar(),
@@ -1318,12 +1385,16 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
 
 OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
     char buf[192];
-    const int top = 4, left = 6, h = 16, w = 68;
+    const int top = 3, left = 6, h = 18, w = 68;
     draw_dec_box(top, left, h, w, "Edit Interface", 1);
 
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
             top + 1, left + 2, sgr_title(), "Edit interface settings and select Save to update draft:");
     write_str(buf);
+
+    const int ain = (wiz_flags_ & 1U) ? 1 : 0;
+    const int aout = (wiz_drv_ != 6 && (wiz_flags_ & 2U)) ? 1 : 0;
+    const oyk_u8 lpol = static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U);
 
     char drv_lbl[32];
     sprintf(drv_lbl, "< %s >", TINYTMUX_DRIVERS[wiz_drv_].type);
@@ -1339,39 +1410,61 @@ OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
 
     const int is_ser = (wiz_drv_ == 2 || wiz_drv_ == 3 || wiz_drv_ == 5) ? 1 : 0;
     const char* ep_lbl = is_ser ? "Serial Device  "
-                                : (wiz_drv_ == 4 ? "Host / IP      " : "Bind Host/IP   ");
+                                : (wiz_drv_ == 4 ? "Host / DMR ID  " : "Bind Host/DMR  ");
     sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
             top + 6, left + 3, ep_lbl, (wiz_focus_ == 3) ? sgr_menubar() : "", wiz_ep_);
     write_str(buf);
 
-    if (wiz_drv_ == 1) {
-        sprintf(buf, "\033[%d;%dHStatic Peer    : %s %-36.36s \033[0m",
-                top + 7, left + 3, (wiz_focus_ == 4) ? sgr_menubar() : "", wiz_peer_);
-        write_str(buf);
-    } else {
+    int r = top + 7;
+    int fi = 4;
+    if (wiz_drv_ != 1) {
         const char* p_lbl = is_ser ? "Baud Rate      "
                                    : (wiz_drv_ == 6 ? "TCP Port       " : "UDP Port       ");
         sprintf(buf, "\033[%d;%dH%s: %s %-36.36s \033[0m",
-                top + 7, left + 3, p_lbl, (wiz_focus_ == 4) ? sgr_menubar() : "", wiz_port_);
+                r, left + 3, p_lbl, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_port_);
         write_str(buf);
-        if (wiz_drv_ == 0) {
-            sprintf(buf, "\033[%d;%dHStatic Peer    : %s %-36.36s \033[0m",
-                    top + 8, left + 3, (wiz_focus_ == 5) ? sgr_menubar() : "", wiz_peer_);
-            write_str(buf);
-        }
+        ++r; ++fi;
+    }
+    if (wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) {
+        sprintf(buf, "\033[%d;%dHNetmask (opt)  : %s %-36.36s \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_mask_);
+        write_str(buf);
+        ++r; ++fi;
+    }
+    if (wiz_drv_ == 0 || wiz_drv_ == 1) {
+        sprintf(buf, "\033[%d;%dHStatic Peer    : %s %-36.36s \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", wiz_peer_);
+        write_str(buf);
+        ++r; ++fi;
+    }
+    sprintf(buf, "\033[%d;%dHAllow Inbound  : %s %-12.12s \033[0m",
+            r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", ain ? "[ON]" : "[OFF]");
+    write_str(buf);
+    ++r; ++fi;
+    if (wiz_drv_ == 6) {
+        sprintf(buf, "\033[%d;%dHAllow Outbound : [OFF] (disabled for telnet)", r, left + 3);
+        write_str(buf);
+    } else {
+        sprintf(buf, "\033[%d;%dHAllow Outbound : %s %-12.12s \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", aout ? "[ON]" : "[OFF]");
+        write_str(buf);
+        ++r; ++fi;
+        sprintf(buf, "\033[%d;%dHLearned Policy : %s < %s > \033[0m",
+                r, left + 3, (wiz_focus_ == fi) ? sgr_menubar() : "", oyk_format_learned_policy(lpol));
+        write_str(buf);
     }
 
     if (wiz_err_[0]) {
-        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 12, left + 2, sgr_warn(), wiz_err_);
+        sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + 14, left + 2, sgr_warn(), wiz_err_);
         write_str(buf);
     }
 
-    draw_dec_hdiv(top + 13, left, w);
+    draw_dec_hdiv(top + 15, left, w);
 
     int fcnt = edit_iface_field_count();
     int on_bar = (wiz_focus_ == fcnt);
     sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
-            top + 14, left + 2,
+            top + 16, left + 2,
             (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
             (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
     write_str(buf);
@@ -1537,6 +1630,14 @@ OYK_FLASHMEM int TinyTmuxConsole::edit_peer_try_save() {
         if (p < 0L || p > 65535L) {
             strcpy(wiz_err_, "Port must be 0..65535.");
             wiz_focus_ = 5;
+            return 0;
+        }
+    }
+    if (wiz_ep_[0] && oyk_is_all_digits(wiz_ep_)) {
+        oyk_u32 did = 0;
+        if (!oyk_parse_dmr_id(wiz_ep_, &did)) {
+            strcpy(wiz_err_, "Invalid DMR ID (allowed 1..16777214).");
+            wiz_focus_ = 4;
             return 0;
         }
     }
@@ -1998,6 +2099,22 @@ OYK_FLASHMEM int TinyTmuxConsole::wizard_try_advance() {
             wiz_focus_ = 1;
             return 0;
         }
+        if ((wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) && oyk_is_all_digits(wiz_ep_)) {
+            oyk_u32 did = 0;
+            if (!oyk_parse_dmr_id(wiz_ep_, &did)) {
+                strcpy(wiz_err_, "Invalid DMR ID (allowed 1..16777214).");
+                wiz_focus_ = 0;
+                return 0;
+            }
+        }
+        if ((wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) && wiz_mask_[0]) {
+            oyk_u32 mip = 0;
+            if (!oyk_parse_ipv4(wiz_mask_, &mip)) {
+                strcpy(wiz_err_, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+                wiz_focus_ = (wiz_drv_ == 1) ? 1 : 2;
+                return 0;
+            }
+        }
         wiz_step_ = 3;
         wiz_focus_ = 0;
         wiz_btn_ = 1;
@@ -2039,6 +2156,22 @@ OYK_FLASHMEM int TinyTmuxConsole::edit_iface_try_save() {
                              : "Port cannot be empty.");
         wiz_focus_ = 4;
         return 0;
+    }
+    if ((wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) && oyk_is_all_digits(wiz_ep_)) {
+        oyk_u32 did = 0;
+        if (!oyk_parse_dmr_id(wiz_ep_, &did)) {
+            strcpy(wiz_err_, "Invalid DMR ID (allowed 1..16777214).");
+            wiz_focus_ = 3;
+            return 0;
+        }
+    }
+    if ((wiz_drv_ == 0 || wiz_drv_ == 1 || wiz_drv_ == 4) && wiz_mask_[0]) {
+        oyk_u32 mip = 0;
+        if (!oyk_parse_ipv4(wiz_mask_, &mip)) {
+            strcpy(wiz_err_, "Invalid IPv4 netmask (e.g. 255.0.0.0).");
+            wiz_focus_ = (wiz_drv_ == 1) ? 4 : 5;
+            return 0;
+        }
     }
     commit_iface_fields(wiz_edit_idx_);
     prompt_kind_ = PROMPT_NONE;
@@ -2103,16 +2236,37 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_edit_iface_key(int key) {
         return;
     }
 
+    int tbase = (wiz_drv_ == 0) ? 7 : ((wiz_drv_ == 1 || wiz_drv_ == 4) ? 6 : 5);
+    if (wiz_focus_ >= tbase) {
+        int rel = wiz_focus_ - tbase;
+        if (key == ' ' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+            if (rel == 0) wiz_flags_ ^= 1U;
+            else if (rel == 1 && wiz_drv_ != 6) wiz_flags_ ^= 2U;
+            else if (rel == 2 && wiz_drv_ != 6) {
+                oyk_u8 lp = tmux_cycle_lpol(static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U),
+                                            (key == TMUX_KEY_LEFT) ? -1 : 1);
+                wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x03U) | ((lp & 0x07U) << 2));
+            }
+            render();
+        } else if (key == '\r' || key == '\n') {
+            edit_iface_try_save();
+            render();
+        }
+        return;
+    }
+
     char* target = NULL;
     size_t cap = 0;
     if (wiz_focus_ == 1) { target = wiz_id_; cap = sizeof(wiz_id_); }
     else if (wiz_focus_ == 2) { target = wiz_desc_; cap = sizeof(wiz_desc_); }
     else if (wiz_focus_ == 3) { target = wiz_ep_; cap = sizeof(wiz_ep_); }
-    else if (wiz_focus_ == 4) {
-        if (wiz_drv_ == 1) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
-        else { target = wiz_port_; cap = sizeof(wiz_port_); }
+    else if (wiz_drv_ == 1) {
+        if (wiz_focus_ == 4) { target = wiz_mask_; cap = sizeof(wiz_mask_); }
+        else if (wiz_focus_ == 5) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
     } else {
-        target = wiz_peer_; cap = sizeof(wiz_peer_);
+        if (wiz_focus_ == 4) { target = wiz_port_; cap = sizeof(wiz_port_); }
+        else if ((wiz_drv_ == 0 || wiz_drv_ == 4) && wiz_focus_ == 5) { target = wiz_mask_; cap = sizeof(wiz_mask_); }
+        else if (wiz_drv_ == 0 && wiz_focus_ == 6) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
     }
 
     if (key == '\r' || key == '\n') {
@@ -2232,6 +2386,27 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
         return;
     }
 
+    if (wiz_step_ == 2) {
+        int tbase = (wiz_drv_ == 0) ? 4 : ((wiz_drv_ == 1 || wiz_drv_ == 4) ? 3 : 2);
+        if (wiz_focus_ >= tbase) {
+            int rel = wiz_focus_ - tbase;
+            if (key == ' ' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+                if (rel == 0) wiz_flags_ ^= 1U;
+                else if (rel == 1 && wiz_drv_ != 6) wiz_flags_ ^= 2U;
+                else if (rel == 2 && wiz_drv_ != 6) {
+                    oyk_u8 lp = tmux_cycle_lpol(static_cast<oyk_u8>((wiz_flags_ >> 2) & 0x07U),
+                                                (key == TMUX_KEY_LEFT) ? -1 : 1);
+                    wiz_flags_ = static_cast<oyk_u8>((wiz_flags_ & 0x03U) | ((lp & 0x07U) << 2));
+                }
+                render();
+            } else if (key == '\r' || key == '\n') {
+                wizard_try_advance();
+                render();
+            }
+            return;
+        }
+    }
+
     char* target = NULL;
     size_t cap = 0;
     if (wiz_step_ == 1) {
@@ -2239,10 +2414,14 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_add_wizard_key(int key) {
         else { target = wiz_desc_; cap = sizeof(wiz_desc_); }
     } else {
         if (wiz_focus_ == 0) { target = wiz_ep_; cap = sizeof(wiz_ep_); }
-        else if (wiz_focus_ == 1) {
-            if (wiz_drv_ == 1) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
-            else { target = wiz_port_; cap = sizeof(wiz_port_); }
-        } else { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+        else if (wiz_drv_ == 1) {
+            if (wiz_focus_ == 1) { target = wiz_mask_; cap = sizeof(wiz_mask_); }
+            else if (wiz_focus_ == 2) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+        } else {
+            if (wiz_focus_ == 1) { target = wiz_port_; cap = sizeof(wiz_port_); }
+            else if ((wiz_drv_ == 0 || wiz_drv_ == 4) && wiz_focus_ == 2) { target = wiz_mask_; cap = sizeof(wiz_mask_); }
+            else if (wiz_drv_ == 0 && wiz_focus_ == 3) { target = wiz_peer_; cap = sizeof(wiz_peer_); }
+        }
     }
 
     if (key == '\r' || key == '\n') {

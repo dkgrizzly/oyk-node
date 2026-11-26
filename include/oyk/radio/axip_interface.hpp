@@ -65,11 +65,16 @@ private:
     static bool resolve_host(const std::string& host, PeerAddr& out);
     static std::string format_ip(const sockaddr_in& addr);
     void parse_peer_spec(const std::string& spec);
+    bool ip_allowed_by_netmask(const sockaddr_in& addr) const noexcept;
     bool send_ip_payload(const std::vector<uint8_t>& payload, const sockaddr_in& dest);
 
     std::string id_;
     std::string description_;
     std::string bind_host_ = "0.0.0.0";
+    std::string netmask_;
+    uint32_t bind_ip_net_ = 0;
+    uint32_t netmask_net_ = 0;
+    uint8_t dmr_prefix_ = 12;
     bool auto_learn_ = true;
 
     std::atomic<bool> running_{false};

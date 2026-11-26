@@ -1253,6 +1253,125 @@ static void test_portable_peer_sections_and_auto_learn() {
     printf("[PASS] test_portable_peer_sections_and_auto_learn\n");
 }
 
+static void test_portable_iface_directions_netmask_and_dmr() {
+    oyk_u32 did = 0;
+    assert(oyk_is_all_digits("3112345") == 1);
+    assert(oyk_is_all_digits("12.0.0.1") == 0);
+    assert(oyk_parse_dmr_id("1", &did) == 1 && did == 1UL);
+    assert(oyk_parse_dmr_id("3112345", &did) == 1 && did == 3112345UL);
+    assert(oyk_parse_dmr_id("16777214", &did) == 1 && did == 16777214UL);
+    assert(oyk_parse_dmr_id("0", &did) == 0);
+    assert(oyk_parse_dmr_id("16777215", &did) == 0);
+
+    char ipbuf[24];
+    oyk_dmr_id_to_ipv4(3112345UL, 44U, ipbuf, sizeof(ipbuf));
+    assert(strcmp(ipbuf, "44.47.125.153") == 0);
+
+    const char* bad_path = "t_baddmr.cfg";
+    {
+        FILE* bfp = fopen(bad_path, "wb");
+        assert(bfp != NULL);
+        fprintf(bfp,
+                "[node]\ncallsign = K7DMR-7\n"
+                "[interface ax0]\ntype = axudp\nbind_host = 44.0.0.1\nnetmask = 255.0.0.0\n"
+                "[peer p0]\ncallsign = W1BAD\ninterface = ax0\nhost = 16777215\n");
+        fclose(bfp);
+    }
+    OykConfig* cfg = new OykConfig;
+    char err[128];
+    assert(oyk_config_load(bad_path, cfg, err, sizeof(err)) == 0);
+    remove(bad_path);
+
+    const char* path = "t_dmr.cfg";
+    {
+        FILE* gfp = fopen(path, "wb");
+        assert(gfp != NULL);
+        fprintf(gfp,
+                "[node]\ncallsign = K7DMR-7\n"
+                "[interface ax_dmr]\n"
+                "type = axudp\n"
+                "bind_host = 44.0.0.1\n"
+                "bind_port = 10093\n"
+                "netmask = 255.0.0.0\n"
+                "allow_inbound = true\n"
+                "allow_outbound = true\n"
+                "[interface ax_rxonly]\n"
+                "type = axudp\n"
+                "bind_host = 127.0.0.1\n"
+                "bind_port = 10094\n"
+                "allow_inbound = true\n"
+                "allow_outbound = false\n"
+                "[interface tel0]\n"
+                "type = telnet\n"
+                "bind_host = 0.0.0.0\n"
+                "bind_port = 8010\n"
+                "allow_inbound = true\n"
+                "allow_outbound = true\n"
+                "[peer pdmr]\n"
+                "callsign = W1DMR\n"
+                "interface = ax_dmr\n"
+                "host = 3112345\n"
+                "allow_inbound = true\n"
+                "allow_outbound = true\n"
+                "[peer pbadnet]\n"
+                "callsign = W1OUT\n"
+                "interface = ax_dmr\n"
+                "host = 10.0.0.5\n"
+                "allow_inbound = true\n"
+                "allow_outbound = true\n");
+        fclose(gfp);
+    }
+    assert(oyk_config_load(path, cfg, err, sizeof(err)) == 1);
+    assert(cfg->iface_count == 3);
+    assert(cfg->ifaces[0].block_inbound == 0 && cfg->ifaces[0].block_outbound == 0);
+    assert(cfg->ifaces[1].block_inbound == 0 && cfg->ifaces[1].block_outbound == 1);
+    assert(cfg->ifaces[2].block_outbound == 1); /* telnet hard-locked off */
+    assert(oyk_dmr_prefix_for_iface(&cfg->ifaces[0]) == 44U);
+
+    oyk_u32 net_dmr_ip = 0, bad_net_ip = 0;
+    assert(oyk_parse_ipv4("44.47.125.153", &net_dmr_ip) == 1);
+    assert(oyk_parse_ipv4("10.0.0.5", &bad_net_ip) == 1);
+    assert(cfg->peers[0].resolved_ip == net_dmr_ip);
+
+    OykPortableNode* node = new OykPortableNode;
+    assert(node->init(cfg, NULL, NULL, err, sizeof(err)) == 1);
+
+    /* Inbound frame outside ax_dmr netmask (10.0.0.5) is dropped */
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    sabm.dst = cfg->callsign;
+    assert(oyk_parse_callsign("W2TEST", &sabm.src));
+    sabm.is_command = 1;
+    sabm.control = 0x3FU;
+    node->on_rx_frame(0, &sabm, bad_net_ip, 10093, 0);
+    int act_cnt = 0;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (node->session_slot(i).state != OYK_SESS_FREE) ++act_cnt;
+    }
+    assert(act_cnt == 0);
+
+    /* Inbound frame inside ax_dmr netmask (44.47.125.153) accepted */
+    node->on_rx_frame(0, &sabm, net_dmr_ip, 10093, 0);
+    act_cnt = 0;
+    for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+        if (node->session_slot(i).state != OYK_SESS_FREE) ++act_cnt;
+    }
+    assert(act_cnt == 1);
+
+    /* Outbound local terminal: blocked on ax_rxonly & tel0, blocked outside netmask, allowed on pdmr */
+    oyk_u32 lsid = 0;
+    assert(node->open_local_terminal(1, "W2ANY", &lsid, NULL, NULL, err, sizeof(err)) == 0);
+    assert(node->open_local_terminal(2, "W2ANY", &lsid, NULL, NULL, err, sizeof(err)) == 0);
+    assert(node->open_local_terminal(0, "W1OUT", &lsid, NULL, NULL, err, sizeof(err)) == 0);
+    assert(node->open_local_terminal(0, "W1DMR", &lsid, NULL, NULL, err, sizeof(err)) == 1);
+    node->terminate_session(lsid, err, sizeof(err));
+
+    delete node;
+    delete cfg;
+    remove(path);
+    printf("[PASS] test_portable_iface_directions_netmask_and_dmr\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1265,6 +1384,7 @@ int oyk_run_portable_tests() {
     test_derive_default_iface_id();
     test_format_peer_spec();
     test_portable_peer_sections_and_auto_learn();
+    test_portable_iface_directions_netmask_and_dmr();
     return 0;
 }
 

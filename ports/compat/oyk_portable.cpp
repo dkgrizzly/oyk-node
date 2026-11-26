@@ -349,6 +349,71 @@ int oyk_parse_ipv4(const char* text, oyk_u32* net_ip_out) {
     return 1;
 }
 
+int oyk_is_all_digits(const char* text) {
+    if (!text || !text[0]) return 0;
+    for (const char* p = text; *p; ++p) {
+        if (*p < '0' || *p > '9') return 0;
+    }
+    return 1;
+}
+
+int oyk_parse_dmr_id(const char* text, oyk_u32* dmr_id_out) {
+    if (!oyk_is_all_digits(text)) return 0;
+    unsigned long v = 0UL;
+    for (const char* p = text; *p; ++p) {
+        unsigned long d = static_cast<unsigned long>(*p - '0');
+        if (v > (16777214UL - d) / 10UL) return 0;
+        v = v * 10UL + d;
+    }
+    if (v == 0UL || v > 16777214UL) return 0;
+    if (dmr_id_out) *dmr_id_out = static_cast<oyk_u32>(v);
+    return 1;
+}
+
+void oyk_dmr_id_to_ipv4(oyk_u32 dmr_id, oyk_u8 prefix_octet, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    char buf[20];
+    sprintf(buf, "%u.%u.%u.%u",
+            static_cast<unsigned int>(prefix_octet),
+            static_cast<unsigned int>((dmr_id >> 16) & 0xFFUL),
+            static_cast<unsigned int>((dmr_id >> 8) & 0xFFUL),
+            static_cast<unsigned int>(dmr_id & 0xFFUL));
+    safe_copy(out, out_sz, buf);
+}
+
+int oyk_resolve_host_or_dmr_id(const char* spec, oyk_u8 prefix_octet,
+                               char* out, size_t out_sz, oyk_u32* net_ip_out) {
+    if (!spec || !spec[0]) return 0;
+    if (oyk_is_all_digits(spec)) {
+        oyk_u32 did = 0;
+        if (!oyk_parse_dmr_id(spec, &did)) return 0;
+        char ip_buf[20];
+        oyk_dmr_id_to_ipv4(did, prefix_octet, ip_buf, sizeof(ip_buf));
+        if (out && out_sz > 0) safe_copy(out, out_sz, ip_buf);
+        if (net_ip_out) (void)oyk_parse_ipv4(ip_buf, net_ip_out);
+        return 1;
+    }
+    if (out && out_sz > 0) safe_copy(out, out_sz, spec);
+    if (net_ip_out) (void)oyk_parse_ipv4(spec, net_ip_out);
+    return 1;
+}
+
+oyk_u8 oyk_dmr_prefix_for_iface(const OykIfaceConfig* ic) {
+    if (!ic) return 12U;
+    if (stricmp_ascii(ic->type, "axudp") != 0 && stricmp_ascii(ic->type, "axip") != 0) return 12U;
+    if (strcmp(ic->netmask, "255.0.0.0") != 0) return 12U;
+    if (!ic->host[0]) return 12U;
+    oyk_u32 bind_ip = 0;
+    if (!oyk_resolve_host_or_dmr_id(ic->host, 12U, NULL, 0, &bind_ip)) return 12U;
+    oyk_u8 top = reinterpret_cast<const oyk_u8*>(&bind_ip)[0];
+    return (top != 0) ? top : static_cast<oyk_u8>(12U);
+}
+
+int oyk_ip_matches_netmask(oyk_u32 ip_net, oyk_u32 bind_net, oyk_u32 mask_net) {
+    if (mask_net == 0 || bind_net == 0) return 1;
+    return ((ip_net & mask_net) == (bind_net & mask_net)) ? 1 : 0;
+}
+
 int oyk_parse_peer_spec(const char* spec, char* call_out, size_t call_sz,
                         oyk_u32* net_ip_out, oyk_u16* port_out, oyk_u16 default_port) {
     if (!spec || !net_ip_out || !port_out) return 0;
@@ -937,6 +1002,8 @@ void oyk_config_init_default(OykConfig* cfg) {
     safe_copy(cfg->ifaces[0].description, sizeof(cfg->ifaces[0].description), "Primary AXUDP Link");
     safe_copy(cfg->ifaces[0].host, sizeof(cfg->ifaces[0].host), "0.0.0.0");
     cfg->ifaces[0].port = 10093;
+    cfg->ifaces[0].block_inbound = 0;
+    cfg->ifaces[0].block_outbound = 0;
 }
 
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz) {
@@ -1245,6 +1312,8 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                     safe_copy(cur_if->host, sizeof(cur_if->host), "0.0.0.0");
                     cur_if->port = 0;
                     cur_if->baud = 9600;
+                    cur_if->block_inbound = 0;
+                    cur_if->block_outbound = 0;
                     section = 2;
                     cur_peer = NULL;
                 }
@@ -1329,10 +1398,13 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
         } else if (section == 2 && cur_if) {
             if (stricmp_ascii(k, "type") == 0) {
                 safe_copy(cur_if->type, sizeof(cur_if->type), v);
+                if (stricmp_ascii(cur_if->type, "telnet") == 0) cur_if->block_outbound = 1;
             } else if (stricmp_ascii(k, "description") == 0) {
                 safe_copy(cur_if->description, sizeof(cur_if->description), v);
             } else if (stricmp_ascii(k, "host") == 0 || stricmp_ascii(k, "bind_host") == 0) {
                 safe_copy(cur_if->host, sizeof(cur_if->host), v);
+            } else if (stricmp_ascii(k, "netmask") == 0) {
+                safe_copy(cur_if->netmask, sizeof(cur_if->netmask), v);
             } else if (stricmp_ascii(k, "port") == 0 || stricmp_ascii(k, "bind_port") == 0) {
                 cur_if->port = static_cast<oyk_u16>(atoi(v));
             } else if (stricmp_ascii(k, "device") == 0) {
@@ -1343,6 +1415,12 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
                 cur_if->kiss_port = static_cast<oyk_u8>(atoi(v) & 0x0F);
             } else if (stricmp_ascii(k, "mode") == 0) {
                 cur_if->server_mode = (stricmp_ascii(v, "server") == 0) ? 1 : 0;
+            } else if (stricmp_ascii(k, "allow_inbound") == 0 || stricmp_ascii(k, "inbound") == 0) {
+                cur_if->block_inbound = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1;
+            } else if (stricmp_ascii(k, "allow_outbound") == 0 || stricmp_ascii(k, "outbound") == 0) {
+                cur_if->block_outbound = (stricmp_ascii(cur_if->type, "telnet") == 0)
+                                             ? 1
+                                             : ((stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 0 : 1);
             } else if (stricmp_ascii(k, "auto_learn") == 0) {
                 cur_if->no_auto_learn = (stricmp_ascii(v, "false") == 0 || strcmp(v, "0") == 0 ||
                                          stricmp_ascii(v, "no") == 0 || stricmp_ascii(v, "off") == 0) ? 1 : 0;
@@ -1528,6 +1606,50 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
         safe_copy(cfg->ifaces[0].description, sizeof(cfg->ifaces[0].description), "Primary AXUDP Link");
         safe_copy(cfg->ifaces[0].host, sizeof(cfg->ifaces[0].host), "0.0.0.0");
         cfg->ifaces[0].port = 10093;
+        cfg->ifaces[0].block_inbound = 0;
+        cfg->ifaces[0].block_outbound = 0;
+    }
+
+    for (int i = 0; i < cfg->iface_count; ++i) {
+        if (stricmp_ascii(cfg->ifaces[i].type, "telnet") == 0) {
+            cfg->ifaces[i].block_outbound = 1;
+        }
+        if (stricmp_ascii(cfg->ifaces[i].type, "axudp") == 0 ||
+            stricmp_ascii(cfg->ifaces[i].type, "axip") == 0) {
+            if (cfg->ifaces[i].host[0] && oyk_is_all_digits(cfg->ifaces[i].host)) {
+                oyk_u32 did = 0;
+                if (!oyk_parse_dmr_id(cfg->ifaces[i].host, &did)) {
+                    safe_copy(err_out, err_sz, "Invalid interface DMR ID (allowed 1..16777214)");
+                    return 0;
+                }
+            }
+            if (cfg->ifaces[i].netmask[0]) {
+                oyk_u32 nm = 0;
+                if (!oyk_parse_ipv4(cfg->ifaces[i].netmask, &nm)) {
+                    safe_copy(err_out, err_sz, "Invalid interface IPv4 netmask");
+                    return 0;
+                }
+            }
+        }
+    }
+    for (int p = 0; p < cfg->peer_count && p < OYK_MAX_CONFIG_PEERS; ++p) {
+        OykPeerConfig* pc = &cfg->peers[p];
+        if (!pc->host[0]) continue;
+        if (oyk_is_all_digits(pc->host)) {
+            oyk_u32 did = 0;
+            if (!oyk_parse_dmr_id(pc->host, &did)) {
+                safe_copy(err_out, err_sz, "Invalid peer DMR ID (allowed 1..16777214)");
+                return 0;
+            }
+        }
+        oyk_u8 pref = 12U;
+        for (int i = 0; i < cfg->iface_count; ++i) {
+            if (stricmp_ascii(cfg->ifaces[i].id, pc->interface_id) == 0) {
+                pref = oyk_dmr_prefix_for_iface(&cfg->ifaces[i]);
+                break;
+            }
+        }
+        (void)oyk_resolve_host_or_dmr_id(pc->host, pref, NULL, 0, &pc->resolved_ip);
     }
     return 1;
 }
@@ -1635,8 +1757,12 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
         } else {
             if (ic->host[0]) fprintf(fp, "bind_host = %s%s", ic->host, nl);
             if (ic->port > 0) fprintf(fp, "bind_port = %u%s", static_cast<unsigned int>(ic->port), nl);
+            if (ic->netmask[0]) fprintf(fp, "netmask = %s%s", ic->netmask, nl);
             if (ic->device[0]) fprintf(fp, "device = %s%s", ic->device, nl);
         }
+        fprintf(fp, "allow_inbound = %s%s", ic->block_inbound ? "false" : "true", nl);
+        fprintf(fp, "allow_outbound = %s%s",
+                (stricmp_ascii(ic->type, "telnet") == 0 || ic->block_outbound) ? "false" : "true", nl);
         if (ic->no_auto_learn) {
             fprintf(fp, "auto_learn = false%s", nl);
         }
@@ -1746,6 +1872,9 @@ int OykPortableNode::init(const OykConfig* cfg, OykTxCallback tx_cb, void* tx_ct
 
     iface_count_ = cfg_.iface_count;
     for (int i = 0; i < iface_count_; ++i) {
+        if (stricmp_ascii(cfg_.ifaces[i].type, "telnet") == 0) {
+            cfg_.ifaces[i].block_outbound = 1;
+        }
         ifaces_[i].cfg = cfg_.ifaces[i];
         ifaces_[i].running = 0;
         safe_copy(ifaces_[i].status, sizeof(ifaces_[i].status), "INIT");
@@ -1883,11 +2012,12 @@ int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
     oyk_format_callsign(call, full, sizeof(full));
 
     int wildcard = -1;
+    const oyk_u8 pref = oyk_dmr_prefix_for_iface(&ic);
     for (int i = 0; i < cfg_.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
         const OykPeerConfig* p = &cfg_.peers[i];
         if (p->interface_id[0] && stricmp_ascii(p->interface_id, ic.id) != 0) continue;
         oyk_u32 ip = p->resolved_ip;
-        if (ip == 0 && p->host[0]) (void)oyk_parse_ipv4(p->host, &ip);
+        if (ip == 0 && p->host[0]) (void)oyk_resolve_host_or_dmr_id(p->host, pref, NULL, 0, &ip);
         if (ip == 0) continue;
         if (!p->callsign[0] || strcmp(p->callsign, "*") == 0) {
             if (wildcard < 0) wildcard = i;
@@ -1901,7 +2031,9 @@ int OykPortableNode::find_peer_for_call(int iface_idx, const OykCallsign* call,
     }
     if (wildcard >= 0) {
         oyk_u32 ip = cfg_.peers[wildcard].resolved_ip;
-        if (ip == 0 && cfg_.peers[wildcard].host[0]) (void)oyk_parse_ipv4(cfg_.peers[wildcard].host, &ip);
+        if (ip == 0 && cfg_.peers[wildcard].host[0]) {
+            (void)oyk_resolve_host_or_dmr_id(cfg_.peers[wildcard].host, pref, NULL, 0, &ip);
+        }
         *ip_out = ip;
         *port_out = cfg_.peers[wildcard].port ? cfg_.peers[wildcard].port : (ic.port ? ic.port : static_cast<oyk_u16>(10093));
         return (ip != 0) ? 1 : 0;
@@ -2034,6 +2166,11 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
         safe_copy(err_out, err_sz, "Invalid interface");
         return 0;
     }
+    if (ifaces_[iface_idx].cfg.block_outbound ||
+        stricmp_ascii(ifaces_[iface_idx].cfg.type, "telnet") == 0) {
+        safe_copy(err_out, err_sz, "Outbound connections on this interface are disabled");
+        return 0;
+    }
 
     oyk_u32 peer_ip = 0;
     oyk_u16 peer_port = 0;
@@ -2063,6 +2200,16 @@ int OykPortableNode::open_local_terminal(int iface_idx, const char* target_spec,
                 safe_copy(err_out, err_sz, "No peer IP for callsign (use CALL@ip:port)");
                 return 0;
             }
+        }
+    }
+    if (peer_ip != 0 && ifaces_[iface_idx].cfg.netmask[0]) {
+        oyk_u32 bind_ip = 0, mask_ip = 0;
+        (void)oyk_resolve_host_or_dmr_id(ifaces_[iface_idx].cfg.host, 12U, NULL, 0, &bind_ip);
+        if (oyk_parse_ipv4(ifaces_[iface_idx].cfg.netmask, &mask_ip) &&
+            !oyk_ip_matches_netmask(peer_ip, bind_ip, mask_ip)) {
+            ifaces_[iface_idx].tx_errors++;
+            safe_copy(err_out, err_sz, "Peer IP outside interface netmask");
+            return 0;
         }
     }
 
@@ -4214,6 +4361,15 @@ void OykPortableNode::handle_chat_line(OykSession* sess, const char* raw_line) {
 void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                                   oyk_u32 peer_ip, oyk_u16 peer_port, oyk_u16 peer_handle) {
     if (iface_idx < 0 || iface_idx >= iface_count_ || !frame) return;
+    if (peer_ip != 0 && ifaces_[iface_idx].cfg.netmask[0]) {
+        oyk_u32 bind_ip = 0, mask_ip = 0;
+        (void)oyk_resolve_host_or_dmr_id(ifaces_[iface_idx].cfg.host, 12U, NULL, 0, &bind_ip);
+        if (oyk_parse_ipv4(ifaces_[iface_idx].cfg.netmask, &mask_ip) &&
+            !oyk_ip_matches_netmask(peer_ip, bind_ip, mask_ip)) {
+            ifaces_[iface_idx].rx_errors++;
+            return;
+        }
+    }
     ifaces_[iface_idx].rx_frames++;
     record_heard(&frame->src, iface_idx);
 
@@ -4254,6 +4410,19 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
         }
 
         if (!sess) {
+            if (ifaces_[iface_idx].cfg.block_inbound) {
+                OykFrame dm;
+                memset(&dm, 0, sizeof(dm));
+                dm.dst = frame->src;
+                dm.src = frame->dst;
+                dm.is_response = 1;
+                dm.control = 0x1FU;
+                if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
+                char msg[72];
+                sprintf(msg, "Denied incoming %s on %s (interface disabled)", src_s, ifaces_[iface_idx].cfg.id);
+                log_message(OYK_LOG_WARNING, msg);
+                return;
+            }
             const OykPeerConfig* existing_peer = find_config_peer(iface_idx, &frame->src);
             if (existing_peer && !existing_peer->allow_inbound) {
                 OykFrame dm;
@@ -4735,11 +4904,14 @@ static int portable_iface_eq(const OykIfaceConfig* a, const OykIfaceConfig* b) {
     if (stricmp_ascii(a->type, b->type) != 0) return 0;
     if (strcmp(a->description, b->description) != 0) return 0;
     if (strcmp(a->host, b->host) != 0) return 0;
+    if (strcmp(a->netmask, b->netmask) != 0) return 0;
     if (a->port != b->port) return 0;
     if (strcmp(a->device, b->device) != 0) return 0;
     if (a->baud != b->baud) return 0;
     if (a->kiss_port != b->kiss_port) return 0;
     if (a->server_mode != b->server_mode) return 0;
+    if (a->block_inbound != b->block_inbound) return 0;
+    if (a->block_outbound != b->block_outbound) return 0;
     if (a->peer_count != b->peer_count) return 0;
     for (int i = 0; i < a->peer_count; ++i) {
         if (strcmp(a->peers[i].callsign, b->peers[i].callsign) != 0 ||
@@ -4779,7 +4951,63 @@ int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
         }
     }
 
-    OykConfig next_cfg = *new_cfg;
+    struct ApplyCfgGuard {
+        OykConfig* p;
+        explicit ApplyCfgGuard(const OykConfig* src) : p(new OykConfig(*src)) {}
+        ~ApplyCfgGuard() { delete p; }
+    };
+    struct ApplyOldIfacesGuard {
+        OykIfaceRuntime* p;
+        ApplyOldIfacesGuard() : p(new OykIfaceRuntime[OYK_MAX_INTERFACES]) {}
+        ~ApplyOldIfacesGuard() { delete[] p; }
+    };
+    ApplyCfgGuard next_guard(new_cfg);
+    if (!next_guard.p) {
+        safe_copy(res->error, sizeof(res->error), "Out of memory.");
+        return 0;
+    }
+    OykConfig& next_cfg = *next_guard.p;
+    for (int i = 0; i < next_cfg.iface_count; ++i) {
+        if (stricmp_ascii(next_cfg.ifaces[i].type, "telnet") == 0) {
+            next_cfg.ifaces[i].block_outbound = 1;
+        }
+        if (stricmp_ascii(next_cfg.ifaces[i].type, "axudp") == 0 ||
+            stricmp_ascii(next_cfg.ifaces[i].type, "axip") == 0) {
+            if (next_cfg.ifaces[i].host[0] && oyk_is_all_digits(next_cfg.ifaces[i].host)) {
+                oyk_u32 did = 0;
+                if (!oyk_parse_dmr_id(next_cfg.ifaces[i].host, &did)) {
+                    safe_copy(res->error, sizeof(res->error), "Invalid interface DMR ID (allowed: 1..16777214).");
+                    return 0;
+                }
+            }
+            if (next_cfg.ifaces[i].netmask[0]) {
+                oyk_u32 nm = 0;
+                if (!oyk_parse_ipv4(next_cfg.ifaces[i].netmask, &nm)) {
+                    safe_copy(res->error, sizeof(res->error), "Invalid interface IPv4 netmask.");
+                    return 0;
+                }
+            }
+        }
+    }
+    for (int p = 0; p < next_cfg.peer_count && p < OYK_MAX_CONFIG_PEERS; ++p) {
+        OykPeerConfig* pc = &next_cfg.peers[p];
+        if (!pc->host[0]) continue;
+        if (oyk_is_all_digits(pc->host)) {
+            oyk_u32 did = 0;
+            if (!oyk_parse_dmr_id(pc->host, &did)) {
+                safe_copy(res->error, sizeof(res->error), "Invalid peer DMR ID (allowed: 1..16777214).");
+                return 0;
+            }
+        }
+        oyk_u8 pref = 12U;
+        for (int i = 0; i < next_cfg.iface_count; ++i) {
+            if (stricmp_ascii(next_cfg.ifaces[i].id, pc->interface_id) == 0) {
+                pref = oyk_dmr_prefix_for_iface(&next_cfg.ifaces[i]);
+                break;
+            }
+        }
+        (void)oyk_resolve_host_or_dmr_id(pc->host, pref, NULL, 0, &pc->resolved_ip);
+    }
     migrate_iface_peers(&next_cfg);
     next_cfg.bbs_ssid = static_cast<oyk_u8>(next_cfg.bbs_ssid & 0x0FU);
     next_cfg.chat_ssid = static_cast<oyk_u8>(next_cfg.chat_ssid & 0x0FU);
@@ -4916,9 +5144,14 @@ int OykPortableNode::apply_config(const OykConfig* new_cfg, int save_to_disk,
 
     /* Phase 3: Apply running configuration */
     int mail_path_changed = (strcmp(cfg_.bbs_mail_path, next_cfg.bbs_mail_path) != 0) ? 1 : 0;
-    OykIfaceRuntime old_ifaces[OYK_MAX_INTERFACES];
+    ApplyOldIfacesGuard old_guard;
+    OykIfaceRuntime* old_ifaces = old_guard.p;
     int old_iface_count = iface_count_;
-    memcpy(old_ifaces, ifaces_, sizeof(old_ifaces));
+    if (!old_ifaces) {
+        safe_copy(res->error, sizeof(res->error), "Out of memory.");
+        return 0;
+    }
+    memcpy(old_ifaces, ifaces_, sizeof(ifaces_));
 
     cfg_ = next_cfg;
 

@@ -5,6 +5,7 @@
 #include "oyk/protocol/yapp.hpp"
 
 #include <gtk/gtk.h>
+#include <arpa/inet.h>
 
 #include <chrono>
 #include <ctime>
@@ -1546,6 +1547,15 @@ static void run_gtk_edit_peer_dialog(GtkSettingsCtx* ctx, int edit_idx) {
                 continue;
             }
         }
+        std::string host_s = gtk_entry_get_text(GTK_ENTRY(e_host));
+        if (!host_s.empty() && radio::is_all_ascii_digits(host_s)) {
+            uint32_t did = 0;
+            if (!radio::parse_dmr_id(host_s, did)) {
+                gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Invalid DMR ID (allowed 1..16777214).</b></span>");
+                gtk_widget_show(lbl_err);
+                continue;
+            }
+        }
         gchar* iface_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_iface));
         std::string iface_s = iface_raw ? iface_raw : "";
         if (iface_raw) g_free(iface_raw);
@@ -1555,7 +1565,7 @@ static void run_gtk_edit_peer_dialog(GtkSettingsCtx* ctx, int edit_idx) {
         next_p.callsign = parsed->str();
         next_p.description = gtk_entry_get_text(GTK_ENTRY(e_desc));
         next_p.interface_id = iface_s;
-        next_p.host = gtk_entry_get_text(GTK_ENTRY(e_host));
+        next_p.host = host_s;
         next_p.port = pnum;
         next_p.allow_inbound = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE;
         next_p.allow_outbound = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE;
@@ -1657,6 +1667,11 @@ bool gtk_iface_ci_eq(const std::string& a, const std::string& b) {
     return true;
 }
 
+bool gtk_is_valid_ipv4(const std::string& s) {
+    struct in_addr a{};
+    return inet_pton(AF_INET, s.c_str(), &a) == 1;
+}
+
 radio::RadioInterfaceConfig gtk_build_iface_config(
     int drv_idx,
     const std::string& id,
@@ -1665,20 +1680,28 @@ radio::RadioInterfaceConfig gtk_build_iface_config(
     const std::string& port,
     const std::string& mode,
     const std::string& kport,
+    const std::string& netmask,
     const std::string& peer,
+    bool allow_in,
+    bool allow_out,
+    const std::string& learn_pol,
     const radio::RadioInterfaceConfig* prev) {
     radio::RadioInterfaceConfig ic;
     const std::string type_s = GTK_IFACE_DRIVERS[drv_idx].type;
     ic.id = id;
     ic.type = type_s;
     ic.description = desc;
+    ic.allow_inbound = allow_in;
+    ic.allow_outbound = (type_s == "telnet") ? false : allow_out;
     if (type_s == "axudp") {
         ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
         ic.params["bind_port"] = port.empty() ? "10093" : port;
+        if (!netmask.empty()) ic.params["netmask"] = netmask;
         ic.params["auto_learn"] = "true";
         if (!peer.empty()) ic.peers.push_back(peer);
     } else if (type_s == "axip") {
         ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
+        if (!netmask.empty()) ic.params["netmask"] = netmask;
         ic.params["auto_learn"] = "true";
         if (!peer.empty()) ic.peers.push_back(peer);
     } else if (type_s == "kiss-serial") {
@@ -1693,6 +1716,9 @@ radio::RadioInterfaceConfig gtk_build_iface_config(
     } else {
         ic.params["bind_host"] = host.empty() ? "0.0.0.0" : host;
         ic.params["bind_port"] = port.empty() ? "8010" : port;
+    }
+    if (type_s != "telnet" && !learn_pol.empty() && learn_pol != "inherit") {
+        ic.params["learned_peer_policy"] = learn_pol;
     }
     if (prev && (type_s == "axudp" || type_s == "axip")) {
         for (std::size_t p = 1; p < prev->peers.size(); ++p) {
@@ -1710,7 +1736,7 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(ctx->dlg));
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dlg), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 470, 320);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 480, 410);
 
     gtk_dialog_add_button(GTK_DIALOG(dlg), GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
     GtkWidget* btn_back = gtk_dialog_add_button(GTK_DIALOG(dlg), "< _Back", WIZ_RESP_BACK);
@@ -1787,8 +1813,8 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl1, nullptr);
 
     /* Page 2: Driver Settings */
-    GtkWidget* tbl2 = gtk_table_new(5, 2, FALSE);
-    gtk_table_set_row_spacings(GTK_TABLE(tbl2), 8);
+    GtkWidget* tbl2 = gtk_table_new(9, 2, FALSE);
+    gtk_table_set_row_spacings(GTK_TABLE(tbl2), 6);
     gtk_table_set_col_spacings(GTK_TABLE(tbl2), 10);
     GtkWidget* l_mode = gtk_label_new("KISS-TCP Mode:");
     gtk_misc_set_alignment(GTK_MISC(l_mode), 0.0f, 0.5f);
@@ -1816,21 +1842,48 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     gtk_table_attach(GTK_TABLE(tbl2), e_port, 1, 2, 2, 3,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
 
+    GtkWidget* l_netmask = gtk_label_new("Netmask (opt):");
+    gtk_misc_set_alignment(GTK_MISC(l_netmask), 0.0f, 0.5f);
+    GtkWidget* e_netmask = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(e_netmask), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), l_netmask, 0, 1, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_netmask, 1, 2, 3, 4,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
     GtkWidget* l_kport = gtk_label_new("KISS Port (0-15):");
     gtk_misc_set_alignment(GTK_MISC(l_kport), 0.0f, 0.5f);
     GtkWidget* e_kport = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_kport), "0");
     gtk_entry_set_activates_default(GTK_ENTRY(e_kport), TRUE);
-    gtk_table_attach(GTK_TABLE(tbl2), l_kport, 0, 1, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(tbl2), e_kport, 1, 2, 3, 4,
+    gtk_table_attach(GTK_TABLE(tbl2), l_kport, 0, 1, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_kport, 1, 2, 4, 5,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
 
     GtkWidget* l_peer = gtk_label_new("Static Peer (opt):");
     gtk_misc_set_alignment(GTK_MISC(l_peer), 0.0f, 0.5f);
     GtkWidget* e_peer = gtk_entry_new();
     gtk_entry_set_activates_default(GTK_ENTRY(e_peer), TRUE);
-    gtk_table_attach(GTK_TABLE(tbl2), l_peer, 0, 1, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(tbl2), e_peer, 1, 2, 4, 5,
+    gtk_table_attach(GTK_TABLE(tbl2), l_peer, 0, 1, 5, 6, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), e_peer, 1, 2, 5, 6,
+                     static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
+    GtkWidget* chk_in = gtk_check_button_new_with_label("Allow inbound connections");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_in), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), chk_in, 0, 2, 6, 7, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* chk_out = gtk_check_button_new_with_label("Allow outbound connections");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out), TRUE);
+    gtk_table_attach(GTK_TABLE(tbl2), chk_out, 0, 2, 7, 8, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* l_lpol = gtk_label_new("Learned Peer Policy:");
+    gtk_misc_set_alignment(GTK_MISC(l_lpol), 0.0f, 0.5f);
+    GtkWidget* cb_lpol = gtk_combo_box_new_text();
+    for (const char* p : {"inherit", "none", "inbound", "outbound", "both"}) {
+        gtk_combo_box_append_text(GTK_COMBO_BOX(cb_lpol), p);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_lpol), 0);
+    gtk_table_attach(GTK_TABLE(tbl2), l_lpol, 0, 1, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl2), cb_lpol, 1, 2, 8, 9,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), tbl2, nullptr);
 
@@ -1887,12 +1940,12 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
             gtk_widget_grab_focus(e_id);
         } else if (step == 2) {
             if (t == "axudp") {
-                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXUDP bind host, UDP port, and optional peer:</b>");
-                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host:");
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXUDP bind host/DMR ID, UDP port, netmask, and peer:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host / DMR:");
                 gtk_label_set_text(GTK_LABEL(l_port), "UDP Port:");
             } else if (t == "axip") {
-                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXIP bind host and optional static peer:</b>");
-                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host:");
+                gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure AXIP bind host/DMR ID, netmask, and static peer:</b>");
+                gtk_label_set_text(GTK_LABEL(l_host), "Bind Host / DMR:");
             } else if (t == "kiss-serial") {
                 gtk_label_set_markup(GTK_LABEL(lbl_prompt), "<b>Configure serial device, baud rate, and KISS port:</b>");
                 gtk_label_set_text(GTK_LABEL(l_host), "Serial Device:");
@@ -1908,16 +1961,27 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
             }
             const bool is_ktcp = (t == "kiss-tcp");
             const bool is_kser = (t == "kiss-serial");
+            const bool is_tel  = (t == "telnet");
             const bool has_port = (t != "axip");
             const bool has_peer = (t == "axudp" || t == "axip");
             gtk_widget_set_visible(l_mode, is_ktcp);
             gtk_widget_set_visible(cb_mode, is_ktcp);
             gtk_widget_set_visible(l_port, has_port);
             gtk_widget_set_visible(e_port, has_port);
+            gtk_widget_set_visible(l_netmask, has_peer);
+            gtk_widget_set_visible(e_netmask, has_peer);
             gtk_widget_set_visible(l_kport, is_kser || is_ktcp);
             gtk_widget_set_visible(e_kport, is_kser || is_ktcp);
             gtk_widget_set_visible(l_peer, has_peer);
             gtk_widget_set_visible(e_peer, has_peer);
+            gtk_widget_set_visible(l_lpol, !is_tel);
+            gtk_widget_set_visible(cb_lpol, !is_tel);
+            if (is_tel) {
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out), FALSE);
+                gtk_widget_set_sensitive(chk_out, FALSE);
+            } else {
+                gtk_widget_set_sensitive(chk_out, TRUE);
+            }
             gtk_widget_grab_focus(e_host);
         } else {
             gtk_label_set_markup(GTK_LABEL(lbl_prompt),
@@ -1929,6 +1993,7 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
             oss << "Description:   " << (d_s.empty() ? "(none)" : d_s) << "\n";
             std::string h_s = gtk_entry_get_text(GTK_ENTRY(e_host));
             std::string p_s = gtk_entry_get_text(GTK_ENTRY(e_port));
+            std::string nm_s = gtk_entry_get_text(GTK_ENTRY(e_netmask));
             if (t == "kiss-serial") {
                 oss << "Serial Device: " << h_s << "\n"
                     << "Baud Rate:     " << p_s << "\n"
@@ -1940,13 +2005,20 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
                     << "KISS Port:     " << gtk_entry_get_text(GTK_ENTRY(e_kport)) << "\n";
                 if (mr) g_free(mr);
             } else {
-                oss << "Bind Host:     " << h_s << "\n";
+                oss << "Bind Host:     " << h_s << (nm_s.empty() ? "" : (" / " + nm_s)) << "\n";
                 if (t != "axip") oss << "Port:          " << p_s << "\n";
                 if (t == "axudp" || t == "axip") {
                     std::string pr = gtk_entry_get_text(GTK_ENTRY(e_peer));
                     oss << "Static Peer:   " << (pr.empty() ? "(auto-learn)" : pr) << "\n";
                 }
             }
+            const bool a_in = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE;
+            const bool a_out = (t != "telnet") && (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE);
+            gchar* lpr = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_lpol));
+            oss << "Allow Inbound: " << (a_in ? "true" : "false") << "\n"
+                << "Allow Outbound:" << (a_out ? "true" : (t == "telnet" ? "false (disabled)" : "false")) << "\n";
+            if (t != "telnet") oss << "Learned Policy:" << (lpr ? lpr : "inherit") << "\n";
+            if (lpr) g_free(lpr);
             gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(sum_tv)),
                                      oss.str().c_str(), -1);
         }
@@ -1986,8 +2058,13 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
                 gtk_entry_set_text(GTK_ENTRY(e_host), GTK_IFACE_DRIVERS[drv_idx].def_host);
                 gtk_entry_set_text(GTK_ENTRY(e_port), GTK_IFACE_DRIVERS[drv_idx].def_port);
                 gtk_entry_set_text(GTK_ENTRY(e_kport), "0");
+                gtk_entry_set_text(GTK_ENTRY(e_netmask), "");
                 gtk_entry_set_text(GTK_ENTRY(e_peer), "");
                 gtk_combo_box_set_active(GTK_COMBO_BOX(cb_mode), 0);
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_in), TRUE);
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out),
+                                             (GTK_IFACE_DRIVERS[drv_idx].type != std::string("telnet")) ? TRUE : FALSE);
+                gtk_combo_box_set_active(GTK_COMBO_BOX(cb_lpol), 0);
                 last_drv = drv_idx;
             }
             step = 1;
@@ -2014,12 +2091,28 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
                 set_err("Host / Serial Device cannot be empty.");
                 continue;
             }
+            const std::string cur_t = GTK_IFACE_DRIVERS[drv_idx].type;
+            if ((cur_t == "axudp" || cur_t == "axip") && radio::is_all_ascii_digits(h_s)) {
+                uint32_t did = 0;
+                if (!radio::parse_dmr_id(h_s, did)) {
+                    set_err("Invalid DMR ID (allowed 1..16777214).");
+                    continue;
+                }
+            }
+            std::string nm_s = gtk_entry_get_text(GTK_ENTRY(e_netmask));
+            if ((cur_t == "axudp" || cur_t == "axip") && !nm_s.empty() && !gtk_is_valid_ipv4(nm_s)) {
+                set_err("Invalid IPv4 netmask (e.g. 255.0.0.0).");
+                continue;
+            }
             step = 3;
             sync_wizard_ui();
         } else {
             gchar* m_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_mode));
             std::string mode = m_raw ? m_raw : "client";
             if (m_raw) g_free(m_raw);
+            gchar* lp_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_lpol));
+            std::string lpol = lp_raw ? lp_raw : "inherit";
+            if (lp_raw) g_free(lp_raw);
             radio::RadioInterfaceConfig ic = gtk_build_iface_config(
                 drv_idx,
                 gtk_entry_get_text(GTK_ENTRY(e_id)),
@@ -2028,7 +2121,11 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
                 gtk_entry_get_text(GTK_ENTRY(e_port)),
                 mode,
                 gtk_entry_get_text(GTK_ENTRY(e_kport)),
+                gtk_entry_get_text(GTK_ENTRY(e_netmask)),
                 gtk_entry_get_text(GTK_ENTRY(e_peer)),
+                gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE,
+                gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE,
+                lpol,
                 nullptr);
             ctx->ifaces->push_back(std::move(ic));
             repopulate_gtk_ifaces(ctx);
@@ -2046,10 +2143,16 @@ struct GtkEditIfaceWidgets {
     GtkWidget* e_host = nullptr;
     GtkWidget* l_port = nullptr;
     GtkWidget* e_port = nullptr;
+    GtkWidget* l_netmask = nullptr;
+    GtkWidget* e_netmask = nullptr;
     GtkWidget* l_kport = nullptr;
     GtkWidget* e_kport = nullptr;
     GtkWidget* l_peer = nullptr;
     GtkWidget* e_peer = nullptr;
+    GtkWidget* chk_in = nullptr;
+    GtkWidget* chk_out = nullptr;
+    GtkWidget* l_lpol = nullptr;
+    GtkWidget* cb_lpol = nullptr;
     int drv_idx = 0;
     bool apply_defaults_on_change = false;
 };
@@ -2063,9 +2166,11 @@ void sync_gtk_edit_iface_fields(GtkEditIfaceWidgets* w) {
     if (drv_changed && w->apply_defaults_on_change) {
         gtk_entry_set_text(GTK_ENTRY(w->e_host), GTK_IFACE_DRIVERS[d].def_host);
         gtk_entry_set_text(GTK_ENTRY(w->e_port), GTK_IFACE_DRIVERS[d].def_port);
+        gtk_entry_set_text(GTK_ENTRY(w->e_netmask), "");
         gtk_entry_set_text(GTK_ENTRY(w->e_kport), "0");
         gtk_entry_set_text(GTK_ENTRY(w->e_peer), "");
         gtk_combo_box_set_active(GTK_COMBO_BOX(w->cb_mode), 0);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_out), (t != "telnet") ? TRUE : FALSE);
     }
 
     if (t == "kiss-serial") {
@@ -2078,24 +2183,35 @@ void sync_gtk_edit_iface_fields(GtkEditIfaceWidgets* w) {
         gtk_label_set_text(GTK_LABEL(w->l_host), "Bind Host:");
         gtk_label_set_text(GTK_LABEL(w->l_port), "TCP Port:");
     } else if (t == "axip") {
-        gtk_label_set_text(GTK_LABEL(w->l_host), "Bind Host:");
+        gtk_label_set_text(GTK_LABEL(w->l_host), "Bind Host / DMR:");
     } else {
-        gtk_label_set_text(GTK_LABEL(w->l_host), "Bind Host:");
+        gtk_label_set_text(GTK_LABEL(w->l_host), "Bind Host / DMR:");
         gtk_label_set_text(GTK_LABEL(w->l_port), "UDP Port:");
     }
 
     const bool is_ktcp = (t == "kiss-tcp");
     const bool is_kser = (t == "kiss-serial");
+    const bool is_tel  = (t == "telnet");
     const bool has_port = (t != "axip");
     const bool has_peer = (t == "axudp" || t == "axip");
     gtk_widget_set_visible(w->l_mode, is_ktcp);
     gtk_widget_set_visible(w->cb_mode, is_ktcp);
     gtk_widget_set_visible(w->l_port, has_port);
     gtk_widget_set_visible(w->e_port, has_port);
+    gtk_widget_set_visible(w->l_netmask, has_peer);
+    gtk_widget_set_visible(w->e_netmask, has_peer);
     gtk_widget_set_visible(w->l_kport, is_kser || is_ktcp);
     gtk_widget_set_visible(w->e_kport, is_kser || is_ktcp);
     gtk_widget_set_visible(w->l_peer, has_peer);
     gtk_widget_set_visible(w->e_peer, has_peer);
+    gtk_widget_set_visible(w->l_lpol, !is_tel);
+    gtk_widget_set_visible(w->cb_lpol, !is_tel);
+    if (is_tel) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->chk_out), FALSE);
+        gtk_widget_set_sensitive(w->chk_out, FALSE);
+    } else {
+        gtk_widget_set_sensitive(w->chk_out, TRUE);
+    }
 }
 
 void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
@@ -2115,7 +2231,7 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
         "_Save", GTK_RESPONSE_ACCEPT,
         static_cast<const char*>(nullptr));
     gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_ACCEPT);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 450, 320);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 470, 420);
 
     GtkWidget* outer = gtk_vbox_new(FALSE, 8);
     gtk_container_set_border_width(GTK_CONTAINER(outer), 10);
@@ -2126,7 +2242,7 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     gtk_misc_set_alignment(GTK_MISC(lbl_prompt), 0.0f, 0.5f);
     gtk_box_pack_start(GTK_BOX(outer), lbl_prompt, FALSE, FALSE, 0);
 
-    GtkWidget* tbl = gtk_table_new(8, 2, FALSE);
+    GtkWidget* tbl = gtk_table_new(12, 2, FALSE);
     gtk_table_set_row_spacings(GTK_TABLE(tbl), 6);
     gtk_table_set_col_spacings(GTK_TABLE(tbl), 10);
     gtk_box_pack_start(GTK_BOX(outer), tbl, TRUE, TRUE, 0);
@@ -2164,6 +2280,11 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     ew.e_port = gtk_entry_new();
     gtk_entry_set_activates_default(GTK_ENTRY(ew.e_port), TRUE);
 
+    ew.l_netmask = gtk_label_new("Netmask (opt):");
+    gtk_misc_set_alignment(GTK_MISC(ew.l_netmask), 0.0f, 0.5f);
+    ew.e_netmask = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(ew.e_netmask), TRUE);
+
     ew.l_kport = gtk_label_new("KISS Port (0-15):");
     gtk_misc_set_alignment(GTK_MISC(ew.l_kport), 0.0f, 0.5f);
     ew.e_kport = gtk_entry_new();
@@ -2174,6 +2295,25 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     gtk_misc_set_alignment(GTK_MISC(ew.l_peer), 0.0f, 0.5f);
     ew.e_peer = gtk_entry_new();
     gtk_entry_set_activates_default(GTK_ENTRY(ew.e_peer), TRUE);
+
+    ew.chk_in = gtk_check_button_new_with_label("Allow inbound connections");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ew.chk_in), src.allow_inbound ? TRUE : FALSE);
+
+    ew.chk_out = gtk_check_button_new_with_label("Allow outbound connections");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ew.chk_out),
+                                 (ew.drv_idx == 4) ? FALSE : (src.allow_outbound ? TRUE : FALSE));
+
+    ew.l_lpol = gtk_label_new("Learned Peer Policy:");
+    gtk_misc_set_alignment(GTK_MISC(ew.l_lpol), 0.0f, 0.5f);
+    ew.cb_lpol = gtk_combo_box_new_text();
+    const std::string cur_lpol = get_p("learned_peer_policy", "inherit");
+    int lp_sel = 0;
+    const char* lp_opts[5] = {"inherit", "none", "inbound", "outbound", "both"};
+    for (int i = 0; i < 5; ++i) {
+        gtk_combo_box_append_text(GTK_COMBO_BOX(ew.cb_lpol), lp_opts[i]);
+        if (cur_lpol == lp_opts[i]) lp_sel = i;
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ew.cb_lpol), lp_sel);
 
     if (ew.drv_idx == 2) {
         gtk_entry_set_text(GTK_ENTRY(ew.e_host), get_p("device", "/dev/ttyUSB0").c_str());
@@ -2190,6 +2330,7 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
         if (ew.drv_idx == 0) gtk_entry_set_text(GTK_ENTRY(ew.e_port), get_p("bind_port", "10093").c_str());
         else if (ew.drv_idx == 4) gtk_entry_set_text(GTK_ENTRY(ew.e_port), get_p("bind_port", "8010").c_str());
         else gtk_entry_set_text(GTK_ENTRY(ew.e_port), "0");
+        gtk_entry_set_text(GTK_ENTRY(ew.e_netmask), get_p("netmask", "").c_str());
         if (!src.peers.empty() && (ew.drv_idx == 0 || ew.drv_idx == 1)) {
             gtk_entry_set_text(GTK_ENTRY(ew.e_peer), src.peers[0].c_str());
         }
@@ -2207,8 +2348,12 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     attach_w(3, ew.l_mode, ew.cb_mode);
     attach_w(4, ew.l_host, ew.e_host);
     attach_w(5, ew.l_port, ew.e_port);
-    attach_w(6, ew.l_kport, ew.e_kport);
-    attach_w(7, ew.l_peer, ew.e_peer);
+    attach_w(6, ew.l_netmask, ew.e_netmask);
+    attach_w(7, ew.l_kport, ew.e_kport);
+    attach_w(8, ew.l_peer, ew.e_peer);
+    gtk_table_attach(GTK_TABLE(tbl), ew.chk_in, 0, 2, 9, 10, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(tbl), ew.chk_out, 0, 2, 10, 11, GTK_FILL, GTK_FILL, 0, 0);
+    attach_w(11, ew.l_lpol, ew.cb_lpol);
 
     GtkWidget* lbl_err = gtk_label_new("");
     gtk_misc_set_alignment(GTK_MISC(lbl_err), 0.0f, 0.5f);
@@ -2248,9 +2393,27 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
             gtk_widget_show(lbl_err);
             continue;
         }
+        const std::string cur_t = GTK_IFACE_DRIVERS[ew.drv_idx].type;
+        if ((cur_t == "axudp" || cur_t == "axip") && radio::is_all_ascii_digits(h_s)) {
+            uint32_t did = 0;
+            if (!radio::parse_dmr_id(h_s, did)) {
+                gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Invalid DMR ID (allowed 1..16777214).</b></span>");
+                gtk_widget_show(lbl_err);
+                continue;
+            }
+        }
+        std::string nm_s = gtk_entry_get_text(GTK_ENTRY(ew.e_netmask));
+        if ((cur_t == "axudp" || cur_t == "axip") && !nm_s.empty() && !gtk_is_valid_ipv4(nm_s)) {
+            gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Invalid IPv4 netmask (e.g. 255.0.0.0).</b></span>");
+            gtk_widget_show(lbl_err);
+            continue;
+        }
         gchar* m_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(ew.cb_mode));
         std::string mode = m_raw ? m_raw : "client";
         if (m_raw) g_free(m_raw);
+        gchar* lp_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(ew.cb_lpol));
+        std::string lpol = lp_raw ? lp_raw : "inherit";
+        if (lp_raw) g_free(lp_raw);
         radio::RadioInterfaceConfig ic = gtk_build_iface_config(
             ew.drv_idx, id,
             gtk_entry_get_text(GTK_ENTRY(e_desc)),
@@ -2258,7 +2421,11 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
             gtk_entry_get_text(GTK_ENTRY(ew.e_port)),
             mode,
             gtk_entry_get_text(GTK_ENTRY(ew.e_kport)),
+            nm_s,
             gtk_entry_get_text(GTK_ENTRY(ew.e_peer)),
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ew.chk_in)) != FALSE,
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ew.chk_out)) != FALSE,
+            lpol,
             &src);
         (*ctx->ifaces)[static_cast<std::size_t>(edit_idx)] = std::move(ic);
         repopulate_gtk_ifaces(ctx);
