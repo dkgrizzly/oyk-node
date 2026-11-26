@@ -453,6 +453,18 @@ static void rf_udp_rx_callback(const unsigned char* packet, const UdpHeader* udp
     const oyk_u8* payload = reinterpret_cast<const oyk_u8*>(packet + sizeof(EthHeader) + sizeof(IpHeader) + sizeof(UdpHeader));
     dos_handle_rf_udp_payload(payload, pay_len);
 }
+
+static int dos_has_pktdrv_at(oyk_u8 iv) {
+    if (iv < 0x60U || iv > 0x7FU) return 0;
+    void (__interrupt __far* vec)() = _dos_getvect(iv);
+    if (!vec) return 0;
+    const oyk_u8 __far* p = reinterpret_cast<const oyk_u8 __far*>(MK_FP(FP_SEG(vec), FP_OFF(vec)));
+    static const char SIG[8] = { 'P','K','T',' ','D','R','V','R' };
+    for (int i = 0; i < 8; ++i) {
+        if (p[3 + i] != static_cast<oyk_u8>(SIG[i])) return 0;
+    }
+    return 1;
+}
 #endif
 
 static void dos_pump_network() {
@@ -3982,9 +3994,24 @@ int main(int argc, char* argv[]) {
     /* Optional mTCP initialization: never a hard requirement at build time or runtime */
     g_mtcp_active = 0;
 #ifdef OYK_DOS_HAS_MTCP
-    if (Utils::parseEnv() == 0 &&
-        Utils::initStack(4, 8, ctrl_break_handler, ctrl_c_handler) == 0) {
-        g_mtcp_active = 1;
+    {
+        const char* mtcp_cfg = getenv("MTCPCFG");
+        if (mtcp_cfg && mtcp_cfg[0]) {
+            FILE* mf = fopen(mtcp_cfg, "r");
+            if (mf) {
+                fclose(mf);
+                if (Utils::parseEnv() == 0) {
+                    uint8_t p1 = Utils::getPacketInt();
+                    uint8_t p2 = Utils::getPacketInt2();
+                    int has_pkt = dos_has_pktdrv_at(p1) ||
+                                  (p2 != 0 && dos_has_pktdrv_at(p2));
+                    if (has_pkt &&
+                        Utils::initStack(4, 8, ctrl_break_handler, ctrl_c_handler) == 0) {
+                        g_mtcp_active = 1;
+                    }
+                }
+            }
+        }
     }
 #endif
     if (!g_mtcp_active) {
@@ -4031,16 +4058,30 @@ int main(int argc, char* argv[]) {
         char call_s[16];
         oyk_format_callsign(&cfg.callsign, call_s, sizeof(call_s));
         printf("OYK Packet Node (MS-DOS) %s running in headless mode. Press Ctrl+C to stop.\n", call_s);
+        fflush(stdout);
         int printed_logs = 0;
         while (!g_break_flag) {
             dos_pump_network();
             g_node.tick();
             while (printed_logs < g_node.console_log_count()) {
                 printf("%s\n", g_node.console_log_line(printed_logs++));
+                fflush(stdout);
             }
         }
     } else {
         g_vid = new OykDosVideo;
+        if (!g_vid) {
+            printf("Out of memory allocating video buffer.\n");
+            g_node.finish_shutdown();
+#ifdef OYK_DOS_HAS_MTCP
+            if (g_mtcp_active) Utils::endStack();
+#endif
+            oyk_dos_serial_close(&g_serial);
+            dos_printer_close();
+            oyk_dos_pktdrv_shutdown(&g_pktdrv);
+            g_ems.shutdown();
+            return 1;
+        }
         dos_vid_init(g_vid);
 
         int running = 1;
