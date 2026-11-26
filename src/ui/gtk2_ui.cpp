@@ -680,41 +680,72 @@ void on_terminate_clicked(GtkWidget*, gpointer user_data) {
     }
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
-        "Terminate Connection",
+        "Terminate Active Connection",
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         "Terminate", GTK_RESPONSE_ACCEPT,
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
         static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 460, 260);
 
     GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
     GtkWidget* lbl = gtk_label_new("Select an active connection to terminate:");
     gtk_misc_set_alignment(GTK_MISC(lbl), 0.0f, 0.5f);
     gtk_box_pack_start(GTK_BOX(vbox), lbl, FALSE, FALSE, 6);
 
-    GtkWidget* combo = gtk_combo_box_new_text();
-    std::vector<uint64_t> ids;
+    GtkListStore* store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING,
+                                             G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT64);
     for (const auto& s : snap.active_sessions) {
-        std::string item = "#" + std::to_string(s.id) + "  " + s.remote_call +
-                           " on " + s.interface_id + " [" + node::Session::state_name(s.state) + "]";
-        gtk_combo_box_append_text(GTK_COMBO_BOX(combo), item.c_str());
-        ids.push_back(s.id);
+        GtkTreeIter iter;
+        std::string id_s = "#" + std::to_string(s.id);
+        std::string st_s = node::Session::state_name(s.state);
+        gtk_list_store_append(store, &iter);
+        gtk_list_store_set(store, &iter,
+                           0, id_s.c_str(),
+                           1, s.remote_call.c_str(),
+                           2, s.interface_id.c_str(),
+                           3, st_s.c_str(),
+                           4, static_cast<guint64>(s.id),
+                           -1);
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
-    gtk_box_pack_start(GTK_BOX(vbox), combo, FALSE, FALSE, 6);
+
+    GtkWidget* tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+    add_text_column(GTK_TREE_VIEW(tv), "ID", 0, 55);
+    add_text_column(GTK_TREE_VIEW(tv), "Callsign", 1, 110);
+    add_text_column(GTK_TREE_VIEW(tv), "Port", 2, 100);
+    add_text_column(GTK_TREE_VIEW(tv), "State", 3, 120);
+    g_signal_connect(tv, "row-activated",
+                     G_CALLBACK(+[](GtkTreeView*, GtkTreePath*, GtkTreeViewColumn*, gpointer d) {
+                         gtk_dialog_response(GTK_DIALOG(d), GTK_RESPONSE_ACCEPT);
+                     }),
+                     dlg);
+
+    GtkTreePath* first_path = gtk_tree_path_new_first();
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(tv)), first_path);
+    gtk_tree_path_free(first_path);
+
+    GtkWidget* sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(sc), tv);
+    gtk_box_pack_start(GTK_BOX(vbox), sc, TRUE, TRUE, 4);
     gtk_widget_show_all(dlg);
 
     GtkSimpleCapCtx cap_ctx{dlg, "terminate", GTK_RESPONSE_CANCEL, 0};
     guint cap_tid = g_gtk_test.enabled ? g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx) : 0;
     if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-        gint idx = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
-        if (idx >= 0 && static_cast<std::size_t>(idx) < ids.size()) {
+        GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(tv));
+        GtkTreeModel* model = nullptr;
+        GtkTreeIter iter;
+        if (gtk_tree_selection_get_selected(sel, &model, &iter)) {
+            guint64 sid = 0;
+            gtk_tree_model_get(model, &iter, 4, &sid, -1);
             std::string msg;
-            st->engine->terminate_session(ids[static_cast<std::size_t>(idx)], &msg);
+            st->engine->terminate_session(static_cast<uint64_t>(sid), &msg);
             set_status_text(st, msg);
         }
     }
     if (cap_tid && cap_ctx.ticks == 0) g_source_remove(cap_tid);
+    g_object_unref(store);
     gtk_widget_destroy(dlg);
     refresh_ui(st);
 }
@@ -745,51 +776,68 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
         "Ban / Unban Callsign (banlist.cfg)",
         GTK_WINDOW(st->window),
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
-        "Ban Callsign", 1,
-        "Unban Selected", 2,
         GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
         static_cast<const char*>(nullptr));
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 380);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 400);
 
     GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
 
-    GtkWidget* table = gtk_table_new(4, 2, FALSE);
-    gtk_table_set_row_spacings(GTK_TABLE(table), 4);
-    gtk_table_set_col_spacings(GTK_TABLE(table), 6);
+    GtkWidget* table = gtk_table_new(4, 3, FALSE);
+    gtk_table_set_row_spacings(GTK_TABLE(table), 5);
+    gtk_table_set_col_spacings(GTK_TABLE(table), 8);
     gtk_container_set_border_width(GTK_CONTAINER(table), 6);
 
-    GtkWidget* call_lbl = gtk_label_new("Callsign (e.g. B4DCAL or B4DCAL-7):");
+    GtkWidget* call_lbl = gtk_label_new("Callsign:");
     gtk_misc_set_alignment(GTK_MISC(call_lbl), 0.0f, 0.5f);
     GtkWidget* call_entry = gtk_entry_new();
     gtk_entry_set_max_length(GTK_ENTRY(call_entry), 9);
 
-    GtkWidget* lift_lbl = gtk_label_new("Lift (permanent, 30m, 12h, 7d, YYYY-MM-DD):");
+    GtkWidget* flags_hbox = gtk_hbox_new(FALSE, 10);
+    GtkWidget* chk_hard = gtk_check_button_new_with_label("Hard Ban");
+    GtkWidget* chk_appeal = gtk_check_button_new_with_label("Appeal Allowed");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_appeal), TRUE);
+    gtk_box_pack_start(GTK_BOX(flags_hbox), chk_hard, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(flags_hbox), chk_appeal, FALSE, FALSE, 0);
+
+    GtkWidget* lift_lbl = gtk_label_new("Lift At:");
     gtk_misc_set_alignment(GTK_MISC(lift_lbl), 0.0f, 0.5f);
     GtkWidget* lift_entry = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(lift_entry), "permanent");
+    GtkWidget* lift_hint = gtk_label_new("(permanent, 30m, 12h, 7d, YYYY-MM-DD)");
+    gtk_misc_set_alignment(GTK_MISC(lift_hint), 0.0f, 0.5f);
 
     GtkWidget* reason_lbl = gtk_label_new("Reason:");
     gtk_misc_set_alignment(GTK_MISC(reason_lbl), 0.0f, 0.5f);
     GtkWidget* reason_entry = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(reason_entry), "Banned by sysop.");
 
-    GtkWidget* chk_hard = gtk_check_button_new_with_label("Hard Ban (block after initial notice)");
-    GtkWidget* chk_appeal = gtk_check_button_new_with_label("Appeal Allowed");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_appeal), TRUE);
+    GtkWidget* btn_hbox = gtk_hbox_new(FALSE, 8);
+    GtkWidget* btn_ban = gtk_button_new_with_mnemonic("_Ban Callsign");
+    GtkWidget* btn_unban = gtk_button_new_with_mnemonic("_Unban Selected");
+    gtk_box_pack_start(GTK_BOX(btn_hbox), btn_ban, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(btn_hbox), btn_unban, FALSE, FALSE, 0);
 
     gtk_table_attach(GTK_TABLE(table), call_lbl, 0, 1, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), call_entry, 1, 2, 0, 1,
+    gtk_table_attach(GTK_TABLE(table), call_entry, 1, 2, 0, 1, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), flags_hbox, 2, 3, 0, 1,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
     gtk_table_attach(GTK_TABLE(table), lift_lbl, 0, 1, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), lift_entry, 1, 2, 1, 2,
+    gtk_table_attach(GTK_TABLE(table), lift_entry, 1, 2, 1, 2, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(table), lift_hint, 2, 3, 1, 2,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+
     gtk_table_attach(GTK_TABLE(table), reason_lbl, 0, 1, 2, 3, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), reason_entry, 1, 2, 2, 3,
+    gtk_table_attach(GTK_TABLE(table), reason_entry, 1, 3, 2, 3,
                      static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), chk_hard, 0, 1, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
-    gtk_table_attach(GTK_TABLE(table), chk_appeal, 1, 2, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
+
+    gtk_table_attach(GTK_TABLE(table), btn_hbox, 1, 3, 3, 4, GTK_FILL, GTK_FILL, 0, 0);
 
     gtk_box_pack_start(GTK_BOX(vbox), table, FALSE, FALSE, 4);
+
+    GtkWidget* list_hdr = gtk_label_new("Active Bans:");
+    gtk_misc_set_alignment(GTK_MISC(list_hdr), 0.0f, 0.5f);
+    gtk_box_pack_start(GTK_BOX(vbox), list_hdr, FALSE, FALSE, 2);
 
     GtkListStore* ban_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING,
                                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
@@ -809,67 +857,85 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
     gtk_misc_set_alignment(GTK_MISC(fb_lbl), 0.0f, 0.5f);
     gtk_box_pack_start(GTK_BOX(vbox), fb_lbl, FALSE, FALSE, 4);
 
+    struct GtkBanCtx {
+        GtkAppState* st;
+        GtkWidget* dlg;
+        GtkWidget* call_entry;
+        GtkWidget* lift_entry;
+        GtkWidget* reason_entry;
+        GtkWidget* chk_hard;
+        GtkWidget* chk_appeal;
+        GtkWidget* ban_tv;
+        GtkListStore* ban_store;
+        GtkWidget* fb_lbl;
+    } bctx{st, dlg, call_entry, lift_entry, reason_entry, chk_hard, chk_appeal, ban_tv, ban_store, fb_lbl};
+
+    g_signal_connect(btn_ban, "clicked",
+                     G_CALLBACK(+[](GtkWidget*, gpointer p) {
+                         auto* c = static_cast<GtkBanCtx*>(p);
+                         std::string call = gtk_entry_get_text(GTK_ENTRY(c->call_entry));
+                         std::string lift = gtk_entry_get_text(GTK_ENTRY(c->lift_entry));
+                         std::string reason = gtk_entry_get_text(GTK_ENTRY(c->reason_entry));
+                         uint32_t flags = 0;
+                         if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(c->chk_hard))) {
+                             flags |= node::BAN_FLAG_HARD_BAN;
+                         }
+                         if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(c->chk_appeal))) {
+                             flags |= node::BAN_FLAG_APPEAL_ALLOWED;
+                         }
+                         std::string msg;
+                         if (c->st->engine->ban_callsign_with_lift_spec(call, lift, &msg, true, flags, reason)) {
+                             gtk_entry_set_text(GTK_ENTRY(c->call_entry), "");
+                             gtk_entry_set_text(GTK_ENTRY(c->lift_entry), "permanent");
+                             gtk_label_set_text(GTK_LABEL(c->fb_lbl), msg.c_str());
+                             set_status_text(c->st, msg);
+                             populate_ban_dialog_store(c->st->engine, c->ban_store);
+                             refresh_ui(c->st);
+                         } else {
+                             gtk_label_set_text(GTK_LABEL(c->fb_lbl), ("Error: " + msg).c_str());
+                         }
+                     }),
+                     &bctx);
+
+    g_signal_connect(btn_unban, "clicked",
+                     G_CALLBACK(+[](GtkWidget*, gpointer p) {
+                         auto* c = static_cast<GtkBanCtx*>(p);
+                         GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(c->ban_tv));
+                         GtkTreeModel* model = nullptr;
+                         GtkTreeIter iter;
+                         if (gtk_tree_selection_get_selected(sel, &model, &iter)) {
+                             gchar* key = nullptr;
+                             gtk_tree_model_get(model, &iter, 0, &key, -1);
+                             if (key) {
+                                 GtkWidget* confirm = gtk_message_dialog_new(
+                                     GTK_WINDOW(c->dlg),
+                                     static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+                                     GTK_MESSAGE_QUESTION,
+                                     GTK_BUTTONS_YES_NO,
+                                     "Unban callsign %s?", key);
+                                 gtk_window_set_title(GTK_WINDOW(confirm), "Confirm Unban");
+                                 gint cresp = gtk_dialog_run(GTK_DIALOG(confirm));
+                                 gtk_widget_destroy(confirm);
+                                 if (cresp == GTK_RESPONSE_YES) {
+                                     std::string msg;
+                                     c->st->engine->unban_callsign(key, &msg);
+                                     gtk_label_set_text(GTK_LABEL(c->fb_lbl), msg.c_str());
+                                     set_status_text(c->st, msg);
+                                     populate_ban_dialog_store(c->st->engine, c->ban_store);
+                                     refresh_ui(c->st);
+                                 }
+                                 g_free(key);
+                             }
+                         }
+                     }),
+                     &bctx);
+
     populate_ban_dialog_store(st->engine, ban_store);
     gtk_widget_show_all(dlg);
 
     GtkSimpleCapCtx cap_ctx{dlg, "ban", GTK_RESPONSE_CLOSE, 0};
     if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
-    while (true) {
-        gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
-        if (resp == 1) {
-            std::string call = gtk_entry_get_text(GTK_ENTRY(call_entry));
-            std::string lift = gtk_entry_get_text(GTK_ENTRY(lift_entry));
-            std::string reason = gtk_entry_get_text(GTK_ENTRY(reason_entry));
-            uint32_t flags = 0;
-            if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_hard))) {
-                flags |= node::BAN_FLAG_HARD_BAN;
-            }
-            if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_appeal))) {
-                flags |= node::BAN_FLAG_APPEAL_ALLOWED;
-            }
-            std::string msg;
-            if (st->engine->ban_callsign_with_lift_spec(call, lift, &msg, true, flags, reason)) {
-                gtk_entry_set_text(GTK_ENTRY(call_entry), "");
-                gtk_entry_set_text(GTK_ENTRY(lift_entry), "permanent");
-                gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
-                set_status_text(st, msg);
-                populate_ban_dialog_store(st->engine, ban_store);
-                refresh_ui(st);
-            } else {
-                gtk_label_set_text(GTK_LABEL(fb_lbl), ("Error: " + msg).c_str());
-            }
-        } else if (resp == 2) {
-            GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ban_tv));
-            GtkTreeModel* model = nullptr;
-            GtkTreeIter iter;
-            if (gtk_tree_selection_get_selected(sel, &model, &iter)) {
-                gchar* key = nullptr;
-                gtk_tree_model_get(model, &iter, 0, &key, -1);
-                if (key) {
-                    GtkWidget* confirm = gtk_message_dialog_new(
-                        GTK_WINDOW(dlg),
-                        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
-                        GTK_MESSAGE_QUESTION,
-                        GTK_BUTTONS_YES_NO,
-                        "Unban callsign %s?", key);
-                    gtk_window_set_title(GTK_WINDOW(confirm), "Confirm Unban");
-                    gint cresp = gtk_dialog_run(GTK_DIALOG(confirm));
-                    gtk_widget_destroy(confirm);
-                    if (cresp == GTK_RESPONSE_YES) {
-                        std::string msg;
-                        st->engine->unban_callsign(key, &msg);
-                        gtk_label_set_text(GTK_LABEL(fb_lbl), msg.c_str());
-                        set_status_text(st, msg);
-                        populate_ban_dialog_store(st->engine, ban_store);
-                        refresh_ui(st);
-                    }
-                    g_free(key);
-                }
-            }
-        } else {
-            break;
-        }
-    }
+    (void)gtk_dialog_run(GTK_DIALOG(dlg));
 
     g_object_unref(ban_store);
     gtk_widget_destroy(dlg);

@@ -1370,24 +1370,25 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(strstr(cap->buf, "axudp0") != NULL);
     tmux_save_capture("main", con, cap);
 
-    /* 2. Terminate Connection flow */
+    /* 2. Terminate Connection centered modal */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
-    assert(strstr(cap->buf, "Terminate session ID") != NULL);
+    assert(strstr(cap->buf, "Terminate Active Connection") != NULL);
+    assert(strstr(cap->buf, "W3TRM-1") != NULL);
     tmux_save_capture("terminate", con, cap);
-    char term_seq[24];
-    sprintf(term_seq, "%lu\r", static_cast<unsigned long>(active_sid));
-    con->feed_input(reinterpret_cast<const oyk_u8*>(term_seq), strlen(term_seq));
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
     assert(node->total_active_connections() == 0);
 
-    /* 3. Ban / Unban flow */
+    /* 3. Ban / Unban Callsign centered modal */
     con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    assert(node->ban_count() >= 1);
     cap->len = 0; cap->buf[0] = '\0';
     con->render();
-    assert(strstr(cap->buf, "Action:") != NULL);
+    assert(strstr(cap->buf, "Ban / Unban Callsign") != NULL);
+    assert(strstr(cap->buf, "Active Bans (1):") != NULL);
     tmux_save_capture("ban", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("B\r\r"), 3);
-    assert(node->ban_count() >= 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(550UL);
 
     /* 4. Settings (Node tab) */
     cap->len = 0; cap->buf[0] = '\0';
@@ -1438,6 +1439,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
     assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "auto-learned peer") != NULL);
+    assert(strstr(cap->buf, "before entering HalfKay bootloader?") != NULL);
     tmux_save_capture("exit", con, cap);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("d"), 1);

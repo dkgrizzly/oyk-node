@@ -86,8 +86,6 @@ private:
         PROMPT_NONE = 0,
         PROMPT_TERMINATE_SID,
         PROMPT_BAN_CALLSIGN,
-        PROMPT_BAN_ACTION,
-        PROMPT_BAN_REASON,
         PROMPT_SETTINGS_VALUE,
         PROMPT_SETTINGS_ADD_WIZARD,
         PROMPT_SETTINGS_EDIT_IFACE,
@@ -146,6 +144,12 @@ private:
     void handle_add_wizard_key(int key);
     void handle_edit_iface_key(int key);
     void handle_edit_peer_key(int key);
+    void open_terminate_dialog();
+    void render_terminate_dialog();
+    void handle_terminate_key(int key);
+    void open_ban_dialog();
+    void render_ban_dialog();
+    void handle_ban_key(int key);
     void wizard_apply_driver_defaults();
     int wizard_try_advance();
     int edit_iface_try_save();

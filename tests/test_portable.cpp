@@ -1706,7 +1706,7 @@ static void test_dos_ui_screen_flows() {
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("settings", sim_vram);
 
-    /* 3. Add Interface Wizard (Step 3/4 showing Same-Iface Fwd) */
+    /* 3. Add Interface Wizard (Step 3/4 matching dos_main.cpp including Learned Policy) */
     dos_render_mock_main(v);
     dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
     dos_vid_title(v, 3, 8, 20, bdr, "Add Interface");
@@ -1716,26 +1716,32 @@ static void test_dos_ui_screen_flows() {
     dos_vid_puts(v, 7, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 7, 26, sel, "0.0.0.0", 30);
     dos_vid_puts(v, 8, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 8, 26, inp, "10093", 30);
     dos_vid_puts(v, 9, 9, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, 9, 26, inp, "255.0.0.0", 30);
+    dos_vid_puts(v, 10, 9, fill, "Peer (opt)     : ", 17); dos_vid_puts(v, 10, 26, inp, "", 30);
     dos_vid_puts(v, 11, 9, fill, "Allow Inbound  : [ON]", 30);
     dos_vid_puts(v, 12, 9, fill, "Allow Outbound : [ON]", 30);
     dos_vid_puts(v, 13, 9, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_puts(v, 14, 9, fill, "Learned Policy : < inherit >", 40);
     dos_vid_hdiv(v, 19, 6, 68, bdr);
     dos_vid_puts(v, 20, 8, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("add_iface", sim_vram);
 
-    /* 4. Edit Interface Single View */
+    /* 4. Edit Interface Single View (matching dos_main.cpp field-for-field) */
     dos_render_mock_main(v);
     dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
     dos_vid_title(v, 3, 8, 20, bdr, "Edit Interface");
-    dos_vid_puts(v, 4, 8, bdr,  "Edit all settings for existing interface below:", 60);
-    dos_vid_puts(v, 5, 9, fill, "Driver         : axudp (read-only)", 50);
-    dos_vid_puts(v, 6, 9, fill, "Interface ID   : ", 17); dos_vid_puts(v, 6, 26, sel, "axudp0", 30);
-    dos_vid_puts(v, 8, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 8, 26, inp, "0.0.0.0", 30);
-    dos_vid_puts(v, 9, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 9, 26, inp, "10093", 30);
-    dos_vid_puts(v, 12, 9, fill, "Allow Inbound  : [ON]", 30);
-    dos_vid_puts(v, 13, 9, fill, "Allow Outbound : [ON]", 30);
-    dos_vid_puts(v, 14, 9, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_puts(v, 4, 8, bdr,  "Edit interface settings and select Save to update draft:", 62);
+    dos_vid_puts(v, 6, 9, fill, "Driver (Lt/Rt) : ", 17); dos_vid_puts(v, 6, 26, sel, "< axudp >", 30);
+    dos_vid_puts(v, 7, 9, fill, "Interface ID   : ", 17); dos_vid_puts(v, 7, 26, inp, "axudp0", 30);
+    dos_vid_puts(v, 8, 9, fill, "Description    : ", 17); dos_vid_puts(v, 8, 26, inp, "Primary AXUDP Link", 30);
+    dos_vid_puts(v, 9, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 9, 26, inp, "0.0.0.0", 30);
+    dos_vid_puts(v, 10, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 10, 26, inp, "10093", 30);
+    dos_vid_puts(v, 11, 9, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, 11, 26, inp, "", 30);
+    dos_vid_puts(v, 12, 9, fill, "Static Peer    : ", 17); dos_vid_puts(v, 12, 26, inp, "", 30);
+    dos_vid_puts(v, 13, 9, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, 14, 9, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_puts(v, 15, 9, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_puts(v, 16, 9, fill, "Learned Policy : < inherit >", 40);
     dos_vid_hdiv(v, 19, 6, 68, bdr);
     dos_vid_puts(v, 20, 8, bar, "[  Save  ]  [ Cancel ]", 30);
     assert(dos_vid_flush(v) > 0);
@@ -1768,26 +1774,31 @@ static void test_dos_ui_screen_flows() {
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("edit_peer", sim_vram);
 
-    /* 7. Terminate Connection Modal */
+    /* 7. Terminate Active Connection Modal */
     dos_render_mock_main(v);
-    dos_vid_box(v, 6, 12, 12, 56, bdr, fill, 1);
-    dos_vid_title(v, 6, 14, 24, bdr, "Terminate Connection");
-    dos_vid_puts(v, 8, 13, lhdr, "ID   Callsign   Port     Dir      State", 54);
-    dos_vid_puts(v, 9, 13, sel,  "#1   W3TRM-1    axudp0   INBOUND  CONNECTED", 54);
-    dos_vid_hdiv(v, 15, 12, 56, bdr);
-    dos_vid_puts(v, 16, 14, bar, "[ Terminate ]  [ Cancel ]", 34);
+    dos_vid_box(v, 4, 8, 16, 64, bdr, fill, 1);
+    dos_vid_title(v, 4, 10, 32, bdr, "Terminate Active Connection");
+    dos_vid_puts(v, 6, 10, lhdr, "ID    Callsign    Port       State", 60);
+    dos_vid_puts(v, 7, 10, sel,  "#1    W3TRM-1     axudp0     [CONNECTED]", 60);
+    dos_vid_hdiv(v, 17, 8, 64, bdr);
+    dos_vid_puts(v, 18, 10, bar, "Up/Down: select | Enter: terminate | Esc: cancel", 60);
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("terminate", sim_vram);
 
     /* 8. Ban / Unban Callsign Modal */
     dos_render_mock_main(v);
-    dos_vid_box(v, 5, 10, 15, 60, bdr, fill, 1);
-    dos_vid_title(v, 5, 12, 26, bdr, "Ban / Unban Callsign");
-    dos_vid_puts(v, 7, 12, fill, "Callsign : ", 11); dos_vid_puts(v, 7, 23, sel, "B4NTST", 16);
-    dos_vid_puts(v, 8, 12, fill, "Action   : [H]ard  [S]oft  [U]nban", 40);
-    dos_vid_puts(v, 9, 12, fill, "Reason   : Sysop ban", 40);
-    dos_vid_hdiv(v, 17, 10, 60, bdr);
-    dos_vid_puts(v, 18, 12, bar, "Enter:Ban/Unban  Esc:Cancel", 40);
+    dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
+    dos_vid_title(v, 2, 5, 38, bdr, "Ban / Unban Callsign (banlist.cfg)");
+    dos_vid_puts(v, 4, 5, fill, "Callsign: ", 10); dos_vid_puts(v, 4, 15, sel, "B4NTST", 12);
+    dos_vid_puts(v, 5, 5, fill, "Lift At : ", 10); dos_vid_puts(v, 5, 15, inp, "permanent", 16);
+    dos_vid_puts(v, 5, 33, fill, "(permanent, 30m, 12h, 7d, YYYY-MM-DD)", 40);
+    dos_vid_puts(v, 6, 5, fill, "Reason  : ", 10); dos_vid_puts(v, 6, 15, inp, "Banned by sysop.", 56);
+    dos_vid_puts(v, 7, 5, fill, "Options : [ ] Hard Ban (H)   [X] Appeal Allowed (A)", 66);
+    dos_vid_puts(v, 9, 5, fill, "Active Bans (1):", 30);
+    dos_vid_puts(v, 10, 5, lhdr, "Callsign   Type  Lift At          Reason", 70);
+    dos_vid_puts(v, 11, 5, fill, "B4NTST     SOFT  permanent        Banned by sysop.", 70);
+    dos_vid_hdiv(v, 21, 3, 74, bdr);
+    dos_vid_puts(v, 22, 5, bar, "Enter: BAN | Tab: next field | Esc: close", 68);
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("ban", sim_vram);
 
