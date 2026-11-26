@@ -48,7 +48,7 @@ CC  = wpp
 AS  = wasm
 LD  = wlink
 
-CFLAGS_COMMON = $(CPU) -ml -os -zm -zdp -zu -zt32 -bt=dos -wx -zq -I../compat
+CFLAGS_COMMON = $(CPU) -ml -os -zm -zt32 -bt=dos -wx -zq -I../compat
 
 # On case-sensitive Linux/Unix hosts, mTCP headers are uppercase on disk (TYPES.H, GLOBAL.CFG)
 # while mTCP sources #include lowercase/mixed-case names ("types.h", "Global.Cfg").
@@ -61,7 +61,7 @@ MTCP_INC_FLAGS = -I. -I$(MTCP_SRC)/TCPINC -I$(MTCP_SRC)/INCLUDE
 CFG_DEF        = -DCFG_H="oyk_mtcp.cfg"
 !endif
 
-CFLAGS_MTCP     = $(CPU) -ml -os -zm -zdp -zu -zt32 -bt=dos -zq -DOYK_DOS_HAS_MTCP=1 $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
+CFLAGS_MTCP     = $(CPU) -ml -os -zm -zt32 -bt=dos -zq -DOYK_DOS_HAS_MTCP=1 $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
 CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
 
 NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj
