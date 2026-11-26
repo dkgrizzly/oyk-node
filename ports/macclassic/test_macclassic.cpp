@@ -17,6 +17,7 @@
 #include "oyk_printer.hpp"
 #include "oyk_yapp.hpp"
 #include "mac_net.hpp"
+#include "mac_ui.hpp"
 #include "mac_capture.hpp"
 
 #include <stdio.h>
@@ -79,6 +80,31 @@ int main() {
         MC_CHECK(node->config().accept_incoming == 1, "default_accept_incoming");
         OykCallsign cs;
         MC_CHECK(oyk_parse_callsign("KR4OYK-7", &cs) == 1, "parse_callsign");
+
+        /* 2b. Verify OS-sourced Classic Mac native theme & full-screen live preview */
+        OykThemeConfig bw_pal;
+        oyk_mac_query_os_native_theme(NULL, 0, &bw_pal);
+        MC_CHECK(strcmp(bw_pal.name, "native") == 0, "mac_bw_native_name");
+        MC_CHECK(bw_pal.is_dark_base == 0, "mac_bw_native_light_base");
+        MC_CHECK(bw_pal.colors[OYK_TR_BG] == 0xFFFFFFUL && bw_pal.colors[OYK_TR_FG] == 0x000000UL,
+                 "mac_bw_native_1bit_colors");
+
+        OykThemeConfig clr_pal;
+        oyk_mac_query_os_native_theme(NULL, 1, &clr_pal);
+        MC_CHECK(strcmp(clr_pal.name, "native") == 0, "mac_color_native_name");
+        MC_CHECK(clr_pal.is_dark_base == 0, "mac_color_native_light_base");
+
+        OykMacNetState mnet;
+        memset(&mnet, 0, sizeof(mnet));
+        oyk_mac_detect_caps(&mnet.caps);
+        int bg_changes = 0;
+        int fg_changes = 0;
+        int prev_ok = oyk_mac_ui_run_theme_preview_self_test(node, &mnet, &bg_changes, &fg_changes);
+        MC_CHECK(prev_ok == 1, "mac_theme_full_screen_preview");
+        if (logf) {
+            fprintf(logf, "INFO: ThemePreview bg_changes=%d fg_changes=%d\n", bg_changes, fg_changes);
+        }
+
         node->shutdown();
     }
     if (cfg) delete cfg;

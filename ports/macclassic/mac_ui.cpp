@@ -23,6 +23,13 @@
 #include <Memory.h>
 #include <OSUtils.h>
 #include <Gestalt.h>
+#include <LowMem.h>
+#if defined(__has_include)
+#  if __has_include(<Appearance.h>)
+#    include <Appearance.h>
+#    define OYK_HAVE_APPEARANCE_H 1
+#  endif
+#endif
 
 #ifndef gdDevType
 #  define gdDevType 0
@@ -69,6 +76,8 @@ enum McHitAction {
     MC_HIT_FILE_UPLOAD,
     MC_HIT_THEME_NEXT,
     MC_HIT_THEME_PREV,
+    MC_HIT_THEME_APPLY,
+    MC_HIT_THEME_CANCEL,
     MC_HIT_QUIT_NOW
 };
 
@@ -109,7 +118,141 @@ struct OykMacUiState {
     McHitZone hits[32];
     int hit_count;
     char fmt_buf[256];
+    int console_draw_count;
+    int modal_draw_count;
+    oyk_u32 last_console_bg;
+    oyk_u32 last_modal_bg;
 };
+
+static oyk_u32 mc_u32_from_rgb(const RGBColor& c) {
+    oyk_u32 r = static_cast<oyk_u32>((c.red >> 8) & 0xFFU);
+    oyk_u32 g = static_cast<oyk_u32>((c.green >> 8) & 0xFFU);
+    oyk_u32 b = static_cast<oyk_u32>((c.blue >> 8) & 0xFFU);
+    return (r << 16) | (g << 8) | b;
+}
+
+static oyk_u32 mc_luma(oyk_u32 rgb) {
+    oyk_u32 r = (rgb >> 16) & 0xFFUL;
+    oyk_u32 g = (rgb >> 8) & 0xFFUL;
+    oyk_u32 b = rgb & 0xFFUL;
+    return (r * 299UL + g * 587UL + b * 114UL) / 1000UL;
+}
+
+void oyk_mac_query_os_native_theme(void* win_ptr, int has_color_qd, OykThemeConfig* out_pal) {
+    if (!out_pal) return;
+    memset(out_pal, 0, sizeof(*out_pal));
+    mu_copy(out_pal->name, sizeof(out_pal->name), "native");
+    out_pal->is_dark_base = 0;
+
+    if (!has_color_qd) {
+        out_pal->colors[OYK_TR_BG]           = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_FG]           = 0x000000UL;
+        out_pal->colors[OYK_TR_PANEL_BG]     = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_PANEL_FG]     = 0x000000UL;
+        out_pal->colors[OYK_TR_HEADER_BG]    = 0x000000UL;
+        out_pal->colors[OYK_TR_HEADER_FG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_STATUS_BG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_STATUS_FG]    = 0x000000UL;
+        out_pal->colors[OYK_TR_BORDER]       = 0x000000UL;
+        out_pal->colors[OYK_TR_ACCENT]       = 0x000000UL;
+        out_pal->colors[OYK_TR_SELECTION_BG] = 0x000000UL;
+        out_pal->colors[OYK_TR_SELECTION_FG] = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_BUTTON_BG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_BUTTON_FG]    = 0x000000UL;
+        out_pal->colors[OYK_TR_INPUT_BG]     = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_INPUT_FG]     = 0x000000UL;
+        out_pal->colors[OYK_TR_OK]           = 0x000000UL;
+        out_pal->colors[OYK_TR_WARN]         = 0x000000UL;
+        out_pal->colors[OYK_TR_ERROR]        = 0x000000UL;
+        return;
+    }
+
+    /* Classic Mac OS System 7 / Platinum Color QuickDraw baseline */
+    out_pal->colors[OYK_TR_BG]           = 0xFFFFFFUL;
+    out_pal->colors[OYK_TR_FG]           = 0x000000UL;
+    out_pal->colors[OYK_TR_PANEL_BG]     = 0xDDDDDDUL;
+    out_pal->colors[OYK_TR_PANEL_FG]     = 0x222222UL;
+    out_pal->colors[OYK_TR_HEADER_BG]    = 0xCCCCCCUL;
+    out_pal->colors[OYK_TR_HEADER_FG]    = 0x000000UL;
+    out_pal->colors[OYK_TR_STATUS_BG]    = 0xDDDDDDUL;
+    out_pal->colors[OYK_TR_STATUS_FG]    = 0x000000UL;
+    out_pal->colors[OYK_TR_BORDER]       = 0x555555UL;
+    out_pal->colors[OYK_TR_ACCENT]       = 0x3366CCUL;
+    out_pal->colors[OYK_TR_SELECTION_BG] = 0xCCCCFFUL;
+    out_pal->colors[OYK_TR_SELECTION_FG] = 0x000000UL;
+    out_pal->colors[OYK_TR_BUTTON_BG]    = 0xEEEEEEUL;
+    out_pal->colors[OYK_TR_BUTTON_FG]    = 0x000000UL;
+    out_pal->colors[OYK_TR_INPUT_BG]     = 0xFFFFFFUL;
+    out_pal->colors[OYK_TR_INPUT_FG]     = 0x000000UL;
+    out_pal->colors[OYK_TR_OK]           = 0x1F8F4EUL;
+    out_pal->colors[OYK_TR_WARN]         = 0xAA6600UL;
+    out_pal->colors[OYK_TR_ERROR]        = 0xCC2222UL;
+
+    /* Query window/system default WCTabHandle (System 6.0.8 - Mac OS 9.2.2) */
+    AuxWinHandle aux = NULL;
+    WindowPtr wp = static_cast<WindowPtr>(win_ptr);
+    if (wp) GetAuxWin(wp, &aux);
+    if (!aux || !(**aux).awCTable) {
+        aux = NULL;
+        GetAuxWin(NULL, &aux);
+    }
+    if (aux && (**aux).awCTable) {
+        CTabHandle ct = (**aux).awCTable;
+        short max_idx = (**ct).ctSize;
+        for (short i = 0; i <= max_idx && i < 16; ++i) {
+            short entry = (**ct).ctTable[i].value;
+            oyk_u32 col = mc_u32_from_rgb((**ct).ctTable[i].rgb);
+            if (entry == wContentColor) {
+                out_pal->colors[OYK_TR_BG] = col;
+                out_pal->colors[OYK_TR_INPUT_BG] = col;
+            } else if (entry == wFrameColor) {
+                out_pal->colors[OYK_TR_BORDER] = col;
+            } else if (entry == wTextColor) {
+                out_pal->colors[OYK_TR_FG] = col;
+                out_pal->colors[OYK_TR_INPUT_FG] = col;
+                out_pal->colors[OYK_TR_BUTTON_FG] = col;
+                out_pal->colors[OYK_TR_STATUS_FG] = col;
+            } else if (entry == wTitleBarColor) {
+                out_pal->colors[OYK_TR_HEADER_BG] = col;
+                out_pal->colors[OYK_TR_HEADER_FG] = (mc_luma(col) < 120UL) ? 0xFFFFFFUL : 0x000000UL;
+            } else if (entry == wHiliteColor) {
+                out_pal->colors[OYK_TR_ACCENT] = col;
+            }
+        }
+    }
+
+    /* Query user Highlight Color from Color Control Panel (LowMem 0x0DA0) */
+    volatile unsigned long hilite_addr = 0x0DA0UL;
+    const volatile RGBColor* hrgb_ptr = reinterpret_cast<const volatile RGBColor*>(hilite_addr);
+    RGBColor hrgb;
+    hrgb.red = hrgb_ptr->red;
+    hrgb.green = hrgb_ptr->green;
+    hrgb.blue = hrgb_ptr->blue;
+    oyk_u32 hcol = mc_u32_from_rgb(hrgb);
+    out_pal->colors[OYK_TR_SELECTION_BG] = hcol;
+    out_pal->colors[OYK_TR_SELECTION_FG] = (mc_luma(hcol) < 140UL) ? 0xFFFFFFUL : 0x000000UL;
+
+#ifdef OYK_HAVE_APPEARANCE_H
+    long app_attr = 0;
+    if (Gestalt(gestaltAppearanceAttr, &app_attr) == noErr &&
+        (app_attr & (1L << gestaltAppearanceExists)) != 0L) {
+        RGBColor ac;
+        if (GetThemeBrushAsColor(kThemeBrushDocumentWindowBackground, 8, true, &ac) == noErr) {
+            out_pal->colors[OYK_TR_BG] = mc_u32_from_rgb(ac);
+        }
+        if (GetThemeBrushAsColor(kThemeBrushDialogBackgroundActive, 8, true, &ac) == noErr) {
+            out_pal->colors[OYK_TR_PANEL_BG] = mc_u32_from_rgb(ac);
+            out_pal->colors[OYK_TR_STATUS_BG] = out_pal->colors[OYK_TR_PANEL_BG];
+        }
+        if (GetThemeTextColor(kThemeTextColorDialogActive, 8, true, &ac) == noErr) {
+            out_pal->colors[OYK_TR_FG] = mc_u32_from_rgb(ac);
+            out_pal->colors[OYK_TR_PANEL_FG] = out_pal->colors[OYK_TR_FG];
+        }
+    }
+#endif
+
+    out_pal->is_dark_base = (mc_luma(out_pal->colors[OYK_TR_BG]) < 100UL) ? 1 : 0;
+}
 
 static RGBColor mc_rgb(oyk_u32 c) {
     RGBColor out;
@@ -193,10 +336,10 @@ static void mc_draw_button(OykMacUiState* ui, int x, int y, int w, int h,
     SetRect(&r, static_cast<short>(x), static_cast<short>(y),
             static_cast<short>(x + w), static_cast<short>(y + h));
     if (ui->has_color) {
-        mc_fill_color(ui, &r, is_default ? ui->active_theme.colors[OYK_TR_ACCENT]
-                                         : ui->active_theme.colors[OYK_TR_BORDER],
-                      &qd.white);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+        oyk_u32 fill_col = is_default ? ui->active_theme.colors[OYK_TR_ACCENT]
+                                      : ui->active_theme.colors[OYK_TR_BUTTON_BG];
+        mc_fill_color(ui, &r, fill_col, &qd.white);
+        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
         FrameRoundRect(&r, 8, 8);
     } else {
         FillRoundRect(&r, 8, 8, &qd.white);
@@ -218,7 +361,11 @@ static void mc_draw_button(OykMacUiState* ui, int x, int y, int w, int h,
     short tx = static_cast<short>(x + (w - tw) / 2);
     if (tx < x + 4) tx = static_cast<short>(x + 4);
     short ty = static_cast<short>(y + h - 5);
-    mc_set_fg(ui, (ui->has_color && is_default) ? 0xFFFFFFUL : ui->active_theme.colors[OYK_TR_FG]);
+    oyk_u32 txt_col = ui->active_theme.colors[OYK_TR_BUTTON_FG];
+    if (ui->has_color && is_default) {
+        txt_col = (mc_luma(ui->active_theme.colors[OYK_TR_ACCENT]) < 140UL) ? 0xFFFFFFUL : 0x000000UL;
+    }
+    mc_set_fg(ui, txt_col);
     MoveTo(tx, ty);
     DrawString(ps);
     mc_add_hit(ui, r, hit_kind, hit_arg);
@@ -333,6 +480,9 @@ static void mc_draw_main_console(OykMacUiState* ui) {
     int h = ui->main_win->portRect.bottom - ui->main_win->portRect.top;
     int compact = (w < 540) ? 1 : 0;
 
+    ++ui->console_draw_count;
+    ui->last_console_bg = ui->active_theme.colors[OYK_TR_BG];
+
     Rect full = ui->main_win->portRect;
     mc_fill_color(ui, &full, ui->active_theme.colors[OYK_TR_BG], &qd.white);
 
@@ -364,13 +514,18 @@ static void mc_draw_main_console(OykMacUiState* ui) {
     Rect pill_r;
     SetRect(&pill_r, static_cast<short>(w - (compact ? 82 : 122)), 6,
             static_cast<short>(w - 8), 22);
-    mc_fill_color(ui, &pill_r,
-                  ui->node->accept_incoming() ? ui->active_theme.colors[OYK_TR_OK]
-                                              : ui->active_theme.colors[OYK_TR_ERROR],
-                  &qd.white);
+    oyk_u32 pill_bg = ui->node->accept_incoming() ? ui->active_theme.colors[OYK_TR_OK]
+                                                  : ui->active_theme.colors[OYK_TR_ERROR];
+    mc_fill_color(ui, &pill_r, pill_bg, &qd.white);
+    if (ui->has_color) {
+        mc_set_fg(ui, (mc_luma(pill_bg) < 140UL) ? 0xFFFFFFUL : 0x000000UL);
+    } else {
+        ForeColor(blackColor);
+    }
+    mc_draw_text(pill_r.left + 4, 17, pill);
     ForeColor(blackColor);
     FrameRect(&pill_r);
-    mc_draw_text(pill_r.left + 4, 17, pill);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
     mc_add_hit(ui, pill_r, MC_HIT_TOGGLE_INCOMING, 0);
 
     /* Side-by-side: Interfaces (left) & Last 5 New Callsigns Heard (right) */
@@ -497,6 +652,9 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
     int scr = ui->active_screen;
     const char* title = oyk_gui_screen_title(scr);
     if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+
+    ++ui->modal_draw_count;
+    ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
 
     mc_draw_modal_frame(ui, mw, mh, title, &box);
     int lx = box.left + 14;
@@ -773,8 +931,8 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             FrameRect(&sw);
             mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
         }
-        mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
-        mc_draw_button(ui, box.right - 92, by, 78, 20, "Apply", 1, MC_HIT_CLOSE_MODAL, 0);
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_THEME_CANCEL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Apply", 1, MC_HIT_THEME_APPLY, 0);
     } else if (scr == OYK_SCR_TERMINAL) {
         mc_draw_text_clip(lx, ty, "Ctrl+A ? Help | Ctrl+A C Conn | Ctrl+A D Disc | Ctrl+A X Close", bw / 6);
         Rect term_r;
@@ -866,6 +1024,14 @@ static void mc_redraw(OykMacUiState* ui) {
     if (ui->active_screen != OYK_SCR_MAIN) {
         mc_draw_modal_content(ui);
     }
+}
+
+static void mc_on_theme_preview(const OykThemeConfig* pal, const char* active_name, void* ctx) {
+    (void)active_name;
+    OykMacUiState* ui = static_cast<OykMacUiState*>(ctx);
+    if (!ui) return;
+    if (pal) ui->active_theme = *pal;
+    mc_redraw(ui);
 }
 
 static void mc_pick_file(OykMacUiState* ui) {
@@ -1122,10 +1288,11 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
 
     ui->draft_cfg = node->config();
     oyk_gui_wiz_init(&ui->wiz, &node->config(), OYK_DRV_ALL);
-    oyk_gui_theme_init(&ui->theme_ctrl, &ui->draft_cfg, 1, ui->has_color ? 1 : 0);
-    if (!ui->has_color) {
-        oyk_gui_theme_select(&ui->theme_ctrl, "light");
-    }
+    OykThemeConfig os_pal;
+    oyk_mac_query_os_native_theme(ui->main_win, ui->has_color, &os_pal);
+    oyk_gui_theme_init(&ui->theme_ctrl, &ui->draft_cfg, 1, os_pal.is_dark_base);
+    oyk_gui_theme_set_os_native(&ui->theme_ctrl, &os_pal);
+    oyk_gui_theme_set_preview_cb(&ui->theme_ctrl, mc_on_theme_preview, ui);
     oyk_term_eol_init(&ui->term_eol, OYK_TERM_EOL_CR, 1);
     mc_sync_menus(ui);
     mc_redraw(ui);
@@ -1170,6 +1337,9 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                             if (hz.kind == MC_HIT_SET_SCREEN) {
                                 ui->active_screen = hz.arg;
                             } else if (hz.kind == MC_HIT_CLOSE_MODAL) {
+                                if (ui->active_screen == OYK_SCR_THEME) {
+                                    oyk_gui_theme_revert(&ui->theme_ctrl);
+                                }
                                 ui->active_screen = OYK_SCR_MAIN;
                             } else if (hz.kind == MC_HIT_TAB) {
                                 ui->settings_tab = hz.arg;
@@ -1187,15 +1357,21 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                             } else if (hz.kind == MC_HIT_FILE_UPLOAD) {
                                 mc_pick_file(ui);
                             } else if (hz.kind == MC_HIT_THEME_NEXT) {
-                                const char* next_t =
-                                    (strcmp(ui->theme_ctrl.active_name, "native") == 0) ? "dark" :
-                                    (strcmp(ui->theme_ctrl.active_name, "dark") == 0) ? "light" : "native";
-                                oyk_gui_theme_select(&ui->theme_ctrl, next_t);
+                                oyk_gui_theme_cycle(&ui->theme_ctrl, 1);
                             } else if (hz.kind == MC_HIT_THEME_PREV) {
-                                const char* prev_t =
-                                    (strcmp(ui->theme_ctrl.active_name, "native") == 0) ? "light" :
-                                    (strcmp(ui->theme_ctrl.active_name, "dark") == 0) ? "native" : "dark";
-                                oyk_gui_theme_select(&ui->theme_ctrl, prev_t);
+                                oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
+                            } else if (hz.kind == MC_HIT_THEME_APPLY) {
+                                mu_copy(ui->draft_cfg.theme_name, sizeof(ui->draft_cfg.theme_name),
+                                        ui->theme_ctrl.active_name);
+                                OykConfigApplyResult tres;
+                                ui->node->apply_config(&ui->draft_cfg, 1, &tres);
+                                mu_copy(ui->theme_ctrl.saved_name, sizeof(ui->theme_ctrl.saved_name),
+                                        ui->theme_ctrl.active_name);
+                                ui->theme_ctrl.dirty = 0;
+                                ui->active_screen = OYK_SCR_MAIN;
+                            } else if (hz.kind == MC_HIT_THEME_CANCEL) {
+                                oyk_gui_theme_revert(&ui->theme_ctrl);
+                                ui->active_screen = OYK_SCR_MAIN;
                             } else if (hz.kind == MC_HIT_QUIT_NOW) {
                                 ui->running = 0;
                             }
@@ -1209,6 +1385,9 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                 if ((ev.modifiers & cmdKey) != 0) {
                     mc_handle_menu(ui, MenuKey(ch));
                 } else if (ch == 0x1B) {
+                    if (ui->active_screen == OYK_SCR_THEME) {
+                        oyk_gui_theme_revert(&ui->theme_ctrl);
+                    }
                     ui->active_screen = OYK_SCR_MAIN;
                     mc_redraw(ui);
                 } else if (ui->active_screen == OYK_SCR_TERMINAL) {
@@ -1260,4 +1439,122 @@ void oyk_mac_ui_show_fatal(const char* msg) {
     mu_c2p(msg ? msg : "Fatal error", ps);
     ParamText(ps, "\p", "\p", "\p");
     Alert(128, NULL);
+}
+
+int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
+                                           OykMacNetState* net,
+                                           int* out_bg_changes,
+                                           int* out_fg_changes) {
+    if (!node || !net) return 0;
+    OykMacUiState* ui = new OykMacUiState();
+    if (!ui) return 0;
+    memset(ui, 0, sizeof(*ui));
+    ui->node = node;
+    ui->net = net;
+    ui->running = 1;
+    ui->active_screen = OYK_SCR_THEME;
+    ui->has_color = net->caps.has_color_qd;
+    ui->scr_w = static_cast<int>(qd.screenBits.bounds.right - qd.screenBits.bounds.left);
+    ui->scr_h = static_cast<int>(qd.screenBits.bounds.bottom - qd.screenBits.bounds.top);
+    if (ui->has_color) {
+        GDHandle gd = GetMainDevice();
+        if (gd) {
+            ui->scr_w = static_cast<int>((**gd).gdRect.right - (**gd).gdRect.left);
+            ui->scr_h = static_cast<int>((**gd).gdRect.bottom - (**gd).gdRect.top);
+        }
+    }
+
+    Rect wrect;
+    SetRect(&wrect, 4, 22, static_cast<short>(ui->scr_w - 4),
+            static_cast<short>(ui->scr_h - 4));
+    if (ui->has_color) {
+        ui->main_win = NewCWindow(NULL, &wrect, "\pOYK Theme Test", true, noGrowDocProc,
+                                  reinterpret_cast<WindowPtr>(-1L), false, 0L);
+    } else {
+        ui->main_win = NewWindow(NULL, &wrect, "\pOYK Theme Test", true, noGrowDocProc,
+                                 reinterpret_cast<WindowPtr>(-1L), false, 0L);
+    }
+    if (!ui->main_win) {
+        delete ui;
+        return 0;
+    }
+
+    ui->draft_cfg = node->config();
+    OykThemeConfig os_pal;
+    oyk_mac_query_os_native_theme(ui->main_win, ui->has_color, &os_pal);
+    oyk_gui_theme_init(&ui->theme_ctrl, &ui->draft_cfg, 1, os_pal.is_dark_base);
+    oyk_gui_theme_set_os_native(&ui->theme_ctrl, &os_pal);
+    oyk_gui_theme_set_preview_cb(&ui->theme_ctrl, mc_on_theme_preview, ui);
+    mc_redraw(ui);
+
+    int ok = 1;
+    if (strcmp(ui->theme_ctrl.active_name, "native") != 0) ok = 0;
+
+    int bg_changes = 0;
+    int fg_changes = 0;
+    oyk_u32 prev_cbg = ui->last_console_bg;
+    oyk_u32 prev_mbg = ui->last_modal_bg;
+    int prev_cdraw = ui->console_draw_count;
+    int prev_mdraw = ui->modal_draw_count;
+    RGBColor prev_cpx = {0, 0, 0};
+    RGBColor prev_mpx = {0, 0, 0};
+    if (ui->has_color) {
+        SetPort(ui->main_win);
+        GetCPixel(12, 32, &prev_cpx);
+        GetCPixel(static_cast<short>(ui->scr_w / 2), static_cast<short>(ui->scr_h / 2), &prev_mpx);
+    }
+
+    const char* seq[4] = { "dark", "light", NULL, "native" };
+    char terr[64];
+    for (int i = 0; i < 4; ++i) {
+        if (seq[i]) {
+            oyk_gui_theme_select(&ui->theme_ctrl, seq[i]);
+        } else {
+            oyk_gui_theme_set_role_rgb(&ui->theme_ctrl, OYK_TR_BG, 0x334455UL,
+                                       terr, sizeof(terr));
+        }
+        if (ui->console_draw_count > prev_cdraw && ui->last_console_bg != prev_cbg) {
+            if (ui->has_color) {
+                RGBColor cur_cpx;
+                SetPort(ui->main_win);
+                GetCPixel(12, 32, &cur_cpx);
+                if (memcmp(&cur_cpx, &prev_cpx, sizeof(RGBColor)) != 0) ++bg_changes;
+                prev_cpx = cur_cpx;
+            } else {
+                ++bg_changes;
+            }
+        }
+        if (ui->modal_draw_count > prev_mdraw && ui->last_modal_bg != prev_mbg) {
+            if (ui->has_color) {
+                RGBColor cur_mpx;
+                SetPort(ui->main_win);
+                GetCPixel(static_cast<short>(ui->scr_w / 2), static_cast<short>(ui->scr_h / 2), &cur_mpx);
+                if (memcmp(&cur_mpx, &prev_mpx, sizeof(RGBColor)) != 0) ++fg_changes;
+                prev_mpx = cur_mpx;
+            } else {
+                ++fg_changes;
+            }
+        }
+        prev_cbg = ui->last_console_bg;
+        prev_mbg = ui->last_modal_bg;
+        prev_cdraw = ui->console_draw_count;
+        prev_mdraw = ui->modal_draw_count;
+    }
+
+    /* Switch to light then revert via Cancel path back to native */
+    oyk_gui_theme_select(&ui->theme_ctrl, "light");
+    oyk_gui_theme_revert(&ui->theme_ctrl);
+    if (strcmp(ui->theme_ctrl.active_name, "native") != 0 ||
+        ui->last_console_bg != os_pal.colors[OYK_TR_BG] ||
+        ui->last_modal_bg != os_pal.colors[OYK_TR_BG]) {
+        ok = 0;
+    }
+
+    if (out_bg_changes) *out_bg_changes = bg_changes;
+    if (out_fg_changes) *out_fg_changes = fg_changes;
+    if (bg_changes < 4 || fg_changes < 4) ok = 0;
+
+    DisposeWindow(ui->main_win);
+    delete ui;
+    return ok;
 }

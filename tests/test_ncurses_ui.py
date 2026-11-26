@@ -455,13 +455,30 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
-            # 8b. Theme Settings Modal (close via SGR top-right [X] mouse click)
+            # 8b. Theme Settings Modal (live preview whole-screen repaint + [X] close)
             os.write(master_fd, b"h")
             drain_and_wait(master_fd, scr, "Theme Settings")
             drain_quiet(master_fd, scr, 0.15)
             theme_txt = scr.text()
             assert "[X]" in theme_txt.splitlines()[2], f"Missing [X] close button in Theme modal title bar:\n{theme_txt}"
             save_cap(cap_dir, "theme", scr)
+
+            # Switch dark -> light and confirm BOTH background console & foreground modal change bg
+            dark_bg_cell = scr.grid[10][1][2]
+            dark_dlg_cell = scr.grid[5][7][2]
+            os.write(master_fd, b"\x1bOC")
+            drain_and_wait(master_fd, scr, "Previewing 'light'")
+            drain_quiet(master_fd, scr, 0.1)
+            light_bg_cell = scr.grid[10][1][2]
+            light_dlg_cell = scr.grid[5][7][2]
+            assert light_bg_cell != dark_bg_cell, f"Background console did not repaint on theme switch ({dark_bg_cell} -> {light_bg_cell})"
+            assert light_dlg_cell != dark_dlg_cell, f"Foreground Theme modal did not repaint on theme switch ({dark_dlg_cell} -> {light_dlg_cell})"
+            os.write(master_fd, b"\x1bOD")
+            drain_and_wait(master_fd, scr, "Previewing 'dark'")
+            drain_quiet(master_fd, scr, 0.1)
+            assert scr.grid[10][1][2] == dark_bg_cell, "Background console did not revert on dark switch"
+            assert scr.grid[5][7][2] == dark_dlg_cell, "Foreground modal did not revert on dark switch"
+
             os.write(master_fd, b"\x1b[<0;74;3M\x1b[<0;74;3m")
             drain_and_wait(master_fd, scr, "Radio Interfaces")
             assert "Theme Settings" not in scr.text(), f"Theme modal did not close on [X] click:\n{scr.text()}"

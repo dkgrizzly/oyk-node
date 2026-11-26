@@ -126,10 +126,77 @@ static void test_add_iface_wizard_and_theme_ctrl() {
     printf("[PASS] test_add_iface_wizard_and_theme_ctrl\n");
 }
 
+struct TestPreviewLog {
+    int calls;
+    char last_name[32];
+    oyk_u32 last_bg;
+    oyk_u32 last_fg;
+};
+
+static void on_test_theme_preview(const OykThemeConfig* pal, const char* active_name, void* ctx) {
+    TestPreviewLog* pl = static_cast<TestPreviewLog*>(ctx);
+    if (!pl || !pal) return;
+    ++pl->calls;
+    strcpy(pl->last_name, active_name ? active_name : "");
+    pl->last_bg = pal->colors[OYK_TR_BG];
+    pl->last_fg = pal->colors[OYK_TR_FG];
+}
+
+static void test_native_os_theme_and_full_screen_preview() {
+    OykConfig cfg;
+    oyk_config_init_default(&cfg);
+
+    OykThemeConfig os_pal;
+    oyk_theme_init_builtin(&os_pal, 1);
+    strcpy(os_pal.name, "native");
+    os_pal.is_dark_base = 0;
+    os_pal.colors[OYK_TR_BG] = 0xEFEFEFUL;
+    os_pal.colors[OYK_TR_FG] = 0x111111UL;
+    os_pal.colors[OYK_TR_ACCENT] = 0x3366CCUL;
+
+    OykGuiThemeCtrl tc;
+    TestPreviewLog log;
+    memset(&log, 0, sizeof(log));
+    oyk_gui_theme_init(&tc, &cfg, 1, 0);
+    assert(strcmp(tc.active_name, "native") == 0);
+    oyk_gui_theme_set_preview_cb(&tc, on_test_theme_preview, &log);
+    oyk_gui_theme_set_os_native(&tc, &os_pal);
+    assert(log.calls == 1);
+    assert(log.last_bg == 0xEFEFEFUL && log.last_fg == 0x111111UL);
+
+    /* Cloning from native preserves OS-sourced colors */
+    char err[96];
+    assert(oyk_gui_theme_set_role_hex(&tc, OYK_TR_ACCENT, "#AA2244", err, sizeof(err)));
+    assert(strcmp(tc.active_name, "custom-light") == 0);
+    assert(log.calls == 2);
+    assert(log.last_bg == 0xEFEFEFUL);
+
+    /* Cycling touches every theme: custom-light -> native -> dark -> light */
+    oyk_gui_theme_cycle(&tc, 1);
+    assert(strcmp(tc.active_name, "native") == 0);
+    assert(log.last_bg == 0xEFEFEFUL);
+
+    oyk_gui_theme_cycle(&tc, 1);
+    assert(strcmp(tc.active_name, "dark") == 0);
+    assert(log.last_bg != 0xEFEFEFUL);
+
+    oyk_gui_theme_cycle(&tc, 1);
+    assert(strcmp(tc.active_name, "light") == 0);
+
+    /* Revert restores initial "native" and fires whole-screen preview callback */
+    int before = log.calls;
+    oyk_gui_theme_revert(&tc);
+    assert(log.calls == before + 1);
+    assert(strcmp(tc.active_name, "native") == 0);
+    assert(log.last_bg == 0xEFEFEFUL);
+    printf("[PASS] test_native_os_theme_and_full_screen_preview\n");
+}
+
 int main() {
     test_menus_titles_tabs_and_tables();
     test_banners_exit_prompt_and_validation();
     test_add_iface_wizard_and_theme_ctrl();
+    test_native_os_theme_and_full_screen_preview();
     printf("All oyk_gui middleware tests passed!\n");
     return 0;
 }

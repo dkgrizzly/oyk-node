@@ -4417,11 +4417,11 @@ static void run_dos_theme_dialog() {
         }
 
         OykThemeConfig pal;
+        strncpy(draft.theme_name, active, sizeof(draft.theme_name) - 1);
+        draft.theme_name[sizeof(draft.theme_name) - 1] = '\0';
         if (strcmp(active, "native") == 0 || strcmp(active, "NATIVE") == 0) {
             oyk_theme_init_dos_native(&pal);
         } else {
-            strncpy(draft.theme_name, active, sizeof(draft.theme_name) - 1);
-            draft.theme_name[sizeof(draft.theme_name) - 1] = '\0';
             oyk_theme_resolve_effective(&draft, 0, 1, &pal);
         }
 

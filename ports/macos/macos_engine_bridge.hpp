@@ -136,4 +136,8 @@ private:
     OykMacOsEngine& operator=(const OykMacOsEngine&);
 };
 
+void oyk_macos_build_os_native_theme(int is_dark,
+                                     const oyk_u32* os_colors_19,
+                                     OykThemeConfig* out_pal);
+
 #endif /* OYK_MACOS_ENGINE_BRIDGE_HPP */

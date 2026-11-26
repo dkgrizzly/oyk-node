@@ -5,7 +5,7 @@
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, and **Classic Macintosh**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, and **macOS**.
 
 ## Port Contact Sheets
 

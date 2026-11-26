@@ -895,8 +895,11 @@ void NcursesUI::modal_theme() {
         if (!has_colors_) return;
         apply_theme_palette(active_palette());
         draw_screen(engine_.snapshot());
+        touchwin(stdscr);
+        wnoutrefresh(stdscr);
         shadow.capture();
         wbkgd(win, COLOR_PAIR(CP_BASE));
+        touchwin(win);
     };
 
     auto prompt_hex = [&](const std::string& label, std::string& val_io) -> bool {

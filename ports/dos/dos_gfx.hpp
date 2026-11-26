@@ -59,6 +59,7 @@ struct OykDosGfx {
     oyk_u32 hw_palette16[16];
     int hw_palette_valid;
     oyk_u32 hw_palette_writes;
+    int palette_dirty;
     int has_custom_theme;
 
     oyk_u16* prev_cells;

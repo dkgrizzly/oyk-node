@@ -355,6 +355,9 @@ void dos_gfx_set_theme(OykDosGfx* g, const OykThemeConfig* tc, int is_native) {
     }
     int changed = (!g->hw_palette_valid ||
                    memcmp(g->hw_palette16, g->palette16, sizeof(g->palette16)) != 0);
+    if (changed) {
+        g->palette_dirty = 1;
+    }
     program_hardware_palette(g);
     if (changed) {
         fill_remainder_band(g);
@@ -581,6 +584,7 @@ static void gfx_reset_state(OykDosGfx* g) {
     memset(g->hw_palette16, 0, sizeof(g->hw_palette16));
     g->hw_palette_valid = 0;
     g->hw_palette_writes = 0;
+    g->palette_dirty = 0;
     g->has_custom_theme = 0;
     g->prev_cells = NULL;
     g->cell_fg_rgb = NULL;
@@ -1023,17 +1027,18 @@ static void dos_wait_vretrace() {
 
 void dos_gfx_present(OykDosGfx* g, const oyk_u16* vram, int force_all) {
     if (!g || !g->active || !vram || !g->prev_cells) return;
+    int full = (force_all || g->palette_dirty) ? 1 : 0;
 
     int cur_moved = (g->cursor_visible != g->prev_cursor_visible ||
                      g->cursor_x != g->prev_cursor_x ||
                      g->cursor_y != g->prev_cursor_y);
 
     if (g->sim_mode) {
-        if (force_all) fill_remainder_band(g);
+        if (full) fill_remainder_band(g);
         for (int row = 0; row < g->rows; ++row) {
             for (int col = 0; col < g->cols; ++col) {
                 int idx = row * g->cols + col;
-                int dirty = force_all || cur_moved ||
+                int dirty = full || cur_moved ||
                             (vram[idx] != g->prev_cells[idx]) ||
                             (g->shadow_mask[idx] != g->prev_shadow_mask[idx]);
                 if (dirty) {
@@ -1045,7 +1050,7 @@ void dos_gfx_present(OykDosGfx* g, const oyk_u16* vram, int force_all) {
     } else {
 #if defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS)
         static GfxRunCell run_cells[OYK_DOS_VID_MAX_COLS];
-        if (force_all) fill_remainder_band(g);
+        if (full) fill_remainder_band(g);
         int step_px = (g->bpp == 32) ? 4 : (g->bpp == 24 ? 3 : ((g->bpp == 16 || g->bpp == 15) ? 2 : 1));
         for (int row = 0; row < g->rows; ++row) {
             oyk_u8 row_dirty_cols[OYK_DOS_VID_MAX_COLS];
@@ -1057,7 +1062,7 @@ void dos_gfx_present(OykDosGfx* g, const oyk_u16* vram, int force_all) {
 
             for (int col = 0; col < g->cols; ++col) {
                 int idx = row * g->cols + col;
-                int d = force_all ||
+                int d = full ||
                         (vram[idx] != g->prev_cells[idx]) ||
                         (g->shadow_mask[idx] != g->prev_shadow_mask[idx]);
                 if (!d && cur_moved && (touches_old_cur || touches_new_cur)) {
@@ -1103,6 +1108,7 @@ void dos_gfx_present(OykDosGfx* g, const oyk_u16* vram, int force_all) {
     g->prev_cursor_x = g->cursor_x;
     g->prev_cursor_y = g->cursor_y;
     g->prev_cursor_visible = g->cursor_visible;
+    g->palette_dirty = 0;
 }
 
 int dos_gfx_smooth_scroll(OykDosGfx* g,

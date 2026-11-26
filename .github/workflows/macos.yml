@@ -35,7 +35,11 @@ jobs:
           APP_BUNDLE="$(find build-macos -maxdepth 3 -name 'OYK Node.app' | head -n 1)"
           if [ -n "$APP_BUNDLE" ]; then
             hdiutil create -volname "OYK Node" -srcfolder "$APP_BUNDLE" -ov -format UDZO dist-macos/OYK-Node-macOS-Universal.dmg
-            OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR=/tmp/macos_caps "$APP_BUNDLE/Contents/MacOS/OYK Node" || true
+            OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR=/tmp/macos_caps "$APP_BUNDLE/Contents/MacOS/OYK Node" | tee /tmp/macos_ui.log
+            grep -q "MACOS_THEME_PREVIEW_TEST_PASS" /tmp/macos_ui.log
+            for flow in main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files; do
+              test -s "/tmp/macos_caps/macos_${flow}.png"
+            done
             ls -lh /tmp/macos_caps
           fi
 

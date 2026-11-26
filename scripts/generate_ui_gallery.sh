@@ -154,6 +154,34 @@ else
     echo "Warning: Retro68 or Mini vMac binaries unavailable; skipping Classic Macintosh capture." >&2
 fi
 
+echo "[8/8] Capturing modern macOS (Cocoa) screens..."
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    MACOS_APP=""
+    for cand in "${ROOT_DIR}/build-macos" "${ROOT_DIR}/build"; do
+        MACOS_APP="$(find "${cand}" -maxdepth 3 -name 'OYK Node.app' 2>/dev/null | head -n 1 || true)"
+        [[ -n "${MACOS_APP}" ]] && break
+    done
+    if [[ -n "${MACOS_APP}" && -x "${MACOS_APP}/Contents/MacOS/OYK Node" ]]; then
+        OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR="${TMP_CAP}" \
+            "${MACOS_APP}/Contents/MacOS/OYK Node" --config "${TMP_WORK}/node.cfg" \
+            || echo "Warning: macOS UI capture exited non-zero." >&2
+    else
+        echo "Warning: OYK Node.app not built on macOS; skipping native capture." >&2
+    fi
+elif [[ -n "${OYK_MACOS_CAPTURE_DIR:-}" && -d "${OYK_MACOS_CAPTURE_DIR}" ]]; then
+    for mf in "${OYK_MACOS_CAPTURE_DIR}"/macos_*.png; do
+        [[ -e "${mf}" ]] || continue
+        [[ "$(basename "${mf}")" == "macos_contact_sheet.png" ]] && continue
+        cp -f "${mf}" "${TMP_CAP}/"
+    done
+else
+    for mf in "${OUT_IMG_DIR}"/macos_*.png; do
+        [[ -e "${mf}" ]] || continue
+        [[ "$(basename "${mf}")" == "macos_contact_sheet.png" ]] && continue
+        cp -f "${mf}" "${TMP_CAP}/"
+    done
+fi
+
 echo "Validating cross-TUI layout parity..."
 PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${TMP_CAP}"
 
@@ -161,7 +189,7 @@ echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
-PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color)
+PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -193,6 +221,13 @@ for f in "${TMP_CAP}"/android_*.png; do
     PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 520 520
 done
 
+for f in "${TMP_CAP}"/macos_*.png; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ "${base}" == "macos_contact_sheet.png" ]] && continue
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 720 520
+done
+
 port_label() {
     case "$1" in
         ncurses)  echo "POSIX ncurses" ;;
@@ -205,6 +240,7 @@ port_label() {
         android)          echo "Android (Material 3 / Jetpack Compose)" ;;
         macclassic_bw)    echo "Classic Macintosh (System 6.0.8 B&W 512x342)" ;;
         macclassic_color) echo "Classic Macintosh (Color QuickDraw 640x480)" ;;
+        macos)            echo "macOS (Cocoa / Universal ARM64 + Intel + PowerPC)" ;;
     esac
 }
 
@@ -268,7 +304,7 @@ done
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, and **Classic Macintosh**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, and **macOS**.
 
 ## Port Contact Sheets
 

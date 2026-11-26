@@ -1593,6 +1593,7 @@ void PicoConsole::open_theme_dialog() {
     wiz_err_[0] = '\0';
     pico_str_copy(wiz_desc_, sizeof(wiz_desc_),
                   draft_.theme_name[0] ? draft_.theme_name : "dark");
+    pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
     render();
 }
 
@@ -2926,7 +2927,11 @@ void PicoConsole::handle_ban_key(int key) {
         } else if (key == 'n' || key == 'N' || key == PK_ESC) wiz_btn_ = 0;
         render(); return;
     }
-    if (key == PK_ESC) { prompt_kind_ = PICO_PROMPT_NONE; render(); return; }
+    if (key == PK_ESC) {
+        prompt_kind_ = PICO_PROMPT_NONE;
+        render();
+        return;
+    }
     if (key == PK_TAB) { wiz_focus_ = (wiz_focus_ + 1) % (bcnt > 0 ? 5 : 4); render(); return; }
     if (wiz_focus_ == 4) {
         if (key == PK_UP && wiz_edit_idx_ > 0) --wiz_edit_idx_;
@@ -3021,7 +3026,11 @@ void PicoConsole::handle_theme_key(int key) {
         }
         return;
     }
-    if (key == PK_ESC) { prompt_kind_ = PICO_PROMPT_NONE; render(); return; }
+    if (key == PK_ESC) {
+        prompt_kind_ = PICO_PROMPT_NONE;
+        render();
+        return;
+    }
     if (key == PK_UP) { wiz_edit_idx_ = (wiz_edit_idx_ + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT; render(); return; }
     if (key == PK_DOWN) { wiz_edit_idx_ = (wiz_edit_idx_ + 1) % OYK_THEME_COLOR_COUNT; render(); return; }
     if (key == PK_LEFT || key == PK_RIGHT) {
@@ -3070,7 +3079,11 @@ void PicoConsole::handle_modal_key(int key) {
     if (prompt_kind_ == PICO_PROMPT_BAN_CALL) { handle_ban_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_THEME) { handle_theme_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) {
-        if (key == PK_ESC) { prompt_kind_ = PICO_PROMPT_NONE; render(); return; }
+        if (key == PK_ESC) {
+        prompt_kind_ = PICO_PROMPT_NONE;
+        render();
+        return;
+    }
         if (key == PK_ENTER) {
             if (pico_fs_format_storage(prompt_buf_)) strcpy(status_fb_, "Storage formatted.");
             else strcpy(status_fb_, "Format aborted (must type FORMAT).");

@@ -2369,6 +2369,7 @@ OYK_FLASHMEM void TinyTmuxConsole::open_theme_dialog() {
     wiz_err_[0] = '\0';
     con_str_copy(wiz_desc_, sizeof(wiz_desc_),
                  draft_.theme_name[0] ? draft_.theme_name : "dark");
+    con_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
     render();
 }
 

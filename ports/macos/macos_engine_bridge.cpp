@@ -21,6 +21,64 @@
 #  include <ctime>
 #endif
 
+void oyk_macos_build_os_native_theme(int is_dark,
+                                     const oyk_u32* os_colors_19,
+                                     OykThemeConfig* out_pal) {
+    if (!out_pal) return;
+    memset(out_pal, 0, sizeof(*out_pal));
+    oyk_theme_init_builtin(out_pal, is_dark ? 0 : 1);
+    out_pal->is_dark_base = is_dark ? 1 : 0;
+    memcpy(out_pal->name, "native", 7);
+
+    if (is_dark) {
+        out_pal->colors[OYK_TR_BG]           = 0x1E1E1EUL;
+        out_pal->colors[OYK_TR_FG]           = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_PANEL_BG]     = 0x262626UL;
+        out_pal->colors[OYK_TR_PANEL_FG]     = 0xE5E5E5UL;
+        out_pal->colors[OYK_TR_HEADER_BG]    = 0x323232UL;
+        out_pal->colors[OYK_TR_HEADER_FG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_STATUS_BG]    = 0x262626UL;
+        out_pal->colors[OYK_TR_STATUS_FG]    = 0xA6A6A6UL;
+        out_pal->colors[OYK_TR_BORDER]       = 0x4A4A4AUL;
+        out_pal->colors[OYK_TR_ACCENT]       = 0x0A84FFUL;
+        out_pal->colors[OYK_TR_SELECTION_BG] = 0x0A84FFUL;
+        out_pal->colors[OYK_TR_SELECTION_FG] = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_BUTTON_BG]    = 0x3A3A3CUL;
+        out_pal->colors[OYK_TR_BUTTON_FG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_INPUT_BG]     = 0x141414UL;
+        out_pal->colors[OYK_TR_INPUT_FG]     = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_OK]           = 0x30D158UL;
+        out_pal->colors[OYK_TR_WARN]         = 0xFF9F0AUL;
+        out_pal->colors[OYK_TR_ERROR]        = 0xFF453AUL;
+    } else {
+        out_pal->colors[OYK_TR_BG]           = 0xECECECUL;
+        out_pal->colors[OYK_TR_FG]           = 0x000000UL;
+        out_pal->colors[OYK_TR_PANEL_BG]     = 0xF5F5F5UL;
+        out_pal->colors[OYK_TR_PANEL_FG]     = 0x262626UL;
+        out_pal->colors[OYK_TR_HEADER_BG]    = 0xE2E2E2UL;
+        out_pal->colors[OYK_TR_HEADER_FG]    = 0x000000UL;
+        out_pal->colors[OYK_TR_STATUS_BG]    = 0xE6E6E6UL;
+        out_pal->colors[OYK_TR_STATUS_FG]    = 0x595959UL;
+        out_pal->colors[OYK_TR_BORDER]       = 0xC6C6C6UL;
+        out_pal->colors[OYK_TR_ACCENT]       = 0x007AFFUL;
+        out_pal->colors[OYK_TR_SELECTION_BG] = 0xB3D7FFUL;
+        out_pal->colors[OYK_TR_SELECTION_FG] = 0x000000UL;
+        out_pal->colors[OYK_TR_BUTTON_BG]    = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_BUTTON_FG]    = 0x000000UL;
+        out_pal->colors[OYK_TR_INPUT_BG]     = 0xFFFFFFUL;
+        out_pal->colors[OYK_TR_INPUT_FG]     = 0x000000UL;
+        out_pal->colors[OYK_TR_OK]           = 0x28CD41UL;
+        out_pal->colors[OYK_TR_WARN]         = 0xFF9500UL;
+        out_pal->colors[OYK_TR_ERROR]        = 0xFF3B30UL;
+    }
+
+    if (os_colors_19) {
+        for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+            out_pal->colors[i] = (os_colors_19[i] & 0x00FFFFFFUL);
+        }
+    }
+}
+
 static void mb_copy(char* dst, size_t cap, const char* src) {
     if (!dst || cap == 0) return;
     if (!src) { dst[0] = '\0'; return; }
@@ -512,7 +570,8 @@ int OykMacOsEngine::init_and_start(const char* config_path, int seed_demo_data,
         std::string bmsg;
         impl_->engine->ban_callsign_with_lift_spec(
             "W9SPAM-9", "7d", &bmsg, false, 1U, "Flooding");
-        impl_->engine->logger().info("macOS native C++20 NodeEngine started");
+        impl_->engine->logger().log(oyk::node::LOG_INFO,
+                                    "macOS native C++20 NodeEngine started");
     }
     return 1;
 }
@@ -582,9 +641,9 @@ void OykMacOsEngine::get_snapshot(OykMacOsSnapshot* out) const {
     if (out->ban_count > 16) out->ban_count = 16;
     for (int i = 0; i < out->ban_count; ++i) {
         const oyk::node::BanEntry& b = snap.ban_entries[static_cast<size_t>(i)];
-        mb_copy(out->bans[i].callsign, sizeof(out->bans[i].callsign), b.callsign.c_str());
-        mb_copy(out->bans[i].banned_at, sizeof(out->bans[i].banned_at), b.banned_at.c_str());
-        mb_copy(out->bans[i].lift_at, sizeof(out->bans[i].lift_at), b.lift_at.c_str());
+        mb_copy(out->bans[i].callsign, sizeof(out->bans[i].callsign), b.key.c_str());
+        mb_copy(out->bans[i].banned_at, sizeof(out->bans[i].banned_at), b.format_banned_at().c_str());
+        mb_copy(out->bans[i].lift_at, sizeof(out->bans[i].lift_at), b.format_lift_at().c_str());
         out->bans[i].flags = b.flags;
         mb_copy(out->bans[i].reason, sizeof(out->bans[i].reason), b.reason.c_str());
     }
@@ -602,7 +661,7 @@ void OykMacOsEngine::get_snapshot(OykMacOsSnapshot* out) const {
                 pend[static_cast<size_t>(i)].uploader.c_str());
         mb_copy(out->pending[i].filename, sizeof(out->pending[i].filename),
                 pend[static_cast<size_t>(i)].filename.c_str());
-        out->pending[i].size = static_cast<oyk_u32>(pend[static_cast<size_t>(i)].size);
+        out->pending[i].size = static_cast<oyk_u32>(pend[static_cast<size_t>(i)].size_bytes);
     }
     const auto appr = impl_->engine->list_approved_files();
     out->approved_count = static_cast<int>(appr.size());
@@ -610,7 +669,7 @@ void OykMacOsEngine::get_snapshot(OykMacOsSnapshot* out) const {
     for (int i = 0; i < out->approved_count; ++i) {
         mb_copy(out->approved[i].rel_path, sizeof(out->approved[i].rel_path),
                 appr[static_cast<size_t>(i)].rel_path.c_str());
-        out->approved[i].size = static_cast<oyk_u32>(appr[static_cast<size_t>(i)].size);
+        out->approved[i].size = static_cast<oyk_u32>(appr[static_cast<size_t>(i)].size_bytes);
     }
     out->auto_learned_count = static_cast<int>(impl_->engine->auto_learned_peer_count());
 }
@@ -668,7 +727,7 @@ int OykMacOsEngine::open_local_terminal(const char* port_id, const char* target_
         return 0;
     }
     if (sess_id_out) *sess_id_out = static_cast<oyk_u32>(sid64);
-    if (resolved_out) mb_copy(resolved_out, rcap, rcs.to_string().c_str());
+    if (resolved_out) mb_copy(resolved_out, rcap, rcs.str().c_str());
     return 1;
 }
 
@@ -731,7 +790,9 @@ void OykMacOsEngine::discard_auto_learned() {
 
 void OykMacOsEngine::log_message(oyk_u32 level, const char* text) {
     (void)level;
-    if (impl_ && impl_->engine && text) impl_->engine->logger().info(text);
+    if (impl_ && impl_->engine && text) {
+        impl_->engine->logger().log(oyk::node::LOG_INFO, text);
+    }
 }
 
 #endif

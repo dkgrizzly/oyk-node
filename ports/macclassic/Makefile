@@ -35,6 +35,7 @@ APP_SRCS := \
 
 TEST_SRCS := \
 	test_macclassic.cpp \
+	mac_ui.cpp \
 	mac_net.cpp \
 	mac_capture.cpp \
 	$(CORE_SRCS)

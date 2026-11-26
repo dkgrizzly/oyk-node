@@ -1794,6 +1794,42 @@ static void test_dos_gfx_renderer_and_smooth_scroll() {
     dos_vid_flush(vid);
     int steps = dos_gfx_smooth_scroll(g, v2, v1, 5, 11, 4, 28, 1);
     assert(steps >= 3);
+
+    /* Verify live theme preview repaints BOTH background console & foreground modal on every switch */
+    OykThemeConfig pal_light;
+    oyk_theme_init_builtin(&pal_light, 1);
+    OykThemeConfig pal_native;
+    oyk_theme_init_dos_native(&pal_native);
+    OykThemeConfig pal_custom = tc;
+    pal_custom.colors[OYK_TR_BG] = 0x283448UL;
+    pal_custom.colors[OYK_TR_PANEL_BG] = 0x384858UL;
+
+    dos_gfx_present(g, v1, 0);
+    const size_t bg_off = ((2 * 16 + 2) * 640 + (2 * 8 + 2)) * 3U;
+    const size_t mdl_off = ((6 * 16 + 2) * 640 + (15 * 8 + 2)) * 3U;
+    oyk_u8 bg_dark[3] = { g->sim_rgb[bg_off], g->sim_rgb[bg_off + 1], g->sim_rgb[bg_off + 2] };
+    oyk_u8 mdl_dark[3] = { g->sim_rgb[mdl_off], g->sim_rgb[mdl_off + 1], g->sim_rgb[mdl_off + 2] };
+
+    /* 1. dark -> light (with force_all = 0: palette_dirty must repaint entire screen) */
+    dos_gfx_set_theme(g, &pal_light, 0);
+    dos_gfx_present(g, v1, 0);
+    assert(memcmp(&g->sim_rgb[bg_off], bg_dark, 3) != 0);
+    assert(memcmp(&g->sim_rgb[mdl_off], mdl_dark, 3) != 0);
+    oyk_u8 bg_light[3] = { g->sim_rgb[bg_off], g->sim_rgb[bg_off + 1], g->sim_rgb[bg_off + 2] };
+    oyk_u8 mdl_light[3] = { g->sim_rgb[mdl_off], g->sim_rgb[mdl_off + 1], g->sim_rgb[mdl_off + 2] };
+
+    /* 2. light -> native */
+    dos_gfx_set_theme(g, &pal_native, 1);
+    dos_gfx_present(g, v1, 0);
+    assert(memcmp(&g->sim_rgb[bg_off], bg_light, 3) != 0);
+    assert(memcmp(&g->sim_rgb[mdl_off], mdl_light, 3) != 0);
+
+    /* 3. native -> custom */
+    dos_gfx_set_theme(g, &pal_custom, 0);
+    dos_gfx_present(g, v1, 0);
+    assert(g->sim_rgb[bg_off] == 0x28U && g->sim_rgb[bg_off + 1] == 0x34U && g->sim_rgb[bg_off + 2] == 0x48U);
+    assert(g->sim_rgb[mdl_off] == 0x38U && g->sim_rgb[mdl_off + 1] == 0x48U && g->sim_rgb[mdl_off + 2] == 0x58U);
+
     assert(dos_gfx_write_bmp(g, "/tmp/oyk_test_dos_gfx.bmp") == 1);
     remove("/tmp/oyk_test_dos_gfx.bmp");
 

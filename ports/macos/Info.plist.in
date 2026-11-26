@@ -7,7 +7,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>oyk-node-macos</string>
+    <string>OYK Node</string>
     <key>CFBundleIdentifier</key>
     <string>net.kr4oyk.oyk-node</string>
     <key>CFBundleInfoDictionaryVersion</key>

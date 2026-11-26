@@ -250,6 +250,50 @@ static int win_os_prefers_dark() {
     return 0;
 }
 
+static oyk_u32 win_rgb_from_syscolor(int sys_idx) {
+    COLORREF c = GetSysColor(sys_idx);
+    return ((static_cast<oyk_u32>(GetRValue(c)) & 0xFFUL) << 16) |
+           ((static_cast<oyk_u32>(GetGValue(c)) & 0xFFUL) << 8) |
+           (static_cast<oyk_u32>(GetBValue(c)) & 0xFFUL);
+}
+
+static void win_query_os_native_theme(OykThemeConfig* out_pal) {
+    if (!out_pal) return;
+    int os_dark = win_os_prefers_dark();
+    oyk_theme_init_builtin(out_pal, os_dark ? 0 : 1);
+    strcpy(out_pal->name, "native");
+    out_pal->is_dark_base = os_dark ? 1 : 0;
+    if (!os_dark) {
+        out_pal->colors[OYK_TR_BG]           = win_rgb_from_syscolor(COLOR_WINDOW);
+        out_pal->colors[OYK_TR_FG]           = win_rgb_from_syscolor(COLOR_WINDOWTEXT);
+        out_pal->colors[OYK_TR_PANEL_BG]     = win_rgb_from_syscolor(COLOR_BTNFACE);
+        out_pal->colors[OYK_TR_PANEL_FG]     = win_rgb_from_syscolor(COLOR_BTNTEXT);
+        out_pal->colors[OYK_TR_HEADER_BG]    = win_rgb_from_syscolor(COLOR_ACTIVECAPTION);
+        out_pal->colors[OYK_TR_HEADER_FG]    = win_rgb_from_syscolor(COLOR_CAPTIONTEXT);
+        out_pal->colors[OYK_TR_STATUS_BG]    = win_rgb_from_syscolor(COLOR_BTNFACE);
+        out_pal->colors[OYK_TR_STATUS_FG]    = win_rgb_from_syscolor(COLOR_BTNTEXT);
+        out_pal->colors[OYK_TR_BORDER]       = win_rgb_from_syscolor(COLOR_BTNSHADOW);
+        out_pal->colors[OYK_TR_ACCENT]       = win_rgb_from_syscolor(COLOR_HIGHLIGHT);
+        out_pal->colors[OYK_TR_SELECTION_BG] = win_rgb_from_syscolor(COLOR_HIGHLIGHT);
+        out_pal->colors[OYK_TR_SELECTION_FG] = win_rgb_from_syscolor(COLOR_HIGHLIGHTTEXT);
+        out_pal->colors[OYK_TR_BUTTON_BG]    = win_rgb_from_syscolor(COLOR_BTNFACE);
+        out_pal->colors[OYK_TR_BUTTON_FG]    = win_rgb_from_syscolor(COLOR_BTNTEXT);
+        out_pal->colors[OYK_TR_INPUT_BG]     = win_rgb_from_syscolor(COLOR_WINDOW);
+        out_pal->colors[OYK_TR_INPUT_FG]     = win_rgb_from_syscolor(COLOR_WINDOWTEXT);
+    }
+}
+
+static void win_repaint_window_tree(HWND hwnd) {
+    if (!hwnd) return;
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    RedrawWindow(hwnd, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
+#else
+    InvalidateRect(hwnd, NULL, TRUE);
+    UpdateWindow(hwnd);
+#endif
+}
+
 static void free_win_theme_brushes() {
     if (g_th_bg_br) { DeleteObject(g_th_bg_br); g_th_bg_br = NULL; }
     if (g_th_panel_br) { DeleteObject(g_th_panel_br); g_th_panel_br = NULL; }
@@ -259,14 +303,15 @@ static void free_win_theme_brushes() {
     g_th_custom_active = 0;
 }
 
-static void apply_win_theme_from(const OykConfig* cfg) {
+static void apply_win_theme_from(const OykConfig* cfg, HWND extra_dlg = NULL) {
     free_win_theme_brushes();
     if (!cfg) cfg = &g_node.config();
     const int os_dark = win_os_prefers_dark();
     const char* tn = cfg->theme_name[0] ? cfg->theme_name : "native";
     if (win_strieq(tn, "native") && !os_dark) {
-        if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
-        if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
+        win_repaint_window_tree(g_hwnd_main);
+        win_repaint_window_tree(g_lterm_hwnd);
+        win_repaint_window_tree(extra_dlg);
         return;
     }
     OykThemeConfig tc;
@@ -289,22 +334,23 @@ static void apply_win_theme_from(const OykConfig* cfg) {
     g_th_inp_br = CreateSolidBrush(g_th_inp_bg_c);
     g_th_custom_active = 1;
 
-    if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
-    if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
+    win_repaint_window_tree(g_hwnd_main);
+    win_repaint_window_tree(g_lterm_hwnd);
+    win_repaint_window_tree(extra_dlg);
 }
 
 static void apply_win_theme() {
-    apply_win_theme_from(&g_node.config());
+    apply_win_theme_from(&g_node.config(), NULL);
 }
 
-static void preview_win_draft_theme(const OykConfig* draft, const char* active) {
+static void preview_win_draft_theme(const OykConfig* draft, const char* active, HWND extra_dlg = NULL) {
     if (!draft || !active) return;
     OykConfig* tmp = new OykConfig;
     if (!tmp) return;
     *tmp = *draft;
     strncpy(tmp->theme_name, active, sizeof(tmp->theme_name) - 1);
     tmp->theme_name[sizeof(tmp->theme_name) - 1] = '\0';
-    apply_win_theme_from(tmp);
+    apply_win_theme_from(tmp, extra_dlg);
     delete tmp;
 }
 
@@ -3738,12 +3784,9 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static void populate_theme_dialog_list(HWND hdlg, const OykConfig* draft, const char* active) {
+static void populate_theme_dialog_list(HWND hdlg, const OykGuiThemeCtrl* ctrl) {
     OykThemeConfig pal;
-    OykConfig tmp = *draft;
-    strncpy(tmp.theme_name, active, sizeof(tmp.theme_name) - 1);
-    tmp.theme_name[sizeof(tmp.theme_name) - 1] = '\0';
-    oyk_theme_resolve_effective(&tmp, 1, win_os_prefers_dark(), &pal);
+    oyk_gui_theme_resolve(ctrl, &pal);
 
     HWND lb = GetDlgItem(hdlg, IDC_TH_LIST);
     int prev_sel = static_cast<int>(SendMessage(lb, LB_GETCURSEL, 0, 0));
@@ -3760,7 +3803,7 @@ static void populate_theme_dialog_list(HWND hdlg, const OykConfig* draft, const 
     char cur_hx[12];
     oyk_theme_format_hex(pal.colors[prev_sel], cur_hx, sizeof(cur_hx));
     SetDlgItemText(hdlg, IDC_TH_HEX, cur_hx);
-    EnableWindow(GetDlgItem(hdlg, IDC_TH_DEL), !oyk_theme_is_builtin(active));
+    EnableWindow(GetDlgItem(hdlg, IDC_TH_DEL), !oyk_theme_is_builtin(ctrl->active_name));
 }
 
 static void populate_theme_dialog_combo(HWND hdlg, const OykConfig* draft, const char* active,
@@ -3802,9 +3845,12 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (!s_draft) s_draft = new OykConfig;
             *s_draft = g_node.config();
             oyk_gui_theme_init(&s_th_ctrl, s_draft, 1, win_os_prefers_dark());
+            OykThemeConfig os_pal;
+            win_query_os_native_theme(&os_pal);
+            oyk_gui_theme_set_os_native(&s_th_ctrl, &os_pal);
             SendDlgItemMessage(hdlg, IDC_TH_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
             populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
-            populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
+            populate_theme_dialog_list(hdlg, &s_th_ctrl);
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) {
                 SetTimer(hdlg, 99, 150, NULL);
@@ -3822,6 +3868,33 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
 #endif
+#ifdef WM_CTLCOLORDLG
+        case WM_CTLCOLORDLG:
+            if (g_th_custom_active && g_th_bg_br) {
+                return OYK_RET_BRUSH_DLG(g_th_bg_br);
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORLISTBOX
+        case WM_CTLCOLORLISTBOX:
+            if (g_th_custom_active && g_th_panel_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_panel_fg_c);
+                SetBkColor(hdc, g_th_panel_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_panel_br);
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLOREDIT
+        case WM_CTLCOLOREDIT:
+            if (g_th_custom_active && g_th_inp_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_inp_fg_c);
+                SetBkColor(hdc, g_th_inp_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_inp_br);
+            }
+            break;
+#endif
 #ifdef WM_CTLCOLORSTATIC
         case WM_CTLCOLORSTATIC: {
             if (OYK_CAST_HWND(lp) == GetDlgItem(hdlg, IDC_TH_PREVIEW)) {
@@ -3833,6 +3906,12 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     s_prev_br = CreateSolidBrush(oyk_rgb_to_colorref(rgb));
                     return OYK_RET_BRUSH_DLG(s_prev_br);
                 }
+            }
+            if (g_th_custom_active && g_th_bg_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_fg_c);
+                SetBkColor(hdc, g_th_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_bg_br);
             }
             break;
         }
@@ -3847,8 +3926,8 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_COMBO, CB_GETCURSEL, 0, 0));
                 if (sel >= 0 && sel < s_n_names) {
                     oyk_gui_theme_select(&s_th_ctrl, s_names[sel]);
-                    populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
-                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
+                    populate_theme_dialog_list(hdlg, &s_th_ctrl);
+                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
                     InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 }
                 return TRUE;
@@ -3896,15 +3975,15 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 if (was_builtin) {
                     populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
                 }
-                populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
-                preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
+                populate_theme_dialog_list(hdlg, &s_th_ctrl);
+                preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
                 InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 return TRUE;
             } else if (id == IDC_TH_DEL) {
                 if (oyk_gui_theme_delete_custom(&s_th_ctrl)) {
                     populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
-                    populate_theme_dialog_list(hdlg, s_draft, s_th_ctrl.active_name);
-                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name);
+                    populate_theme_dialog_list(hdlg, &s_th_ctrl);
+                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
                 }
                 return TRUE;
             } else if (id == IDOK) {

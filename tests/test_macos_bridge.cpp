@@ -60,6 +60,60 @@ int main() {
     MB_CHECK(oyk_gui_settings_tab_count() == 7, "gui_tabs_7");
     MB_CHECK(oyk_gui_node_menu_count() == 13, "gui_menu_13");
 
+    /* Verify macOS OS-native default theme + whole-screen live preview across all themes */
+    OykConfig tcfg = eng->portable_config();
+    OykThemeConfig os_light;
+    OykThemeConfig os_dark;
+    oyk_macos_build_os_native_theme(0, NULL, &os_light);
+    oyk_macos_build_os_native_theme(1, NULL, &os_dark);
+    MB_CHECK(strcmp(os_light.name, "native") == 0 && os_light.is_dark_base == 0, "macos_os_light_native");
+    MB_CHECK(strcmp(os_dark.name, "native") == 0 && os_dark.is_dark_base == 1, "macos_os_dark_native");
+    MB_CHECK(os_light.colors[OYK_TR_BG] != os_dark.colors[OYK_TR_BG], "macos_os_light_vs_dark");
+
+    struct RepaintTrack {
+        oyk_u32 main_bg;
+        oyk_u32 modal_bg;
+        int repaints;
+    } track = { 0, 0, 0 };
+
+    struct PreviewShim {
+        static void on_preview(const OykThemeConfig* pal, const char*, void* ctx) {
+            RepaintTrack* tr = static_cast<RepaintTrack*>(ctx);
+            if (!tr || !pal) return;
+            tr->main_bg = pal->colors[OYK_TR_BG];
+            tr->modal_bg = pal->colors[OYK_TR_BG];
+            ++tr->repaints;
+        }
+    };
+
+    OykGuiThemeCtrl tctrl;
+    oyk_gui_theme_init(&tctrl, &tcfg, 1, 0);
+    MB_CHECK(strcmp(tctrl.active_name, "native") == 0, "macos_default_native");
+    oyk_gui_theme_set_preview_cb(&tctrl, PreviewShim::on_preview, &track);
+    oyk_gui_theme_set_os_native(&tctrl, &os_light);
+    MB_CHECK(track.repaints == 1 && track.main_bg == os_light.colors[OYK_TR_BG] &&
+             track.modal_bg == os_light.colors[OYK_TR_BG], "macos_native_initial_repaint");
+
+    OykThemeConfig dt;
+    OykThemeConfig lt;
+    oyk_theme_init_builtin(&dt, 0);
+    oyk_theme_init_builtin(&lt, 1);
+
+    oyk_gui_theme_select(&tctrl, "dark");
+    MB_CHECK(track.repaints == 2 && track.main_bg == dt.colors[OYK_TR_BG] &&
+             track.modal_bg == dt.colors[OYK_TR_BG], "macos_dark_whole_screen_repaint");
+    oyk_gui_theme_select(&tctrl, "light");
+    MB_CHECK(track.repaints == 3 && track.main_bg == lt.colors[OYK_TR_BG] &&
+             track.modal_bg == lt.colors[OYK_TR_BG], "macos_light_whole_screen_repaint");
+    char terr[64];
+    MB_CHECK(oyk_gui_theme_set_role_rgb(&tctrl, OYK_TR_BG, 0x243040UL, terr, sizeof(terr)) == 1,
+             "macos_custom_clone_edit");
+    MB_CHECK(track.repaints == 4 && track.main_bg == 0x243040UL && track.modal_bg == 0x243040UL,
+             "macos_custom_whole_screen_repaint");
+    oyk_gui_theme_revert(&tctrl);
+    MB_CHECK(track.repaints == 5 && strcmp(tctrl.active_name, "native") == 0 &&
+             track.main_bg == os_light.colors[OYK_TR_BG], "macos_revert_native_repaint");
+
     eng->stop();
     MB_CHECK(eng->is_running() == 0, "engine_stopped");
 

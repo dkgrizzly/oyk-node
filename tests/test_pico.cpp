@@ -367,13 +367,39 @@ static void test_pico_ui_flows_and_captures() {
     con->tick(1500UL);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);
 
-    /* 8b. Theme Settings Modal */
+    /* 8b. Theme Settings Modal & whole-screen live preview (dark -> light -> Esc revert) */
+    OykThemeConfig dt_pal, lt_pal;
+    oyk_theme_init_builtin(&dt_pal, 0);
+    oyk_theme_init_builtin(&lt_pal, 1);
+    char dark_menu_sgr[32], light_menu_sgr[32], dark_bdr_sgr[32], light_bdr_sgr[32];
+    sprintf(dark_menu_sgr, "\033[38;5;%d;48;5;%dm",
+            oyk_rgb_to_xterm256(dt_pal.colors[OYK_TR_BUTTON_FG]),
+            oyk_rgb_to_xterm256(dt_pal.colors[OYK_TR_BUTTON_BG]));
+    sprintf(light_menu_sgr, "\033[38;5;%d;48;5;%dm",
+            oyk_rgb_to_xterm256(lt_pal.colors[OYK_TR_BUTTON_FG]),
+            oyk_rgb_to_xterm256(lt_pal.colors[OYK_TR_BUTTON_BG]));
+    sprintf(dark_bdr_sgr, "\033[38;5;%dm", oyk_rgb_to_xterm256(dt_pal.colors[OYK_TR_BORDER]));
+    sprintf(light_bdr_sgr, "\033[38;5;%dm", oyk_rgb_to_xterm256(lt_pal.colors[OYK_TR_BORDER]));
+
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
     assert(strstr(cap->buf, "Theme Settings") != NULL);
+    assert(strstr(cap->buf, dark_menu_sgr) != NULL);
+    assert(strstr(cap->buf, dark_bdr_sgr) != NULL);
     pico_save_capture("theme", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[C"), 3); /* dark -> light */
+    assert(strstr(cap->buf, "Previewing 'light'") != NULL);
+    assert(strstr(cap->buf, light_menu_sgr) != NULL);
+    assert(strstr(cap->buf, light_bdr_sgr) != NULL);
+    assert(strstr(cap->buf, dark_menu_sgr) == NULL);
+
+    cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
+    assert(strstr(cap->buf, dark_menu_sgr) != NULL); /* reverted cleanly to dark */
+    assert(strstr(cap->buf, dark_bdr_sgr) != NULL);
 
     /* 8b2. Local Terminal: Ctrl+A B BBS, Help overlay, EOL cycle, and CHAT / passthrough */
     cap->len = 0; cap->buf[0] = '\0';

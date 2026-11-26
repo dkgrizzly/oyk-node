@@ -92,14 +92,24 @@ struct OykGuiAddIfaceWizard {
     char error[96];
 };
 
+typedef void (*OykGuiThemePreviewFn)(const OykThemeConfig* pal,
+                                     const char* active_name,
+                                     void* ctx);
+
 struct OykGuiThemeCtrl {
     OykConfig* draft;
     char active_name[32];
+    char saved_name[32];
     int selected_role;
     int dirty;
     int preview_active;
     int default_native;
     int os_dark;
+    int has_os_native;
+    OykThemeConfig os_native_pal;
+    oyk_u32 preview_generation;
+    OykGuiThemePreviewFn preview_cb;
+    void* preview_ctx;
 };
 
 struct OykGuiExitPrompt {
@@ -158,7 +168,12 @@ void        oyk_gui_wiz_format_summary(const OykGuiAddIfaceWizard* w,
 /* Shared Theme Settings Controller */
 void        oyk_gui_theme_init(OykGuiThemeCtrl* c, OykConfig* draft,
                                int default_native, int os_dark);
+void        oyk_gui_theme_set_os_native(OykGuiThemeCtrl* c, const OykThemeConfig* os_pal);
+void        oyk_gui_theme_set_preview_cb(OykGuiThemeCtrl* c, OykGuiThemePreviewFn cb, void* ctx);
+int         oyk_gui_theme_list_names(const OykGuiThemeCtrl* c, const char** out_names, int max_names);
 void        oyk_gui_theme_select(OykGuiThemeCtrl* c, const char* name);
+void        oyk_gui_theme_cycle(OykGuiThemeCtrl* c, int delta);
+void        oyk_gui_theme_revert(OykGuiThemeCtrl* c);
 int         oyk_gui_theme_set_role_rgb(OykGuiThemeCtrl* c, int role_idx, oyk_u32 rgb,
                                        char* err, size_t err_cap);
 int         oyk_gui_theme_set_role_hex(OykGuiThemeCtrl* c, int role_idx, const char* hex_str,

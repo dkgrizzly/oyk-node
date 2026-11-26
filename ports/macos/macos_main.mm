@@ -27,16 +27,71 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     return [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0];
 }
 
+static oyk_u32 oyk_u32_from_nscolor(NSColor* c, oyk_u32 fallback) {
+    if (!c) return fallback;
+    NSColor* rgb = [c colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (!rgb) return fallback;
+    CGFloat r = 0.0, g = 0.0, b = 0.0, a = 1.0;
+    [rgb getRed:&r green:&g blue:&b alpha:&a];
+    if (r < 0.0) r = 0.0; else if (r > 1.0) r = 1.0;
+    if (g < 0.0) g = 0.0; else if (g > 1.0) g = 1.0;
+    if (b < 0.0) b = 0.0; else if (b > 1.0) b = 1.0;
+    oyk_u32 ri = static_cast<oyk_u32>(r * 255.0 + 0.5) & 0xFFU;
+    oyk_u32 gi = static_cast<oyk_u32>(g * 255.0 + 0.5) & 0xFFU;
+    oyk_u32 bi = static_cast<oyk_u32>(b * 255.0 + 0.5) & 0xFFU;
+    return (ri << 16) | (gi << 8) | bi;
+}
+
+@interface OykColorSwatchView : NSView {
+    NSColor* swatchColor_;
+}
+- (void)setSwatchColor:(NSColor*)c;
+@end
+
+@implementation OykColorSwatchView
+- (void)dealloc {
+    [swatchColor_ release];
+    [super dealloc];
+}
+- (void)setSwatchColor:(NSColor*)c {
+    [c retain];
+    [swatchColor_ release];
+    swatchColor_ = c;
+    [self setNeedsDisplay:YES];
+}
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSColor* fill = swatchColor_ ? swatchColor_ : [NSColor grayColor];
+    [fill setFill];
+    NSRectFill([self bounds]);
+    [[NSColor grayColor] setStroke];
+    NSFrameRect([self bounds]);
+}
+@end
+
 @interface OykAppDelegate : NSObject {
     OykMacOsEngine* engine_;
     NSWindow* mainWindow_;
     NSTextField* bannerLabel_;
+    NSScrollView* consoleScrollView_;
     NSTextView* consoleTextView_;
     NSToolbar* toolbar_;
     NSMenuItem* allowItem_;
     NSMenuItem* denyItem_;
     NSTimer* pollTimer_;
     NSWindow* modalWindow_;
+
+    /* Interactive Theme Settings controls */
+    NSWindow* themeWindow_;
+    NSPopUpButton* themePopup_;
+    NSButton* themeDelBtn_;
+    NSTextField* themeHexField_;
+    OykColorSwatchView* themeActiveSwatch_;
+    NSMutableArray* themeRoleLabels_;
+    NSMutableArray* themeRoleSwatches_;
+    NSMutableArray* themeNamesList_;
+    int themeSelectedRole_;
+    int themePreviewCount_;
 
     int uiTestMode_;
     NSString* captureDir_;
@@ -48,7 +103,12 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
 }
 - (void)startWithArgs:(const char*)cfgPath;
 - (void)dispatchGuiAction:(int)act;
+- (void)applyThemeToAllWindows;
 @end
+
+static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
+                                           const char* active_name,
+                                           void* ctx);
 
 @implementation OykAppDelegate
 
@@ -63,6 +123,149 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
         }
     }
     return NO;
+}
+
+- (void)queryOsNativeTheme:(OykThemeConfig*)outPal {
+    if (!outPal) return;
+    int isDark = [self detectDarkAppearance] ? 1 : 0;
+    OykThemeConfig base;
+    oyk_macos_build_os_native_theme(isDark, NULL, &base);
+    oyk_u32 cols[OYK_THEME_COLOR_COUNT];
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) cols[i] = base.colors[i];
+
+    cols[OYK_TR_BG]           = oyk_u32_from_nscolor([NSColor windowBackgroundColor], cols[OYK_TR_BG]);
+    cols[OYK_TR_FG]           = oyk_u32_from_nscolor([NSColor controlTextColor], cols[OYK_TR_FG]);
+    cols[OYK_TR_PANEL_BG]     = oyk_u32_from_nscolor([NSColor controlBackgroundColor], cols[OYK_TR_PANEL_BG]);
+    cols[OYK_TR_PANEL_FG]     = oyk_u32_from_nscolor([NSColor controlTextColor], cols[OYK_TR_PANEL_FG]);
+    cols[OYK_TR_HEADER_BG]    = oyk_u32_from_nscolor([NSColor controlColor], cols[OYK_TR_HEADER_BG]);
+    cols[OYK_TR_HEADER_FG]    = oyk_u32_from_nscolor([NSColor controlTextColor], cols[OYK_TR_HEADER_FG]);
+    cols[OYK_TR_STATUS_BG]    = cols[OYK_TR_PANEL_BG];
+    if ([NSColor respondsToSelector:@selector(secondaryLabelColor)]) {
+        NSColor* sc = [NSColor performSelector:@selector(secondaryLabelColor)];
+        cols[OYK_TR_STATUS_FG] = oyk_u32_from_nscolor(sc, cols[OYK_TR_STATUS_FG]);
+    } else {
+        cols[OYK_TR_STATUS_FG] = oyk_u32_from_nscolor([NSColor disabledControlTextColor], cols[OYK_TR_STATUS_FG]);
+    }
+    cols[OYK_TR_BORDER]       = oyk_u32_from_nscolor([NSColor gridColor], cols[OYK_TR_BORDER]);
+    if ([NSColor respondsToSelector:@selector(controlAccentColor)]) {
+        NSColor* ac = [NSColor performSelector:@selector(controlAccentColor)];
+        cols[OYK_TR_ACCENT] = oyk_u32_from_nscolor(ac, cols[OYK_TR_ACCENT]);
+    } else {
+        cols[OYK_TR_ACCENT] = oyk_u32_from_nscolor([NSColor alternateSelectedControlColor], cols[OYK_TR_ACCENT]);
+    }
+    cols[OYK_TR_SELECTION_BG] = oyk_u32_from_nscolor([NSColor selectedTextBackgroundColor], cols[OYK_TR_SELECTION_BG]);
+    cols[OYK_TR_SELECTION_FG] = oyk_u32_from_nscolor([NSColor selectedControlTextColor], cols[OYK_TR_SELECTION_FG]);
+    cols[OYK_TR_BUTTON_BG]    = oyk_u32_from_nscolor([NSColor controlColor], cols[OYK_TR_BUTTON_BG]);
+    cols[OYK_TR_BUTTON_FG]    = oyk_u32_from_nscolor([NSColor controlTextColor], cols[OYK_TR_BUTTON_FG]);
+    cols[OYK_TR_INPUT_BG]     = oyk_u32_from_nscolor([NSColor textBackgroundColor], cols[OYK_TR_INPUT_BG]);
+    cols[OYK_TR_INPUT_FG]     = oyk_u32_from_nscolor([NSColor textColor], cols[OYK_TR_INPUT_FG]);
+    if ([NSColor respondsToSelector:@selector(systemGreenColor)]) {
+        cols[OYK_TR_OK] = oyk_u32_from_nscolor([NSColor performSelector:@selector(systemGreenColor)], cols[OYK_TR_OK]);
+    }
+    if ([NSColor respondsToSelector:@selector(systemOrangeColor)]) {
+        cols[OYK_TR_WARN] = oyk_u32_from_nscolor([NSColor performSelector:@selector(systemOrangeColor)], cols[OYK_TR_WARN]);
+    }
+    if ([NSColor respondsToSelector:@selector(systemRedColor)]) {
+        cols[OYK_TR_ERROR] = oyk_u32_from_nscolor([NSColor performSelector:@selector(systemRedColor)], cols[OYK_TR_ERROR]);
+    }
+
+    oyk_macos_build_os_native_theme(isDark, cols, outPal);
+}
+
+- (void)applyThemeToViewTree:(NSView*)view {
+    if (!view) return;
+    NSColor* bg = oyk_color_from_u32(activeTheme_.colors[OYK_TR_BG]);
+    NSColor* fg = oyk_color_from_u32(activeTheme_.colors[OYK_TR_FG]);
+    NSColor* inpBg = oyk_color_from_u32(activeTheme_.colors[OYK_TR_INPUT_BG]);
+    NSColor* inpFg = oyk_color_from_u32(activeTheme_.colors[OYK_TR_INPUT_FG]);
+
+    if (view == bannerLabel_) {
+        [bannerLabel_ setBackgroundColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_HEADER_BG])];
+        [bannerLabel_ setTextColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_HEADER_FG])];
+    } else if ([view isKindOfClass:[NSTextView class]]) {
+        NSTextView* tv = (NSTextView*)view;
+        [tv setBackgroundColor:bg];
+        [tv setTextColor:fg];
+        [tv setInsertionPointColor:fg];
+    } else if ([view isKindOfClass:[NSScrollView class]]) {
+        [(NSScrollView*)view setBackgroundColor:bg];
+    } else if ([view isKindOfClass:[NSTextField class]]) {
+        NSTextField* tf = (NSTextField*)view;
+        if ([tf isEditable]) {
+            [tf setBackgroundColor:inpBg];
+            [tf setTextColor:inpFg];
+        } else if (![tf isKindOfClass:[NSButton class]]) {
+            [tf setTextColor:fg];
+        }
+    }
+    [view setNeedsDisplay:YES];
+    NSArray* subs = [view subviews];
+    for (NSUInteger i = 0; i < [subs count]; ++i) {
+        [self applyThemeToViewTree:[subs objectAtIndex:i]];
+    }
+}
+
+- (void)refreshThemeWindowRows {
+    if (!themeWindow_) return;
+    if (themeRoleLabels_ && themeRoleSwatches_) {
+        for (int r = 0; r < OYK_THEME_COLOR_COUNT; ++r) {
+            oyk_u32 col = activeTheme_.colors[r];
+            char hx[12];
+            oyk_theme_format_hex(col, hx, sizeof(hx));
+            NSString* rowStr = [NSString stringWithFormat:@"%-16s  %-14s  %s",
+                                oyk_theme_role_label(r), oyk_theme_role_key(r), hx];
+            if (r < static_cast<int>([themeRoleLabels_ count])) {
+                NSTextField* lbl = [themeRoleLabels_ objectAtIndex:static_cast<NSUInteger>(r)];
+                BOOL sel = (r == themeSelectedRole_);
+                [lbl setDrawsBackground:sel ? YES : NO];
+                if (sel) {
+                    [lbl setBackgroundColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_SELECTION_BG])];
+                    [lbl setTextColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_SELECTION_FG])];
+                } else {
+                    [lbl setTextColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_FG])];
+                }
+                [lbl setStringValue:rowStr];
+            }
+            if (r < static_cast<int>([themeRoleSwatches_ count])) {
+                OykColorSwatchView* sw = [themeRoleSwatches_ objectAtIndex:static_cast<NSUInteger>(r)];
+                [sw setSwatchColor:oyk_color_from_u32(col)];
+            }
+        }
+    }
+    if (themeSelectedRole_ >= 0 && themeSelectedRole_ < OYK_THEME_COLOR_COUNT) {
+        char shx[12];
+        oyk_theme_format_hex(activeTheme_.colors[themeSelectedRole_], shx, sizeof(shx));
+        if (themeHexField_) {
+            [themeHexField_ setStringValue:[NSString stringWithUTF8String:shx]];
+        }
+        if (themeActiveSwatch_) {
+            [themeActiveSwatch_ setSwatchColor:oyk_color_from_u32(activeTheme_.colors[themeSelectedRole_])];
+        }
+    }
+    if (themeDelBtn_) {
+        [themeDelBtn_ setEnabled:(!oyk_theme_is_builtin(themeCtrl_.active_name)) ? YES : NO];
+    }
+}
+
+- (void)applyThemeToAllWindows {
+    oyk_gui_theme_resolve(&themeCtrl_, &activeTheme_);
+    NSColor* bg = oyk_color_from_u32(activeTheme_.colors[OYK_TR_BG]);
+
+    NSMutableArray* wins = [NSMutableArray arrayWithArray:[NSApp windows]];
+    if (mainWindow_ && ![wins containsObject:mainWindow_]) [wins addObject:mainWindow_];
+    if (themeWindow_ && ![wins containsObject:themeWindow_]) [wins addObject:themeWindow_];
+    if (modalWindow_ && ![wins containsObject:modalWindow_]) [wins addObject:modalWindow_];
+
+    for (NSUInteger i = 0; i < [wins count]; ++i) {
+        NSWindow* w = [wins objectAtIndex:i];
+        [w setBackgroundColor:bg];
+        [self applyThemeToViewTree:[w contentView]];
+    }
+    [self refreshThemeWindowRows];
+    for (NSUInteger i = 0; i < [wins count]; ++i) {
+        [[wins objectAtIndex:i] display];
+    }
+    ++themePreviewCount_;
 }
 
 - (void)captureWindow:(NSWindow*)win asFlow:(NSString*)flow {
@@ -125,7 +328,7 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
             [nodeMenu addItem:[NSMenuItem separatorItem]];
             continue;
         }
-        NSString* title = [NSString stringWithUTF8String:gi->macos_label];
+        NSString* title = [NSString stringWithUTF8String:gi->mac_label];
         NSString* key = @"";
         if (gi->action == OYK_ACT_LOCAL_TERM) key = @"t";
         else if (gi->action == OYK_ACT_SETTINGS) key = @",";
@@ -348,6 +551,246 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     return s;
 }
 
+static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
+                                           const char* active_name,
+                                           void* ctx) {
+    (void)pal;
+    (void)active_name;
+    OykAppDelegate* del = static_cast<OykAppDelegate*>(ctx);
+    if (del) [del applyThemeToAllWindows];
+}
+
+- (void)rebuildThemePopup {
+    if (!themePopup_) return;
+    [themePopup_ removeAllItems];
+    if (!themeNamesList_) themeNamesList_ = [[NSMutableArray alloc] init];
+    [themeNamesList_ removeAllObjects];
+
+    const char* names[OYK_MAX_THEMES + 4];
+    int n = oyk_gui_theme_list_names(&themeCtrl_, names, OYK_MAX_THEMES + 4);
+    int sel = 0;
+    for (int i = 0; i < n; ++i) {
+        NSString* ns = [NSString stringWithUTF8String:names[i]];
+        [themePopup_ addItemWithTitle:ns];
+        [themeNamesList_ addObject:ns];
+        if (strcasecmp(names[i], themeCtrl_.active_name) == 0) sel = i;
+    }
+    if (n > 0) [themePopup_ selectItemAtIndex:sel];
+}
+
+- (void)onThemePopupChanged:(id)sender {
+    (void)sender;
+    NSInteger idx = [themePopup_ indexOfSelectedItem];
+    if (idx >= 0 && idx < static_cast<NSInteger>([themeNamesList_ count])) {
+        NSString* nm = [themeNamesList_ objectAtIndex:static_cast<NSUInteger>(idx)];
+        oyk_gui_theme_select(&themeCtrl_, [nm UTF8String]);
+    }
+}
+
+- (void)onThemeRoleClicked:(id)sender {
+    themeSelectedRole_ = static_cast<int>([sender tag]);
+    if (themeSelectedRole_ < 0 || themeSelectedRole_ >= OYK_THEME_COLOR_COUNT) {
+        themeSelectedRole_ = 0;
+    }
+    [self refreshThemeWindowRows];
+}
+
+- (void)onThemeApplyHex:(id)sender {
+    (void)sender;
+    if (!themeHexField_) return;
+    char err[96];
+    const char* hx = [[themeHexField_ stringValue] UTF8String];
+    int wasBuiltin = oyk_theme_is_builtin(themeCtrl_.active_name);
+    if (oyk_gui_theme_set_role_hex(&themeCtrl_, themeSelectedRole_, hx, err, sizeof(err))) {
+        if (wasBuiltin) [self rebuildThemePopup];
+    } else {
+        NSRunAlertPanel(@"Theme Settings", @"%@", @"OK", nil, nil,
+                        [NSString stringWithUTF8String:err]);
+    }
+}
+
+- (void)onThemeColorPanelChanged:(id)sender {
+    NSColor* col = [sender color];
+    oyk_u32 rgb = oyk_u32_from_nscolor(col, activeTheme_.colors[themeSelectedRole_]);
+    char hx[12];
+    oyk_theme_format_hex(rgb, hx, sizeof(hx));
+    if (themeHexField_) [themeHexField_ setStringValue:[NSString stringWithUTF8String:hx]];
+    char err[96];
+    int wasBuiltin = oyk_theme_is_builtin(themeCtrl_.active_name);
+    if (oyk_gui_theme_set_role_rgb(&themeCtrl_, themeSelectedRole_, rgb, err, sizeof(err))) {
+        if (wasBuiltin) [self rebuildThemePopup];
+    }
+}
+
+- (void)onThemePickColor:(id)sender {
+    (void)sender;
+    NSColorPanel* cp = [NSColorPanel sharedColorPanel];
+    [cp setColor:oyk_color_from_u32(activeTheme_.colors[themeSelectedRole_])];
+    [cp setTarget:self];
+    [cp setAction:@selector(onThemeColorPanelChanged:)];
+    [cp makeKeyAndOrderFront:nil];
+}
+
+- (void)onThemeDeleteCustom:(id)sender {
+    (void)sender;
+    if (oyk_gui_theme_delete_custom(&themeCtrl_)) {
+        [self rebuildThemePopup];
+    }
+}
+
+- (void)onThemeCancel:(id)sender {
+    (void)sender;
+    oyk_gui_theme_revert(&themeCtrl_);
+    if (themeWindow_) {
+        [themeWindow_ close];
+        [themeWindow_ release];
+        themeWindow_ = nil;
+    }
+}
+
+- (void)onThemeSaveApply:(id)sender {
+    (void)sender;
+    strncpy(draftCfg_.theme_name, themeCtrl_.active_name, sizeof(draftCfg_.theme_name) - 1);
+    draftCfg_.theme_name[sizeof(draftCfg_.theme_name) - 1] = '\0';
+    strncpy(themeCtrl_.saved_name, themeCtrl_.active_name, sizeof(themeCtrl_.saved_name) - 1);
+    themeCtrl_.saved_name[sizeof(themeCtrl_.saved_name) - 1] = '\0';
+    char err[96];
+    err[0] = '\0';
+    engine_->apply_config(&draftCfg_, 1, err, sizeof(err));
+    themeCtrl_.dirty = 0;
+    [self applyThemeToAllWindows];
+    if (themeWindow_) {
+        [themeWindow_ close];
+        [themeWindow_ release];
+        themeWindow_ = nil;
+    }
+}
+
+- (NSWindow*)presentThemeSettingsWindow {
+    if (themeWindow_) {
+        [themeWindow_ makeKeyAndOrderFront:nil];
+        return themeWindow_;
+    }
+    CGFloat w = 640.0;
+    CGFloat h = 440.0;
+    NSWindow* win = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(160, 140, w, h)
+                  styleMask:(NSTitledWindowMask | NSClosableWindowMask)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    [win setTitle:[NSString stringWithUTF8String:oyk_gui_screen_title(OYK_SCR_THEME)]];
+    themeWindow_ = win;
+
+    NSView* cv = [win contentView];
+    NSTextField* lblT = [[[NSTextField alloc] initWithFrame:NSMakeRect(16, h - 38, 60, 20)] autorelease];
+    [lblT setEditable:NO]; [lblT setBezeled:NO]; [lblT setDrawsBackground:NO];
+    [lblT setStringValue:@"Theme:"];
+    [cv addSubview:lblT];
+
+    themePopup_ = [[[NSPopUpButton alloc] initWithFrame:NSMakeRect(76, h - 42, 220, 26) pullsDown:NO] autorelease];
+    [themePopup_ setTarget:self];
+    [themePopup_ setAction:@selector(onThemePopupChanged:)];
+    [cv addSubview:themePopup_];
+
+    themeDelBtn_ = [[[NSButton alloc] initWithFrame:NSMakeRect(306, h - 42, 128, 26)] autorelease];
+    [themeDelBtn_ setTitle:@"Delete Custom"];
+    [themeDelBtn_ setTarget:self];
+    [themeDelBtn_ setAction:@selector(onThemeDeleteCustom:)];
+    [cv addSubview:themeDelBtn_];
+
+    NSTextField* hint = [[[NSTextField alloc] initWithFrame:NSMakeRect(16, h - 66, w - 32, 18)] autorelease];
+    [hint setEditable:NO]; [hint setBezeled:NO]; [hint setDrawsBackground:NO];
+    [hint setFont:[NSFont systemFontOfSize:11.0]];
+    [hint setStringValue:@"Live preview repaints all windows. Built-in themes clone to custom on edit."];
+    [cv addSubview:hint];
+
+    NSTextField* hdr = [[[NSTextField alloc] initWithFrame:NSMakeRect(16, h - 90, w - 32, 18)] autorelease];
+    [hdr setEditable:NO]; [hdr setBezeled:NO]; [hdr setDrawsBackground:NO];
+    [hdr setFont:[NSFont fontWithName:@"Monaco" size:11.0]];
+    [hdr setStringValue:[NSString stringWithFormat:@"%-16s  %-14s  %-9s  %s",
+                         oyk_gui_table_column(OYK_TBL_THEME, 0),
+                         oyk_gui_table_column(OYK_TBL_THEME, 1),
+                         oyk_gui_table_column(OYK_TBL_THEME, 2),
+                         oyk_gui_table_column(OYK_TBL_THEME, 3)]];
+    [cv addSubview:hdr];
+
+    NSScrollView* sv = [[[NSScrollView alloc] initWithFrame:NSMakeRect(16, 94, w - 32, h - 190)] autorelease];
+    [sv setHasVerticalScroller:YES];
+    [sv setBorderType:NSBezelBorder];
+    CGFloat listH = OYK_THEME_COLOR_COUNT * 22.0 + 8.0;
+    NSView* docView = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, w - 52, listH)] autorelease];
+
+    if (!themeRoleLabels_) themeRoleLabels_ = [[NSMutableArray alloc] init];
+    if (!themeRoleSwatches_) themeRoleSwatches_ = [[NSMutableArray alloc] init];
+    [themeRoleLabels_ removeAllObjects];
+    [themeRoleSwatches_ removeAllObjects];
+
+    for (int r = 0; r < OYK_THEME_COLOR_COUNT; ++r) {
+        CGFloat ry = listH - 22.0 * (r + 1) - 4.0;
+        NSTextField* rowLbl = [[[NSTextField alloc] initWithFrame:NSMakeRect(6, ry, 420, 18)] autorelease];
+        [rowLbl setEditable:NO]; [rowLbl setBezeled:NO];
+        [rowLbl setFont:[NSFont fontWithName:@"Monaco" size:11.0]];
+        [docView addSubview:rowLbl];
+        [themeRoleLabels_ addObject:rowLbl];
+
+        OykColorSwatchView* sw = [[[OykColorSwatchView alloc] initWithFrame:NSMakeRect(436, ry + 1, 60, 16)] autorelease];
+        [docView addSubview:sw];
+        [themeRoleSwatches_ addObject:sw];
+
+        NSButton* selBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(506, ry - 2, 62, 20)] autorelease];
+        [selBtn setTitle:@"Select"];
+        [selBtn setTag:r];
+        [selBtn setTarget:self];
+        [selBtn setAction:@selector(onThemeRoleClicked:)];
+        [docView addSubview:selBtn];
+    }
+    [sv setDocumentView:docView];
+    [cv addSubview:sv];
+
+    NSTextField* clbl = [[[NSTextField alloc] initWithFrame:NSMakeRect(16, 56, 48, 20)] autorelease];
+    [clbl setEditable:NO]; [clbl setBezeled:NO]; [clbl setDrawsBackground:NO];
+    [clbl setStringValue:@"Hex:"];
+    [cv addSubview:clbl];
+
+    themeHexField_ = [[[NSTextField alloc] initWithFrame:NSMakeRect(66, 54, 96, 22)] autorelease];
+    [themeHexField_ setFont:[NSFont fontWithName:@"Monaco" size:11.0]];
+    [cv addSubview:themeHexField_];
+
+    themeActiveSwatch_ = [[[OykColorSwatchView alloc] initWithFrame:NSMakeRect(172, 55, 36, 20)] autorelease];
+    [cv addSubview:themeActiveSwatch_];
+
+    NSButton* pickBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(220, 52, 114, 26)] autorelease];
+    [pickBtn setTitle:@"Pick Color..."];
+    [pickBtn setTarget:self];
+    [pickBtn setAction:@selector(onThemePickColor:)];
+    [cv addSubview:pickBtn];
+
+    NSButton* applyHexBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(342, 52, 114, 26)] autorelease];
+    [applyHexBtn setTitle:@"Apply Color"];
+    [applyHexBtn setTarget:self];
+    [applyHexBtn setAction:@selector(onThemeApplyHex:)];
+    [cv addSubview:applyHexBtn];
+
+    NSButton* cancelBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(w - 220, 14, 92, 28)] autorelease];
+    [cancelBtn setTitle:@"Cancel"];
+    [cancelBtn setTarget:self];
+    [cancelBtn setAction:@selector(onThemeCancel:)];
+    [cv addSubview:cancelBtn];
+
+    NSButton* saveBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(w - 120, 14, 104, 28)] autorelease];
+    [saveBtn setTitle:@"Save & Apply"];
+    [saveBtn setKeyEquivalent:@"\r"];
+    [saveBtn setTarget:self];
+    [saveBtn setAction:@selector(onThemeSaveApply:)];
+    [cv addSubview:saveBtn];
+
+    themeSelectedRole_ = 0;
+    [self rebuildThemePopup];
+    [self applyThemeToAllWindows];
+    [win makeKeyAndOrderFront:nil];
+    return win;
+}
+
 - (void)runUiCaptureTour {
     struct CapItem { int scr; const char* flow; };
     static const CapItem kFlows[12] = {
@@ -367,12 +810,39 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     [self refreshConsole];
     [self captureWindow:mainWindow_ asFlow:@"main"];
     for (int i = 1; i < 12; ++i) {
-        NSWindow* w = [self presentDialogScreen:kFlows[i].scr
-                                       bodyText:[self buildScreenText:kFlows[i].scr]
-                                         height:380.0];
-        [self captureWindow:w asFlow:[NSString stringWithUTF8String:kFlows[i].flow]];
-        [w close];
-        [w release];
+        if (kFlows[i].scr == OYK_SCR_THEME) {
+            NSWindow* tw = [self presentThemeSettingsWindow];
+            int startCount = themePreviewCount_;
+            oyk_gui_theme_select(&themeCtrl_, "dark");
+            NSColor* darkMainBg = [[mainWindow_ backgroundColor] retain];
+            NSColor* darkDlgBg = [[tw backgroundColor] retain];
+            oyk_gui_theme_select(&themeCtrl_, "light");
+            NSColor* lightMainBg = [[mainWindow_ backgroundColor] retain];
+            NSColor* lightDlgBg = [[tw backgroundColor] retain];
+            char terr[64];
+            oyk_gui_theme_set_role_rgb(&themeCtrl_, OYK_TR_BG, 0x223344UL, terr, sizeof(terr));
+            oyk_gui_theme_revert(&themeCtrl_);
+            if ((themePreviewCount_ - startCount) >= 4 &&
+                oyk_u32_from_nscolor(darkMainBg, 0) != oyk_u32_from_nscolor(lightMainBg, 0) &&
+                oyk_u32_from_nscolor(darkDlgBg, 0) != oyk_u32_from_nscolor(lightDlgBg, 0)) {
+                printf("MACOS_THEME_PREVIEW_TEST_PASS\n");
+                fflush(stdout);
+            }
+            [darkMainBg release]; [darkDlgBg release];
+            [lightMainBg release]; [lightDlgBg release];
+            [self rebuildThemePopup];
+            [self captureWindow:tw asFlow:@"theme"];
+            [tw close];
+            [tw release];
+            themeWindow_ = nil;
+        } else {
+            NSWindow* w = [self presentDialogScreen:kFlows[i].scr
+                                           bodyText:[self buildScreenText:kFlows[i].scr]
+                                             height:380.0];
+            [self captureWindow:w asFlow:[NSString stringWithUTF8String:kFlows[i].flow]];
+            [w close];
+            [w release];
+        }
     }
     engine_->stop();
     [NSApp terminate:nil];
@@ -382,12 +852,12 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     if (act == OYK_ACT_ALLOW_INCOMING) { engine_->set_accept_incoming(1); [self refreshConsole]; }
     else if (act == OYK_ACT_DENY_INCOMING) { engine_->set_accept_incoming(0); [self refreshConsole]; }
     else if (act == OYK_ACT_EXIT) [self requestExit:nil];
+    else if (act == OYK_ACT_THEME) { [self presentThemeSettingsWindow]; }
     else {
         int scr = OYK_SCR_SETTINGS;
         if (act == OYK_ACT_LOCAL_TERM) scr = OYK_SCR_TERMINAL;
         else if (act == OYK_ACT_FILES) scr = OYK_SCR_FILES;
         else if (act == OYK_ACT_PEERS) scr = OYK_SCR_PEERS;
-        else if (act == OYK_ACT_THEME) scr = OYK_SCR_THEME;
         else if (act == OYK_ACT_TERMINATE) scr = OYK_SCR_TERMINATE;
         else if (act == OYK_ACT_BAN) scr = OYK_SCR_BAN;
         else if (act == OYK_ACT_RIG) scr = OYK_SCR_RIG;
@@ -467,7 +937,11 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     engine_->init_and_start(cfgPath, uiTestMode_, err, sizeof(err));
     draftCfg_ = engine_->portable_config();
     oyk_gui_wiz_init(&wiz_, &draftCfg_, OYK_DRV_ALL);
-    oyk_gui_theme_init(&themeCtrl_, &draftCfg_, 1, [self detectDarkAppearance] ? 1 : 0);
+    OykThemeConfig osPal;
+    [self queryOsNativeTheme:&osPal];
+    oyk_gui_theme_init(&themeCtrl_, &draftCfg_, 1, osPal.is_dark_base);
+    oyk_gui_theme_set_os_native(&themeCtrl_, &osPal);
+    oyk_gui_theme_set_preview_cb(&themeCtrl_, macos_theme_preview_trampoline, self);
     oyk_gui_theme_resolve(&themeCtrl_, &activeTheme_);
     oyk_term_eol_init(&termEol_, OYK_TERM_EOL_AUTO, 1);
 
@@ -493,17 +967,18 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
     [bannerLabel_ setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
     [[mainWindow_ contentView] addSubview:bannerLabel_];
 
-    NSScrollView* sv = [[[NSScrollView alloc] initWithFrame:NSMakeRect(12, 12, 736, 464)] autorelease];
-    [sv setHasVerticalScroller:YES];
-    [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    consoleScrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 12, 736, 464)];
+    [consoleScrollView_ setHasVerticalScroller:YES];
+    [consoleScrollView_ setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
     consoleTextView_ = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 720, 464)];
     [consoleTextView_ setEditable:NO];
     [consoleTextView_ setFont:[NSFont fontWithName:@"Monaco" size:11.0]];
     [consoleTextView_ setBackgroundColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_BG])];
     [consoleTextView_ setTextColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_FG])];
-    [sv setDocumentView:consoleTextView_];
-    [[mainWindow_ contentView] addSubview:sv];
+    [consoleScrollView_ setDocumentView:consoleTextView_];
+    [[mainWindow_ contentView] addSubview:consoleScrollView_];
 
+    [self applyThemeToAllWindows];
     [mainWindow_ makeKeyAndOrderFront:nil];
     [self refreshConsole];
 
@@ -523,6 +998,18 @@ static NSColor* oyk_color_from_u32(oyk_u32 rgb) {
 int main(int argc, const char* argv[]) {
     NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
     [NSApplication sharedApplication];
+    SEL actSel = @selector(setActivationPolicy:);
+    if ([NSApp respondsToSelector:actSel]) {
+        NSMethodSignature* sig = [NSApp methodSignatureForSelector:actSel];
+        if (sig) {
+            NSInvocation* inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:NSApp];
+            [inv setSelector:actSel];
+            NSInteger policy = 0; /* NSApplicationActivationPolicyRegular */
+            [inv setArgument:&policy atIndex:2];
+            [inv invoke];
+        }
+    }
     const char* cfg = NULL;
     for (int i = 1; i + 1 < argc; ++i) {
         if (strcmp(argv[i], "--config") == 0) cfg = argv[i + 1];

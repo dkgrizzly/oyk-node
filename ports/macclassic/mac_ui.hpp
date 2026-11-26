@@ -18,7 +18,12 @@
 
 struct OykMacUiState;
 
+void oyk_mac_query_os_native_theme(void* win_ptr, int has_color_qd, OykThemeConfig* out_pal);
 int  oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode);
 void oyk_mac_ui_show_fatal(const char* msg);
+int  oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
+                                            OykMacNetState* net,
+                                            int* out_bg_changes,
+                                            int* out_fg_changes);
 
 #endif /* OYK_MAC_UI_HPP */
