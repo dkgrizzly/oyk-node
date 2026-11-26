@@ -20,6 +20,7 @@
 #include "../compat/oyk_rig.hpp"
 #include "../compat/oyk_printer.hpp"
 #include "../compat/oyk_tui.hpp"
+#include "../compat/oyk_term.hpp"
 #include "dos_usb.hpp"
 #include "dos_video.hpp"
 #include "dos_mouse.hpp"
@@ -918,11 +919,16 @@ static int dos_rig_refresh(char* err_out, size_t err_sz) {
 static void prompt_line(const char* prompt, char* out, int max_len) {
     int prow = g_vid ? (g_vid->rows - 1) : 24;
     int pcols = g_vid ? g_vid->cols : 80;
+    int pcol = static_cast<int>(strlen(prompt));
+    if (pcol > pcols - 12) pcol = pcols - 12;
+    int avail = pcols - pcol;
     vid_puts(prow, 0, 0x4F, prompt, pcols);
-    vid_flush_row(prow);
     int len = 0;
     out[0] = '\0';
-    int pcol = static_cast<int>(strlen(prompt));
+    int start = 0;
+    int cur_off = 0;
+    dos_vid_putc(g_vid, prow, pcol, 0x70U, ' ');
+    vid_flush_row(prow);
     while (!g_break_flag) {
         dos_pump_network();
         g_node.tick();
@@ -937,7 +943,12 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
             out[len++] = static_cast<char>(ch);
             out[len] = '\0';
         }
-        vid_puts(prow, pcol, 0x4F, out, pcols - pcol);
+        size_t s_off = 0;
+        oyk_term_input_slice(static_cast<size_t>(len), avail, &s_off, &cur_off);
+        start = static_cast<int>(s_off);
+        vid_puts(prow, pcol, 0x4F, out + start, avail);
+        char cur_ch = out[start + cur_off] ? out[start + cur_off] : ' ';
+        dos_vid_putc(g_vid, prow, pcol + cur_off, 0x70U, static_cast<oyk_u8>(cur_ch));
         vid_flush_row(prow);
     }
 }
@@ -1135,6 +1146,7 @@ static int confirm_dos_exit() {
 /* ==================== DOS Local Terminal, YAPP & Commander File Selector ==================== */
 
 #define DOS_TERM_MAX_LINES 48
+#define DOS_TERM_LINE_CAP  256
 #define DOS_FS_MAX_ENTRIES 128
 
 struct DosFsEntry {
@@ -1147,16 +1159,19 @@ static oyk_u32 g_dterm_sid = 0;
 static int g_dterm_inited = 0;
 static int g_dterm_connected = 0;
 static int g_dterm_connecting = 0;
+static int g_dterm_opening = 0;
 static int g_dterm_is_local = 0;
 static OykCallsign g_dterm_remote;
 static OykYappSession g_dterm_yapp;
-static char g_dterm_lines[DOS_TERM_MAX_LINES][80];
+static OykTermEolParser g_dterm_eol;
+static char g_dterm_lines[DOS_TERM_MAX_LINES][DOS_TERM_LINE_CAP];
 static int g_dterm_line_count = 0;
-static char g_dterm_curline[80];
+static char g_dterm_curline[DOS_TERM_LINE_CAP];
 static int g_dterm_curline_len = 0;
 static char g_dterm_last_yapp[128];
-static char g_dterm_in_buf[160];
+static char g_dterm_in_buf[256];
 static int g_dterm_in_len = 0;
+static int g_dterm_scroll = 0;
 static int g_dterm_dirty = 1;
 
 static int dos_local_term_is_active() {
@@ -1166,15 +1181,15 @@ static int dos_local_term_is_active() {
 static void dterm_push_line(const char* s) {
     if (!s) return;
     if (g_dterm_line_count < DOS_TERM_MAX_LINES) {
-        strncpy(g_dterm_lines[g_dterm_line_count], s, 79);
-        g_dterm_lines[g_dterm_line_count][79] = '\0';
+        strncpy(g_dterm_lines[g_dterm_line_count], s, DOS_TERM_LINE_CAP - 1);
+        g_dterm_lines[g_dterm_line_count][DOS_TERM_LINE_CAP - 1] = '\0';
         g_dterm_line_count++;
     } else {
         for (int i = 1; i < DOS_TERM_MAX_LINES; ++i) {
-            memcpy(g_dterm_lines[i - 1], g_dterm_lines[i], 80);
+            memcpy(g_dterm_lines[i - 1], g_dterm_lines[i], DOS_TERM_LINE_CAP);
         }
-        strncpy(g_dterm_lines[DOS_TERM_MAX_LINES - 1], s, 79);
-        g_dterm_lines[DOS_TERM_MAX_LINES - 1][79] = '\0';
+        strncpy(g_dterm_lines[DOS_TERM_MAX_LINES - 1], s, DOS_TERM_LINE_CAP - 1);
+        g_dterm_lines[DOS_TERM_MAX_LINES - 1][DOS_TERM_LINE_CAP - 1] = '\0';
     }
     g_dterm_dirty = 1;
 }
@@ -1206,14 +1221,26 @@ static int dos_yapp_overwrite_cb(const char* target_path, const char* /*filename
 static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
                                     const oyk_u8* data, size_t len,
                                     const char* reason, void* /*ctx*/) {
-    if (sid != g_dterm_sid) return;
+    if (sid != g_dterm_sid) {
+        if (g_dterm_opening && g_dterm_sid == 0 && sid != 0) {
+            g_dterm_sid = sid;
+        } else {
+            return;
+        }
+    }
     if (event_type == 1) {
         g_dterm_connecting = 0;
         g_dterm_connected = 1;
-        char cs[16], msg[64];
+        g_dterm_scroll = 0;
+        char cs[16], msg[80];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-        sprintf(msg, "*** Connected to %s", cs);
+        if (g_dterm_is_local) {
+            sprintf(msg, "*** Connected locally to %s (YAPP disabled)", cs);
+        } else {
+            sprintf(msg, "*** Connected to %s", cs);
+        }
         dterm_push_line(msg);
+        g_dterm_dirty = 1;
     } else if (event_type == 2 && data && len > 0) {
         const oyk_u8* text_ptr = data;
         size_t text_len = len;
@@ -1224,34 +1251,53 @@ static void dos_local_term_event_cb(oyk_u32 sid, int event_type,
         }
         for (size_t i = 0; i < text_len; ++i) {
             oyk_u8 ch = text_ptr[i];
-            if (ch == '\r' || ch == '\n') {
-                if (g_dterm_curline_len > 0 || ch == '\r') {
+            int act = oyk_term_eol_feed_byte(&g_dterm_eol, ch);
+            if (act == OYK_TERM_ACT_NEWLINE) {
+                g_dterm_curline[g_dterm_curline_len] = '\0';
+                dterm_push_line(g_dterm_curline);
+                g_dterm_curline_len = 0;
+                g_dterm_scroll = 0;
+                g_dterm_dirty = 1;
+            } else if (act == OYK_TERM_ACT_BS) {
+                if (g_dterm_curline_len > 0) {
+                    --g_dterm_curline_len;
+                    g_dterm_curline[g_dterm_curline_len] = '\0';
+                    g_dterm_dirty = 1;
+                }
+            } else if (act == OYK_TERM_ACT_CHAR) {
+                if (g_dterm_curline_len >= DOS_TERM_LINE_CAP - 1) {
                     g_dterm_curline[g_dterm_curline_len] = '\0';
                     dterm_push_line(g_dterm_curline);
                     g_dterm_curline_len = 0;
                 }
-            } else if (ch >= 0x20U && ch < 0x7FU) {
-                if (g_dterm_curline_len < 78) {
-                    g_dterm_curline[g_dterm_curline_len++] = static_cast<char>(ch);
-                }
+                g_dterm_curline[g_dterm_curline_len++] = (ch == '\t') ? ' ' : static_cast<char>(ch);
+                g_dterm_curline[g_dterm_curline_len] = '\0';
+                g_dterm_scroll = 0;
+                g_dterm_dirty = 1;
             }
         }
         if (!g_dterm_is_local && g_dterm_yapp.status[0] && strcmp(g_dterm_yapp.status, g_dterm_last_yapp) != 0) {
             strncpy(g_dterm_last_yapp, g_dterm_yapp.status, sizeof(g_dterm_last_yapp) - 1);
             g_dterm_last_yapp[sizeof(g_dterm_last_yapp) - 1] = '\0';
-            char line[80];
-            sprintf(line, "*** %.74s", g_dterm_last_yapp);
+            char line[140];
+            sprintf(line, "*** %.130s", g_dterm_last_yapp);
             dterm_push_line(line);
         }
     } else if (event_type == 3) {
+        if (g_dterm_curline_len > 0) {
+            g_dterm_curline[g_dterm_curline_len] = '\0';
+            dterm_push_line(g_dterm_curline);
+            g_dterm_curline_len = 0;
+        }
         g_dterm_sid = 0;
         g_dterm_connecting = 0;
         g_dterm_connected = 0;
         g_dterm_is_local = 0;
         oyk_yapp_reset(&g_dterm_yapp);
-        char msg[80];
-        sprintf(msg, "*** Disconnected (%.56s)", reason ? reason : "Closed");
+        char msg[96];
+        sprintf(msg, "*** Disconnected (%.72s)", reason ? reason : "Closed");
         dterm_push_line(msg);
+        g_dterm_scroll = 0;
         g_dterm_dirty = 1;
     }
 }
@@ -1444,6 +1490,64 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
     return picked;
 }
 
+static int dos_str_ieq(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        char ca = *a;
+        char cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb + ('a' - 'A'));
+        if (ca != cb) return 0;
+        ++a;
+        ++b;
+    }
+    return (*a == '\0' && *b == '\0') ? 1 : 0;
+}
+
+static void dos_term_connect(const char* target) {
+    if (!target || !target[0]) return;
+    if (g_dterm_sid != 0) {
+        oyk_yapp_cancel(&g_dterm_yapp, "Reconnecting");
+        g_node.close_local_terminal(g_dterm_sid);
+        g_dterm_sid = 0;
+    }
+    g_dterm_curline_len = 0;
+    g_dterm_curline[0] = '\0';
+    g_dterm_scroll = 0;
+    oyk_term_eol_init(&g_dterm_eol, OYK_TERM_EOL_CR, 1);
+
+    oyk_u32 sid = 0;
+    char err[64];
+    int tx_iface = (g_axudp_iface_idx >= 0) ? g_axudp_iface_idx : g_serial_iface_idx;
+    g_dterm_opening = 1;
+    g_dterm_is_local = 0;
+    g_dterm_connected = 0;
+    g_dterm_connecting = 0;
+    int ok = g_node.open_local_terminal(tx_iface, target, &sid,
+                                        &g_dterm_remote, &g_dterm_is_local,
+                                        err, sizeof(err));
+    g_dterm_opening = 0;
+    if (ok) {
+        g_dterm_sid = sid;
+        g_dterm_connecting = g_dterm_is_local ? 0 : 1;
+        g_dterm_connected = g_dterm_is_local ? 1 : 0;
+        oyk_yapp_reset(&g_dterm_yapp);
+        oyk_yapp_set_remote(&g_dterm_yapp, &g_dterm_remote);
+        g_dterm_last_yapp[0] = '\0';
+        if (!g_dterm_is_local) {
+            char cs[16], msg[78];
+            oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
+            sprintf(msg, "*** Connecting to %s...", cs);
+            dterm_push_line(msg);
+        }
+    } else {
+        char msg[88];
+        sprintf(msg, "*** Connect error: %.64s", err);
+        dterm_push_line(msg);
+    }
+    g_dterm_dirty = 1;
+}
+
 static void render_dos_terminal(const char* input_buf) {
     if (!g_vid) return;
     DosTuiCtx dc;
@@ -1453,30 +1557,70 @@ static void render_dos_terminal(const char* input_buf) {
     OykTuiTermLayout tlay;
     oyk_tui_compute_term_layout(g_vid->rows, g_vid->cols, &tlay);
 
+    const int body_w = (tlay.cols > 2) ? (tlay.cols - 2) : 1;
+    const int inner_h = (tlay.body_rows > 2) ? (tlay.body_rows - 2) : 1;
+    const int show_live = (g_dterm_curline_len > 0) ? 1 : 0;
+
+    int total_rows = 0;
+    for (int i = 0; i < g_dterm_line_count; ++i) {
+        total_rows += oyk_term_count_wrapped_rows(
+            g_dterm_lines[i], strlen(g_dterm_lines[i]), body_w);
+    }
+    if (show_live) {
+        g_dterm_curline[g_dterm_curline_len] = '\0';
+        total_rows += oyk_term_count_wrapped_rows(
+            g_dterm_curline, static_cast<size_t>(g_dterm_curline_len), body_w);
+    }
+    int max_scroll = (total_rows > inner_h) ? (total_rows - inner_h) : 0;
+    if (g_dterm_scroll > max_scroll) g_dterm_scroll = max_scroll;
+    if (g_dterm_scroll < 0) g_dterm_scroll = 0;
+    int first_vis = max_scroll - g_dterm_scroll;
+
     char hdr[140];
+    const char* eol_lbl = oyk_term_eol_label(&g_dterm_eol);
     if (g_dterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-        sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (%s)",
-                cs, g_dterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready");
+        if (g_dterm_scroll > 0) {
+            sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (%s) [EOL:%s] [UP %d]",
+                    cs, g_dterm_is_local ? "LOCAL" : "YAPP", eol_lbl, g_dterm_scroll);
+        } else {
+            sprintf(hdr, " LOCAL TERMINAL | CONNECTED: %-10s (%s) [EOL:%s]",
+                    cs, g_dterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready", eol_lbl);
+        }
     } else if (g_dterm_connecting) {
         char cs[16];
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-        sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s...", cs);
+        sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s... [EOL:%s]", cs, eol_lbl);
     } else {
-        strcpy(hdr, " LOCAL TERMINAL | DISCONNECTED (Press F2:Connect | F9/Esc:Console)");
+        sprintf(hdr, " LOCAL TERMINAL | DISCONNECTED [EOL:%s] (F2:Connect | /bbs /local | F9:Console)",
+                eol_lbl);
     }
     vid_puts(tlay.header_row, 0, ta.top_hdr, hdr, tlay.cols);
 
-    vid_box(tlay.body_top, 0, tlay.body_rows, tlay.cols, ta.bdr, ta.norm, 0);
+    vid_box(tlay.body_top, 0, tlay.body_rows, tlay.cols, ta.bdr, ta.norm, 1);
     dos_vid_title(g_vid, tlay.body_top, 2, tlay.cols - 4, ta.ttl, "Terminal Output");
 
-    int inner_h = (tlay.body_rows > 2) ? (tlay.body_rows - 2) : 1;
-    int start = (g_dterm_line_count > inner_h) ? (g_dterm_line_count - inner_h) : 0;
-    for (int r = 0; r < inner_h; ++r) {
-        int idx = start + r;
-        vid_puts(tlay.body_top + 1 + r, 1, ta.norm,
-                 (idx < g_dterm_line_count) ? g_dterm_lines[idx] : "", tlay.cols - 2);
+    int vis_idx = 0;
+    int out_row = 0;
+    const int nlines = g_dterm_line_count + show_live;
+    for (int li = 0; li < nlines && out_row < inner_h; ++li) {
+        const char* ln = (li < g_dterm_line_count) ? g_dterm_lines[li] : g_dterm_curline;
+        size_t l_len = strlen(ln);
+        OykTermWrapSpan spans[16];
+        int sc = oyk_term_wrap_line(ln, l_len, body_w, spans, 16);
+        for (int si = 0; si < sc && out_row < inner_h; ++si) {
+            if (vis_idx >= first_vis) {
+                char seg[160];
+                size_t slen = spans[si].len;
+                if (slen >= sizeof(seg)) slen = sizeof(seg) - 1;
+                memcpy(seg, ln + spans[si].start, slen);
+                seg[slen] = '\0';
+                vid_puts(tlay.body_top + 1 + out_row, 1, ta.norm, seg, body_w);
+                ++out_row;
+            }
+            ++vis_idx;
+        }
     }
 
     char bar[140];
@@ -1485,13 +1629,22 @@ static void render_dos_terminal(const char* input_buf) {
                 static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_dterm_yapp.total_bytes));
     } else {
-        strcpy(bar, " F2:Connect  F3:YAPP Upload  F4:Disconnect  F6:Abort YAPP  F9/Esc:Console");
+        strcpy(bar, " F2:Connect  F3:YAPP  F4:Disc  F6:Abort  PgUp/Dn:Scroll  F9/Tab:Console");
     }
     vid_puts(tlay.hotkey_row, 0, ta.menu_bg, bar, tlay.cols);
 
-    char in_row[140];
-    sprintf(in_row, "> %s", input_buf);
+    int in_avail = (tlay.cols > 3) ? (tlay.cols - 3) : 1;
+    size_t in_start = 0;
+    int cur_col = 0;
+    oyk_term_input_slice(static_cast<size_t>(g_dterm_in_len), in_avail, &in_start, &cur_col);
+    char in_row[160];
+    in_row[0] = '>';
+    in_row[1] = ' ';
+    strncpy(in_row + 2, input_buf + in_start, sizeof(in_row) - 3);
+    in_row[sizeof(in_row) - 1] = '\0';
     vid_puts(tlay.input_row, 0, ta.norm, in_row, tlay.cols);
+    char cur_ch = input_buf[in_start + cur_col] ? input_buf[in_start + cur_col] : ' ';
+    dos_vid_putc(g_vid, tlay.input_row, 2 + cur_col, ta.dlg_sel, static_cast<oyk_u8>(cur_ch));
     vid_flush();
 }
 
@@ -1501,21 +1654,31 @@ static void run_dos_local_terminal() {
         g_dterm_sid = 0;
         g_dterm_connected = 0;
         g_dterm_connecting = 0;
+        g_dterm_opening = 0;
         g_dterm_is_local = 0;
         g_dterm_line_count = 0;
         g_dterm_curline_len = 0;
+        g_dterm_curline[0] = '\0';
         g_dterm_last_yapp[0] = '\0';
         g_dterm_in_buf[0] = '\0';
         g_dterm_in_len = 0;
+        g_dterm_scroll = 0;
+        oyk_term_eol_init(&g_dterm_eol, OYK_TERM_EOL_CR, 1);
         oyk_yapp_init(&g_dterm_yapp, "incoming",
                       dos_yapp_send_cb, NULL,
                       dos_yapp_overwrite_cb, NULL);
         g_node.set_local_event_callback(dos_local_term_event_cb, NULL);
 
         dterm_push_line("*** OYK MS-DOS Local Packet Terminal (YAPP / YAPP-C enabled)");
-        dterm_push_line("*** F2:Connect (LOCAL, CHAT, CALL@ip:port) | F3:YAPP Upload | F9/Esc:Console");
+        dterm_push_line("*** F2 or /local, /bbs, /chat, /connect, /eol [auto|cr|lf|crlf] | F9/Tab:Console");
     }
 
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        dos_gfx_clear_shadows(g_gfx);
+        dos_gfx_clear_cell_rgb(g_gfx);
+    }
+#endif
     g_dterm_dirty = 1;
     oyk_u32 last_yapp_bytes = g_dterm_yapp.bytes_transferred;
     int prev_yapp_state = g_dterm_yapp.state;
@@ -1535,42 +1698,48 @@ static void run_dos_local_terminal() {
             render_dos_terminal(g_dterm_in_buf);
         }
 
-        if (!kbhit()) continue;
-        int ch = getch();
-        if (ch == 0 || ch == 0xE0) {
-            int ext = getch();
-            if (ext == 67) { /* F9: Switch back to Operator Console without closing session */
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
+
+        int sim_ext = 0;
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_WHEEL) {
+                if (mev.wheel_delta < 0) {
+                    g_dterm_scroll += 3;
+                } else if (mev.wheel_delta > 0) {
+                    g_dterm_scroll = (g_dterm_scroll > 3) ? (g_dterm_scroll - 3) : 0;
+                }
+                g_dterm_dirty = 1;
+                continue;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) {
+                break;
+            }
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                OykTuiTermLayout tlay;
+                oyk_tui_compute_term_layout(g_vid ? g_vid->rows : 25, g_vid ? g_vid->cols : 80, &tlay);
+                if (mev.row == tlay.hotkey_row) {
+                    if (mev.col >= 1 && mev.col <= 11) sim_ext = 60;
+                    else if (mev.col >= 13 && mev.col <= 20) sim_ext = 61;
+                    else if (mev.col >= 22 && mev.col <= 29) sim_ext = 62;
+                    else if (mev.col >= 31 && mev.col <= 39) sim_ext = 64;
+                    else if (mev.col >= 55) break;
+                }
+            }
+            if (sim_ext == 0) continue;
+        }
+
+        if (sim_ext != 0 || ch == 0 || ch == 0xE0) {
+            int ext = sim_ext ? sim_ext : getch();
+            if (ext == 67) { /* F9: Return to Operator Console without closing session */
                 break;
             } else if (ext == 60) { /* F2: Connect */
-                char target[64], err[64];
-                prompt_line("Target (LOCAL, CHAT, or CALL@ip:port): ", target, sizeof(target));
+                char target[64];
+                prompt_line("Target (LOCAL, BBS, CHAT, or CALL@ip:port): ", target, sizeof(target));
                 if (target[0]) {
-                    if (g_dterm_sid != 0) g_node.close_local_terminal(g_dterm_sid);
-                    oyk_u32 sid = 0;
-                    int is_local = 0;
-                    g_dterm_is_local = 0;
-                    if (g_node.open_local_terminal(g_axudp_iface_idx, target, &sid,
-                                                   &g_dterm_remote, &is_local, err, sizeof(err))) {
-                        g_dterm_sid = sid;
-                        g_dterm_is_local = is_local;
-                        g_dterm_connecting = is_local ? 0 : 1;
-                        g_dterm_connected = is_local ? 1 : 0;
-                        oyk_yapp_reset(&g_dterm_yapp);
-                        oyk_yapp_set_remote(&g_dterm_yapp, &g_dterm_remote);
-                        g_dterm_last_yapp[0] = '\0';
-                        char cs[16], msg[78];
-                        oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
-                        if (is_local) {
-                            sprintf(msg, "*** Connected locally to %s (YAPP disabled)", cs);
-                        } else {
-                            sprintf(msg, "*** Connecting to %s...", cs);
-                        }
-                        dterm_push_line(msg);
-                    } else {
-                        char msg[80];
-                        sprintf(msg, "*** Connect error: %.56s", err);
-                        dterm_push_line(msg);
-                    }
+                    dos_term_connect(target);
                 }
             } else if (ext == 61) { /* F3: YAPP Upload */
                 if (!g_dterm_connected || g_dterm_sid == 0) {
@@ -1582,12 +1751,12 @@ static void run_dos_local_terminal() {
                     if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
                         char err[64];
                         if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
-                            char msg[80];
-                            sprintf(msg, "*** YAPP error: %.58s", err);
+                            char msg[96];
+                            sprintf(msg, "*** YAPP error: %.72s", err);
                             dterm_push_line(msg);
                         } else {
-                            char msg[80];
-                            sprintf(msg, "*** %.74s", g_dterm_yapp.status);
+                            char msg[96];
+                            sprintf(msg, "*** %.86s", g_dterm_yapp.status);
                             dterm_push_line(msg);
                         }
                     }
@@ -1600,21 +1769,127 @@ static void run_dos_local_terminal() {
             } else if (ext == 64) { /* F6: Abort YAPP */
                 oyk_yapp_cancel(&g_dterm_yapp, "Cancelled by user");
                 dterm_push_line("*** YAPP transfer aborted.");
+            } else if (ext == 73) { /* PgUp */
+                g_dterm_scroll += 6;
+            } else if (ext == 81) { /* PgDn */
+                g_dterm_scroll = (g_dterm_scroll > 6) ? (g_dterm_scroll - 6) : 0;
+            } else if (ext == 71) { /* Home */
+                g_dterm_scroll = 10000;
+            } else if (ext == 79) { /* End */
+                g_dterm_scroll = 0;
             }
             g_dterm_dirty = 1;
-        } else if (ch == 27) {
+        } else if (ch == 27 || ch == '\t') {
             break;
         } else if (ch == '\r' || ch == '\n') {
             g_dterm_in_buf[g_dterm_in_len] = '\0';
-            char echo[80];
-            sprintf(echo, "> %.77s", g_dterm_in_buf);
+            char cmd[64];
+            size_t ci = 0;
+            while (g_dterm_in_buf[ci] == ' ' || g_dterm_in_buf[ci] == '\t') ++ci;
+            if (g_dterm_in_buf[ci] == '/') {
+                size_t wi = 0;
+                while (g_dterm_in_buf[ci] && g_dterm_in_buf[ci] != ' ' &&
+                       g_dterm_in_buf[ci] != '\t' && wi < sizeof(cmd) - 1) {
+                    cmd[wi++] = g_dterm_in_buf[ci++];
+                }
+                cmd[wi] = '\0';
+                while (g_dterm_in_buf[ci] == ' ' || g_dterm_in_buf[ci] == '\t') ++ci;
+                const char* arg = g_dterm_in_buf + ci;
+                int handled = 1;
+                if (dos_str_ieq(cmd, "/console") || dos_str_ieq(cmd, "/bg")) {
+                    g_dterm_in_len = 0;
+                    g_dterm_in_buf[0] = '\0';
+                    break;
+                } else if (dos_str_ieq(cmd, "/local")) {
+                    dos_term_connect("LOCAL");
+                } else if (dos_str_ieq(cmd, "/bbs")) {
+                    dos_term_connect("BBS");
+                } else if (dos_str_ieq(cmd, "/chat")) {
+                    dos_term_connect("CHAT");
+                } else if (dos_str_ieq(cmd, "/connect") || dos_str_ieq(cmd, "/c")) {
+                    if (!arg[0]) {
+                        dterm_push_line("*** Usage: /connect <LOCAL|BBS|CHAT|CALL[@ip:port]>");
+                    } else {
+                        dos_term_connect(arg);
+                    }
+                } else if (dos_str_ieq(cmd, "/disc") || dos_str_ieq(cmd, "/d")) {
+                    if (g_dterm_sid != 0) {
+                        oyk_yapp_cancel(&g_dterm_yapp, "Disconnected");
+                        g_node.close_local_terminal(g_dterm_sid);
+                    }
+                } else if (dos_str_ieq(cmd, "/ports")) {
+                    dterm_push_line("*** Configured Interfaces:");
+                    for (int pi = 0; pi < g_node.iface_count(); ++pi) {
+                        char pline[120];
+                        const OykIfaceRuntime& ir = g_node.iface(pi);
+                        sprintf(pline, "  %-10s [%-8s] %s", ir.cfg.id, ir.cfg.type, ir.status);
+                        dterm_push_line(pline);
+                    }
+                } else if (dos_str_ieq(cmd, "/send")) {
+                    if (!g_dterm_connected || g_dterm_sid == 0) {
+                        dterm_push_line("*** Not connected.");
+                    } else if (g_dterm_is_local) {
+                        dterm_push_line("*** YAPP is disallowed when both sides are local.");
+                    } else {
+                        static char chosen[160];
+                        if (dos_file_selector("YAPP Upload - Select File", chosen, sizeof(chosen))) {
+                            char err[64];
+                            if (!oyk_yapp_start_send(&g_dterm_yapp, chosen, err, sizeof(err))) {
+                                char msg[96];
+                                sprintf(msg, "*** YAPP error: %.72s", err);
+                                dterm_push_line(msg);
+                            } else {
+                                char msg[96];
+                                sprintf(msg, "*** %.86s", g_dterm_yapp.status);
+                                dterm_push_line(msg);
+                            }
+                        }
+                    }
+                } else if (dos_str_ieq(cmd, "/eol")) {
+                    if (!arg[0]) {
+                        char emsg[80];
+                        sprintf(emsg, "*** Terminal EOL: %s (use /eol auto|cr|lf|crlf)",
+                                oyk_term_eol_label(&g_dterm_eol));
+                        dterm_push_line(emsg);
+                    } else {
+                        int new_mode = OYK_TERM_EOL_AUTO;
+                        if (oyk_term_eol_parse_mode(arg, &new_mode)) {
+                            g_dterm_eol.override_mode = new_mode;
+                            char emsg[80];
+                            sprintf(emsg, "*** Terminal EOL set to %s.",
+                                    oyk_term_eol_label(&g_dterm_eol));
+                            dterm_push_line(emsg);
+                        } else {
+                            dterm_push_line("*** Usage: /eol [auto|cr|lf|crlf]");
+                        }
+                    }
+                } else {
+                    handled = 0;
+                }
+                if (handled) {
+                    g_dterm_in_len = 0;
+                    g_dterm_in_buf[0] = '\0';
+                    g_dterm_scroll = 0;
+                    g_dterm_dirty = 1;
+                    continue;
+                }
+            }
+
+            char echo[DOS_TERM_LINE_CAP];
+            sprintf(echo, "> %.250s", g_dterm_in_buf);
             dterm_push_line(echo);
+            g_dterm_scroll = 0;
             if (g_dterm_connected && g_dterm_sid != 0) {
-                g_dterm_in_buf[g_dterm_in_len++] = '\r';
+                size_t eol_len = 0;
+                const char* eol = oyk_term_eol_tx_bytes(&g_dterm_eol, &eol_len);
+                if (g_dterm_in_len + static_cast<int>(eol_len) < static_cast<int>(sizeof(g_dterm_in_buf))) {
+                    memcpy(g_dterm_in_buf + g_dterm_in_len, eol, eol_len);
+                    g_dterm_in_len += static_cast<int>(eol_len);
+                }
                 g_node.send_local_bytes(g_dterm_sid, reinterpret_cast<const oyk_u8*>(g_dterm_in_buf),
                                         static_cast<size_t>(g_dterm_in_len));
             } else {
-                dterm_push_line("*** Not connected. Press F2 to connect.");
+                dterm_push_line("*** Not connected. Press F2 or type /local, /bbs, or /chat.");
             }
             g_dterm_in_len = 0;
             g_dterm_in_buf[0] = '\0';
@@ -1622,7 +1897,7 @@ static void run_dos_local_terminal() {
         } else if ((ch == 8 || ch == 127) && g_dterm_in_len > 0) {
             g_dterm_in_buf[--g_dterm_in_len] = '\0';
             g_dterm_dirty = 1;
-        } else if (ch >= 32 && ch < 127 && g_dterm_in_len < 76) {
+        } else if (ch >= 32 && ch < 127 && g_dterm_in_len < static_cast<int>(sizeof(g_dterm_in_buf) - 4)) {
             g_dterm_in_buf[g_dterm_in_len++] = static_cast<char>(ch);
             g_dterm_in_buf[g_dterm_in_len] = '\0';
             g_dterm_dirty = 1;
@@ -1857,8 +2132,13 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
     if (pcol > pcols - 20) pcol = pcols - 20;
     vid_puts(prow, 0, 0x4F, prompt, pcols);
     int avail = pcols - pcol;
-    int start = (len > avail) ? (len - avail) : 0;
+    size_t s_off = 0;
+    int cur_off = 0;
+    oyk_term_input_slice(static_cast<size_t>(len), avail, &s_off, &cur_off);
+    int start = static_cast<int>(s_off);
     vid_puts(prow, pcol, 0x4F, buf + start, avail);
+    char cur_ch = buf[start + cur_off] ? buf[start + cur_off] : ' ';
+    dos_vid_putc(g_vid, prow, pcol + cur_off, 0x70U, static_cast<oyk_u8>(cur_ch));
     vid_flush_row(prow);
     if (accepted_out) *accepted_out = 0;
     while (!g_break_flag) {
@@ -1875,8 +2155,11 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
             buf[len++] = static_cast<char>(ch);
             buf[len] = '\0';
         }
-        start = (len > avail) ? (len - avail) : 0;
+        oyk_term_input_slice(static_cast<size_t>(len), avail, &s_off, &cur_off);
+        start = static_cast<int>(s_off);
         vid_puts(prow, pcol, 0x4F, buf + start, avail);
+        cur_ch = buf[start + cur_off] ? buf[start + cur_off] : ' ';
+        dos_vid_putc(g_vid, prow, pcol + cur_off, 0x70U, static_cast<oyk_u8>(cur_ch));
         vid_flush_row(prow);
     }
 }

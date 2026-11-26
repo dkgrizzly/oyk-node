@@ -65,7 +65,7 @@ CFLAGS_MTCP     = $(CPU) -ml -os -zm -zt32 -bt=dos -zq -DOYK_DOS_HAS_MTCP=1 $(CF
 CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
 
 NODE_OBJS = dos_main.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj oyk_term.obj
-TEST_OBJS = test_dos.obj test_portable_dos.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj oyk_term.obj
+TEST_OBJS = test_dos.obj test_portable_dos.obj test_portable_term_dos.obj dos_usb.obj dos_video.obj dos_mouse.obj ems.obj oyk_portable.obj oyk_yapp.obj oyk_rig.obj oyk_printer.obj oyk_tui.obj oyk_term.obj
 
 MTCP_OBJS = &
     mtcp_packet.obj &
@@ -134,6 +134,9 @@ test_dos.obj: test_dos.cpp dos_usb.hpp dos_video.hpp ems.hpp ../compat/oyk_porta
 
 test_portable_dos.obj: ../../tests/test_portable.cpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp dos_video.hpp
     $(CC) $(CFLAGS_COMMON) -DOYK_PORTABLE_TESTS_AS_LIBRARY -fo=test_portable_dos.obj ../../tests/test_portable.cpp
+
+test_portable_term_dos.obj: ../../tests/test_portable_term.cpp ../compat/oyk_portable.hpp ../compat/oyk_tui.hpp ../compat/oyk_term.hpp dos_mouse.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=test_portable_term_dos.obj ../../tests/test_portable_term.cpp
 
 !if $(USE_MTCP) == 1
 # mTCP TCPLIB objects compiled from upstream uppercase sources with oyk_mtcp.cfg

@@ -53,7 +53,7 @@ NODE_OBJS = gfxdos_main.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_mouse.obj gfx
             dos_xms.obj dos_font8x16.obj dos_gfx.obj &
             gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj gfxdos_tui.obj gfxdos_term.obj
 
-TEST_OBJS = gfxdos_test.obj gfxdos_test_portable.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_mouse.obj gfxdos_ems.obj &
+TEST_OBJS = gfxdos_test.obj gfxdos_test_portable.obj gfxdos_test_portable_term.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_mouse.obj gfxdos_ems.obj &
             dos_xms.obj dos_font8x16.obj dos_gfx.obj &
             gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj gfxdos_tui.obj gfxdos_term.obj
 
@@ -133,6 +133,9 @@ gfxdos_test.obj: test_dos.cpp dos_usb.hpp dos_video.hpp ems.hpp dos_xms.hpp dos_
 
 gfxdos_test_portable.obj: ../../tests/test_portable.cpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp dos_video.hpp dos_xms.hpp dos_gfx.hpp
     $(CC) $(CFLAGS_COMMON) -DOYK_PORTABLE_TESTS_AS_LIBRARY -fo=gfxdos_test_portable.obj ../../tests/test_portable.cpp
+
+gfxdos_test_portable_term.obj: ../../tests/test_portable_term.cpp ../compat/oyk_portable.hpp ../compat/oyk_tui.hpp ../compat/oyk_term.hpp dos_mouse.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_test_portable_term.obj ../../tests/test_portable_term.cpp
 
 !if $(USE_MTCP) == 1
 gfx_mtcp_packet.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/PACKET.CPP

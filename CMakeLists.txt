@@ -412,6 +412,7 @@ if(BUILD_TESTS AND NOT WIN32)
     # Strict C++98 verification of the portable MS-DOS / Win16 / Win32 shared core
     add_executable(oyk_portable_tests
         tests/test_portable.cpp
+        tests/test_portable_term.cpp
         ports/compat/oyk_portable.cpp
         ports/compat/oyk_yapp.cpp
         ports/compat/oyk_rig.cpp
