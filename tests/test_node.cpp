@@ -3383,16 +3383,19 @@ void test_config_include_storage_modes() {
         assert(reloaded.peers.size() == 2);
     }
 
-    // 6. Verify example configs/node.cfg + configs/interfaces.cfg + configs/peers.cfg load cleanly
+    // 6. Verify example configs/node.cfg + configs/interfaces.cfg + configs/peers.cfg + configs/themes.cfg load cleanly
     {
         const fs::path repo_cfg = fs::path(__FILE__).parent_path().parent_path() / "configs" / "node.cfg";
         node::NodeConfig ex_cfg;
         assert(node::NodeConfig::load_from_file(repo_cfg.string(), ex_cfg, err));
         assert(ex_cfg.interfaces_file == "interfaces.cfg");
         assert(ex_cfg.peers_file == "peers.cfg");
+        assert(ex_cfg.themes_file == "themes.cfg");
         assert(ex_cfg.interfaces.size() == 1);
         assert(ex_cfg.interfaces[0].id == "axudp0");
         assert(ex_cfg.peers.empty());
+        assert(ex_cfg.themes.size() == 1);
+        assert(ex_cfg.themes[0].name == "amber-crt");
     }
 
     fs::remove_all(tmp);
@@ -3511,6 +3514,86 @@ void test_same_interface_forwarding_policy() {
     std::cout << "[PASS] test_same_interface_forwarding_policy\n";
 }
 
+void test_theme_config_cloning_and_storage() {
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "oyk_theme_cfg_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    auto read_txt = [](const fs::path& p) {
+        std::ifstream ifs(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+    };
+
+    // 1. Auto-clone naming from built-in dark and light themes with collision numbering
+    std::vector<ui::ThemeConfig> custom;
+    assert(ui::is_builtin_theme_name("dark"));
+    assert(ui::is_builtin_theme_name("light"));
+    assert(ui::is_builtin_theme_name("native"));
+    assert(!ui::is_builtin_theme_name("custom-dark"));
+
+    std::string c1 = ui::make_custom_clone_name(custom, true);
+    assert(c1 == "custom-dark");
+    ui::ThemeConfig t1 = ui::builtin_dark_theme();
+    t1.name = c1;
+    t1.colors[static_cast<std::size_t>(ui::ThemeRole::Accent)] = 0xFF8800u;
+    custom.push_back(t1);
+
+    assert(ui::make_custom_clone_name(custom, true) == "custom-dark-2");
+    ui::ThemeConfig t2 = ui::builtin_dark_theme();
+    t2.name = "custom-dark-2";
+    custom.push_back(t2);
+    assert(ui::make_custom_clone_name(custom, true) == "custom-dark-3");
+
+    std::string l1 = ui::make_custom_clone_name(custom, false);
+    assert(l1 == "custom-light");
+    ui::ThemeConfig tl = ui::builtin_light_theme();
+    tl.name = l1;
+    custom.push_back(tl);
+    assert(ui::make_custom_clone_name(custom, false) == "custom-light-2");
+
+    // 2. Built-in themes are never saved to config even when selected or if injected
+    node::NodeConfig cfg;
+    cfg.callsign = ax25::Callsign("K7THM", 7);
+    cfg.logging.log_path = (tmp / "logs").string();
+    cfg.banlist_path = (tmp / "banlist.cfg").string();
+    cfg.theme_name = "dark";
+    cfg.themes = custom;
+    ui::ThemeConfig sneaky_builtin = ui::builtin_light_theme();
+    cfg.themes.push_back(sneaky_builtin); // name == "light", must never be written
+
+    const fs::path inline_cfg = tmp / "inline.cfg";
+    assert(cfg.save_to_file(inline_cfg));
+    std::string inline_raw = read_txt(inline_cfg);
+    assert(inline_raw.find("theme = dark") != std::string::npos);
+    assert(inline_raw.find("[theme custom-dark]") != std::string::npos);
+    assert(inline_raw.find("[theme custom-light]") != std::string::npos);
+    assert(inline_raw.find("[theme light]") == std::string::npos);
+    assert(inline_raw.find("[theme dark]") == std::string::npos);
+
+    // 3. Separate themes= file and combined themes=+peers= file consolidation
+    cfg.theme_name = "custom-dark";
+    cfg.themes_file = "my_themes.cfg";
+    assert(cfg.save_to_file(inline_cfg));
+    std::string main_sep = read_txt(inline_cfg);
+    std::string sep_raw = read_txt(tmp / "my_themes.cfg");
+    assert(main_sep.find("themes = my_themes.cfg") != std::string::npos);
+    assert(main_sep.find("[theme ") == std::string::npos);
+    assert(sep_raw.find("[theme custom-dark]") != std::string::npos);
+    assert(sep_raw.find("accent = #FF8800") != std::string::npos);
+
+    node::NodeConfig reloaded;
+    std::string err;
+    assert(node::NodeConfig::load_from_file(inline_cfg, reloaded, err));
+    assert(reloaded.theme_name == "custom-dark");
+    assert(reloaded.themes_file == "my_themes.cfg");
+    assert(reloaded.themes.size() == 3);
+    assert(reloaded.themes[0].name == "custom-dark");
+    assert(reloaded.themes[0].colors[static_cast<std::size_t>(ui::ThemeRole::Accent)] == 0xFF8800u);
+
+    fs::remove_all(tmp);
+    std::cout << "[PASS] test_theme_config_cloning_and_storage\n";
+}
+
 } // namespace
 
 int main() {
@@ -3541,6 +3624,7 @@ int main() {
     test_iface_directions_netmask_and_dmr_id();
     test_config_include_storage_modes();
     test_same_interface_forwarding_policy();
+    test_theme_config_cloning_and_storage();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

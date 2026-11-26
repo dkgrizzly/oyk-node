@@ -1083,6 +1083,257 @@ void oyk_config_resolve_peers(const OykConfig* cfg, char* out, size_t out_sz) {
     resolve_cfg_subpath(cfg->source_path, cfg->peers_file, out, out_sz);
 }
 
+void oyk_config_resolve_themes(const OykConfig* cfg, char* out, size_t out_sz) {
+    if (!cfg || !out || out_sz == 0) return;
+    resolve_cfg_subpath(cfg->source_path, cfg->themes_file, out, out_sz);
+}
+
+static const char* const kPortableThemeKeys[OYK_THEME_COLOR_COUNT] = {
+    "bg",           "fg",           "panel_bg",   "panel_fg",    "border",
+    "header_bg",    "header_fg",    "accent",     "status_bg",   "status_fg",
+    "selection_bg", "selection_fg", "input_bg",   "input_fg",    "button_bg",
+    "button_fg",    "ok",           "warn",       "error"
+};
+
+static const char* const kPortableThemeLabels[OYK_THEME_COLOR_COUNT] = {
+    "Background",    "Foreground",   "Panel Bg",     "Panel Fg",     "Border",
+    "Header Bg",     "Header Fg",    "Accent",       "Status Bg",    "Status Fg",
+    "Selection Bg",  "Selection Fg", "Input Bg",     "Input Fg",     "Button Bg",
+    "Button Fg",     "OK Status",    "Warning",      "Error"
+};
+
+static const oyk_u32 kBuiltinDarkColors[OYK_THEME_COLOR_COUNT] = {
+    0x10141AUL, 0xE2E8F0UL, 0x18202AUL, 0xE2E8F0UL, 0x38BDF8UL,
+    0x1E3A5FUL, 0xFFFFFFUL, 0x38BDF8UL, 0x18202AUL, 0xFACC15UL,
+    0x0EA5E9UL, 0xFFFFFFUL, 0x0F172AUL, 0xF8FAFCUL, 0x263445UL,
+    0xF8FAFCUL, 0x4ADE80UL, 0xFACC15UL, 0xF87171UL
+};
+
+static const oyk_u32 kBuiltinLightColors[OYK_THEME_COLOR_COUNT] = {
+    0xF4F6F9UL, 0x111827UL, 0xFFFFFFUL, 0x111827UL, 0x1D4ED8UL,
+    0x1E40AFUL, 0xFFFFFFUL, 0x0284C7UL, 0xE2E8F0UL, 0x1E293BUL,
+    0x2563EBUL, 0xFFFFFFUL, 0xFFFFFFUL, 0x0F172AUL, 0xE5E7EBUL,
+    0x111827UL, 0x15803DUL, 0xB45309UL, 0xB91C1CUL
+};
+
+static const oyk_u32 kDosNativeColors[OYK_THEME_COLOR_COUNT] = {
+    0x000000UL, 0xAAAAAAUL, 0x0000AAUL, 0xFFFFFFUL, 0x00AAAAUL,
+    0x0000AAUL, 0xFFFFFFUL, 0x55FFFFUL, 0x000000UL, 0xFFFF55UL,
+    0x00AAAAUL, 0xFFFFFFUL, 0x000000UL, 0xFFFFFFUL, 0xAAAAAAUL,
+    0x000000UL, 0x55FF55UL, 0xFFFF55UL, 0xFF5555UL
+};
+
+const char* oyk_theme_role_key(int role) {
+    if (role < 0 || role >= OYK_THEME_COLOR_COUNT) return "";
+    return kPortableThemeKeys[role];
+}
+
+const char* oyk_theme_role_label(int role) {
+    if (role < 0 || role >= OYK_THEME_COLOR_COUNT) return "";
+    return kPortableThemeLabels[role];
+}
+
+int oyk_theme_role_index(const char* key) {
+    if (!key) return -1;
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+        if (stricmp_ascii(key, kPortableThemeKeys[i]) == 0) return i;
+    }
+    return -1;
+}
+
+int oyk_theme_is_builtin(const char* name) {
+    if (!name || !name[0]) return 1;
+    return (stricmp_ascii(name, "dark") == 0 ||
+            stricmp_ascii(name, "light") == 0 ||
+            stricmp_ascii(name, "native") == 0 ||
+            stricmp_ascii(name, "auto") == 0) ? 1 : 0;
+}
+
+int oyk_theme_parse_hex(const char* text, oyk_u32* rgb_out) {
+    if (!text) return 0;
+    while (*text == ' ' || *text == '\t') ++text;
+    if (*text == '#') ++text;
+    oyk_u32 v = 0;
+    int digits = 0;
+    while (text[digits] && text[digits] != ' ' && text[digits] != '\t') {
+        char c = text[digits];
+        int nib = -1;
+        if (c >= '0' && c <= '9') nib = c - '0';
+        else if (c >= 'a' && c <= 'f') nib = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'F') nib = 10 + (c - 'A');
+        else return 0;
+        if (digits >= 6) return 0;
+        v = (v << 4) | static_cast<oyk_u32>(nib);
+        ++digits;
+    }
+    if (digits != 6) return 0;
+    const char* tail = text + digits;
+    while (*tail == ' ' || *tail == '\t') ++tail;
+    if (*tail != '\0') return 0;
+    if (rgb_out) *rgb_out = v & 0x00FFFFFFUL;
+    return 1;
+}
+
+void oyk_theme_format_hex(oyk_u32 rgb, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    char buf[16];
+    sprintf(buf, "#%06lX", static_cast<unsigned long>(rgb & 0x00FFFFFFUL));
+    safe_copy(out, out_sz, buf);
+}
+
+void oyk_theme_init_builtin(OykThemeConfig* out, int light_mode) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    safe_copy(out->name, sizeof(out->name), light_mode ? "light" : "dark");
+    out->is_dark_base = light_mode ? 0 : 1;
+    const oyk_u32* src = light_mode ? kBuiltinLightColors : kBuiltinDarkColors;
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+        out->colors[i] = src[i];
+    }
+}
+
+void oyk_theme_init_dos_native(OykThemeConfig* out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    safe_copy(out->name, sizeof(out->name), "native");
+    out->is_dark_base = 1;
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+        out->colors[i] = kDosNativeColors[i];
+    }
+}
+
+void oyk_theme_make_clone_name(const OykConfig* cfg, int is_dark_base,
+                               char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    const char* prefix = is_dark_base ? "custom-dark" : "custom-light";
+    for (int idx = 1; idx < 1000; ++idx) {
+        char cand[24];
+        if (idx == 1) {
+            safe_copy(cand, sizeof(cand), prefix);
+        } else {
+            sprintf(cand, "%s-%d", prefix, idx);
+        }
+        int used = 0;
+        if (cfg) {
+            for (int i = 0; i < cfg->theme_count && i < OYK_MAX_THEMES; ++i) {
+                if (stricmp_ascii(cfg->themes[i].name, cand) == 0) {
+                    used = 1;
+                    break;
+                }
+            }
+        }
+        if (!used) {
+            safe_copy(out, out_sz, cand);
+            return;
+        }
+    }
+    safe_copy(out, out_sz, prefix);
+}
+
+void oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
+                                 int os_prefers_dark, OykThemeConfig* out) {
+    if (!out) return;
+    const char* name = (cfg && cfg->theme_name[0]) ? cfg->theme_name : "";
+    if (!name[0] || stricmp_ascii(name, "auto") == 0) {
+        name = default_to_native ? "native" : "dark";
+    }
+    if (stricmp_ascii(name, "native") == 0) {
+        oyk_theme_init_builtin(out, os_prefers_dark ? 0 : 1);
+        safe_copy(out->name, sizeof(out->name), "native");
+        return;
+    }
+    if (stricmp_ascii(name, "light") == 0) {
+        oyk_theme_init_builtin(out, 1);
+        return;
+    }
+    if (stricmp_ascii(name, "dark") == 0) {
+        oyk_theme_init_builtin(out, 0);
+        return;
+    }
+    if (cfg) {
+        for (int i = 0; i < cfg->theme_count && i < OYK_MAX_THEMES; ++i) {
+            if (stricmp_ascii(cfg->themes[i].name, name) == 0) {
+                *out = cfg->themes[i];
+                return;
+            }
+        }
+    }
+    oyk_theme_init_builtin(out, os_prefers_dark ? 0 : 1);
+}
+
+static int nearest_rgb_table_idx(oyk_u32 rgb, const oyk_u32* tbl, int count) {
+    long r = static_cast<long>((rgb >> 16) & 0xFFUL);
+    long g = static_cast<long>((rgb >> 8) & 0xFFUL);
+    long b = static_cast<long>(rgb & 0xFFUL);
+    int best_idx = 0;
+    long best_dist = 0x7FFFFFFFL;
+    for (int i = 0; i < count; ++i) {
+        long dr = r - static_cast<long>((tbl[i] >> 16) & 0xFFUL);
+        long dg = g - static_cast<long>((tbl[i] >> 8) & 0xFFUL);
+        long db = b - static_cast<long>(tbl[i] & 0xFFUL);
+        long d = dr * dr + dg * dg + db * db;
+        if (d < best_dist) {
+            best_dist = d;
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
+oyk_u8 oyk_rgb_to_vga16(oyk_u32 rgb) {
+    static const oyk_u32 kVga16[16] = {
+        0x000000UL, 0x0000AAUL, 0x00AA00UL, 0x00AAAAUL,
+        0xAA0000UL, 0xAA00AAUL, 0xAA5500UL, 0xAAAAAAUL,
+        0x555555UL, 0x5555FFUL, 0x55FF55UL, 0x55FFFFUL,
+        0xFF5555UL, 0xFF55FFUL, 0xFFFF55UL, 0xFFFFFFUL
+    };
+    return static_cast<oyk_u8>(nearest_rgb_table_idx(rgb, kVga16, 16));
+}
+
+int oyk_rgb_to_ansi16(oyk_u32 rgb) {
+    static const oyk_u32 kAnsi16[16] = {
+        0x000000UL, 0xAA0000UL, 0x00AA00UL, 0xAA5500UL,
+        0x0000AAUL, 0xAA00AAUL, 0x00AAAAUL, 0xAAAAAAUL,
+        0x555555UL, 0xFF5555UL, 0x55FF55UL, 0xFFFF55UL,
+        0x5555FFUL, 0xFF55FFUL, 0x55FFFFUL, 0xFFFFFFUL
+    };
+    return nearest_rgb_table_idx(rgb, kAnsi16, 16);
+}
+
+int oyk_rgb_to_xterm256(oyk_u32 rgb) {
+    static const int kCube[6] = {0, 95, 135, 175, 215, 255};
+    long r = static_cast<long>((rgb >> 16) & 0xFFUL);
+    long g = static_cast<long>((rgb >> 8) & 0xFFUL);
+    long b = static_cast<long>(rgb & 0xFFUL);
+    long comp[3] = {r, g, b};
+    int ci[3];
+    for (int k = 0; k < 3; ++k) {
+        int best = 0;
+        long bd = 0x7FFFFFFFL;
+        for (int i = 0; i < 6; ++i) {
+            long d = (comp[k] - kCube[i]) * (comp[k] - kCube[i]);
+            if (d < bd) { bd = d; best = i; }
+        }
+        ci[k] = best;
+    }
+    long dr = r - kCube[ci[0]];
+    long dg = g - kCube[ci[1]];
+    long db = b - kCube[ci[2]];
+    long best_dist = dr * dr + dg * dg + db * db;
+    int best_idx = 16 + 36 * ci[0] + 6 * ci[1] + ci[2];
+
+    long gray_avg = (r + g + b) / 3L;
+    int gi = static_cast<int>((gray_avg - 8L + 5L) / 10L);
+    if (gi < 0) gi = 0;
+    if (gi > 23) gi = 23;
+    long gv = 8L + gi * 10L;
+    long gd = (r - gv) * (r - gv) + (g - gv) * (g - gv) + (b - gv) * (b - gv);
+    if (gd < best_dist) {
+        best_idx = 232 + gi;
+    }
+    return best_idx;
+}
+
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out) {
     if (!cfg || !out) return;
     if (cfg->bbs_callsign.base[0] != '\0') {
@@ -1301,18 +1552,45 @@ struct PortableParseState {
 
 static void parse_config_bytes(const char* raw, size_t raw_len,
                                OykConfig* cfg, PortableParseState* st,
-                               int allow_node, int allow_iface, int allow_peer) {
-    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer, 7=peer, -1=skip */
+                               int allow_node, int allow_iface, int allow_peer,
+                               int allow_theme) {
+    int section = 0; /* 0=node, 1=logfiles, 2=interface, 3=chat, 4=bbs, 5=rig, 6=printer, 7=peer, 8=theme, -1=skip */
     OykIfaceConfig* cur_if = NULL;
     OykPeerConfig* cur_peer = NULL;
+    OykThemeConfig* cur_theme = NULL;
 
     size_t pos = 0;
     char line[256];
     while (next_line_any_eol(raw, raw_len, &pos, line, sizeof(line))) {
-        char* hash = strchr(line, '#');
-        if (hash) *hash = '\0';
-        char* semi = strchr(line, ';');
-        if (semi) *semi = '\0';
+        const char* eq_pos = strchr(line, '=');
+        for (size_t ci = 0; line[ci]; ++ci) {
+            if (line[ci] == ';') {
+                line[ci] = '\0';
+                break;
+            }
+            if (line[ci] == '#') {
+                int is_hex_after_eq = (eq_pos != NULL && (line + ci) > eq_pos &&
+                                       strlen(line + ci) >= 7) ? 1 : 0;
+                if (is_hex_after_eq) {
+                    for (int k = 1; k <= 6; ++k) {
+                        char hc = line[ci + k];
+                        int is_x = ((hc >= '0' && hc <= '9') ||
+                                    (hc >= 'a' && hc <= 'f') ||
+                                    (hc >= 'A' && hc <= 'F')) ? 1 : 0;
+                        if (!is_x) { is_hex_after_eq = 0; break; }
+                    }
+                    char after = line[ci + 7];
+                    if (is_hex_after_eq && after != '\0' && after != ' ' &&
+                        after != '\t' && after != '#' && after != ';') {
+                        is_hex_after_eq = 0;
+                    }
+                }
+                if (!is_hex_after_eq) {
+                    line[ci] = '\0';
+                    break;
+                }
+            }
+        }
         trim_inplace(line);
         if (!line[0]) continue;
 
@@ -1323,28 +1601,22 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
             trim_inplace(sec);
             if (stricmp_ascii(sec, "node") == 0) {
                 section = allow_node ? 0 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (stricmp_ascii(sec, "logfiles") == 0) {
                 section = allow_node ? 1 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (stricmp_ascii(sec, "bbs") == 0) {
                 section = allow_node ? 4 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (stricmp_ascii(sec, "chat") == 0) {
                 section = allow_node ? 3 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (stricmp_ascii(sec, "rig") == 0 || stricmp_ascii(sec, "radio") == 0) {
                 section = allow_node ? 5 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (stricmp_ascii(sec, "printer") == 0) {
                 section = allow_node ? 6 : -1;
-                cur_if = NULL;
-                cur_peer = NULL;
+                cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
             } else if (strlen(sec) > 9 &&
                        (sec[0] == 'i' || sec[0] == 'I') &&
                        (sec[8] == 'e' || sec[8] == 'E')) {
@@ -1352,7 +1624,7 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                 trim_inplace(idp);
                 if (*idp == ':') { ++idp; trim_inplace(idp); }
                 if (!allow_iface) {
-                    section = -1; cur_if = NULL; cur_peer = NULL;
+                    section = -1; cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
                     continue;
                 }
                 cur_if = NULL;
@@ -1376,6 +1648,7 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                     cur_if->allow_same_interface = 0;
                     section = 2;
                     cur_peer = NULL;
+                    cur_theme = NULL;
                 } else {
                     section = -1;
                 }
@@ -1389,7 +1662,7 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                 trim_inplace(idp);
                 if (*idp == ':') { ++idp; trim_inplace(idp); }
                 if (!allow_peer || !*idp) {
-                    section = -1; cur_if = NULL; cur_peer = NULL;
+                    section = -1; cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
                     continue;
                 }
                 cur_peer = NULL;
@@ -1410,6 +1683,40 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                     cur_peer->auto_learned = 0;
                     section = 7;
                     cur_if = NULL;
+                    cur_theme = NULL;
+                } else {
+                    section = -1;
+                }
+            } else if (strlen(sec) > 5 &&
+                       (sec[0] == 't' || sec[0] == 'T') &&
+                       (sec[1] == 'h' || sec[1] == 'H') &&
+                       (sec[2] == 'e' || sec[2] == 'E') &&
+                       (sec[3] == 'm' || sec[3] == 'M') &&
+                       (sec[4] == 'e' || sec[4] == 'E') &&
+                       (sec[5] == ' ' || sec[5] == '\t' || sec[5] == ':')) {
+                char* tname = sec + 5;
+                trim_inplace(tname);
+                if (*tname == ':') { ++tname; trim_inplace(tname); }
+                if (!allow_theme || !*tname || oyk_theme_is_builtin(tname)) {
+                    section = -1; cur_if = NULL; cur_peer = NULL; cur_theme = NULL;
+                    continue;
+                }
+                cur_theme = NULL;
+                for (int et = 0; et < cfg->theme_count && et < OYK_MAX_THEMES; ++et) {
+                    if (stricmp_ascii(cfg->themes[et].name, tname) == 0) {
+                        cur_theme = &cfg->themes[et];
+                        break;
+                    }
+                }
+                if (!cur_theme && cfg->theme_count < OYK_MAX_THEMES) {
+                    cur_theme = &cfg->themes[cfg->theme_count++];
+                }
+                if (cur_theme) {
+                    oyk_theme_init_builtin(cur_theme, 0);
+                    safe_copy(cur_theme->name, sizeof(cur_theme->name), tname);
+                    section = 8;
+                    cur_if = NULL;
+                    cur_peer = NULL;
                 } else {
                     section = -1;
                 }
@@ -1464,6 +1771,10 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
                 safe_copy(cfg->interfaces_file, sizeof(cfg->interfaces_file), v);
             } else if (stricmp_ascii(k, "peers") == 0 || stricmp_ascii(k, "peers_file") == 0) {
                 safe_copy(cfg->peers_file, sizeof(cfg->peers_file), v);
+            } else if (stricmp_ascii(k, "theme") == 0) {
+                safe_copy(cfg->theme_name, sizeof(cfg->theme_name), v);
+            } else if (stricmp_ascii(k, "themes") == 0 || stricmp_ascii(k, "themes_file") == 0) {
+                safe_copy(cfg->themes_file, sizeof(cfg->themes_file), v);
             } else if (stricmp_ascii(k, "accept_incoming") == 0) {
                 cfg->accept_incoming = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             } else if (stricmp_ascii(k, "allow_flash_logging") == 0 ||
@@ -1663,6 +1974,18 @@ static void parse_config_bytes(const char* raw, size_t raw_len,
             } else if (stricmp_ascii(k, "allow_outbound") == 0 || stricmp_ascii(k, "outbound") == 0) {
                 cur_peer->allow_outbound = (stricmp_ascii(v, "false") != 0 && strcmp(v, "0") != 0) ? 1 : 0;
             }
+        } else if (section == 8 && cur_theme) {
+            if (stricmp_ascii(k, "base") == 0) {
+                cur_theme->is_dark_base = (stricmp_ascii(v, "light") == 0) ? 0 : 1;
+            } else {
+                int ridx = oyk_theme_role_index(k);
+                if (ridx >= 0) {
+                    oyk_u32 rgb = 0;
+                    if (oyk_theme_parse_hex(v, &rgb)) {
+                        cur_theme->colors[ridx] = rgb;
+                    }
+                }
+            }
         }
     }
 }
@@ -1687,38 +2010,30 @@ int oyk_config_load(const char* path, OykConfig* cfg, char* err_out, size_t err_
     PortableParseState st;
     memset(&st, 0, sizeof(st));
     st.node_ssid_val = OYK_DEFAULT_NODE_SSID;
-    parse_config_bytes(raw, raw_len, cfg, &st, 1, 1, 1);
+    parse_config_bytes(raw, raw_len, cfg, &st, 1, 1, 1, 1);
     free(raw);
 
-    char if_path[128], pr_path[128];
+    char if_path[128], pr_path[128], th_path[128];
     oyk_config_resolve_interfaces(cfg, if_path, sizeof(if_path));
     oyk_config_resolve_peers(cfg, pr_path, sizeof(pr_path));
-    int same_inc = (if_path[0] && pr_path[0] && portable_same_path(if_path, pr_path)) ? 1 : 0;
-    if (same_inc) {
-        if (!portable_same_path(if_path, path)) {
-            size_t ilen = 0;
-            char* iraw = read_all_binary(if_path, &ilen);
-            if (iraw) {
-                parse_config_bytes(iraw, ilen, cfg, &st, 0, 1, 1);
-                free(iraw);
-            }
+    oyk_config_resolve_themes(cfg, th_path, sizeof(th_path));
+
+    const char* srcs[3] = { if_path, pr_path, th_path };
+    for (int s = 0; s < 3; ++s) {
+        if (!srcs[s][0] || portable_same_path(srcs[s], path)) continue;
+        int seen = 0;
+        for (int p = 0; p < s; ++p) {
+            if (srcs[p][0] && portable_same_path(srcs[p], srcs[s])) { seen = 1; break; }
         }
-    } else {
-        if (if_path[0] && !portable_same_path(if_path, path)) {
-            size_t ilen = 0;
-            char* iraw = read_all_binary(if_path, &ilen);
-            if (iraw) {
-                parse_config_bytes(iraw, ilen, cfg, &st, 0, 1, 0);
-                free(iraw);
-            }
-        }
-        if (pr_path[0] && !portable_same_path(pr_path, path)) {
-            size_t plen = 0;
-            char* praw = read_all_binary(pr_path, &plen);
-            if (praw) {
-                parse_config_bytes(praw, plen, cfg, &st, 0, 0, 1);
-                free(praw);
-            }
+        if (seen) continue;
+        int want_if = (if_path[0] && portable_same_path(srcs[s], if_path)) ? 1 : 0;
+        int want_pr = (pr_path[0] && portable_same_path(srcs[s], pr_path)) ? 1 : 0;
+        int want_th = (th_path[0] && portable_same_path(srcs[s], th_path)) ? 1 : 0;
+        size_t ilen = 0;
+        char* iraw = read_all_binary(srcs[s], &ilen);
+        if (iraw) {
+            parse_config_bytes(iraw, ilen, cfg, &st, 0, want_if, want_pr, want_th);
+            free(iraw);
         }
     }
 
@@ -1848,6 +2163,17 @@ static void write_portable_peer_section(FILE* fp, const OykPeerConfig* pc, const
     fprintf(fp, "allow_outbound = %s%s", pc->allow_outbound ? "true" : "false", nl);
 }
 
+static void write_portable_theme_section(FILE* fp, const OykThemeConfig* th, const char* nl) {
+    if (!th || oyk_theme_is_builtin(th->name)) return;
+    fprintf(fp, "%s[theme %s]%s", nl, th->name, nl);
+    fprintf(fp, "base = %s%s", th->is_dark_base ? "dark" : "light", nl);
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+        char hb[12];
+        oyk_theme_format_hex(th->colors[i], hb, sizeof(hb));
+        fprintf(fp, "%s = %s%s", oyk_theme_role_key(i), hb, nl);
+    }
+}
+
 int oyk_config_save(const OykConfig* cfg, const char* path) {
     const char* target = (path && path[0]) ? path : cfg->source_path;
     if (!target || !target[0]) return 0;
@@ -1855,12 +2181,13 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     if (!fp) return 0;
 
     const char* nl = oyk_eol_bytes(cfg->line_ending);
-    char if_target[128], pr_target[128];
+    char if_target[128], pr_target[128], th_target[128];
     resolve_cfg_subpath(target, cfg->interfaces_file, if_target, sizeof(if_target));
     resolve_cfg_subpath(target, cfg->peers_file, pr_target, sizeof(pr_target));
-    int same_inc = (if_target[0] && pr_target[0] && portable_same_path(if_target, pr_target)) ? 1 : 0;
+    resolve_cfg_subpath(target, cfg->themes_file, th_target, sizeof(th_target));
     int if_inline = (!if_target[0] || portable_same_path(if_target, target)) ? 1 : 0;
     int pr_inline = (!pr_target[0] || portable_same_path(pr_target, target)) ? 1 : 0;
+    int th_inline = (!th_target[0] || portable_same_path(th_target, target)) ? 1 : 0;
 
     char call_s[16], alias_s[16];
     oyk_format_callsign(&cfg->callsign, call_s, sizeof(call_s));
@@ -1882,6 +2209,8 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
     if (cfg->banlist_path[0]) fprintf(fp, "banlist = %s%s", cfg->banlist_path, nl);
     if (cfg->interfaces_file[0]) fprintf(fp, "interfaces = %s%s", cfg->interfaces_file, nl);
     if (cfg->peers_file[0]) fprintf(fp, "peers = %s%s", cfg->peers_file, nl);
+    if (cfg->theme_name[0]) fprintf(fp, "theme = %s%s", cfg->theme_name, nl);
+    if (cfg->themes_file[0]) fprintf(fp, "themes = %s%s", cfg->themes_file, nl);
 
     if (cfg->log_file_count > 0) {
         fprintf(fp, "%s[logfiles]%s", nl, nl);
@@ -1953,39 +2282,51 @@ int oyk_config_save(const OykConfig* cfg, const char* path) {
             write_portable_peer_section(fp, &cfg->peers[i], nl);
         }
     }
+    if (th_inline) {
+        for (int i = 0; i < cfg->theme_count && i < OYK_MAX_THEMES; ++i) {
+            write_portable_theme_section(fp, &cfg->themes[i], nl);
+        }
+    }
 
     fclose(fp);
 
-    if (same_inc && !if_inline) {
-        FILE* cfp = fopen(if_target, "wb");
-        if (!cfp) return 0;
-        fprintf(cfp, "# OYK Packet Node Interfaces and Peers%s", nl);
-        for (int i = 0; i < cfg->iface_count; ++i) {
-            write_portable_iface_section(cfp, &cfg->ifaces[i], nl);
+    const char* ext_targets[3] = { if_target, pr_target, th_target };
+    for (int s = 0; s < 3; ++s) {
+        if (!ext_targets[s][0] || portable_same_path(ext_targets[s], target)) continue;
+        int seen = 0;
+        for (int p = 0; p < s; ++p) {
+            if (ext_targets[p][0] && portable_same_path(ext_targets[p], ext_targets[s])) {
+                seen = 1;
+                break;
+            }
         }
-        for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
-            write_portable_peer_section(cfp, &cfg->peers[i], nl);
-        }
-        fclose(cfp);
-    } else {
-        if (!if_inline) {
-            FILE* ifp = fopen(if_target, "wb");
-            if (!ifp) return 0;
-            fprintf(ifp, "# OYK Packet Node Interfaces%s", nl);
+        if (seen) continue;
+        int wr_if = (!if_inline && portable_same_path(ext_targets[s], if_target)) ? 1 : 0;
+        int wr_pr = (!pr_inline && portable_same_path(ext_targets[s], pr_target)) ? 1 : 0;
+        int wr_th = (!th_inline && portable_same_path(ext_targets[s], th_target)) ? 1 : 0;
+        FILE* efp = fopen(ext_targets[s], "wb");
+        if (!efp) return 0;
+        fprintf(efp, "# OYK Packet Node%s%s%s%s",
+                wr_if ? " Interfaces" : "",
+                wr_pr ? " Peers" : "",
+                wr_th ? " Themes" : "",
+                nl);
+        if (wr_if) {
             for (int i = 0; i < cfg->iface_count; ++i) {
-                write_portable_iface_section(ifp, &cfg->ifaces[i], nl);
+                write_portable_iface_section(efp, &cfg->ifaces[i], nl);
             }
-            fclose(ifp);
         }
-        if (!pr_inline) {
-            FILE* pfp = fopen(pr_target, "wb");
-            if (!pfp) return 0;
-            fprintf(pfp, "# OYK Packet Node Peers%s", nl);
+        if (wr_pr) {
             for (int i = 0; i < cfg->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
-                write_portable_peer_section(pfp, &cfg->peers[i], nl);
+                write_portable_peer_section(efp, &cfg->peers[i], nl);
             }
-            fclose(pfp);
         }
+        if (wr_th) {
+            for (int i = 0; i < cfg->theme_count && i < OYK_MAX_THEMES; ++i) {
+                write_portable_theme_section(efp, &cfg->themes[i], nl);
+            }
+        }
+        fclose(efp);
     }
     return 1;
 }

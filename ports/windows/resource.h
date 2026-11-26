@@ -13,6 +13,7 @@
 #define IDM_RIG_CONTROL     209
 #define IDM_SETTINGS        208
 #define IDM_PEERS           210
+#define IDM_THEME           211
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -96,6 +97,8 @@
 #define IDC_SET_IF_FILE     510
 #define IDC_SET_L_PRFILE    511
 #define IDC_SET_PR_FILE     512
+#define IDC_SET_L_THFILE    515
+#define IDC_SET_TH_FILE     516
 #define IDC_SET_ACCEPT      464
 
 #define IDC_SET_BBS_EN      465
@@ -246,5 +249,16 @@
 #define IDC_XPR_MSG         641
 #define IDC_XPR_DISCARD     642
 #define IDC_XPR_REVIEW      643
+
+/* Theme Settings Dialog */
+#define IDD_THEME           650
+#define IDC_TH_COMBO        651
+#define IDC_TH_DEL          652
+#define IDC_TH_HINT         653
+#define IDC_TH_LIST         654
+#define IDC_TH_HEX          655
+#define IDC_TH_PICK         656
+#define IDC_TH_APPLY_COLOR  657
+#define IDC_TH_PREVIEW      658
 
 #endif /* OYK_WIN_RESOURCE_H */

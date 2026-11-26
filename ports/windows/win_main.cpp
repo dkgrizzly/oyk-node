@@ -38,6 +38,10 @@
   #define OYK_HBRUSH(idx)     ((HBRUSH)(INT_PTR)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPCSTR)(s))
+  #define OYK_CAST_HDC(wp)    ((HDC)(wp))
+  #define OYK_CAST_HWND(lp)   ((HWND)(lp))
+  #define OYK_RET_BRUSH_DLG(br) ((INT_PTR)(br))
+  #define OYK_RET_BRUSH_WND(br) ((LRESULT)(br))
   #define OYK_EDIT_SETSEL(h, a, b) do { \
       SendMessage((h), EM_SETSEL, (WPARAM)(a), (LPARAM)(b)); \
       SendMessage((h), EM_SCROLLCARET, 0, 0); \
@@ -52,6 +56,10 @@
   #define OYK_HBRUSH(idx)     ((HBRUSH)(idx))
   #define OYK_WPARAM_H(h)     ((WPARAM)(h))
   #define OYK_LPARAM_STR(s)   ((LPARAM)(LPSTR)(s))
+  #define OYK_CAST_HDC(wp)    ((HDC)(wp))
+  #define OYK_CAST_HWND(lp)   ((HWND)(WORD)(lp))
+  #define OYK_RET_BRUSH_DLG(br) ((BOOL)(br))
+  #define OYK_RET_BRUSH_WND(br) ((LRESULT)(br))
   #define OYK_EDIT_SETSEL(h, a, b) SendMessage((h), EM_SETSEL, 0, MAKELONG((WORD)(a), (WORD)(b)))
   #ifndef INVALID_SOCKET
     #define INVALID_SOCKET    ((SOCKET)(~0))
@@ -131,6 +139,27 @@ static HWND g_hwnd_main = NULL;
 static int g_win_headless = 0;
 static int g_win_shutdown_drained = 0;
 static void drain_win_shutdown();
+
+static int        g_th_custom_active = 0;
+static COLORREF   g_th_bg_c = RGB(0, 0, 0);
+static COLORREF   g_th_fg_c = RGB(0, 0, 0);
+static COLORREF   g_th_panel_bg_c = RGB(0, 0, 0);
+static COLORREF   g_th_panel_fg_c = RGB(0, 0, 0);
+static COLORREF   g_th_hdr_bg_c = RGB(0, 0, 0);
+static COLORREF   g_th_hdr_fg_c = RGB(0, 0, 0);
+static COLORREF   g_th_stat_bg_c = RGB(0, 0, 0);
+static COLORREF   g_th_stat_fg_c = RGB(0, 0, 0);
+static COLORREF   g_th_inp_bg_c = RGB(0, 0, 0);
+static COLORREF   g_th_inp_fg_c = RGB(0, 0, 0);
+static HBRUSH     g_th_bg_br = NULL;
+static HBRUSH     g_th_panel_br = NULL;
+static HBRUSH     g_th_hdr_br = NULL;
+static HBRUSH     g_th_stat_br = NULL;
+static HBRUSH     g_th_inp_br = NULL;
+static void free_win_theme_brushes();
+static void apply_win_theme();
+static int  win_os_prefers_dark();
+static COLORREF oyk_rgb_to_colorref(oyk_u32 rgb);
 static HWND g_ctl_header = NULL;
 static HWND g_ctl_badge = NULL;
 static HWND g_ctl_ifaces = NULL;
@@ -184,6 +213,73 @@ static int win_strieq(const char* a, const char* b) {
         ++b;
     }
     return (*a == '\0' && *b == '\0') ? 1 : 0;
+}
+
+static COLORREF oyk_rgb_to_colorref(oyk_u32 rgb) {
+    return RGB(static_cast<unsigned int>((rgb >> 16) & 0xFFUL),
+               static_cast<unsigned int>((rgb >> 8) & 0xFFUL),
+               static_cast<unsigned int>(rgb & 0xFFUL));
+}
+
+static int win_os_prefers_dark() {
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    HKEY hkey = NULL;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER,
+                      "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                      0, KEY_QUERY_VALUE, &hkey) == ERROR_SUCCESS) {
+        DWORD val = 1, sz = sizeof(val), ty = 0;
+        LONG rc = RegQueryValueExA(hkey, "AppsUseLightTheme", NULL, &ty,
+                                   reinterpret_cast<LPBYTE>(&val), &sz);
+        RegCloseKey(hkey);
+        if (rc == ERROR_SUCCESS && ty == REG_DWORD && val == 0UL) {
+            return 1;
+        }
+    }
+#endif
+    return 0;
+}
+
+static void free_win_theme_brushes() {
+    if (g_th_bg_br) { DeleteObject(g_th_bg_br); g_th_bg_br = NULL; }
+    if (g_th_panel_br) { DeleteObject(g_th_panel_br); g_th_panel_br = NULL; }
+    if (g_th_hdr_br) { DeleteObject(g_th_hdr_br); g_th_hdr_br = NULL; }
+    if (g_th_stat_br) { DeleteObject(g_th_stat_br); g_th_stat_br = NULL; }
+    if (g_th_inp_br) { DeleteObject(g_th_inp_br); g_th_inp_br = NULL; }
+    g_th_custom_active = 0;
+}
+
+static void apply_win_theme() {
+    free_win_theme_brushes();
+    const OykConfig& cfg = g_node.config();
+    const int os_dark = win_os_prefers_dark();
+    const char* tn = cfg.theme_name[0] ? cfg.theme_name : "native";
+    if (win_strieq(tn, "native") && !os_dark) {
+        if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
+        if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
+        return;
+    }
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(&cfg, 1, os_dark, &tc);
+    g_th_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_BG]);
+    g_th_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_FG]);
+    g_th_panel_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_PANEL_BG]);
+    g_th_panel_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_PANEL_FG]);
+    g_th_hdr_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_HEADER_BG]);
+    g_th_hdr_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_HEADER_FG]);
+    g_th_stat_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_STATUS_BG]);
+    g_th_stat_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_STATUS_FG]);
+    g_th_inp_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_INPUT_BG]);
+    g_th_inp_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_INPUT_FG]);
+
+    g_th_bg_br = CreateSolidBrush(g_th_bg_c);
+    g_th_panel_br = CreateSolidBrush(g_th_panel_bg_c);
+    g_th_hdr_br = CreateSolidBrush(g_th_hdr_bg_c);
+    g_th_stat_br = CreateSolidBrush(g_th_stat_bg_c);
+    g_th_inp_br = CreateSolidBrush(g_th_inp_bg_c);
+    g_th_custom_active = 1;
+
+    if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
+    if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
 }
 
 static int resolve_bind_addr(const char* host, unsigned long* addr_out) {
@@ -1249,6 +1345,18 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_SIZE:
             layout_lterm_controls(hdlg, LOWORD(lp), HIWORD(lp));
             return TRUE;
+#ifdef WM_CTLCOLOREDIT
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORSTATIC:
+            if (g_th_custom_active && g_th_inp_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetBkMode(hdc, OPAQUE);
+                SetTextColor(hdc, g_th_inp_fg_c);
+                SetBkColor(hdc, g_th_inp_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_inp_br);
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_LTERM_CONNECT) {
@@ -2784,6 +2892,7 @@ static void switch_settings_tab(HWND hdlg, int tab) {
         IDC_SET_L_WELC, IDC_SET_WELCOME, IDC_SET_L_INFO, IDC_SET_INFO,
         IDC_SET_L_LPOL, IDC_SET_LEARN_POL, IDC_SET_L_NWELC, IDC_SET_NEW_WELC,
         IDC_SET_L_IFFILE, IDC_SET_IF_FILE, IDC_SET_L_PRFILE, IDC_SET_PR_FILE,
+        IDC_SET_L_THFILE, IDC_SET_TH_FILE,
         IDC_SET_ACCEPT
     };
     static const int BBS_IDS[] = {
@@ -3004,6 +3113,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome);
             SetDlgItemText(hdlg, IDC_SET_IF_FILE, g_set_draft.interfaces_file);
             SetDlgItemText(hdlg, IDC_SET_PR_FILE, g_set_draft.peers_file);
+            SetDlgItemText(hdlg, IDC_SET_TH_FILE, g_set_draft.themes_file);
 #if defined(_WIN32) || defined(_WIN64)
 #ifndef EM_SETCUEBANNER
 #define EM_SETCUEBANNER 0x1501
@@ -3011,6 +3121,8 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SendDlgItemMessageW(hdlg, IDC_SET_IF_FILE, EM_SETCUEBANNER, TRUE,
                                 reinterpret_cast<LPARAM>(L"<inline>"));
             SendDlgItemMessageW(hdlg, IDC_SET_PR_FILE, EM_SETCUEBANNER, TRUE,
+                                reinterpret_cast<LPARAM>(L"<inline>"));
+            SendDlgItemMessageW(hdlg, IDC_SET_TH_FILE, EM_SETCUEBANNER, TRUE,
                                 reinterpret_cast<LPARAM>(L"<inline>"));
 #endif
 
@@ -3230,6 +3342,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 GetDlgItemText(hdlg, IDC_SET_NEW_WELC, g_set_draft.new_user_welcome, sizeof(g_set_draft.new_user_welcome));
                 GetDlgItemText(hdlg, IDC_SET_IF_FILE, g_set_draft.interfaces_file, sizeof(g_set_draft.interfaces_file));
                 GetDlgItemText(hdlg, IDC_SET_PR_FILE, g_set_draft.peers_file, sizeof(g_set_draft.peers_file));
+                GetDlgItemText(hdlg, IDC_SET_TH_FILE, g_set_draft.themes_file, sizeof(g_set_draft.themes_file));
 
                 g_set_draft.bbs_enabled = (IsDlgButtonChecked(hdlg, IDC_SET_BBS_EN) != 0) ? 1 : 0;
                 GetDlgItemText(hdlg, IDC_SET_BBS_SSID, buf, sizeof(buf));
@@ -3364,6 +3477,239 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static void populate_theme_dialog_list(HWND hdlg, const OykConfig* draft, const char* active) {
+    OykThemeConfig pal;
+    OykConfig tmp = *draft;
+    strncpy(tmp.theme_name, active, sizeof(tmp.theme_name) - 1);
+    tmp.theme_name[sizeof(tmp.theme_name) - 1] = '\0';
+    oyk_theme_resolve_effective(&tmp, 1, win_os_prefers_dark(), &pal);
+
+    HWND lb = GetDlgItem(hdlg, IDC_TH_LIST);
+    int prev_sel = static_cast<int>(SendMessage(lb, LB_GETCURSEL, 0, 0));
+    if (prev_sel < 0 || prev_sel >= OYK_THEME_COLOR_COUNT) prev_sel = 0;
+    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < OYK_THEME_COLOR_COUNT; ++i) {
+        char hx[12], row[80];
+        oyk_theme_format_hex(pal.colors[i], hx, sizeof(hx));
+        sprintf(row, "%-16.16s  %-14.14s  %s",
+                oyk_theme_role_label(i), oyk_theme_role_key(i), hx);
+        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
+    }
+    SendMessage(lb, LB_SETCURSEL, prev_sel, 0);
+    char cur_hx[12];
+    oyk_theme_format_hex(pal.colors[prev_sel], cur_hx, sizeof(cur_hx));
+    SetDlgItemText(hdlg, IDC_TH_HEX, cur_hx);
+    EnableWindow(GetDlgItem(hdlg, IDC_TH_DEL), !oyk_theme_is_builtin(active));
+}
+
+static void populate_theme_dialog_combo(HWND hdlg, const OykConfig* draft, const char* active,
+                                        char names_out[][24], int* n_names_out) {
+    HWND cb = GetDlgItem(hdlg, IDC_TH_COMBO);
+    SendMessage(cb, CB_RESETCONTENT, 0, 0);
+    int n = 0;
+    strcpy(names_out[n++], "native");
+    strcpy(names_out[n++], "dark");
+    strcpy(names_out[n++], "light");
+    for (int i = 0; i < draft->theme_count && i < OYK_MAX_THEMES; ++i) {
+        if (!oyk_theme_is_builtin(draft->themes[i].name)) {
+            strncpy(names_out[n], draft->themes[i].name, 23);
+            names_out[n][23] = '\0';
+            ++n;
+        }
+    }
+    int sel = 0;
+    for (int i = 0; i < n; ++i) {
+        SendMessage(cb, CB_ADDSTRING, 0, OYK_LPARAM_STR(names_out[i]));
+        if (win_strieq(names_out[i], active)) sel = i;
+    }
+    *n_names_out = n;
+    SendMessage(cb, CB_SETCURSEL, sel, 0);
+}
+
+OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    static OykConfig* s_draft = NULL;
+    static char s_active[24];
+    static char s_names[OYK_MAX_THEMES + 3][24];
+    static int s_n_names = 0;
+    static COLORREF s_cust_colors[16];
+    static HBRUSH s_prev_br = NULL;
+
+    switch (msg) {
+        case WM_INITDIALOG: {
+            if (!s_draft) s_draft = new OykConfig;
+            *s_draft = g_node.config();
+            if (s_draft->theme_name[0]) {
+                strncpy(s_active, s_draft->theme_name, sizeof(s_active) - 1);
+                s_active[sizeof(s_active) - 1] = '\0';
+            } else {
+                strcpy(s_active, "native");
+            }
+            SendDlgItemMessage(hdlg, IDC_TH_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
+            populate_theme_dialog_list(hdlg, s_draft, s_active);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) {
+                SetTimer(hdlg, 99, 150, NULL);
+            }
+#endif
+            return TRUE;
+        }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99 && g_win_ui_test) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "theme");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORSTATIC
+        case WM_CTLCOLORSTATIC: {
+            if (OYK_CAST_HWND(lp) == GetDlgItem(hdlg, IDC_TH_PREVIEW)) {
+                char hx[16];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                oyk_u32 rgb = 0;
+                if (oyk_theme_parse_hex(hx, &rgb)) {
+                    if (s_prev_br) DeleteObject(s_prev_br);
+                    s_prev_br = CreateSolidBrush(oyk_rgb_to_colorref(rgb));
+                    return OYK_RET_BRUSH_DLG(s_prev_br);
+                }
+            }
+            break;
+        }
+#endif
+        case WM_DESTROY:
+            if (s_prev_br) { DeleteObject(s_prev_br); s_prev_br = NULL; }
+            break;
+        case WM_COMMAND: {
+            WORD id = OYK_CMD_ID(wp, lp);
+            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
+            if (id == IDC_TH_COMBO && ntf == CBN_SELCHANGE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_COMBO, CB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < s_n_names) {
+                    strncpy(s_active, s_names[sel], sizeof(s_active) - 1);
+                    s_active[sizeof(s_active) - 1] = '\0';
+                    populate_theme_dialog_list(hdlg, s_draft, s_active);
+                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                }
+                return TRUE;
+            } else if (id == IDC_TH_LIST && ntf == LBN_SELCHANGE) {
+                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
+                if (r >= 0 && r < OYK_THEME_COLOR_COUNT) {
+                    OykThemeConfig pal;
+                    OykConfig tmp = *s_draft;
+                    strncpy(tmp.theme_name, s_active, sizeof(tmp.theme_name) - 1);
+                    oyk_theme_resolve_effective(&tmp, 1, win_os_prefers_dark(), &pal);
+                    char hx[12];
+                    oyk_theme_format_hex(pal.colors[r], hx, sizeof(hx));
+                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
+                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                }
+                return TRUE;
+            } else if (id == IDC_TH_PICK) {
+                CHOOSECOLOR cc;
+                memset(&cc, 0, sizeof(cc));
+                cc.lStructSize = sizeof(cc);
+                cc.hwndOwner = hdlg;
+                cc.lpCustColors = s_cust_colors;
+                cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+                char hx[16];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                oyk_u32 cur = 0;
+                if (oyk_theme_parse_hex(hx, &cur)) cc.rgbResult = oyk_rgb_to_colorref(cur);
+                if (ChooseColor(&cc)) {
+                    oyk_u32 picked = ((static_cast<oyk_u32>(GetRValue(cc.rgbResult)) & 0xFFUL) << 16) |
+                                     ((static_cast<oyk_u32>(GetGValue(cc.rgbResult)) & 0xFFUL) << 8) |
+                                     (static_cast<oyk_u32>(GetBValue(cc.rgbResult)) & 0xFFUL);
+                    oyk_theme_format_hex(picked, hx, sizeof(hx));
+                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
+                    SendMessage(hdlg, WM_COMMAND, IDC_TH_APPLY_COLOR, 0);
+                }
+                return TRUE;
+            } else if (id == IDC_TH_APPLY_COLOR) {
+                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
+                if (r < 0 || r >= OYK_THEME_COLOR_COUNT) r = 0;
+                char hx[16];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                oyk_u32 new_rgb = 0;
+                if (!oyk_theme_parse_hex(hx, &new_rgb)) {
+                    MessageBox(hdlg, "Enter a valid #RRGGBB hex color.", "Theme Settings", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                if (oyk_theme_is_builtin(s_active)) {
+                    if (s_draft->theme_count >= OYK_MAX_THEMES) {
+                        MessageBox(hdlg, "Maximum custom theme count reached.", "Theme Settings", MB_OK | MB_ICONEXCLAMATION);
+                        return TRUE;
+                    }
+                    OykThemeConfig pal;
+                    OykConfig tmp = *s_draft;
+                    strncpy(tmp.theme_name, s_active, sizeof(tmp.theme_name) - 1);
+                    const int os_d = win_os_prefers_dark();
+                    oyk_theme_resolve_effective(&tmp, 1, os_d, &pal);
+                    int dark_b = win_strieq(s_active, "light") ? 0 : (win_strieq(s_active, "native") ? os_d : 1);
+                    char cname[24];
+                    oyk_theme_make_clone_name(s_draft, dark_b, cname, sizeof(cname));
+                    OykThemeConfig* nt = &s_draft->themes[s_draft->theme_count++];
+                    *nt = pal;
+                    nt->is_dark_base = dark_b ? 1 : 0;
+                    strncpy(nt->name, cname, sizeof(nt->name) - 1);
+                    nt->name[sizeof(nt->name) - 1] = '\0';
+                    strcpy(s_active, nt->name);
+                    populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
+                }
+                for (int ti = 0; ti < s_draft->theme_count; ++ti) {
+                    if (win_strieq(s_draft->themes[ti].name, s_active)) {
+                        s_draft->themes[ti].colors[r] = new_rgb;
+                        break;
+                    }
+                }
+                populate_theme_dialog_list(hdlg, s_draft, s_active);
+                InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                return TRUE;
+            } else if (id == IDC_TH_DEL) {
+                if (!oyk_theme_is_builtin(s_active)) {
+                    for (int ti = 0; ti < s_draft->theme_count; ++ti) {
+                        if (win_strieq(s_draft->themes[ti].name, s_active)) {
+                            for (int k = ti; k + 1 < s_draft->theme_count; ++k) {
+                                s_draft->themes[k] = s_draft->themes[k + 1];
+                            }
+                            --s_draft->theme_count;
+                            break;
+                        }
+                    }
+                    strcpy(s_active, "native");
+                    populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
+                    populate_theme_dialog_list(hdlg, s_draft, s_active);
+                }
+                return TRUE;
+            } else if (id == IDOK) {
+                strncpy(s_draft->theme_name, s_active, sizeof(s_draft->theme_name) - 1);
+                s_draft->theme_name[sizeof(s_draft->theme_name) - 1] = '\0';
+                static OykConfigApplyResult tres;
+                if (g_node.apply_config(s_draft, 1, &tres)) {
+                    apply_win_theme();
+                    char st[128];
+                    sprintf(st, "Theme '%s' %s.", s_active,
+                            tres.saved_to_disk ? "saved & applied" : "applied (memory only)");
+                    set_status(st);
+                    EndDialog(hdlg, IDOK);
+                } else {
+                    MessageBox(hdlg, tres.error[0] ? tres.error : "Failed to save theme.",
+                               "Theme Settings", MB_OK | MB_ICONSTOP);
+                }
+                return TRUE;
+            } else if (id == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        }
+    }
+    return FALSE;
+}
+
 OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
@@ -3390,9 +3736,54 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             SetTimer(hwnd, 1, 50, NULL);  /* Network pump */
             SetTimer(hwnd, 2, 250, NULL); /* GUI refresh */
+            apply_win_theme();
             refresh_gui();
             return 0;
         }
+#ifdef WM_ERASEBKGND
+        case WM_ERASEBKGND:
+            if (g_th_custom_active && g_th_bg_br) {
+                RECT rc;
+                GetClientRect(hwnd, &rc);
+                FillRect(OYK_CAST_HDC(wp), &rc, g_th_bg_br);
+                return TRUE;
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORSTATIC
+        case WM_CTLCOLORSTATIC:
+            if (g_th_custom_active) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                HWND ctl = OYK_CAST_HWND(lp);
+                SetBkMode(hdc, OPAQUE);
+                if (ctl == g_ctl_header && g_th_hdr_br) {
+                    SetTextColor(hdc, g_th_hdr_fg_c);
+                    SetBkColor(hdc, g_th_hdr_bg_c);
+                    return OYK_RET_BRUSH_WND(g_th_hdr_br);
+                }
+                if (ctl == g_ctl_status && g_th_stat_br) {
+                    SetTextColor(hdc, g_th_stat_fg_c);
+                    SetBkColor(hdc, g_th_stat_bg_c);
+                    return OYK_RET_BRUSH_WND(g_th_stat_br);
+                }
+                if (g_th_bg_br) {
+                    SetTextColor(hdc, g_th_fg_c);
+                    SetBkColor(hdc, g_th_bg_c);
+                    return OYK_RET_BRUSH_WND(g_th_bg_br);
+                }
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORLISTBOX
+        case WM_CTLCOLORLISTBOX:
+            if (g_th_custom_active && g_th_panel_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_panel_fg_c);
+                SetBkColor(hdc, g_th_panel_bg_c);
+                return OYK_RET_BRUSH_WND(g_th_panel_br);
+            }
+            break;
+#endif
         case WM_SIZE:
             layout_controls(hwnd, static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)));
             return 0;
@@ -3478,6 +3869,8 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
                 refresh_gui();
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
+                refresh_gui();
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
 #endif
             }
@@ -3518,6 +3911,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (id == IDM_PEERS) {
                 g_settings_initial_tab = 4;
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                refresh_gui();
+            } else if (id == IDM_THEME) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {
@@ -3593,6 +3989,7 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             KillTimer(hwnd, 1);
             KillTimer(hwnd, 2);
+            free_win_theme_brushes();
             PostQuitMessage(0);
             return 0;
 #ifdef WM_QUERYENDSESSION

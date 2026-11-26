@@ -205,3 +205,25 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Windows GUI (Wine / Win32/64) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/win_exit.png)
 
+## 10. Theme Settings Dialog
+
+### POSIX ncurses
+
+![POSIX ncurses — 10. Theme Settings Dialog](images/ui-gallery/ncurses_theme.png)
+
+### MS-DOS (80x25 Text)
+
+![MS-DOS (80x25 Text) — 10. Theme Settings Dialog](images/ui-gallery/dos_theme.png)
+
+### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
+
+![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 10. Theme Settings Dialog](images/ui-gallery/tinytmux_theme.png)
+
+### X11 GTK+ 2.0
+
+![X11 GTK+ 2.0 — 10. Theme Settings Dialog](images/ui-gallery/gtk_theme.png)
+
+### Windows GUI (Wine / Win32/64)
+
+![Windows GUI (Wine / Win32/64) — 10. Theme Settings Dialog](images/ui-gallery/win_theme.png)
+

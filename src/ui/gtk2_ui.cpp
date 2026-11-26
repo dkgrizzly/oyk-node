@@ -2,6 +2,7 @@
 // Copyright (C) 2026 KR4OYK - David Kuder
 
 #include "oyk/ui/gtk2_ui.hpp"
+#include "oyk/ui/theme.hpp"
 #include "oyk/ax25/crc.hpp"
 #include "oyk/protocol/yapp.hpp"
 
@@ -2736,7 +2737,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     };
 
     // Tab 1: Node
-    GtkWidget* t_node = make_table(9);
+    GtkWidget* t_node = make_table(10);
     GtkWidget* e_call = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_call), draft.callsign.str().c_str());
     attach_row(t_node, 0, "Node Callsign (CALL-SSID):", e_call);
@@ -2777,9 +2778,13 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
     gtk_setup_inline_hint_entry(e_pr_file, draft.peers_file);
     attach_row(t_node, 7, "Peers File:", e_pr_file);
 
+    GtkWidget* e_th_file = gtk_entry_new();
+    gtk_setup_inline_hint_entry(e_th_file, draft.themes_file);
+    attach_row(t_node, 8, "Themes File:", e_th_file);
+
     GtkWidget* chk_accept = gtk_check_button_new_with_label("Allow incoming connections by default");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_accept), draft.accept_incoming_default ? TRUE : FALSE);
-    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 9, 10, GTK_FILL, GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new("Node"));
 
     // Tab 2: BBS
@@ -3091,6 +3096,7 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
         next.new_user_welcome = gtk_entry_get_text(GTK_ENTRY(e_new_welc));
         next.interfaces_file = gtk_inline_hint_entry_value(e_if_file);
         next.peers_file = gtk_inline_hint_entry_value(e_pr_file);
+        next.themes_file = gtk_inline_hint_entry_value(e_th_file);
         next.accept_incoming_default = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_accept)) != FALSE;
 
         next.bbs.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_bbs)) != FALSE;
@@ -3233,6 +3239,411 @@ void on_peers_clicked(GtkWidget*, gpointer user_data) {
     open_settings_dialog(static_cast<GtkAppState*>(user_data), 4);
 }
 
+bool gtk_os_prefers_dark() {
+    if (GtkSettings* gs = gtk_settings_get_default()) {
+        gboolean pref_dark = FALSE;
+        gchar* tname = nullptr;
+        GObjectClass* klass = G_OBJECT_GET_CLASS(gs);
+        if (klass && g_object_class_find_property(klass, "gtk-application-prefer-dark-theme")) {
+            g_object_get(gs, "gtk-application-prefer-dark-theme", &pref_dark, nullptr);
+        }
+        if (klass && g_object_class_find_property(klass, "gtk-theme-name")) {
+            g_object_get(gs, "gtk-theme-name", &tname, nullptr);
+        }
+        bool dark = (pref_dark != FALSE);
+        if (!dark && tname) {
+            if (theme_to_lower(tname).find("dark") != std::string::npos) dark = true;
+        }
+        g_free(tname);
+        if (dark) return true;
+    }
+    if (const char* env_t = std::getenv("GTK_THEME")) {
+        if (theme_to_lower(env_t).find("dark") != std::string::npos) return true;
+    }
+    return false;
+}
+
+GdkColor gdk_from_rgb(uint32_t rgb) {
+    GdkColor c{};
+    c.red   = static_cast<guint16>(((rgb >> 16) & 0xFFu) * 257u);
+    c.green = static_cast<guint16>(((rgb >> 8) & 0xFFu) * 257u);
+    c.blue  = static_cast<guint16>((rgb & 0xFFu) * 257u);
+    return c;
+}
+
+void apply_gtk_theme_recursive(GtkWidget* w, const ThemeConfig* t) {
+    if (!w) return;
+    if (!t) {
+        gtk_widget_modify_bg(w, GTK_STATE_NORMAL, nullptr);
+        gtk_widget_modify_bg(w, GTK_STATE_PRELIGHT, nullptr);
+        gtk_widget_modify_bg(w, GTK_STATE_SELECTED, nullptr);
+        gtk_widget_modify_fg(w, GTK_STATE_NORMAL, nullptr);
+        gtk_widget_modify_fg(w, GTK_STATE_PRELIGHT, nullptr);
+        gtk_widget_modify_fg(w, GTK_STATE_SELECTED, nullptr);
+        gtk_widget_modify_base(w, GTK_STATE_NORMAL, nullptr);
+        gtk_widget_modify_base(w, GTK_STATE_SELECTED, nullptr);
+        gtk_widget_modify_text(w, GTK_STATE_NORMAL, nullptr);
+        gtk_widget_modify_text(w, GTK_STATE_SELECTED, nullptr);
+    } else {
+        GdkColor bg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::Bg)]);
+        GdkColor fg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::Fg)]);
+        GdkColor pbg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::PanelBg)]);
+        GdkColor pfg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::PanelFg)]);
+        GdkColor bbg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::ButtonBg)]);
+        GdkColor bfg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::ButtonFg)]);
+        GdkColor ibg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::InputBg)]);
+        GdkColor ifg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::InputFg)]);
+        GdkColor sbg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::SelectionBg)]);
+        GdkColor sfg = gdk_from_rgb(t->colors[static_cast<std::size_t>(ThemeRole::SelectionFg)]);
+
+        if (GTK_IS_ENTRY(w) || GTK_IS_TEXT_VIEW(w) || GTK_IS_TREE_VIEW(w)) {
+            gtk_widget_modify_base(w, GTK_STATE_NORMAL, &ibg);
+            gtk_widget_modify_text(w, GTK_STATE_NORMAL, &ifg);
+            gtk_widget_modify_base(w, GTK_STATE_SELECTED, &sbg);
+            gtk_widget_modify_text(w, GTK_STATE_SELECTED, &sfg);
+        } else if (GTK_IS_BUTTON(w)) {
+            gtk_widget_modify_bg(w, GTK_STATE_NORMAL, &bbg);
+            gtk_widget_modify_fg(w, GTK_STATE_NORMAL, &bfg);
+        } else if (GTK_IS_MENU_BAR(w) || GTK_IS_MENU(w) || GTK_IS_MENU_ITEM(w)) {
+            gtk_widget_modify_bg(w, GTK_STATE_NORMAL, &pbg);
+            gtk_widget_modify_fg(w, GTK_STATE_NORMAL, &pfg);
+            gtk_widget_modify_bg(w, GTK_STATE_PRELIGHT, &sbg);
+            gtk_widget_modify_fg(w, GTK_STATE_PRELIGHT, &sfg);
+        } else {
+            gtk_widget_modify_bg(w, GTK_STATE_NORMAL, &bg);
+            gtk_widget_modify_fg(w, GTK_STATE_NORMAL, &fg);
+        }
+    }
+    if (GTK_IS_CONTAINER(w)) {
+        GList* children = gtk_container_get_children(GTK_CONTAINER(w));
+        for (GList* it = children; it != nullptr; it = it->next) {
+            apply_gtk_theme_recursive(GTK_WIDGET(it->data), t);
+        }
+        g_list_free(children);
+    }
+}
+
+void apply_gtk_theme(GtkAppState* st) {
+    if (!st || !st->engine) return;
+    const node::NodeConfig cfg = st->engine->config();
+    const std::string eff = normalized_port_theme_name(cfg.theme_name, true);
+    const ThemeConfig* ptr = nullptr;
+    ThemeConfig resolved;
+    if (theme_to_lower(eff) != "native") {
+        resolved = resolve_effective_theme(cfg.theme_name, cfg.themes, true, gtk_os_prefers_dark());
+        ptr = &resolved;
+    }
+    if (st->window) apply_gtk_theme_recursive(st->window, ptr);
+    if (st->term_window) apply_gtk_theme_recursive(st->term_window, ptr);
+}
+
+void on_theme_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    node::NodeConfig draft = st->engine->config();
+    std::string active = normalized_port_theme_name(draft.theme_name, true);
+    const bool os_dark = gtk_os_prefers_dark();
+
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        "Theme Settings",
+        GTK_WINDOW(st->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        "Save & Apply", GTK_RESPONSE_ACCEPT,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 480);
+
+    GtkWidget* vbox = GTK_DIALOG(dlg)->vbox;
+    GtkWidget* top_h = gtk_hbox_new(FALSE, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(top_h), 6);
+    GtkWidget* cb_theme = gtk_combo_box_new_text();
+    GtkWidget* btn_del = gtk_button_new_with_label("Delete Custom");
+    gtk_box_pack_start(GTK_BOX(top_h), gtk_label_new("Theme:"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(top_h), cb_theme, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(top_h), btn_del, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), top_h, FALSE, FALSE, 0);
+
+    GtkWidget* hint = gtk_label_new("Built-in dark/light/native are never saved; editing clones custom-dark or custom-light.");
+    gtk_misc_set_alignment(GTK_MISC(hint), 0.0f, 0.5f);
+    gtk_misc_set_padding(GTK_MISC(hint), 6, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), hint, FALSE, FALSE, 0);
+
+    GtkListStore* store = gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    GtkWidget* tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+    add_text_column(GTK_TREE_VIEW(tv), "Role", 0, 145);
+    add_text_column(GTK_TREE_VIEW(tv), "Key", 1, 115);
+    add_text_column(GTK_TREE_VIEW(tv), "#RRGGBB", 2, 95);
+    {
+        GtkCellRenderer* rend = gtk_cell_renderer_text_new();
+        GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes(
+            "Preview", rend, "cell-background", 3, nullptr);
+        gtk_tree_view_column_set_min_width(col, 80);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(tv), col);
+    }
+    GtkWidget* sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(sc), tv);
+    gtk_box_pack_start(GTK_BOX(vbox), sc, TRUE, TRUE, 4);
+
+    GtkWidget* ed_h = gtk_hbox_new(FALSE, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(ed_h), 6);
+    GtkWidget* e_hex = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(e_hex), 10);
+    GtkWidget* btn_pick = gtk_button_new_with_label("Pick Color...");
+    GtkWidget* btn_apply_c = gtk_button_new_with_label("Apply Color");
+    gtk_box_pack_start(GTK_BOX(ed_h), gtk_label_new("Color:"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(ed_h), e_hex, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(ed_h), btn_pick, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(ed_h), btn_apply_c, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), ed_h, FALSE, FALSE, 0);
+
+    struct GtkThemeCtx {
+        node::NodeConfig* draft;
+        std::string* active;
+        bool os_dark;
+        GtkWidget* cb;
+        GtkWidget* btn_del;
+        GtkListStore* store;
+        GtkWidget* tv;
+        GtkWidget* e_hex;
+        GtkWidget* btn_apply;
+        GtkWidget* dlg;
+        std::vector<std::string> names;
+        bool populating;
+    } ctx{&draft, &active, os_dark, cb_theme, btn_del, store, tv, e_hex, btn_apply_c, dlg, {}, false};
+
+    auto refresh_rows = [&](GtkThemeCtx* c) {
+        const ThemeConfig pal = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+        gtk_list_store_clear(c->store);
+        for (std::size_t i = 0; i < kThemeRoleCount; ++i) {
+            const std::string hx = format_hex_rgb(pal.colors[i]);
+            GtkTreeIter it;
+            gtk_list_store_append(c->store, &it);
+            gtk_list_store_set(c->store, &it,
+                               0, kThemeRoleLabels[i],
+                               1, kThemeRoleKeys[i],
+                               2, hx.c_str(),
+                               3, hx.c_str(),
+                               -1);
+        }
+        gtk_widget_set_sensitive(c->btn_del, !is_builtin_theme_name(*c->active) ? TRUE : FALSE);
+    };
+
+    auto rebuild_combo = [&](GtkThemeCtx* c) {
+        c->populating = true;
+        GtkTreeModel* m = gtk_combo_box_get_model(GTK_COMBO_BOX(c->cb));
+        if (m) gtk_list_store_clear(GTK_LIST_STORE(m));
+        c->names = {"native", "dark", "light"};
+        for (const auto& ct : c->draft->themes) {
+            if (!is_builtin_theme_name(ct.name)) c->names.push_back(ct.name);
+        }
+        int sel = 0;
+        for (int i = 0; i < static_cast<int>(c->names.size()); ++i) {
+            gtk_combo_box_append_text(GTK_COMBO_BOX(c->cb), c->names[static_cast<std::size_t>(i)].c_str());
+            if (theme_to_lower(c->names[static_cast<std::size_t>(i)]) == theme_to_lower(*c->active)) {
+                sel = i;
+            }
+        }
+        gtk_combo_box_set_active(GTK_COMBO_BOX(c->cb), sel);
+        c->populating = false;
+    };
+
+    rebuild_combo(&ctx);
+    refresh_rows(&ctx);
+    {
+        GtkTreePath* p0 = gtk_tree_path_new_from_indices(0, -1);
+        gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(tv)), p0);
+        gtk_tree_path_free(p0);
+        const ThemeConfig pal0 = resolve_effective_theme(active, draft.themes, true, os_dark);
+        gtk_entry_set_text(GTK_ENTRY(e_hex), format_hex_rgb(pal0.colors[0]).c_str());
+    }
+
+    auto apply_selected_hex = [&](GtkThemeCtx* c, const std::string& hex_txt) {
+        uint32_t new_rgb = 0;
+        if (!parse_hex_rgb(hex_txt, new_rgb)) return;
+        GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(c->tv));
+        GtkTreeModel* mod = nullptr;
+        GtkTreeIter iter;
+        int role_idx = 0;
+        if (gtk_tree_selection_get_selected(sel, &mod, &iter)) {
+            GtkTreePath* path = gtk_tree_model_get_path(mod, &iter);
+            if (path) {
+                role_idx = gtk_tree_path_get_indices(path)[0];
+                gtk_tree_path_free(path);
+            }
+        }
+        if (is_builtin_theme_name(*c->active)) {
+            ThemeConfig cloned = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+            const std::string la = theme_to_lower(*c->active);
+            cloned.is_dark_base = (la == "light") ? false : ((la == "native") ? c->os_dark : true);
+            cloned.name = make_custom_clone_name(c->draft->themes, cloned.is_dark_base);
+            c->draft->themes.push_back(cloned);
+            *c->active = cloned.name;
+            rebuild_combo(c);
+        }
+        for (auto& ct : c->draft->themes) {
+            if (theme_to_lower(ct.name) == theme_to_lower(*c->active)) {
+                ct.colors[static_cast<std::size_t>(role_idx)] = new_rgb;
+                break;
+            }
+        }
+        refresh_rows(c);
+        GtkTreePath* rp = gtk_tree_path_new_from_indices(role_idx, -1);
+        gtk_tree_selection_select_path(sel, rp);
+        gtk_tree_path_free(rp);
+    };
+
+    auto cb_combo_fn = +[](GtkComboBox* cb, gpointer p) {
+        auto* c = static_cast<GtkThemeCtx*>(p);
+        if (c->populating) return;
+        int idx = gtk_combo_box_get_active(cb);
+        if (idx >= 0 && idx < static_cast<int>(c->names.size())) {
+            *c->active = c->names[static_cast<std::size_t>(idx)];
+            const ThemeConfig pal = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+            gtk_list_store_clear(c->store);
+            for (std::size_t i = 0; i < kThemeRoleCount; ++i) {
+                const std::string hx = format_hex_rgb(pal.colors[i]);
+                GtkTreeIter it;
+                gtk_list_store_append(c->store, &it);
+                gtk_list_store_set(c->store, &it, 0, kThemeRoleLabels[i],
+                                   1, kThemeRoleKeys[i], 2, hx.c_str(), 3, hx.c_str(), -1);
+            }
+            gtk_widget_set_sensitive(c->btn_del, !is_builtin_theme_name(*c->active) ? TRUE : FALSE);
+        }
+    };
+    g_signal_connect(cb_theme, "changed", G_CALLBACK(cb_combo_fn), &ctx);
+
+    auto cb_sel_fn = +[](GtkTreeSelection* sel, gpointer p) {
+        auto* c = static_cast<GtkThemeCtx*>(p);
+        GtkTreeModel* mod = nullptr;
+        GtkTreeIter iter;
+        if (gtk_tree_selection_get_selected(sel, &mod, &iter)) {
+            gchar* hx = nullptr;
+            gtk_tree_model_get(mod, &iter, 2, &hx, -1);
+            if (hx) { gtk_entry_set_text(GTK_ENTRY(c->e_hex), hx); g_free(hx); }
+        }
+    };
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(tv)), "changed",
+                     G_CALLBACK(cb_sel_fn), &ctx);
+
+    auto cb_apply_fn = +[](GtkWidget*, gpointer p) {
+        auto* c = static_cast<GtkThemeCtx*>(p);
+        std::string ht = gtk_entry_get_text(GTK_ENTRY(c->e_hex));
+        uint32_t dummy = 0;
+        if (!parse_hex_rgb(ht, dummy)) return;
+        GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(c->tv));
+        GtkTreeModel* mod = nullptr;
+        GtkTreeIter iter;
+        int role_idx = 0;
+        if (gtk_tree_selection_get_selected(sel, &mod, &iter)) {
+            GtkTreePath* path = gtk_tree_model_get_path(mod, &iter);
+            if (path) { role_idx = gtk_tree_path_get_indices(path)[0]; gtk_tree_path_free(path); }
+        }
+        if (is_builtin_theme_name(*c->active)) {
+            ThemeConfig cloned = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+            const std::string la = theme_to_lower(*c->active);
+            cloned.is_dark_base = (la == "light") ? false : ((la == "native") ? c->os_dark : true);
+            cloned.name = make_custom_clone_name(c->draft->themes, cloned.is_dark_base);
+            c->draft->themes.push_back(cloned);
+            *c->active = cloned.name;
+            c->populating = true;
+            gtk_combo_box_append_text(GTK_COMBO_BOX(c->cb), cloned.name.c_str());
+            c->names.push_back(cloned.name);
+            gtk_combo_box_set_active(GTK_COMBO_BOX(c->cb), static_cast<int>(c->names.size()) - 1);
+            c->populating = false;
+        }
+        for (auto& ct : c->draft->themes) {
+            if (theme_to_lower(ct.name) == theme_to_lower(*c->active)) {
+                ct.colors[static_cast<std::size_t>(role_idx)] = dummy;
+                break;
+            }
+        }
+        const ThemeConfig pal = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+        gtk_list_store_clear(c->store);
+        for (std::size_t i = 0; i < kThemeRoleCount; ++i) {
+            const std::string nhx = format_hex_rgb(pal.colors[i]);
+            GtkTreeIter it;
+            gtk_list_store_append(c->store, &it);
+            gtk_list_store_set(c->store, &it, 0, kThemeRoleLabels[i],
+                               1, kThemeRoleKeys[i], 2, nhx.c_str(), 3, nhx.c_str(), -1);
+        }
+        gtk_widget_set_sensitive(c->btn_del, !is_builtin_theme_name(*c->active) ? TRUE : FALSE);
+    };
+    g_signal_connect(btn_apply_c, "clicked", G_CALLBACK(cb_apply_fn), &ctx);
+
+    auto cb_pick_fn = +[](GtkWidget*, gpointer p) {
+        auto* c = static_cast<GtkThemeCtx*>(p);
+        GtkWidget* cdlg = gtk_color_selection_dialog_new("Pick Theme Color");
+        GtkColorSelection* cs = GTK_COLOR_SELECTION(GTK_COLOR_SELECTION_DIALOG(cdlg)->colorsel);
+        uint32_t cur = 0;
+        if (parse_hex_rgb(gtk_entry_get_text(GTK_ENTRY(c->e_hex)), cur)) {
+            GdkColor gc = gdk_from_rgb(cur);
+            gtk_color_selection_set_current_color(cs, &gc);
+        }
+        if (gtk_dialog_run(GTK_DIALOG(cdlg)) == GTK_RESPONSE_OK) {
+            GdkColor gc{};
+            gtk_color_selection_get_current_color(cs, &gc);
+            uint32_t rgb = ((static_cast<uint32_t>(gc.red >> 8) & 0xFFu) << 16) |
+                           ((static_cast<uint32_t>(gc.green >> 8) & 0xFFu) << 8) |
+                           (static_cast<uint32_t>(gc.blue >> 8) & 0xFFu);
+            gtk_entry_set_text(GTK_ENTRY(c->e_hex), format_hex_rgb(rgb).c_str());
+            gtk_button_clicked(GTK_BUTTON(c->btn_apply));
+        }
+        gtk_widget_destroy(cdlg);
+    };
+    g_signal_connect(btn_pick, "clicked", G_CALLBACK(cb_pick_fn), &ctx);
+
+    auto cb_del_fn = +[](GtkWidget*, gpointer p) {
+        auto* c = static_cast<GtkThemeCtx*>(p);
+        if (is_builtin_theme_name(*c->active)) return;
+        const std::string ln = theme_to_lower(*c->active);
+        c->draft->themes.erase(
+            std::remove_if(c->draft->themes.begin(), c->draft->themes.end(),
+                           [&](const ThemeConfig& ct) { return theme_to_lower(ct.name) == ln; }),
+            c->draft->themes.end());
+        *c->active = "native";
+        c->populating = true;
+        GtkTreeModel* m = gtk_combo_box_get_model(GTK_COMBO_BOX(c->cb));
+        if (m) gtk_list_store_clear(GTK_LIST_STORE(m));
+        c->names = {"native", "dark", "light"};
+        for (const auto& ct : c->draft->themes) {
+            if (!is_builtin_theme_name(ct.name)) c->names.push_back(ct.name);
+        }
+        for (const auto& nm : c->names) gtk_combo_box_append_text(GTK_COMBO_BOX(c->cb), nm.c_str());
+        gtk_combo_box_set_active(GTK_COMBO_BOX(c->cb), 0);
+        c->populating = false;
+        const ThemeConfig pal = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
+        gtk_list_store_clear(c->store);
+        for (std::size_t i = 0; i < kThemeRoleCount; ++i) {
+            const std::string nhx = format_hex_rgb(pal.colors[i]);
+            GtkTreeIter it;
+            gtk_list_store_append(c->store, &it);
+            gtk_list_store_set(c->store, &it, 0, kThemeRoleLabels[i],
+                               1, kThemeRoleKeys[i], 2, nhx.c_str(), 3, nhx.c_str(), -1);
+        }
+        gtk_widget_set_sensitive(c->btn_del, FALSE);
+    };
+    g_signal_connect(btn_del, "clicked", G_CALLBACK(cb_del_fn), &ctx);
+
+    (void)apply_selected_hex;
+    gtk_widget_show_all(dlg);
+    GtkSimpleCapCtx cap_ctx{dlg, "theme", GTK_RESPONSE_CANCEL, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
+    gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    g_object_unref(store);
+
+    if (resp == GTK_RESPONSE_ACCEPT) {
+        draft.theme_name = active;
+        auto res = st->engine->apply_config(draft, true);
+        if (res.applied) {
+            apply_gtk_theme(st);
+            set_status_text(st, res.saved_to_disk
+                                    ? ("Theme '" + active + "' saved & applied.")
+                                    : ("Theme '" + active + "' applied (memory only)."));
+        }
+    }
+}
+
 bool confirm_and_exit(GtkAppState* st) {
     const std::size_t auto_cnt = st->engine->auto_learned_peer_count();
     if (auto_cnt > 0) {
@@ -3353,6 +3764,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_rig   = gtk_menu_item_new_with_mnemonic("_Radio Control...");
     GtkWidget* mi_sett  = gtk_menu_item_new_with_mnemonic("_Settings...");
     GtkWidget* mi_peers = gtk_menu_item_new_with_mnemonic("_Peers...");
+    GtkWidget* mi_theme = gtk_menu_item_new_with_mnemonic("T_heme...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
     GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
@@ -3365,6 +3777,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_signal_connect(mi_rig,   "activate", G_CALLBACK(on_rig_control_clicked), &st);
     g_signal_connect(mi_sett,  "activate", G_CALLBACK(on_settings_clicked), &st);
     g_signal_connect(mi_peers, "activate", G_CALLBACK(on_peers_clicked), &st);
+    g_signal_connect(mi_theme, "activate", G_CALLBACK(on_theme_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
@@ -3377,6 +3790,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_rig);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sett);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_peers);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_theme);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);
@@ -3507,6 +3921,9 @@ bool Gtk2UI::run(int& argc, char**& argv) {
                     on_ban_clicked(nullptr, app);
                     return TRUE;
                 case 5:
+                    on_theme_clicked(nullptr, app);
+                    return TRUE;
+                case 6:
                     on_exit_clicked(nullptr, app);
                     return FALSE;
                 default:
@@ -3516,6 +3933,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     }
 
     gtk_widget_show_all(st.window);
+    apply_gtk_theme(&st);
     gtk_main();
 
     g_source_remove(timer_id);

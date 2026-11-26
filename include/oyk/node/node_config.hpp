@@ -8,6 +8,7 @@
 #include "oyk/node/logger.hpp"
 #include "oyk/radio/radio_interface.hpp"
 #include "oyk/radio/rig_control.hpp"
+#include "oyk/ui/theme.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -56,6 +57,8 @@ struct NodeConfig {
     std::string banlist_path;     // Optional override from banlist= in [node]
     std::string interfaces_file;  // Optional interfaces= include path in [node] (empty = inline in node.cfg)
     std::string peers_file;       // Optional peers= include path in [node] (empty = inline in node.cfg)
+    std::string theme_name;       // Optional theme= selection in [node] (empty = port default)
+    std::string themes_file;      // Optional themes= include path in [node] (empty = inline in node.cfg)
 
     bool accept_incoming_default = true;
     bool allow_flash_logging = false;
@@ -71,6 +74,7 @@ struct NodeConfig {
     std::vector<std::string> banned_callsigns; // Legacy inline ban= support if present
     std::vector<radio::RadioInterfaceConfig> interfaces;
     std::vector<radio::PeerConfig> peers;
+    std::vector<ui::ThemeConfig> themes;
 
     // Resolves banlist.cfg path: explicit `banlist=` override if set,
     // otherwise `banlist.cfg` in the same directory as `source_path` (or `./banlist.cfg`).
@@ -81,6 +85,9 @@ struct NodeConfig {
 
     // Resolves optional `peers=` include path relative to `source_path` (empty if inline).
     std::string resolved_peers_path() const;
+
+    // Resolves optional `themes=` include path relative to `source_path` (empty if inline).
+    std::string resolved_themes_path() const;
 
     // Resolves BBS callsign: explicit bbs.callsign if valid, else <callsign.base()>-<bbs.ssid>.
     ax25::Callsign resolved_bbs_callsign() const;

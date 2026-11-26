@@ -35,6 +35,8 @@ private:
     void draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int h, int w);
 
     void open_node_menu(bool& should_exit);
+    void apply_theme_colors();
+    void modal_theme();
     void modal_local_terminal();
     bool has_active_terminal() const;
     void close_terminal_session();

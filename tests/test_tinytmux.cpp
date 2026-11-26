@@ -833,7 +833,7 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[1;2B"), 6);
     assert(con->current_settings_sel() == 2);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[F"), 3);
-    assert(con->current_settings_sel() == 9);
+    assert(con->current_settings_sel() == 10);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H"), 3);
     assert(con->current_settings_sel() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOC"), 3);
@@ -1162,21 +1162,22 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(strstr(cap->buf, "\033[?25l") != NULL);
     assert(strstr(cap->buf, "VT220") != NULL);
 
-    /* 3. VT340 DA1 reply with param 22 enables ANSI colors & dark-grey list headers */
+    /* 3. VT340 DA1 reply with param 22 enables ANSI colors & dynamic dark theme SGRs */
     cap->len = 0; cap->buf[0] = '\0';
     const char* da_vt340 = "\033[?64;1;2;22c";
     con->feed_input(reinterpret_cast<const oyk_u8*>(da_vt340), strlen(da_vt340));
     assert(con->term_type() == TMUX_TERM_VT340);
-    assert(strstr(cap->buf, "\033[1;97;100m") != NULL);
-    assert(strstr(cap->buf, "\033[36m") != NULL);
+    assert(strstr(cap->buf, "\033[1;96m") != NULL);
+    assert(strstr(cap->buf, "\033[96m") != NULL);
 
-    /* 4. xterm-256color DA2 reply enables 256-color dark-grey list headers */
+    /* 4. xterm-256color DA2 reply enables 256-color SGR sequences */
     cap->len = 0; cap->buf[0] = '\0';
     const char* da_x256 = "\033[>41;354;0c";
     con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
     assert(con->term_type() == TMUX_TERM_XTERM256);
     assert(strcmp(con->term_type_label(), "xterm-256") == 0);
-    assert(strstr(cap->buf, "\033[1;97;48;5;238m") != NULL);
+    assert(strstr(cap->buf, "\033[1;38;5;") != NULL);
+    assert(strstr(cap->buf, ";48;5;") != NULL);
 
     /* 5. Add Interface 4-step wizard: corner progress bar, Back navigation, driver switch, and Summary commit */
     con->feed_input(reinterpret_cast<const oyk_u8*>("s4"), 2);
@@ -1429,8 +1430,17 @@ static void test_tinytmux_ui_flows_and_captures() {
     tmux_save_capture("edit_peer", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(600UL);
+
+    /* 8b. Theme Settings Modal (from main console via 'h') */
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(700UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
+    assert(strstr(cap->buf, "Theme Settings") != NULL);
+    tmux_save_capture("theme", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(800UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 KR4OYK - David Kuder
 
 #include "oyk/ui/ncurses_ui.hpp"
+#include "oyk/ui/theme.hpp"
 #include "oyk/protocol/yapp.hpp"
 
 #include <ncurses.h>
@@ -32,6 +33,8 @@ constexpr int CP_BORDER   = 7;
 constexpr int CP_NC_PANEL = 8;
 constexpr int CP_NC_DIR   = 9;
 constexpr int CP_NC_SEL   = 10;
+constexpr int CP_BASE     = 11;
+constexpr int CP_PREVIEW  = 12;
 
 struct CursesGuard {
     CursesGuard() {
@@ -159,16 +162,7 @@ void NcursesUI::run() {
         start_color();
         use_default_colors();
         has_colors_ = true;
-        init_pair(CP_HEADER, COLOR_WHITE, COLOR_BLUE);
-        init_pair(CP_OK, COLOR_GREEN, -1);
-        init_pair(CP_WARN, COLOR_YELLOW, -1);
-        init_pair(CP_DANGER, COLOR_RED, -1);
-        init_pair(CP_MENU, COLOR_BLACK, COLOR_WHITE);
-        init_pair(CP_MENU_SEL, COLOR_BLACK, COLOR_CYAN);
-        init_pair(CP_BORDER, COLOR_CYAN, -1);
-        init_pair(CP_NC_PANEL, COLOR_WHITE, COLOR_BLUE);
-        init_pair(CP_NC_DIR, COLOR_YELLOW, COLOR_BLUE);
-        init_pair(CP_NC_SEL, COLOR_BLACK, COLOR_CYAN);
+        apply_theme_colors();
     }
 
     bool should_exit = false;
@@ -244,6 +238,10 @@ void NcursesUI::run() {
             case 's':
             case 'S':
                 modal_settings(0);
+                break;
+            case 'h':
+            case 'H':
+                modal_theme();
                 break;
             case 'q':
             case 'Q':
@@ -535,7 +533,7 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
 }
 
 void NcursesUI::open_node_menu(bool& should_exit) {
-    static const char* ITEMS[10] = {
+    static const char* ITEMS[11] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
@@ -543,17 +541,18 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         " [R] Radio Control...           ",
         " [S] Settings...                ",
         " [P] Peers...                   ",
+        " [H] Theme...                   ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
     // Row offsets inside menu window (with separators after Deny and Ban)
-    static const int ITEM_ROWS[10] = { 1, 2, 4, 5, 6, 7, 8, 9, 10, 12 };
+    static const int ITEM_ROWS[11] = { 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13 };
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(36, cols - 2);
-    const int h = 14;
+    const int h = 15;
     if (rows < h + 2 || w < 24) return;
 
     WINDOW* win = newwin(h, w, 1, 1);
@@ -569,9 +568,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         werase(win);
         box(win, 0, 0);
         mvwhline(win, 3, 1, ACS_HLINE, w - 2);
-        mvwhline(win, 11, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 12, 1, ACS_HLINE, w - 2);
 
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 11; ++i) {
             if (i == sel) wattron(win, A_REVERSE | A_BOLD);
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
@@ -582,9 +581,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         if (ch == ERR) continue;
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
-            sel = (sel + 9) % 10;
+            sel = (sel + 10) % 11;
         } else if (ch == KEY_DOWN) {
-            sel = (sel + 1) % 10;
+            sel = (sel + 1) % 11;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             chosen = sel;
         } else if (ch == 'a' || ch == 'A') {
@@ -601,12 +600,14 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             chosen = 5;
         } else if (ch == 'p' || ch == 'P') {
             chosen = 6;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'h' || ch == 'H') {
             chosen = 7;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 8;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 9;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 10;
         }
     }
 
@@ -637,12 +638,15 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             modal_settings(4);
             break;
         case 7:
-            modal_terminate_connection();
+            modal_theme();
             break;
         case 8:
-            modal_ban_callsign();
+            modal_terminate_connection();
             break;
         case 9:
+            modal_ban_callsign();
+            break;
+        case 10:
             if (modal_confirm_exit()) {
                 should_exit = true;
             }
@@ -650,6 +654,197 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         default:
             break;
     }
+}
+
+void NcursesUI::apply_theme_colors() {
+    if (!has_colors_) return;
+    const node::NodeConfig cfg = engine_.config();
+    const ThemeConfig t = resolve_effective_theme(cfg.theme_name, cfg.themes, false, true);
+    auto pick = [&](ThemeRole r) -> int {
+        const uint32_t rgb = t.colors[static_cast<std::size_t>(r)];
+        if (COLORS >= 256) return rgb_to_xterm256(rgb);
+        return rgb_to_ansi16(rgb) & 0x07;
+    };
+    const int c_bg = pick(ThemeRole::Bg);
+    const int c_fg = pick(ThemeRole::Fg);
+    init_pair(CP_BASE, static_cast<short>(c_fg), static_cast<short>(c_bg));
+    init_pair(CP_HEADER, static_cast<short>(pick(ThemeRole::HeaderFg)), static_cast<short>(pick(ThemeRole::HeaderBg)));
+    init_pair(CP_OK, static_cast<short>(pick(ThemeRole::Ok)), static_cast<short>(c_bg));
+    init_pair(CP_WARN, static_cast<short>(pick(ThemeRole::Warn)), static_cast<short>(c_bg));
+    init_pair(CP_DANGER, static_cast<short>(pick(ThemeRole::Error)), static_cast<short>(c_bg));
+    init_pair(CP_MENU, static_cast<short>(pick(ThemeRole::ButtonFg)), static_cast<short>(pick(ThemeRole::ButtonBg)));
+    init_pair(CP_MENU_SEL, static_cast<short>(pick(ThemeRole::SelectionFg)), static_cast<short>(pick(ThemeRole::SelectionBg)));
+    init_pair(CP_BORDER, static_cast<short>(pick(ThemeRole::Border)), static_cast<short>(c_bg));
+    init_pair(CP_NC_PANEL, static_cast<short>(pick(ThemeRole::PanelFg)), static_cast<short>(pick(ThemeRole::PanelBg)));
+    init_pair(CP_NC_DIR, static_cast<short>(pick(ThemeRole::Accent)), static_cast<short>(pick(ThemeRole::PanelBg)));
+    init_pair(CP_NC_SEL, static_cast<short>(pick(ThemeRole::SelectionFg)), static_cast<short>(pick(ThemeRole::SelectionBg)));
+    bkgd(COLOR_PAIR(CP_BASE));
+}
+
+void NcursesUI::modal_theme() {
+    node::NodeConfig draft = engine_.config();
+    std::string active_name = normalized_port_theme_name(draft.theme_name, false);
+
+    auto collect_names = [&]() -> std::vector<std::string> {
+        std::vector<std::string> names{"dark", "light"};
+        for (const auto& ct : draft.themes) {
+            if (!is_builtin_theme_name(ct.name)) names.push_back(ct.name);
+        }
+        return names;
+    };
+
+    auto active_palette = [&]() -> ThemeConfig {
+        return resolve_effective_theme(active_name, draft.themes, false, true);
+    };
+
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    const int w = std::min(74, cols - 4);
+    const int h = std::min(22, rows - 2);
+    if (w < 54 || h < 14) return;
+
+    WINDOW* win = newwin(h, w, std::max(1, (rows - h) / 2), std::max(1, (cols - w) / 2));
+    if (!win) return;
+    keypad(win, TRUE);
+    wtimeout(win, 200);
+
+    int role_sel = 0;
+    int scroll = 0;
+    std::string fb = "Left/Right:Switch theme  Enter:Edit #RRGGBB  S/F2:Save";
+
+    auto prompt_hex = [&](const std::string& label, std::string& val_io) -> bool {
+        echo();
+        curs_set(1);
+        mvwhline(win, h - 2, 2, ' ', w - 4);
+        mvwaddnstr(win, h - 2, 2, label.c_str(), w - 16);
+        wrefresh(win);
+        char buf[32]{};
+        wgetnstr(win, buf, 16);
+        noecho();
+        curs_set(0);
+        if (!buf[0]) return false;
+        val_io = buf;
+        return true;
+    };
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+        const std::vector<std::string> names = collect_names();
+        const ThemeConfig pal = active_palette();
+        const int vis_rows = h - 9;
+        if (role_sel < scroll) scroll = role_sel;
+        if (role_sel >= scroll + vis_rows) scroll = role_sel - vis_rows + 1;
+
+        werase(win);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+        box(win, 0, 0);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+        wattron(win, A_BOLD);
+        mvwprintw(win, 0, 2, " Theme Settings ");
+        wattroff(win, A_BOLD);
+
+        mvwprintw(win, 2, 2, "Theme  : < %-20.20s >  (%s)",
+                  active_name.c_str(),
+                  is_builtin_theme_name(active_name) ? "Built-in (not written)" : "Custom");
+        mvwaddnstr(win, 3, 2, "Editing built-in dark/light clones custom-dark or custom-light.", w - 4);
+        wattron(win, A_BOLD);
+        mvwaddnstr(win, 5, 2, "Role              Key            Color     Preview", w - 4);
+        wattroff(win, A_BOLD);
+
+        for (int i = 0; i < vis_rows && (scroll + i) < static_cast<int>(kThemeRoleCount); ++i) {
+            const int idx = scroll + i;
+            const bool is_sel = (idx == role_sel);
+            const std::string hx = format_hex_rgb(pal.colors[static_cast<std::size_t>(idx)]);
+            if (is_sel) wattron(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            mvwprintw(win, 6 + i, 2, "%-16.16s  %-13.13s  %-8.8s",
+                      kThemeRoleLabels[idx], kThemeRoleKeys[idx], hx.c_str());
+            if (is_sel) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            if (has_colors_) {
+                const uint32_t rgb = pal.colors[static_cast<std::size_t>(idx)];
+                int sc = (COLORS >= 256) ? rgb_to_xterm256(rgb) : (rgb_to_ansi16(rgb) & 0x07);
+                init_pair(CP_PREVIEW, static_cast<short>(sc), static_cast<short>(sc));
+                wattron(win, COLOR_PAIR(CP_PREVIEW));
+                mvwaddstr(win, 6 + i, 45, "    ");
+                wattroff(win, COLOR_PAIR(CP_PREVIEW));
+            }
+        }
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+        mvwhline(win, h - 4, 1, ACS_HLINE, w - 2);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+        mvwaddnstr(win, h - 3, 2, fb.c_str(), w - 4);
+        mvwaddnstr(win, h - 2, 2, "Enter:Edit  Lt/Rt:Theme  X:Del Custom  S/F2:Save & Apply  Esc:Cancel", w - 4);
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == 27) break;
+        if (ch == KEY_UP) {
+            role_sel = (role_sel + static_cast<int>(kThemeRoleCount) - 1) % static_cast<int>(kThemeRoleCount);
+        } else if (ch == KEY_DOWN) {
+            role_sel = (role_sel + 1) % static_cast<int>(kThemeRoleCount);
+        } else if (ch == KEY_LEFT || ch == KEY_RIGHT) {
+            int cur_i = 0;
+            for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+                if (theme_to_lower(names[static_cast<std::size_t>(i)]) == theme_to_lower(active_name)) {
+                    cur_i = i;
+                    break;
+                }
+            }
+            const int n = static_cast<int>(names.size());
+            cur_i = (ch == KEY_RIGHT) ? ((cur_i + 1) % n) : ((cur_i + n - 1) % n);
+            active_name = names[static_cast<std::size_t>(cur_i)];
+            fb = "Selected theme '" + active_name + "'. Press S/F2 to apply.";
+        } else if (ch == 'x' || ch == 'X') {
+            if (is_builtin_theme_name(active_name)) {
+                fb = "Built-in themes cannot be deleted.";
+            } else {
+                const std::string ln = theme_to_lower(active_name);
+                draft.themes.erase(std::remove_if(draft.themes.begin(), draft.themes.end(),
+                                                  [&](const ThemeConfig& tc) {
+                                                      return theme_to_lower(tc.name) == ln;
+                                                  }),
+                                   draft.themes.end());
+                active_name = "dark";
+                fb = "Deleted custom theme; reverted to dark.";
+            }
+        } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+            std::string hx = format_hex_rgb(pal.colors[static_cast<std::size_t>(role_sel)]);
+            if (prompt_hex(std::string(kThemeRoleKeys[role_sel]) + " (#RRGGBB): ", hx)) {
+                uint32_t new_rgb = 0;
+                if (!parse_hex_rgb(hx, new_rgb)) {
+                    fb = "Invalid hex color (use #RRGGBB).";
+                } else {
+                    if (is_builtin_theme_name(active_name)) {
+                        ThemeConfig cloned = pal;
+                        cloned.is_dark_base = (theme_to_lower(active_name) != "light");
+                        cloned.name = make_custom_clone_name(draft.themes, cloned.is_dark_base);
+                        draft.themes.push_back(cloned);
+                        active_name = cloned.name;
+                    }
+                    for (auto& ct : draft.themes) {
+                        if (theme_to_lower(ct.name) == theme_to_lower(active_name)) {
+                            ct.colors[static_cast<std::size_t>(role_sel)] = new_rgb;
+                            break;
+                        }
+                    }
+                    fb = "Updated " + active_name + " (" + kThemeRoleKeys[role_sel] + ").";
+                }
+            }
+        } else if (ch == 's' || ch == 'S' || ch == KEY_F(2)) {
+            draft.theme_name = active_name;
+            auto res = engine_.apply_config(draft, true);
+            if (res.applied) {
+                apply_theme_colors();
+                set_status(res.saved_to_disk
+                               ? ("Theme '" + active_name + "' saved & applied.")
+                               : ("Theme '" + active_name + "' applied (in-memory only)."));
+                break;
+            }
+            fb = "Apply failed: " + res.error;
+        }
+    }
+    delwin(win);
 }
 
 bool NcursesUI::modal_file_selector(const std::string& title, std::string& selected_path_out) {
@@ -2045,7 +2240,7 @@ void NcursesUI::modal_settings(int initial_tab) {
     static const char* TAB_NAMES[7] = {
         "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
     };
-    static const char* NODE_LABELS[9] = {
+    static const char* NODE_LABELS[10] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
@@ -2054,7 +2249,8 @@ void NcursesUI::modal_settings(int initial_tab) {
         "Learned Peer Policy",
         "New User Welcome",
         "Interfaces File",
-        "Peers File"
+        "Peers File",
+        "Themes File"
     };
     static const char* BBS_LABELS[9] = {
         "Enable Packet BBS",
@@ -2093,7 +2289,7 @@ void NcursesUI::modal_settings(int initial_tab) {
     };
 
     auto tab_item_count = [&](int t) -> int {
-        if (t == 0) return 9;
+        if (t == 0) return 10;
         if (t == 1) return 9;
         if (t == 2) return 6;
         if (t == 3) return static_cast<int>(draft.interfaces.size());
@@ -2122,6 +2318,7 @@ void NcursesUI::modal_settings(int initial_tab) {
                 case 6: return draft.new_user_welcome.empty() ? "(use default)" : draft.new_user_welcome;
                 case 7: return draft.interfaces_file;
                 case 8: return draft.peers_file;
+                case 9: return draft.themes_file;
                 default: return "";
             }
         }
@@ -2543,6 +2740,7 @@ void NcursesUI::modal_settings(int initial_tab) {
                 else if (f == 6) val = draft.new_user_welcome;
                 else if (f == 7) val = draft.interfaces_file;
                 else if (f == 8) val = draft.peers_file;
+                else if (f == 9) val = draft.themes_file;
             } else if (tab == 1) {
                 if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
                 else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
@@ -2591,6 +2789,8 @@ void NcursesUI::modal_settings(int initial_tab) {
                     draft.interfaces_file = val;
                 } else if (f == 8) {
                     draft.peers_file = val;
+                } else if (f == 9) {
+                    draft.themes_file = val;
                 }
             } else if (tab == 1) {
                 if (f == 1) {

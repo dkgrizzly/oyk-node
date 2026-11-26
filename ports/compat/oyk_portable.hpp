@@ -66,6 +66,9 @@ typedef unsigned long  oyk_u32;
 #define OYK_MAX_CONFIG_PEERS 32
 #endif
 #endif
+#ifndef OYK_MAX_THEMES
+#define OYK_MAX_THEMES       8
+#endif
 
 /* Learned peer admission policies */
 #define OYK_LEARN_INHERIT    0x00U
@@ -195,6 +198,35 @@ struct OykLogFileEntry {
     char active_date[10]; /* YYYYMMDD */
 };
 
+enum OykThemeRole {
+    OYK_TR_BG = 0,
+    OYK_TR_FG,
+    OYK_TR_PANEL_BG,
+    OYK_TR_PANEL_FG,
+    OYK_TR_BORDER,
+    OYK_TR_HEADER_BG,
+    OYK_TR_HEADER_FG,
+    OYK_TR_ACCENT,
+    OYK_TR_STATUS_BG,
+    OYK_TR_STATUS_FG,
+    OYK_TR_SELECTION_BG,
+    OYK_TR_SELECTION_FG,
+    OYK_TR_INPUT_BG,
+    OYK_TR_INPUT_FG,
+    OYK_TR_BUTTON_BG,
+    OYK_TR_BUTTON_FG,
+    OYK_TR_OK,
+    OYK_TR_WARN,
+    OYK_TR_ERROR,
+    OYK_THEME_COLOR_COUNT
+};
+
+struct OykThemeConfig {
+    char   name[24];
+    oyk_u8 is_dark_base; /* 1 = dark, 0 = light */
+    oyk_u32 colors[OYK_THEME_COLOR_COUNT];
+};
+
 struct OykConfig {
     OykCallsign callsign;
     OykCallsign alias;
@@ -204,6 +236,8 @@ struct OykConfig {
     char banlist_path[128];
     char interfaces_file[64];
     char peers_file[64];
+    char theme_name[24];
+    char themes_file[64];
     char log_path[96];
     oyk_u32 console_level;
     int rotate_daily;
@@ -254,6 +288,9 @@ struct OykConfig {
 
     int peer_count;
     OykPeerConfig peers[OYK_MAX_CONFIG_PEERS];
+
+    int theme_count;
+    OykThemeConfig themes[OYK_MAX_THEMES];
 };
 
 struct OykBanEntry {
@@ -455,6 +492,24 @@ int oyk_config_save(const OykConfig* cfg, const char* path);
 void oyk_config_resolve_banlist(const OykConfig* cfg, char* out, size_t out_sz);
 void oyk_config_resolve_interfaces(const OykConfig* cfg, char* out, size_t out_sz);
 void oyk_config_resolve_peers(const OykConfig* cfg, char* out, size_t out_sz);
+void oyk_config_resolve_themes(const OykConfig* cfg, char* out, size_t out_sz);
+
+/* Theme helpers (strict C++98, 16-bit safe) */
+const char* oyk_theme_role_key(int role);
+const char* oyk_theme_role_label(int role);
+int         oyk_theme_role_index(const char* key);
+int         oyk_theme_is_builtin(const char* name);
+int         oyk_theme_parse_hex(const char* text, oyk_u32* rgb_out);
+void        oyk_theme_format_hex(oyk_u32 rgb, char* out, size_t out_sz);
+void        oyk_theme_init_builtin(OykThemeConfig* out, int light_mode);
+void        oyk_theme_init_dos_native(OykThemeConfig* out);
+void        oyk_theme_make_clone_name(const OykConfig* cfg, int is_dark_base,
+                                      char* out, size_t out_sz);
+void        oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
+                                        int os_prefers_dark, OykThemeConfig* out);
+oyk_u8      oyk_rgb_to_vga16(oyk_u32 rgb);
+int         oyk_rgb_to_ansi16(oyk_u32 rgb);
+int         oyk_rgb_to_xterm256(oyk_u32 rgb);
 void oyk_config_resolved_bbs_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_config_resolved_chat_callsign(const OykConfig* cfg, OykCallsign* out);
 void oyk_derive_default_iface_id(const OykConfig* cfg, const char* iface_type,

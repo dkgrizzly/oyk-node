@@ -191,24 +191,84 @@ static void vid_clear(oyk_u8 attr) {
 
 static int dos_local_term_is_active();
 
+struct DosThemeAttrs {
+    oyk_u8 menu_bg, menu_sel, top_hdr, allow_at, deny_at;
+    oyk_u8 bdr, ttl, list_hdr, norm, dim, run_up, run_dn, stat;
+    oyk_u8 dlg_bdr, dlg_fill, dlg_sel, dlg_inp;
+};
+
+static oyk_u8 dos_make_pair_attr(OykDosVideo* v, oyk_u32 bg_rgb, oyk_u32 fg_rgb, oyk_u8 mono_fallback) {
+    oyk_u8 bg = static_cast<oyk_u8>(oyk_rgb_to_vga16(bg_rgb) & 0x0FU);
+    oyk_u8 fg = static_cast<oyk_u8>(oyk_rgb_to_vga16(fg_rgb) & 0x0FU);
+    if (fg == bg) {
+        fg = (bg == 0U || bg == 1U || bg == 2U || bg == 4U || bg == 8U) ? 15U : 0U;
+    }
+    return dos_vid_attr(v, static_cast<oyk_u8>((bg << 4) | fg), mono_fallback);
+}
+
+static void resolve_dos_theme_attrs(const OykConfig* cfg, DosThemeAttrs* out) {
+    const char* tn = (cfg && cfg->theme_name[0]) ? cfg->theme_name : "dark";
+    if (tn[0] && (strcmp(tn, "native") == 0 || strcmp(tn, "NATIVE") == 0)) {
+        out->menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
+        out->menu_sel = dos_vid_attr(g_vid, 0x30U, 0x0FU);
+        out->top_hdr  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+        out->allow_at = dos_vid_attr(g_vid, 0x2FU, 0x0FU);
+        out->deny_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+        out->bdr      = dos_vid_attr(g_vid, 0x03U, 0x07U);
+        out->ttl      = dos_vid_attr(g_vid, 0x0BU, 0x0FU);
+        out->list_hdr = dos_vid_list_hdr_attr(g_vid);
+        out->norm     = 0x07U;
+        out->dim      = dos_vid_attr(g_vid, 0x08U, 0x07U);
+        out->run_up   = dos_vid_attr(g_vid, 0x0AU, 0x0FU);
+        out->run_dn   = dos_vid_attr(g_vid, 0x0CU, 0x07U);
+        out->stat     = dos_vid_attr(g_vid, 0x0EU, 0x0FU);
+        out->dlg_bdr  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+        out->dlg_fill = dos_vid_attr(g_vid, 0x17U, 0x07U);
+        out->dlg_sel  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+        out->dlg_inp  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+        return;
+    }
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(cfg, 0, 1, &tc);
+    out->menu_bg  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BUTTON_BG], tc.colors[OYK_TR_BUTTON_FG], 0x70U);
+    out->menu_sel = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_SELECTION_BG], tc.colors[OYK_TR_SELECTION_FG], 0x0FU);
+    out->top_hdr  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_HEADER_BG], tc.colors[OYK_TR_HEADER_FG], 0x70U);
+    out->allow_at = dos_make_pair_attr(g_vid, 0x008000UL, 0xFFFFFFUL, 0x0FU);
+    out->deny_at  = dos_make_pair_attr(g_vid, 0xAA0000UL, 0xFFFFFFUL, 0x70U);
+    out->bdr      = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_BORDER], 0x07U);
+    out->ttl      = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_ACCENT], 0x0FU);
+    out->list_hdr = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_PANEL_BG], tc.colors[OYK_TR_PANEL_FG], 0x70U);
+    out->norm     = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_FG], 0x07U);
+    out->dim      = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_ACCENT], 0x07U);
+    out->run_up   = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_OK], 0x0FU);
+    out->run_dn   = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BG], tc.colors[OYK_TR_ERROR], 0x07U);
+    out->stat     = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_STATUS_BG], tc.colors[OYK_TR_STATUS_FG], 0x0FU);
+    out->dlg_bdr  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_PANEL_BG], tc.colors[OYK_TR_BORDER], 0x0FU);
+    out->dlg_fill = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_PANEL_BG], tc.colors[OYK_TR_PANEL_FG], 0x07U);
+    out->dlg_sel  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_SELECTION_BG], tc.colors[OYK_TR_SELECTION_FG], 0x70U);
+    out->dlg_inp  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_INPUT_BG], tc.colors[OYK_TR_INPUT_FG], 0x07U);
+}
+
 static void render_dos_screen() {
     char line[82];
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
 
-    oyk_u8 menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
-    oyk_u8 menu_sel = dos_vid_attr(g_vid, 0x30U, 0x0FU);
-    oyk_u8 top_hdr  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
-    oyk_u8 allow_at = dos_vid_attr(g_vid, 0x2FU, 0x0FU);
-    oyk_u8 deny_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
-    oyk_u8 bdr_at   = dos_vid_attr(g_vid, 0x03U, 0x07U);
-    oyk_u8 ttl_at   = dos_vid_attr(g_vid, 0x0BU, 0x0FU);
-    oyk_u8 list_hdr = dos_vid_list_hdr_attr(g_vid);
-    oyk_u8 norm_at  = 0x07U;
-    oyk_u8 dim_at   = dos_vid_attr(g_vid, 0x08U, 0x07U);
-    oyk_u8 run_up   = dos_vid_attr(g_vid, 0x0AU, 0x0FU);
-    oyk_u8 run_dn   = dos_vid_attr(g_vid, 0x0CU, 0x07U);
-    oyk_u8 stat_at  = dos_vid_attr(g_vid, 0x0EU, 0x0FU);
+    DosThemeAttrs ta;
+    resolve_dos_theme_attrs(&g_node.config(), &ta);
+    oyk_u8 menu_bg  = ta.menu_bg;
+    oyk_u8 menu_sel = ta.menu_sel;
+    oyk_u8 top_hdr  = ta.top_hdr;
+    oyk_u8 allow_at = ta.allow_at;
+    oyk_u8 deny_at  = ta.deny_at;
+    oyk_u8 bdr_at   = ta.bdr;
+    oyk_u8 ttl_at   = ta.ttl;
+    oyk_u8 list_hdr = ta.list_hdr;
+    oyk_u8 norm_at  = ta.norm;
+    oyk_u8 dim_at   = ta.dim;
+    oyk_u8 run_up   = ta.run_up;
+    oyk_u8 run_dn   = ta.run_dn;
+    oyk_u8 stat_at  = ta.stat;
 
     /* Row 0: Top Menu Bar (matching GUI and ncurses menu bar) */
     vid_puts(0, 0,  menu_bg, "", 80);
@@ -2792,7 +2852,7 @@ static void run_dos_settings(int initial_tab) {
     static const char* TAB_NAMES[7] = {
         " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Printer "
     };
-    static const char* NODE_LABELS[9] = {
+    static const char* NODE_LABELS[10] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
@@ -2801,7 +2861,8 @@ static void run_dos_settings(int initial_tab) {
         "Learned Peer Policy",
         "New User Welcome",
         "Interfaces File",
-        "Peers File"
+        "Peers File",
+        "Themes File"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS",
@@ -2856,7 +2917,7 @@ static void run_dos_settings(int initial_tab) {
         dos_pump_network();
         g_node.tick();
 
-        int cnt = (tab == 0) ? 9 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
+        int cnt = (tab == 0) ? 10 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
         if (cnt <= 0) sel[tab] = 0;
         else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
 
@@ -2895,6 +2956,8 @@ static void run_dos_settings(int initial_tab) {
                             strncpy(val, draft.interfaces_file, 46); val[46] = '\0';
                         } else if (i == 8) {
                             strncpy(val, draft.peers_file, 46); val[46] = '\0';
+                        } else if (i == 9) {
+                            strncpy(val, draft.themes_file, 46); val[46] = '\0';
                         }
                     } else if (tab == 1) {
                         if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
@@ -3174,6 +3237,7 @@ static void run_dos_settings(int initial_tab) {
                 else if (f == 6) { strncpy(ed, draft.new_user_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 7) { strncpy(ed, draft.interfaces_file, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 8) { strncpy(ed, draft.peers_file, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 9) { strncpy(ed, draft.themes_file, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) sprintf(ed, "%u", static_cast<unsigned int>(draft.bbs_ssid));
                 else if (f == 2 && draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, ed, sizeof(ed));
@@ -3211,6 +3275,7 @@ static void run_dos_settings(int initial_tab) {
                 else if (f == 6) { strncpy(draft.new_user_welcome, ed, sizeof(draft.new_user_welcome) - 1); draft.new_user_welcome[sizeof(draft.new_user_welcome) - 1] = '\0'; }
                 else if (f == 7) { strncpy(draft.interfaces_file, ed, sizeof(draft.interfaces_file) - 1); draft.interfaces_file[sizeof(draft.interfaces_file) - 1] = '\0'; }
                 else if (f == 8) { strncpy(draft.peers_file, ed, sizeof(draft.peers_file) - 1); draft.peers_file[sizeof(draft.peers_file) - 1] = '\0'; }
+                else if (f == 9) { strncpy(draft.themes_file, ed, sizeof(draft.themes_file) - 1); draft.themes_file[sizeof(draft.themes_file) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) { int sv = atoi(ed); if (sv >= 0 && sv <= 15) draft.bbs_ssid = static_cast<oyk_u8>(sv); else strcpy(fb, "SSID must be 0..15."); }
                 else if (f == 2) { if (!ed[0]) memset(&draft.bbs_callsign, 0, sizeof(draft.bbs_callsign)); else if (!oyk_parse_callsign_with_default_ssid(ed, draft.bbs_ssid, &draft.bbs_callsign)) strcpy(fb, "Invalid BBS callsign."); }
@@ -3466,6 +3531,183 @@ static void run_dos_ban_dialog() {
     }
 }
 
+static void run_dos_theme_dialog() {
+    struct DraftGuard {
+        OykConfig* p;
+        DraftGuard() : p(new OykConfig) {}
+        ~DraftGuard() { delete p; }
+    } dg;
+    if (!dg.p) return;
+    OykConfig& draft = *dg.p;
+    draft = g_node.config();
+
+    char active[24];
+    if (draft.theme_name[0]) {
+        strncpy(active, draft.theme_name, sizeof(active) - 1);
+        active[sizeof(active) - 1] = '\0';
+    } else {
+        strcpy(active, "dark");
+    }
+
+    int role_sel = 0;
+    int scroll = 0;
+    int dirty = 1;
+    char fb[70] = "Lt/Rt:Switch  Enter:Edit #RRGGBB  X:Del Custom  S/F2:Save";
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+
+        /* Collect theme names: dark, light, native, + custom */
+        const char* names[OYK_MAX_THEMES + 3];
+        int n_names = 0;
+        names[n_names++] = "dark";
+        names[n_names++] = "light";
+        names[n_names++] = "native";
+        for (int ti = 0; ti < draft.theme_count && ti < OYK_MAX_THEMES; ++ti) {
+            if (!oyk_theme_is_builtin(draft.themes[ti].name)) {
+                names[n_names++] = draft.themes[ti].name;
+            }
+        }
+
+        OykThemeConfig pal;
+        if (strcmp(active, "native") == 0 || strcmp(active, "NATIVE") == 0) {
+            oyk_theme_init_dos_native(&pal);
+        } else {
+            strncpy(draft.theme_name, active, sizeof(draft.theme_name) - 1);
+            draft.theme_name[sizeof(draft.theme_name) - 1] = '\0';
+            oyk_theme_resolve_effective(&draft, 0, 1, &pal);
+        }
+
+        const int vis_rows = 11;
+        if (role_sel < scroll) scroll = role_sel;
+        if (role_sel >= scroll + vis_rows) scroll = role_sel - vis_rows + 1;
+
+        if (dirty) {
+            dirty = 0;
+            render_dos_screen();
+            DosThemeAttrs ta;
+            resolve_dos_theme_attrs(&g_node.config(), &ta);
+
+            const int top = 2, left = 3, bh = 21, bw = 74;
+            dos_vid_box(g_vid, top, left, bh, bw, ta.dlg_bdr, ta.dlg_fill, 1);
+            dos_vid_title(g_vid, top, left + 2, 18, ta.dlg_bdr, "Theme Settings");
+
+            char hdr_line[72];
+            sprintf(hdr_line, "Theme  : < %-18.18s > (%s)", active,
+                    oyk_theme_is_builtin(active) ? "Built-in (not saved)" : "Custom");
+            vid_puts(4, left + 2, ta.dlg_fill, hdr_line, bw - 4);
+            vid_puts(5, left + 2, ta.dlg_fill,
+                     "Editing built-in clones custom-dark or custom-light.", bw - 4);
+            vid_puts(7, left + 2, ta.list_hdr,
+                     "Role              Key            Color     Preview", bw - 4);
+
+            for (int r = 0; r < vis_rows && (scroll + r) < OYK_THEME_COLOR_COUNT; ++r) {
+                int idx = scroll + r;
+                char hx[12], row_s[60];
+                oyk_theme_format_hex(pal.colors[idx], hx, sizeof(hx));
+                sprintf(row_s, "%-16.16s  %-13.13s  %-8.8s",
+                        oyk_theme_role_label(idx), oyk_theme_role_key(idx), hx);
+                vid_puts(8 + r, left + 2, (idx == role_sel) ? ta.dlg_sel : ta.dlg_fill, row_s, 44);
+                oyk_u8 sw = dos_make_pair_attr(g_vid, pal.colors[idx], pal.colors[idx], ta.dlg_fill);
+                vid_puts(8 + r, left + 47, sw, "    ", 4);
+            }
+
+            dos_vid_hdiv(g_vid, 19, left, bw, ta.dlg_bdr);
+            vid_puts(20, left + 2, ta.dlg_fill, fb, bw - 4);
+            vid_puts(21, left + 2, ta.menu_bg,
+                     "Enter:Edit  Lt/Rt:Theme  X:Del  S/F2:Save & Apply  Esc:Cancel", bw - 4);
+            dos_vid_flush(g_vid);
+        }
+
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72) role_sel = (role_sel + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT;
+            else if (ext == 80) role_sel = (role_sel + 1) % OYK_THEME_COLOR_COUNT;
+            else if (ext == 75 || ext == 77) {
+                int ci = 0;
+                for (int i = 0; i < n_names; ++i) {
+                    if (strcmp(names[i], active) == 0) { ci = i; break; }
+                }
+                ci = (ext == 77) ? ((ci + 1) % n_names) : ((ci + n_names - 1) % n_names);
+                strncpy(active, names[ci], sizeof(active) - 1);
+                active[sizeof(active) - 1] = '\0';
+                sprintf(fb, "Selected '%s' (press S/F2 to save & apply).", active);
+            } else if (ext == 60) { /* F2 */
+                ch = 's';
+            }
+        }
+        if (ch == 27) break;
+        if (ch == 's' || ch == 'S') {
+            strncpy(draft.theme_name, active, sizeof(draft.theme_name) - 1);
+            draft.theme_name[sizeof(draft.theme_name) - 1] = '\0';
+            OykConfigApplyResult res;
+            g_node.apply_config(&draft, 1, &res);
+            if (res.applied) {
+                sprintf(g_status_line, "Theme '%s' %s.", active,
+                        res.saved_to_disk ? "saved & applied" : "applied (memory only)");
+                break;
+            }
+            sprintf(fb, "Apply failed: %.54s", res.error);
+        } else if (ch == 'x' || ch == 'X') {
+            if (oyk_theme_is_builtin(active)) {
+                strcpy(fb, "Built-in themes cannot be deleted.");
+            } else {
+                for (int ti = 0; ti < draft.theme_count; ++ti) {
+                    if (strcmp(draft.themes[ti].name, active) == 0) {
+                        for (int k = ti; k + 1 < draft.theme_count; ++k) {
+                            draft.themes[k] = draft.themes[k + 1];
+                        }
+                        --draft.theme_count;
+                        break;
+                    }
+                }
+                strcpy(active, "dark");
+                strcpy(fb, "Custom theme deleted; reverted to dark.");
+            }
+        } else if (ch == '\r' || ch == '\n') {
+            char hx[16], pr[40];
+            oyk_theme_format_hex(pal.colors[role_sel], hx, sizeof(hx));
+            sprintf(pr, "%s (#RRGGBB): ", oyk_theme_role_key(role_sel));
+            int ok = 0;
+            prompt_line_prefill(pr, hx, sizeof(hx), &ok);
+            if (ok) {
+                oyk_u32 new_rgb = 0;
+                if (!oyk_theme_parse_hex(hx, &new_rgb)) {
+                    strcpy(fb, "Invalid hex color (use #RRGGBB).");
+                } else {
+                    if (oyk_theme_is_builtin(active)) {
+                        if (draft.theme_count >= OYK_MAX_THEMES) {
+                            strcpy(fb, "Maximum custom theme count reached.");
+                            continue;
+                        }
+                        int dark_b = (strcmp(active, "light") == 0 || strcmp(active, "LIGHT") == 0) ? 0 : 1;
+                        char cname[24];
+                        oyk_theme_make_clone_name(&draft, dark_b, cname, sizeof(cname));
+                        OykThemeConfig* nt = &draft.themes[draft.theme_count++];
+                        *nt = pal;
+                        nt->is_dark_base = dark_b ? 1 : 0;
+                        strncpy(nt->name, cname, sizeof(nt->name) - 1);
+                        nt->name[sizeof(nt->name) - 1] = '\0';
+                        strcpy(active, nt->name);
+                    }
+                    for (int ti = 0; ti < draft.theme_count; ++ti) {
+                        if (strcmp(draft.themes[ti].name, active) == 0) {
+                            draft.themes[ti].colors[role_sel] = new_rgb;
+                            break;
+                        }
+                    }
+                    sprintf(fb, "Updated %s (%s).", active, oyk_theme_role_key(role_sel));
+                }
+            }
+        }
+    }
+    render_dos_screen();
+}
+
 static void run_dos_menu_action(int chosen, int* running) {
     if (chosen == 0) {
         g_node.set_accept_incoming(1);
@@ -3484,10 +3726,12 @@ static void run_dos_menu_action(int chosen, int* running) {
     } else if (chosen == 6) {
         run_dos_settings(4);
     } else if (chosen == 7) {
-        run_dos_terminate_dialog();
+        run_dos_theme_dialog();
     } else if (chosen == 8) {
-        run_dos_ban_dialog();
+        run_dos_terminate_dialog();
     } else if (chosen == 9) {
+        run_dos_ban_dialog();
+    } else if (chosen == 10) {
         if (confirm_dos_exit()) {
             *running = 0;
         }
@@ -3495,7 +3739,7 @@ static void run_dos_menu_action(int chosen, int* running) {
 }
 
 static void open_dos_node_menu(int* running) {
-    static const char* ITEMS[10] = {
+    static const char* ITEMS[11] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
@@ -3503,26 +3747,29 @@ static void open_dos_node_menu(int* running) {
         " [R] Radio Control...           ",
         " [S] Settings...                ",
         " [P] Peers...                   ",
+        " [H] Theme...                   ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
-    static const int ITEM_ROWS[10] = { 2, 3, 5, 6, 7, 8, 9, 10, 11, 13 };
+    static const int ITEM_ROWS[11] = { 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 14 };
 
     int sel = 0;
     int chosen = -1;
     int dirty = 1;
-    oyk_u8 menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
-    oyk_u8 menu_sel = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    DosThemeAttrs ta;
+    resolve_dos_theme_attrs(&g_node.config(), &ta);
+    oyk_u8 menu_bg  = ta.menu_bg;
+    oyk_u8 menu_sel = ta.menu_sel;
     while (chosen < 0 && !g_break_flag) {
         dos_pump_network();
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, 1, 1, 14, 34, menu_bg, menu_bg, 0);
+            dos_vid_box(g_vid, 1, 1, 15, 34, menu_bg, menu_bg, 0);
             dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
-            dos_vid_hdiv(g_vid, 12, 1, 34, menu_bg);
-            for (int i = 0; i < 10; ++i) {
+            dos_vid_hdiv(g_vid, 13, 1, 34, menu_bg);
+            for (int i = 0; i < 11; ++i) {
                 dos_vid_putc(g_vid, ITEM_ROWS[i], 1, menu_bg, OYK_BOX_V);
                 vid_puts(ITEM_ROWS[i], 2, (i == sel) ? menu_sel : menu_bg, ITEMS[i], 32);
                 dos_vid_putc(g_vid, ITEM_ROWS[i], 34, menu_bg, OYK_BOX_V);
@@ -3535,8 +3782,8 @@ static void open_dos_node_menu(int* running) {
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72) sel = (sel + 9) % 10;      /* Up arrow */
-            else if (ext == 80) sel = (sel + 1) % 10; /* Down arrow */
+            if (ext == 72) sel = (sel + 10) % 11;      /* Up arrow */
+            else if (ext == 80) sel = (sel + 1) % 11; /* Down arrow */
             else if (ext == 68) break;               /* F10 closes menu */
         } else if (ch == 27) {
             break;
@@ -3556,12 +3803,14 @@ static void open_dos_node_menu(int* running) {
             chosen = 5;
         } else if (ch == 'p' || ch == 'P') {
             chosen = 6;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'h' || ch == 'H') {
             chosen = 7;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 8;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 9;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 10;
         }
     }
 
@@ -3829,12 +4078,14 @@ int main(int argc, char* argv[]) {
                     run_dos_menu_action(5, &running);
                 } else if (ch == 'p' || ch == 'P') {
                     run_dos_menu_action(6, &running);
-                } else if (ch == 't' || ch == 'T') {
+                } else if (ch == 'h' || ch == 'H') {
                     run_dos_menu_action(7, &running);
-                } else if (ch == 'b' || ch == 'B') {
+                } else if (ch == 't' || ch == 'T') {
                     run_dos_menu_action(8, &running);
-                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                } else if (ch == 'b' || ch == 'B') {
                     run_dos_menu_action(9, &running);
+                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                    run_dos_menu_action(10, &running);
                 }
                 render_dos_screen();
                 last_sig = dos_screen_signature();
