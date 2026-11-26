@@ -56,7 +56,9 @@ static void bridge_str_copy(char* dst, size_t dst_sz, const char* src) {
 
 static oyk_u32 bridge_parse_ip(const char* text) {
     oyk_u32 ip = 0;
-    if (text && text[0]) oyk_parse_ipv4(text, &ip);
+    if (text && text[0]) {
+        oyk_resolve_host_or_dmr_id(text, 12U, NULL, 0, &ip);
+    }
     return ip;
 }
 

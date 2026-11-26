@@ -3035,6 +3035,157 @@ void test_peer_sections_acl_migration_and_auto_learn() {
     std::cout << "[PASS] test_peer_sections_acl_migration_and_auto_learn\n";
 }
 
+void test_iface_directions_netmask_and_dmr_id() {
+    // 1. RadioFoundry DMR ID <-> IPv4 math & validation
+    assert(radio::is_all_ascii_digits("3112345"));
+    assert(!radio::is_all_ascii_digits("12.34.56.78"));
+    assert(!radio::is_all_ascii_digits(""));
+
+    uint32_t did = 0;
+    assert(radio::parse_dmr_id("1", did) && did == 1U);
+    assert(radio::parse_dmr_id("3112345", did) && did == 3112345U);
+    assert(radio::parse_dmr_id("16777214", did) && did == 16777214U);
+    assert(!radio::parse_dmr_id("0", did));
+    assert(!radio::parse_dmr_id("16777215", did));
+    assert(!radio::parse_dmr_id("99999999", did));
+
+    assert(radio::dmr_id_to_ipv4(1U, 12U) == "12.0.0.1");
+    assert(radio::dmr_id_to_ipv4(3112345U, 12U) == "12.47.125.153");
+    assert(radio::dmr_id_to_ipv4(3112345U, 44U) == "44.47.125.153");
+    assert(radio::dmr_id_to_ipv4(16777214U, 12U) == "12.255.255.254");
+
+    radio::RadioInterfaceConfig dmr_if;
+    dmr_if.type = "axudp";
+    dmr_if.params["bind_host"] = "44.1.2.3";
+    dmr_if.params["netmask"] = "255.0.0.0";
+    assert(radio::dmr_prefix_for_iface(dmr_if) == 44U);
+
+    std::string resolved;
+    assert(radio::resolve_host_or_dmr_id("3112345", radio::dmr_prefix_for_iface(dmr_if), resolved));
+    assert(resolved == "44.47.125.153");
+    assert(radio::resolve_host_or_dmr_id("radio.example.org", 12U, resolved));
+    assert(resolved == "radio.example.org");
+    assert(!radio::resolve_host_or_dmr_id("16777215", 12U, resolved));
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "oyk_test_iface_dmr";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    // 2. Reject out-of-range DMR ID in config
+    {
+        const fs::path bad_cfg = tmp / "bad_dmr.cfg";
+        {
+            std::ofstream ofs(bad_cfg);
+            ofs << "[node]\ncallsign = K7DMR-7\n"
+                << "[interface ax0]\ntype = axudp\nbind_host = 127.0.0.1\nbind_port = 10093\n"
+                << "[peer pbad]\ncallsign = W1BAD\ninterface = ax0\nhost = 16777215\n";
+        }
+        node::NodeConfig cfg;
+        std::string err;
+        assert(!node::NodeConfig::load_from_file(bad_cfg, cfg, err));
+        assert(err.find("DMR") != std::string::npos);
+    }
+
+    // 3. Per-interface allow_inbound/allow_outbound + telnet lock + netmask + live enforcement
+    const fs::path cfg_path = tmp / "node.cfg";
+    {
+        std::ofstream ofs(cfg_path);
+        ofs << "[node]\n"
+            << "callsign = K7DMR-7\n"
+            << "logpath = " << (tmp / "logs").string() << "\n"
+            << "banlist = " << (tmp / "banlist.cfg").string() << "\n"
+            << "\n"
+            << "[interface ax_rx]\n"
+            << "type = axudp\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "netmask = 255.0.0.0\n"
+            << "allow_inbound = true\n"
+            << "allow_outbound = false\n"
+            << "\n"
+            << "[interface ax_noin]\n"
+            << "type = axudp\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "netmask = 255.0.0.0\n"
+            << "allow_inbound = false\n"
+            << "allow_outbound = true\n"
+            << "\n"
+            << "[interface tel0]\n"
+            << "type = telnet\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "allow_inbound = true\n"
+            << "allow_outbound = true\n"
+            << "\n"
+            << "[peer dmrout]\n"
+            << "callsign = W1OUT\n"
+            << "interface = ax_noin\n"
+            << "host = 3112345\n"
+            << "allow_inbound = true\n"
+            << "allow_outbound = true\n";
+    }
+
+    node::NodeConfig cfg;
+    std::string err;
+    assert(node::NodeConfig::load_from_file(cfg_path, cfg, err));
+    assert(cfg.interfaces.size() == 3);
+    assert(cfg.interfaces[0].allow_inbound && !cfg.interfaces[0].allow_outbound);
+    assert(!cfg.interfaces[1].allow_inbound && cfg.interfaces[1].allow_outbound);
+    assert(!cfg.interfaces[2].allow_outbound); // Telnet outbound hard-locked false
+
+    node::NodeEngine engine(cfg);
+    assert(engine.start(err));
+    auto* ax_rx_iface = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("ax_rx"));
+    auto* ax_noin_iface = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("ax_noin"));
+    assert(ax_rx_iface && ax_noin_iface);
+    const uint16_t p_rx = ax_rx_iface->bound_port();
+    const uint16_t p_noin = ax_noin_iface->bound_port();
+    assert(p_rx > 0 && p_noin > 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Inbound SABM on ax_rx (allow_inbound=true) succeeds
+    {
+        TestAxudpClient cl(ax25::Callsign("W2OK", 0), p_rx);
+        cl.send(ax25::Frame::make_sabm(cfg.callsign, cl.call()));
+        auto ua = cl.recv();
+        assert(ua.has_value() && ua->type() == ax25::FrameType::UA);
+        cl.send(ax25::Frame::make_disc(cfg.callsign, cl.call()));
+    }
+    // Inbound SABM on ax_noin (allow_inbound=false) gets DM
+    {
+        TestAxudpClient cl(ax25::Callsign("W2BLK", 0), p_noin);
+        cl.send(ax25::Frame::make_sabm(cfg.callsign, cl.call()));
+        auto rsp = cl.recv();
+        assert(rsp.has_value() && rsp->type() == ax25::FrameType::DM);
+    }
+    // Outbound connect on ax_rx (allow_outbound=false) and tel0 refused
+    {
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        uint64_t lsid = 0;
+        err.clear();
+        assert(!engine.open_local_terminal("ax_rx", "W2ANY", cbs, lsid, nullptr, err, nullptr));
+        assert(err.find("disabled") != std::string::npos);
+        err.clear();
+        assert(!engine.open_local_terminal("tel0", "W2ANY", cbs, lsid, nullptr, err, nullptr));
+        assert(err.find("disabled") != std::string::npos);
+        // Outbound connect to DMR peer on ax_noin (bind=127.0.0.1, mask=255.0.0.0 -> prefix 127 -> 127.47.125.153)
+        err.clear();
+        assert(engine.open_local_terminal("ax_noin", "W1OUT", cbs, lsid, nullptr, err, nullptr));
+        engine.close_local_terminal(lsid);
+    }
+    // Test netmask TX drop directly on ax_rx_iface (mask 255.0.0.0 bind 127.0.0.1 rejects TX to 10.0.0.1)
+    {
+        ax25::Frame ui = ax25::Frame::make_sabm(ax25::Callsign("W1RMT", 0), cfg.callsign);
+        assert(!ax_rx_iface->send_frame(ui, "10.0.0.1:10093"));
+        assert(ax_rx_iface->send_frame(ui, "127.0.0.2:10093"));
+    }
+
+    engine.stop();
+    fs::remove_all(tmp);
+    std::cout << "[PASS] test_iface_directions_netmask_and_dmr_id\n";
+}
+
 } // namespace
 
 int main() {
@@ -3062,6 +3213,7 @@ int main() {
     test_direct_printer_logging_pty_and_config();
     test_derive_default_iface_id_node();
     test_peer_sections_acl_migration_and_auto_learn();
+    test_iface_directions_netmask_and_dmr_id();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

@@ -5,6 +5,7 @@
 #include "oyk/protocol/yapp.hpp"
 
 #include <ncurses.h>
+#include <arpa/inet.h>
 
 #include <algorithm>
 #include <cctype>
@@ -2684,11 +2685,19 @@ static void nc_apply_driver_defaults(int drv,
                                      std::string& f_port,
                                      std::string& f_mode,
                                      std::string& f_kport,
-                                     std::string& f_peer) {
+                                     std::string& f_netmask,
+                                     std::string& f_peer,
+                                     bool& f_in,
+                                     bool& f_out,
+                                     std::string& f_lpol) {
     const std::string t = NC_IFACE_DRIVERS[drv].type;
     f_peer.clear();
+    f_netmask.clear();
     f_kport = "0";
     f_mode = "client";
+    f_in = true;
+    f_out = (t != "telnet");
+    f_lpol = "inherit";
     if (t == "axudp") {
         f_host = "0.0.0.0";
         f_port = "10093";
@@ -2707,6 +2716,20 @@ static void nc_apply_driver_defaults(int drv,
     }
 }
 
+static std::string nc_cycle_learned_policy(const std::string& cur, int dir) {
+    static const char* const POLS[5] = {"inherit", "none", "inbound", "outbound", "both"};
+    int idx = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (cur == POLS[i]) { idx = i; break; }
+    }
+    return POLS[(idx + dir + 5) % 5];
+}
+
+static bool nc_is_valid_ipv4(const std::string& ip) {
+    struct in_addr a{};
+    return inet_pton(AF_INET, ip.c_str(), &a) == 1;
+}
+
 static void nc_build_iface_config(int drv,
                                   const std::string& f_id,
                                   const std::string& f_desc,
@@ -2714,20 +2737,28 @@ static void nc_build_iface_config(int drv,
                                   const std::string& f_port,
                                   const std::string& f_mode,
                                   const std::string& f_kport,
+                                  const std::string& f_netmask,
                                   const std::string& f_peer,
+                                  bool f_in,
+                                  bool f_out,
+                                  const std::string& f_lpol,
                                   const radio::RadioInterfaceConfig* prev,
                                   radio::RadioInterfaceConfig& out_iface) {
     out_iface = radio::RadioInterfaceConfig{};
     out_iface.id = f_id;
     out_iface.type = NC_IFACE_DRIVERS[drv].type;
     out_iface.description = f_desc;
+    out_iface.allow_inbound = f_in;
+    out_iface.allow_outbound = (drv == 4) ? false : f_out;
     if (drv == 0) {
         out_iface.params["bind_host"] = f_host;
         out_iface.params["bind_port"] = f_port;
+        if (!f_netmask.empty()) out_iface.params["netmask"] = f_netmask;
         out_iface.params["auto_learn"] = "true";
         if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
     } else if (drv == 1) {
         out_iface.params["bind_host"] = f_host;
+        if (!f_netmask.empty()) out_iface.params["netmask"] = f_netmask;
         out_iface.params["auto_learn"] = "true";
         if (!f_peer.empty()) out_iface.peers.push_back(f_peer);
     } else if (drv == 2) {
@@ -2742,6 +2773,9 @@ static void nc_build_iface_config(int drv,
     } else {
         out_iface.params["bind_host"] = f_host;
         out_iface.params["bind_port"] = f_port;
+    }
+    if (drv != 4 && !f_lpol.empty() && f_lpol != "inherit") {
+        out_iface.params["learned_peer_policy"] = f_lpol;
     }
     if (prev && (drv == 0 || drv == 1)) {
         for (std::size_t p = 1; p < prev->peers.size(); ++p) {
@@ -2761,7 +2795,7 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     int w = std::min(68, cols - 4);
-    int h = 16;
+    int h = std::min(19, std::max(16, rows - 2));
     int y = std::max(1, (rows - h) / 2);
     int x = std::max(1, (cols - w) / 2);
 
@@ -2775,23 +2809,25 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
     int last_drv = -1;
     int focus = 0;
     int btn = 1; // 0=Back, 1=Next/Finish, 2=Cancel
-    std::string f_id, f_desc, f_host, f_port, f_mode = "client", f_kport = "0", f_peer;
+    std::string f_id, f_desc, f_host, f_port, f_mode = "client", f_kport = "0", f_netmask, f_peer;
+    std::string f_lpol = "inherit";
+    bool f_in = true, f_out = true;
     std::string err_msg;
     bool committed = false;
 
     auto apply_driver_defaults = [&]() {
         f_id = node::derive_default_iface_id(existing, NC_IFACE_DRIVERS[drv].type);
         f_desc.clear();
-        nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
+        nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_netmask, f_peer, f_in, f_out, f_lpol);
         last_drv = drv;
     };
 
     auto field_count_for_step = [&]() -> int {
         if (step == 1) return 2;
         if (step == 2) {
-            if (drv == 0 || drv == 2) return 3;
-            if (drv == 3) return 4;
-            return 2;
+            if (drv == 0 || drv == 3) return 7;
+            if (drv == 1 || drv == 2) return 6;
+            return 3; // telnet: Bind Host, TCP Port, Allow Inbound (outbound locked)
         }
         return 0;
     };
@@ -2801,18 +2837,43 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             return (fidx == 0) ? &f_id : &f_desc;
         }
         if (step == 2) {
-            if (drv == 0) return (fidx == 0) ? &f_host : ((fidx == 1) ? &f_port : &f_peer);
-            if (drv == 1) return (fidx == 0) ? &f_host : &f_peer;
-            if (drv == 2) return (fidx == 0) ? &f_host : ((fidx == 1) ? &f_port : &f_kport);
+            if (drv == 0) {
+                if (fidx == 0) return &f_host;
+                if (fidx == 1) return &f_port;
+                if (fidx == 2) return &f_netmask;
+                if (fidx == 3) return &f_peer;
+                return nullptr;
+            }
+            if (drv == 1) {
+                if (fidx == 0) return &f_host;
+                if (fidx == 1) return &f_netmask;
+                if (fidx == 2) return &f_peer;
+                return nullptr;
+            }
+            if (drv == 2) {
+                if (fidx == 0) return &f_host;
+                if (fidx == 1) return &f_port;
+                if (fidx == 2) return &f_kport;
+                return nullptr;
+            }
             if (drv == 3) {
-                if (fidx == 0) return nullptr; // toggle mode
                 if (fidx == 1) return &f_host;
                 if (fidx == 2) return &f_port;
-                return &f_kport;
+                if (fidx == 3) return &f_kport;
+                return nullptr;
             }
-            return (fidx == 0) ? &f_host : &f_port;
+            if (fidx == 0) return &f_host;
+            if (fidx == 1) return &f_port;
+            return nullptr;
         }
         return nullptr;
+    };
+
+    auto is_toggle_field = [&](int fidx) -> bool {
+        if (step != 2) return false;
+        if (drv == 0 || drv == 3) return fidx >= 4;
+        if (drv == 1 || drv == 2) return fidx >= 3;
+        return fidx == 2;
     };
 
     auto validate_and_advance = [&]() {
@@ -2845,12 +2906,25 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
         if (step == 2) {
             if (f_host.empty()) {
                 err_msg = (drv == 2) ? "Serial device cannot be empty." : "Host cannot be empty.";
-                focus = 0;
+                focus = (drv == 3) ? 1 : 0;
                 return;
             }
             if (drv != 1 && f_port.empty()) {
                 err_msg = (drv == 2) ? "Baud rate cannot be empty." : "Port cannot be empty.";
-                focus = 1;
+                focus = (drv == 3) ? 2 : 1;
+                return;
+            }
+            if ((drv == 0 || drv == 1) && radio::is_all_ascii_digits(f_host)) {
+                uint32_t did = 0;
+                if (!radio::parse_dmr_id(f_host, did)) {
+                    err_msg = "Invalid DMR ID (allowed 1..16777214).";
+                    focus = 0;
+                    return;
+                }
+            }
+            if ((drv == 0 || drv == 1) && !f_netmask.empty() && !nc_is_valid_ipv4(f_netmask)) {
+                err_msg = "Invalid IPv4 netmask (e.g. 255.0.0.0).";
+                focus = (drv == 0) ? 2 : 1;
                 return;
             }
             step = 3;
@@ -2859,8 +2933,8 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             return;
         }
         if (step == 3) {
-            nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport, f_peer,
-                                  nullptr, out_iface);
+            nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport,
+                                  f_netmask, f_peer, f_in, f_out, f_lpol, nullptr, out_iface);
             committed = true;
         }
     };
@@ -2930,34 +3004,50 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             draw_f(5, 0, "Interface ID", f_id);
             draw_f(7, 1, "Description", f_desc);
         } else if (step == 2) {
-            mvwprintw(wiz, 3, 3, "Interface    : %s (%s)", f_id.c_str(), NC_IFACE_DRIVERS[drv].type);
+            mvwprintw(wiz, 2, 3, "Interface    : %s (%s)", f_id.c_str(), NC_IFACE_DRIVERS[drv].type);
             auto draw_f = [&](int row, int idx, const char* lbl, const std::string& val) {
                 bool hi = (focus == idx);
-                mvwprintw(wiz, row, 3, "%-15s: ", lbl);
+                mvwprintw(wiz, row, 3, "%-16s: ", lbl);
                 if (hi) wattron(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-                mvwprintw(wiz, row, 20, " %-*s ", std::max(10, w - 25),
-                          clip(val, std::max(10, w - 25)).c_str());
+                mvwprintw(wiz, row, 21, " %-*s ", std::max(10, w - 26),
+                          clip(val, std::max(10, w - 26)).c_str());
                 if (hi) wattroff(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
             };
             if (drv == 0) {
-                draw_f(5, 0, "Bind Host/IP", f_host);
-                draw_f(7, 1, "UDP Port", f_port);
-                draw_f(9, 2, "Peer (opt)", f_peer);
+                draw_f(4, 0, "Bind Host / DMR", f_host);
+                draw_f(5, 1, "UDP Port", f_port);
+                draw_f(6, 2, "Netmask (opt)", f_netmask);
+                draw_f(7, 3, "Peer (opt)", f_peer);
+                draw_f(8, 4, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+                draw_f(9, 5, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+                draw_f(10, 6, "Learned Policy", std::string("< ") + f_lpol + " >");
             } else if (drv == 1) {
-                draw_f(5, 0, "Bind Host/IP", f_host);
-                draw_f(7, 1, "Peer (opt)", f_peer);
+                draw_f(4, 0, "Bind Host / DMR", f_host);
+                draw_f(5, 1, "Netmask (opt)", f_netmask);
+                draw_f(6, 2, "Peer (opt)", f_peer);
+                draw_f(7, 3, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+                draw_f(8, 4, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+                draw_f(9, 5, "Learned Policy", std::string("< ") + f_lpol + " >");
             } else if (drv == 2) {
-                draw_f(5, 0, "Serial Device", f_host);
-                draw_f(7, 1, "Baud Rate", f_port);
-                draw_f(9, 2, "KISS Port", f_kport);
+                draw_f(4, 0, "Serial Device", f_host);
+                draw_f(5, 1, "Baud Rate", f_port);
+                draw_f(6, 2, "KISS Port", f_kport);
+                draw_f(7, 3, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+                draw_f(8, 4, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+                draw_f(9, 5, "Learned Policy", std::string("< ") + f_lpol + " >");
             } else if (drv == 3) {
                 draw_f(4, 0, "Mode (Space)", f_mode);
-                draw_f(6, 1, "Host / IP", f_host);
-                draw_f(8, 2, "TCP Port", f_port);
-                draw_f(10, 3, "KISS Port", f_kport);
+                draw_f(5, 1, "Host / IP", f_host);
+                draw_f(6, 2, "TCP Port", f_port);
+                draw_f(7, 3, "KISS Port", f_kport);
+                draw_f(8, 4, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+                draw_f(9, 5, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+                draw_f(10, 6, "Learned Policy", std::string("< ") + f_lpol + " >");
             } else {
-                draw_f(5, 0, "Bind Host/IP", f_host);
-                draw_f(7, 1, "TCP Port", f_port);
+                draw_f(4, 0, "Bind Host/IP", f_host);
+                draw_f(5, 1, "TCP Port", f_port);
+                draw_f(6, 2, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+                mvwprintw(wiz, 7, 3, "%-16s: [OFF] (disabled for telnet)", "Allow Outbound");
             }
         } else {
             mvwprintw(wiz, 3, 3, "Driver       : %s", NC_IFACE_DRIVERS[drv].type);
@@ -2970,14 +3060,19 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
                 mvwprintw(wiz, 6, 3, "Endpoint     : %s %s:%s", f_mode.c_str(), f_host.c_str(), f_port.c_str());
                 mvwprintw(wiz, 7, 3, "KISS Port    : %s", f_kport.c_str());
             } else {
-                mvwprintw(wiz, 6, 3, "Bind Host/IP : %s", f_host.c_str());
+                mvwprintw(wiz, 6, 3, "Bind Host/IP : %s%s", f_host.c_str(),
+                          f_netmask.empty() ? "" : (std::string(" / ") + f_netmask).c_str());
                 if (drv != 1) mvwprintw(wiz, 7, 3, "Port         : %s", f_port.c_str());
                 if (drv == 0 || drv == 1) {
                     mvwprintw(wiz, 8, 3, "Static Peer  : %s", f_peer.empty() ? "(auto-learn)" : clip(f_peer, w - 20).c_str());
                 }
             }
+            mvwprintw(wiz, 9, 3, "Directions   : Inbound=%s  Outbound=%s  Learn=%s",
+                      f_in ? "ON" : "OFF",
+                      (drv == 4) ? "OFF(locked)" : (f_out ? "ON" : "OFF"),
+                      (drv == 4) ? "n/a" : f_lpol.c_str());
             wattron(wiz, A_BOLD);
-            mvwaddnstr(wiz, 10, 3, "Select Finish to add this interface to Settings draft.", w - 6);
+            mvwaddnstr(wiz, 11, 3, "Select Finish to add this interface to Settings draft.", w - 6);
             wattroff(wiz, A_BOLD);
         }
 
@@ -3114,6 +3209,17 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
             }
             continue;
         }
+        if (is_toggle_field(focus)) {
+            if (ch == ' ' || ch == KEY_LEFT || ch == KEY_RIGHT) {
+                int rel = focus - ((drv == 0 || drv == 3) ? 4 : ((drv == 1 || drv == 2) ? 3 : 2));
+                if (rel == 0) f_in = !f_in;
+                else if (rel == 1 && drv != 4) f_out = !f_out;
+                else if (rel == 2 && drv != 4) f_lpol = nc_cycle_learned_policy(f_lpol, (ch == KEY_LEFT) ? -1 : 1);
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_advance();
+            }
+            continue;
+        }
 
         std::string* fld = active_text_field(focus);
         if (fld) {
@@ -3145,7 +3251,7 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     int w = std::min(68, cols - 4);
-    int h = 16;
+    int h = std::min(19, std::max(16, rows - 2));
     int y = std::max(1, (rows - h) / 2);
     int x = std::max(1, (cols - w) / 2);
 
@@ -3168,6 +3274,10 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
     std::string f_desc = src.description;
     std::string f_mode = "client";
     std::string f_kport = "0";
+    std::string f_netmask = get_p("netmask", "");
+    std::string f_lpol = get_p("learned_peer_policy", "inherit");
+    bool f_in = src.allow_inbound;
+    bool f_out = (drv == 4) ? false : src.allow_outbound;
     std::string f_host, f_port, f_peer;
     if (drv == 2) {
         f_host = get_p("device", "/dev/ttyUSB0");
@@ -3192,25 +3302,43 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
     bool committed = false;
 
     auto field_count = [&]() -> int {
-        if (drv == 0 || drv == 2) return 6;
-        if (drv == 3) return 7;
-        return 5;
+        if (drv == 0 || drv == 3) return 10;
+        if (drv == 1 || drv == 2) return 9;
+        return 6; // telnet: 0..4 + Allow Inbound(5)
     };
 
     auto active_text_field = [&](int fidx) -> std::string* {
-        if (fidx == 0) return nullptr; // Driver cycler
+        if (fidx == 0) return nullptr;
         if (fidx == 1) return &f_id;
         if (fidx == 2) return &f_desc;
-        if (drv == 0) return (fidx == 3) ? &f_host : ((fidx == 4) ? &f_port : &f_peer);
-        if (drv == 1) return (fidx == 3) ? &f_host : &f_peer;
-        if (drv == 2) return (fidx == 3) ? &f_host : ((fidx == 4) ? &f_port : &f_kport);
+        if (drv == 0) {
+            if (fidx == 3) return &f_host;
+            if (fidx == 4) return &f_port;
+            if (fidx == 5) return &f_netmask;
+            if (fidx == 6) return &f_peer;
+            return nullptr;
+        }
+        if (drv == 1) {
+            if (fidx == 3) return &f_host;
+            if (fidx == 4) return &f_netmask;
+            if (fidx == 5) return &f_peer;
+            return nullptr;
+        }
+        if (drv == 2) {
+            if (fidx == 3) return &f_host;
+            if (fidx == 4) return &f_port;
+            if (fidx == 5) return &f_kport;
+            return nullptr;
+        }
         if (drv == 3) {
-            if (fidx == 3) return nullptr; // Mode toggle
             if (fidx == 4) return &f_host;
             if (fidx == 5) return &f_port;
-            return &f_kport;
+            if (fidx == 6) return &f_kport;
+            return nullptr;
         }
-        return (fidx == 3) ? &f_host : &f_port;
+        if (fidx == 3) return &f_host;
+        if (fidx == 4) return &f_port;
+        return nullptr;
     };
 
     auto validate_and_save = [&]() {
@@ -3238,8 +3366,21 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
             focus = (drv == 3) ? 5 : 4;
             return;
         }
-        nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport, f_peer,
-                              &src, out_iface);
+        if ((drv == 0 || drv == 1) && radio::is_all_ascii_digits(f_host)) {
+            uint32_t did = 0;
+            if (!radio::parse_dmr_id(f_host, did)) {
+                err_msg = "Invalid DMR ID (allowed 1..16777214).";
+                focus = 3;
+                return;
+            }
+        }
+        if ((drv == 0 || drv == 1) && !f_netmask.empty() && !nc_is_valid_ipv4(f_netmask)) {
+            err_msg = "Invalid IPv4 netmask (e.g. 255.0.0.0).";
+            focus = (drv == 0) ? 5 : 4;
+            return;
+        }
+        nc_build_iface_config(drv, f_id, f_desc, f_host, f_port, f_mode, f_kport,
+                              f_netmask, f_peer, f_in, f_out, f_lpol, &src, out_iface);
         committed = true;
     };
 
@@ -3272,24 +3413,40 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
         draw_row(4, 1, "Interface ID", f_id);
         draw_row(5, 2, "Description", f_desc);
         if (drv == 0) {
-            draw_row(6, 3, "Bind Host/IP", f_host);
+            draw_row(6, 3, "Bind Host / DMR", f_host);
             draw_row(7, 4, "UDP Port", f_port);
-            draw_row(8, 5, "Peer (opt)", f_peer);
+            draw_row(8, 5, "Netmask (opt)", f_netmask);
+            draw_row(9, 6, "Peer (opt)", f_peer);
+            draw_row(10, 7, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+            draw_row(11, 8, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+            draw_row(12, 9, "Learned Policy", std::string("< ") + f_lpol + " >");
         } else if (drv == 1) {
-            draw_row(6, 3, "Bind Host/IP", f_host);
-            draw_row(7, 4, "Peer (opt)", f_peer);
+            draw_row(6, 3, "Bind Host / DMR", f_host);
+            draw_row(7, 4, "Netmask (opt)", f_netmask);
+            draw_row(8, 5, "Peer (opt)", f_peer);
+            draw_row(9, 6, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+            draw_row(10, 7, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+            draw_row(11, 8, "Learned Policy", std::string("< ") + f_lpol + " >");
         } else if (drv == 2) {
             draw_row(6, 3, "Serial Device", f_host);
             draw_row(7, 4, "Baud Rate", f_port);
             draw_row(8, 5, "KISS Port", f_kport);
+            draw_row(9, 6, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+            draw_row(10, 7, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+            draw_row(11, 8, "Learned Policy", std::string("< ") + f_lpol + " >");
         } else if (drv == 3) {
             draw_row(6, 3, "Mode (Lt/Rt/Sp)", std::string("< ") + f_mode + " >");
             draw_row(7, 4, "Host / IP", f_host);
             draw_row(8, 5, "TCP Port", f_port);
             draw_row(9, 6, "KISS Port", f_kport);
+            draw_row(10, 7, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+            draw_row(11, 8, "Allow Outbound", f_out ? "[ON]" : "[OFF]");
+            draw_row(12, 9, "Learned Policy", std::string("< ") + f_lpol + " >");
         } else {
             draw_row(6, 3, "Bind Host/IP", f_host);
             draw_row(7, 4, "TCP Port", f_port);
+            draw_row(8, 5, "Allow Inbound", f_in ? "[ON]" : "[OFF]");
+            mvwprintw(dlg, 9, 3, "%-16s: [OFF] (disabled for telnet)", "Allow Outbound");
         }
 
         if (!err_msg.empty()) {
@@ -3352,11 +3509,11 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
         if (focus == 0) {
             if (ch == KEY_LEFT) {
                 drv = (drv + 4) % 5;
-                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
+                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_netmask, f_peer, f_in, f_out, f_lpol);
                 err_msg.clear();
             } else if (ch == KEY_RIGHT || ch == ' ') {
                 drv = (drv + 1) % 5;
-                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_peer);
+                nc_apply_driver_defaults(drv, f_host, f_port, f_mode, f_kport, f_netmask, f_peer, f_in, f_out, f_lpol);
                 err_msg.clear();
             } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
                 validate_and_save();
@@ -3370,6 +3527,20 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
                 validate_and_save();
             }
             continue;
+        }
+        {
+            int toggle_base = (drv == 0 || drv == 3) ? 7 : ((drv == 1 || drv == 2) ? 6 : 5);
+            if (focus >= toggle_base && focus < fcnt) {
+                if (ch == ' ' || ch == KEY_LEFT || ch == KEY_RIGHT) {
+                    int rel = focus - toggle_base;
+                    if (rel == 0) f_in = !f_in;
+                    else if (rel == 1 && drv != 4) f_out = !f_out;
+                    else if (rel == 2 && drv != 4) f_lpol = nc_cycle_learned_policy(f_lpol, (ch == KEY_LEFT) ? -1 : 1);
+                } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                    validate_and_save();
+                }
+                continue;
+            }
         }
         std::string* fld = active_text_field(focus);
         if (fld) {
@@ -3463,6 +3634,14 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
                 pnum = static_cast<uint16_t>(pv);
             } catch (...) {
                 err_msg = "Invalid port number.";
+                return;
+            }
+        }
+        if (!f_host.empty() && radio::is_all_ascii_digits(f_host)) {
+            uint32_t did = 0;
+            if (!radio::parse_dmr_id(f_host, did)) {
+                err_msg = "Invalid DMR ID (allowed 1..16777214).";
+                focus = 4;
                 return;
             }
         }

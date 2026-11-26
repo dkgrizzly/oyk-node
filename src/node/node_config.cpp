@@ -3,6 +3,7 @@
 
 #include "oyk/node/node_config.hpp"
 
+#include <arpa/inet.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -512,8 +513,13 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
         } else if (current_section == "interface" && current_iface != nullptr) {
             if (key == "type") {
                 current_iface->type = to_lower(val);
+                if (current_iface->type == "telnet") current_iface->allow_outbound = false;
             } else if (key == "description") {
                 current_iface->description = val;
+            } else if (key == "allow_inbound" || key == "inbound") {
+                current_iface->allow_inbound = parse_bool(val, true);
+            } else if (key == "allow_outbound" || key == "outbound") {
+                current_iface->allow_outbound = (current_iface->type == "telnet") ? false : parse_bool(val, true);
             } else if (key == "peer") {
                 if (!val.empty()) {
                     current_iface->peers.push_back(val);
@@ -571,6 +577,16 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
 
     if (cfg.interfaces.empty()) {
         cfg.interfaces = make_default().interfaces;
+    }
+
+    for (auto& ic : cfg.interfaces) {
+        if (ic.type == "telnet") {
+            ic.allow_outbound = false;
+        }
+    }
+
+    if (!radio::validate_iface_and_peer_addresses(cfg.interfaces, cfg.peers, error_out)) {
+        return false;
     }
 
     // Migrate legacy inline peer = lines inside [interface <id>] into [peer <id>] entries
@@ -714,7 +730,11 @@ bool NodeConfig::save_to_file(const std::string& path) const {
         if (!iface.description.empty()) {
             lines.push_back("description = " + iface.description);
         }
+        lines.push_back(std::string("allow_inbound = ") + (iface.allow_inbound ? "true" : "false"));
+        const bool out_allowed = (iface.type == "telnet") ? false : iface.allow_outbound;
+        lines.push_back(std::string("allow_outbound = ") + (out_allowed ? "true" : "false"));
         for (const auto& [k, v] : iface.params) {
+            if (k == "allow_inbound" || k == "allow_outbound" || k == "inbound" || k == "outbound") continue;
             lines.push_back(k + " = " + v);
         }
     }
@@ -894,3 +914,101 @@ bool parse_legacy_peer_spec(const std::string& raw,
 }
 
 } // namespace oyk::node
+
+namespace oyk::radio {
+
+bool is_all_ascii_digits(const std::string& text) noexcept {
+    if (text.empty()) return false;
+    for (unsigned char ch : text) {
+        if (ch < '0' || ch > '9') return false;
+    }
+    return true;
+}
+
+bool parse_dmr_id(const std::string& text, uint32_t& id_out) noexcept {
+    if (!is_all_ascii_digits(text)) return false;
+    uint64_t v = 0;
+    for (unsigned char ch : text) {
+        v = v * 10u + static_cast<uint64_t>(ch - '0');
+        if (v > 16777214ULL) return false;
+    }
+    if (v == 0ULL || v > 16777214ULL) return false;
+    id_out = static_cast<uint32_t>(v);
+    return true;
+}
+
+std::string dmr_id_to_ipv4(uint32_t dmr_id, uint8_t prefix_octet) {
+    return std::to_string(static_cast<unsigned>(prefix_octet)) + "." +
+           std::to_string(static_cast<unsigned>((dmr_id >> 16) & 0xFFu)) + "." +
+           std::to_string(static_cast<unsigned>((dmr_id >> 8) & 0xFFu)) + "." +
+           std::to_string(static_cast<unsigned>(dmr_id & 0xFFu));
+}
+
+bool resolve_host_or_dmr_id(const std::string& host_spec,
+                            uint8_t prefix_octet,
+                            std::string& resolved_out) {
+    if (host_spec.empty()) return false;
+    if (is_all_ascii_digits(host_spec)) {
+        uint32_t dmr_id = 0;
+        if (!parse_dmr_id(host_spec, dmr_id)) return false;
+        resolved_out = dmr_id_to_ipv4(dmr_id, prefix_octet);
+        return true;
+    }
+    resolved_out = host_spec;
+    return true;
+}
+
+uint8_t dmr_prefix_for_iface(const RadioInterfaceConfig& ic) {
+    if (ic.type != "axudp" && ic.type != "axip") return 12;
+    auto nmit = ic.params.find("netmask");
+    if (nmit == ic.params.end() || nmit->second != "255.0.0.0") return 12;
+    auto bhit = ic.params.find("bind_host");
+    if (bhit == ic.params.end() || bhit->second.empty()) return 12;
+    std::string bh;
+    if (!resolve_host_or_dmr_id(bhit->second, 12, bh)) return 12;
+    in_addr ia{};
+    if (inet_pton(AF_INET, bh.c_str(), &ia) == 1) {
+        const uint8_t top = reinterpret_cast<const uint8_t*>(&ia.s_addr)[0];
+        if (top != 0) return top;
+    }
+    return 12;
+}
+
+bool validate_iface_and_peer_addresses(const std::vector<RadioInterfaceConfig>& ifaces,
+                                       const std::vector<PeerConfig>& peers,
+                                       std::string& error_out) {
+    for (const auto& ic : ifaces) {
+        if (ic.type == "axudp" || ic.type == "axip") {
+            if (auto it = ic.params.find("bind_host"); it != ic.params.end() && !it->second.empty()) {
+                if (is_all_ascii_digits(it->second)) {
+                    uint32_t id = 0;
+                    if (!parse_dmr_id(it->second, id)) {
+                        error_out = "Invalid DMR ID '" + it->second + "' on interface '" + ic.id +
+                                    "' (allowed: 1..16777214).";
+                        return false;
+                    }
+                }
+            }
+            if (auto nm = ic.params.find("netmask"); nm != ic.params.end() && !nm->second.empty()) {
+                in_addr ma{};
+                if (inet_pton(AF_INET, nm->second.c_str(), &ma) != 1) {
+                    error_out = "Invalid IPv4 netmask '" + nm->second + "' on interface '" + ic.id + "'.";
+                    return false;
+                }
+            }
+        }
+    }
+    for (const auto& p : peers) {
+        if (!p.host.empty() && is_all_ascii_digits(p.host)) {
+            uint32_t id = 0;
+            if (!parse_dmr_id(p.host, id)) {
+                error_out = "Invalid DMR ID '" + p.host + "' on peer '" + p.id +
+                            "' (allowed: 1..16777214).";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace oyk::radio

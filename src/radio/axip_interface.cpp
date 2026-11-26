@@ -34,8 +34,27 @@ AxipInterface::AxipInterface(const RadioInterfaceConfig& config)
     : id_(config.id.empty() ? "axip0" : config.id),
       description_(config.description.empty() ? "AXIP (IP Proto 93)" : config.description) {
     if (auto it = config.params.find("bind_host"); it != config.params.end() && !it->second.empty()) {
-        bind_host_ = it->second;
+        std::string resolved_bh;
+        if (resolve_host_or_dmr_id(it->second, 12, resolved_bh)) {
+            bind_host_ = resolved_bh;
+        } else {
+            bind_host_ = it->second;
+        }
     }
+    if (auto it = config.params.find("netmask"); it != config.params.end() && !it->second.empty()) {
+        netmask_ = it->second;
+        in_addr ma{};
+        if (inet_pton(AF_INET, netmask_.c_str(), &ma) == 1) {
+            netmask_net_ = ma.s_addr;
+        }
+    }
+    if (!bind_host_.empty() && bind_host_ != "0.0.0.0" && bind_host_ != "*") {
+        in_addr ba{};
+        if (inet_pton(AF_INET, bind_host_.c_str(), &ba) == 1) {
+            bind_ip_net_ = ba.s_addr;
+        }
+    }
+    dmr_prefix_ = dmr_prefix_for_iface(config);
     if (auto it = config.params.find("auto_learn"); it != config.params.end()) {
         auto_learn_ = parse_bool(it->second, true);
     }
@@ -151,11 +170,23 @@ void AxipInterface::parse_peer_spec(const std::string& raw) {
     }
 }
 
+bool AxipInterface::ip_allowed_by_netmask(const sockaddr_in& addr) const noexcept {
+    if (netmask_net_ == 0 || bind_ip_net_ == 0) return true;
+    return (addr.sin_addr.s_addr & netmask_net_) == (bind_ip_net_ & netmask_net_);
+}
+
 bool AxipInterface::add_peer_locked(const std::string& callsign_or_empty,
                                     const std::string& host,
                                     bool record_manual) {
+    std::string resolved_host;
+    if (!resolve_host_or_dmr_id(host, dmr_prefix_, resolved_host)) {
+        return false;
+    }
     PeerAddr peer;
-    if (!resolve_host(host, peer)) {
+    if (!resolve_host(resolved_host, peer)) {
+        return false;
+    }
+    if (!ip_allowed_by_netmask(peer.addr)) {
         return false;
     }
 
@@ -316,6 +347,11 @@ void AxipInterface::rx_loop() {
             ssize_t n = recvfrom(sock_fd_, buffer, sizeof(buffer), 0,
                                  reinterpret_cast<sockaddr*>(&sender), &sender_len);
             if (n <= 0) continue;
+            if (!ip_allowed_by_netmask(sender)) {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                stats_.rx_errors++;
+                continue;
+            }
 
             const uint8_t* payload = nullptr;
             std::size_t payload_len = 0;
@@ -366,6 +402,11 @@ bool AxipInterface::send_ip_payload(const std::vector<uint8_t>& payload, const s
     if (sock_fd_ < 0 || !running_.load()) {
         return false;
     }
+    if (!ip_allowed_by_netmask(dest)) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.tx_errors++;
+        return false;
+    }
     ssize_t sent = sendto(sock_fd_, payload.data(), payload.size(), 0,
                           reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
     if (sent != static_cast<ssize_t>(payload.size())) {
@@ -393,7 +434,9 @@ bool AxipInterface::send_frame(const ax25::Frame& frame, const std::string& targ
 
     if (!target_endpoint.empty()) {
         PeerAddr ep;
-        if (resolve_host(target_endpoint, ep)) {
+        std::string resolved_ep;
+        if (resolve_host_or_dmr_id(target_endpoint, dmr_prefix_, resolved_ep) &&
+            resolve_host(resolved_ep, ep)) {
             return send_ip_payload(raw, ep.addr);
         }
     }

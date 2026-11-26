@@ -46,9 +46,23 @@ struct RadioInterfaceConfig {
     std::string id;          // Unique identifier (e.g. "axudp0")
     std::string type;        // Driver type (e.g. "axudp"; future: "kiss-tcp", "kiss-serial", "agwpe")
     std::string description; // Human-readable label
+    bool allow_inbound = true;
+    bool allow_outbound = true;
     std::map<std::string, std::string> params;
     std::vector<std::string> peers; // Optional peer specs (driver-defined)
 };
+
+// RadioFoundry DMR ID <-> IPv4 & Netmask utilities (used by NodeConfig, AxudpInterface, AxipInterface)
+bool is_all_ascii_digits(const std::string& text) noexcept;
+bool parse_dmr_id(const std::string& text, uint32_t& id_out) noexcept;
+std::string dmr_id_to_ipv4(uint32_t dmr_id, uint8_t prefix_octet = 12);
+bool resolve_host_or_dmr_id(const std::string& host_spec,
+                            uint8_t prefix_octet,
+                            std::string& resolved_out);
+uint8_t dmr_prefix_for_iface(const RadioInterfaceConfig& ic);
+bool validate_iface_and_peer_addresses(const std::vector<RadioInterfaceConfig>& ifaces,
+                                       const std::vector<PeerConfig>& peers,
+                                       std::string& error_out);
 
 struct RadioInterfaceStats {
     uint64_t rx_frames = 0;

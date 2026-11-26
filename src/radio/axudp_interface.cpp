@@ -32,8 +32,27 @@ AxudpInterface::AxudpInterface(const RadioInterfaceConfig& config)
     : id_(config.id.empty() ? "axudp0" : config.id),
       description_(config.description.empty() ? "AXUDP Port" : config.description) {
     if (auto it = config.params.find("bind_host"); it != config.params.end() && !it->second.empty()) {
-        bind_host_ = it->second;
+        std::string resolved_bh;
+        if (resolve_host_or_dmr_id(it->second, 12, resolved_bh)) {
+            bind_host_ = resolved_bh;
+        } else {
+            bind_host_ = it->second;
+        }
     }
+    if (auto it = config.params.find("netmask"); it != config.params.end() && !it->second.empty()) {
+        netmask_ = it->second;
+        in_addr ma{};
+        if (inet_pton(AF_INET, netmask_.c_str(), &ma) == 1) {
+            netmask_net_ = ma.s_addr;
+        }
+    }
+    if (!bind_host_.empty() && bind_host_ != "0.0.0.0" && bind_host_ != "*") {
+        in_addr ba{};
+        if (inet_pton(AF_INET, bind_host_.c_str(), &ba) == 1) {
+            bind_ip_net_ = ba.s_addr;
+        }
+    }
+    dmr_prefix_ = dmr_prefix_for_iface(config);
     if (auto it = config.params.find("bind_port"); it != config.params.end() && !it->second.empty()) {
         try {
             int p = std::stoi(it->second);
@@ -151,12 +170,24 @@ void AxudpInterface::parse_peer_spec(const std::string& raw) {
     add_peer_locked(call_str, host, port, false);
 }
 
+bool AxudpInterface::ip_allowed_by_netmask(const sockaddr_in& addr) const noexcept {
+    if (netmask_net_ == 0 || bind_ip_net_ == 0) return true;
+    return (addr.sin_addr.s_addr & netmask_net_) == (bind_ip_net_ & netmask_net_);
+}
+
 bool AxudpInterface::add_peer_locked(const std::string& callsign_or_empty,
                                      const std::string& host,
                                      uint16_t port,
                                      bool record_manual) {
+    std::string resolved_host;
+    if (!resolve_host_or_dmr_id(host, dmr_prefix_, resolved_host)) {
+        return false;
+    }
     Endpoint ep;
-    if (!resolve_endpoint(host, port, ep)) {
+    if (!resolve_endpoint(resolved_host, port, ep)) {
+        return false;
+    }
+    if (!ip_allowed_by_netmask(ep.addr)) {
         return false;
     }
 
@@ -335,6 +366,11 @@ void AxudpInterface::rx_loop() {
             if (n <= 0) {
                 continue;
             }
+            if (!ip_allowed_by_netmask(sender)) {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                stats_.rx_errors++;
+                continue;
+            }
 
             const std::size_t packet_len = static_cast<std::size_t>(n);
             if (!ax25::verify_fcs(buffer, packet_len)) {
@@ -376,6 +412,11 @@ bool AxudpInterface::send_datagram(const std::vector<uint8_t>& datagram, const s
     if (sock_fd_ < 0 || !running_.load()) {
         return false;
     }
+    if (!ip_allowed_by_netmask(dest)) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.tx_errors++;
+        return false;
+    }
     ssize_t sent = sendto(sock_fd_, datagram.data(), datagram.size(), 0,
                           reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
     if (sent != static_cast<ssize_t>(datagram.size())) {
@@ -406,8 +447,12 @@ bool AxudpInterface::send_frame(const ax25::Frame& frame, const std::string& tar
         std::string host;
         uint16_t port = 0;
         Endpoint ep;
-        if (parse_host_port(target_endpoint, host, port) && resolve_endpoint(host, port, ep)) {
-            return send_datagram(raw, ep.addr);
+        if (parse_host_port(target_endpoint, host, port)) {
+            std::string resolved_h;
+            if (resolve_host_or_dmr_id(host, dmr_prefix_, resolved_h) &&
+                resolve_endpoint(resolved_h, port, ep)) {
+                return send_datagram(raw, ep.addr);
+            }
         }
     }
 
