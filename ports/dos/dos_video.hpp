@@ -63,6 +63,7 @@ void dos_vid_hline(OykDosVideo* v, int row, int col, int len, oyk_u8 attr, oyk_u
 void dos_vid_vline(OykDosVideo* v, int row, int col, int len, oyk_u8 attr, oyk_u8 ch);
 void dos_vid_box(OykDosVideo* v, int top, int left, int h, int w,
                  oyk_u8 border_attr, oyk_u8 fill_attr, int fill_interior);
+void dos_vid_shadow(OykDosVideo* v, int top, int left, int h, int w);
 void dos_vid_hdiv(OykDosVideo* v, int row, int left, int w, oyk_u8 attr);
 void dos_vid_title(OykDosVideo* v, int row, int col, int max_w, oyk_u8 attr, const char* title);
 

@@ -248,18 +248,18 @@ static void free_win_theme_brushes() {
     g_th_custom_active = 0;
 }
 
-static void apply_win_theme() {
+static void apply_win_theme_from(const OykConfig* cfg) {
     free_win_theme_brushes();
-    const OykConfig& cfg = g_node.config();
+    if (!cfg) cfg = &g_node.config();
     const int os_dark = win_os_prefers_dark();
-    const char* tn = cfg.theme_name[0] ? cfg.theme_name : "native";
+    const char* tn = cfg->theme_name[0] ? cfg->theme_name : "native";
     if (win_strieq(tn, "native") && !os_dark) {
         if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
         if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
         return;
     }
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(&cfg, 1, os_dark, &tc);
+    oyk_theme_resolve_effective(cfg, 1, os_dark, &tc);
     g_th_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_BG]);
     g_th_fg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_FG]);
     g_th_panel_bg_c = oyk_rgb_to_colorref(tc.colors[OYK_TR_PANEL_BG]);
@@ -280,6 +280,21 @@ static void apply_win_theme() {
 
     if (g_hwnd_main) InvalidateRect(g_hwnd_main, NULL, TRUE);
     if (g_lterm_hwnd) InvalidateRect(g_lterm_hwnd, NULL, TRUE);
+}
+
+static void apply_win_theme() {
+    apply_win_theme_from(&g_node.config());
+}
+
+static void preview_win_draft_theme(const OykConfig* draft, const char* active) {
+    if (!draft || !active) return;
+    OykConfig* tmp = new OykConfig;
+    if (!tmp) return;
+    *tmp = *draft;
+    strncpy(tmp->theme_name, active, sizeof(tmp->theme_name) - 1);
+    tmp->theme_name[sizeof(tmp->theme_name) - 1] = '\0';
+    apply_win_theme_from(tmp);
+    delete tmp;
 }
 
 static int resolve_bind_addr(const char* host, unsigned long* addr_out) {
@@ -3592,6 +3607,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     strncpy(s_active, s_names[sel], sizeof(s_active) - 1);
                     s_active[sizeof(s_active) - 1] = '\0';
                     populate_theme_dialog_list(hdlg, s_draft, s_active);
+                    preview_win_draft_theme(s_draft, s_active);
                     InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 }
                 return TRUE;
@@ -3666,6 +3682,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                 }
                 populate_theme_dialog_list(hdlg, s_draft, s_active);
+                preview_win_draft_theme(s_draft, s_active);
                 InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
                 return TRUE;
             } else if (id == IDC_TH_DEL) {
@@ -3682,6 +3699,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     strcpy(s_active, "native");
                     populate_theme_dialog_combo(hdlg, s_draft, s_active, s_names, &s_n_names);
                     populate_theme_dialog_list(hdlg, s_draft, s_active);
+                    preview_win_draft_theme(s_draft, s_active);
                 }
                 return TRUE;
             } else if (id == IDOK) {
@@ -3701,6 +3719,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return TRUE;
             } else if (id == IDCANCEL) {
+                apply_win_theme();
                 EndDialog(hdlg, IDCANCEL);
                 return TRUE;
             }

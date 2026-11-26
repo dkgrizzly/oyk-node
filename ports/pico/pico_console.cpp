@@ -99,52 +99,64 @@ void PicoConsole::write_str(const char* s) {
     }
 }
 
+const OykConfig* PicoConsole::active_theme_cfg() const {
+    if (prompt_kind_ == PICO_PROMPT_THEME) return &draft_;
+    return node_ ? &node_->config() : NULL;
+}
+
 const char* PicoConsole::sgr_border() const {
     if (term_type_ < PICO_TERM_VT220) return "";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(0, tc.colors[OYK_TR_BORDER], tc.colors[OYK_TR_BG], 0, 0, term_type_);
 }
 
 const char* PicoConsole::sgr_title() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[1m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(1, tc.colors[OYK_TR_ACCENT], tc.colors[OYK_TR_BG], 0, 1, term_type_);
 }
 
 const char* PicoConsole::sgr_header() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[1m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(2, tc.colors[OYK_TR_HEADER_FG], tc.colors[OYK_TR_HEADER_BG], 1, 1, term_type_);
 }
 
 const char* PicoConsole::sgr_menubar() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[7m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(3, tc.colors[OYK_TR_BUTTON_FG], tc.colors[OYK_TR_BUTTON_BG], 1, 0, term_type_);
+}
+
+const char* PicoConsole::sgr_menusel() const {
+    if (term_type_ < PICO_TERM_VT220) return "\033[7m";
+    OykThemeConfig tc;
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
+    return pico_format_sgr(4, tc.colors[OYK_TR_SELECTION_FG], tc.colors[OYK_TR_SELECTION_BG], 1, 1, term_type_);
 }
 
 const char* PicoConsole::sgr_list_hdr() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[1;7m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(5, tc.colors[OYK_TR_PANEL_FG], tc.colors[OYK_TR_PANEL_BG], 1, 1, term_type_);
 }
 
 const char* PicoConsole::sgr_sel() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[7m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(6, tc.colors[OYK_TR_SELECTION_FG], tc.colors[OYK_TR_SELECTION_BG], 1, 1, term_type_);
 }
 
 const char* PicoConsole::sgr_warn() const {
     if (term_type_ < PICO_TERM_VT220) return "\033[1m";
     OykThemeConfig tc;
-    oyk_theme_resolve_effective(node_ ? &node_->config() : NULL, 0, 1, &tc);
+    oyk_theme_resolve_effective(active_theme_cfg(), 0, 1, &tc);
     return pico_format_sgr(7, tc.colors[OYK_TR_WARN], tc.colors[OYK_TR_BG], 0, 1, term_type_);
 }
 
@@ -185,6 +197,39 @@ void PicoConsole::draw_box(int row, int col, int h, int w, const char* title, in
     line[inner + 1] = '\0';
     write_str(line);
     write_str("\033(B\033[0m");
+}
+
+void PicoConsole::draw_shadow(int row, int col, int h, int w) {
+    if (h < 2 || w < 4) return;
+    char line[128];
+    const char* sattr = (term_type_ >= PICO_TERM_VT220) ? "\033[0;90;40m" : "\033[0m";
+    int r_end = row + h;
+    int c_right = col + w;
+    if (c_right <= 80) {
+        int rw = (c_right + 1 <= 80) ? 2 : 1;
+        for (int r = row + 1; r <= r_end && r <= 24; ++r) {
+            if (r < 1) continue;
+            sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
+                    r, c_right, sattr, (rw == 2) ? "aa" : "a");
+            write_str(line);
+        }
+    }
+    if (r_end >= 1 && r_end <= 24) {
+        int bx = col + 2;
+        if (bx <= 80) {
+            int bw = w - 2;
+            if (bx + bw - 1 > 80) bw = 80 - bx + 1;
+            if (bw > 0) {
+                char shades[82];
+                if (bw > 80) bw = 80;
+                for (int i = 0; i < bw; ++i) shades[i] = 'a';
+                shades[bw] = '\0';
+                sprintf(line, "\033[%d;%dH%s\033(0%s\033(B\033[0m",
+                        r_end, bx, sattr, shades);
+                write_str(line);
+            }
+        }
+    }
 }
 
 void PicoConsole::draw_hdiv(int row, int col, int w) {
@@ -242,8 +287,12 @@ void PicoConsole::render_console() {
     else strcpy(rad_s, "NONE");
 
     write_str("\033[H\033[2J");
-    sprintf(buf, "%s Node (M) | Settings (S) | Storage (G) | PSRAM (P) | %-10s [%-9s]\033[0m",
-            sgr_menubar(), lterm_sid_ ? "Term:ACT" : "Tab:Term", term_type_label());
+    sprintf(buf, "%s%-80s\033[0m\033[1;2H%s Node \033[0m\033[1;48H%s %-19s  [%9s]\033[0m",
+            sgr_menubar(), "",
+            sgr_menusel(),
+            sgr_menubar(),
+            lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | F10/M",
+            term_type_label());
     write_str(buf);
 
     sprintf(buf, "\033[2;1H%s OYK PICO(%s): %-9s Up:%-4lus C:%-2d IN:%-5s PSRAM:%-3s RF:%-5s \033[0m",
@@ -319,18 +368,31 @@ void PicoConsole::render_console() {
 }
 
 void PicoConsole::render_menu() {
-    static const char* const kItems[8] = {
-        "Allow Incoming", "Deny Incoming", "Settings...", "Storage (SD/Flash)...",
-        "PSRAM Diagnostics...", "Theme...", "Terminate / Ban...", "Enter BOOTSEL (UF2)..."
+    static const char* const kItems[12] = {
+        " [A] Allow Incoming Connections   ",
+        " [D] Deny Incoming Connections    ",
+        " [L] Local Terminal...            ",
+        " [S] Settings...                  ",
+        " [E] Peers...                     ",
+        " [H] Theme...                     ",
+        " [T] Terminate Connection...      ",
+        " [B] Ban / Unban Callsign...      ",
+        " [P] PSRAM Diagnostics...         ",
+        " [G] Storage Manager...           ",
+        " [U] Enter BOOTSEL (UF2)...       ",
+        " [X] Close Menu                   "
     };
-    draw_box(2, 2, 12, 34, "Node Menu", 1);
+    static const int kItemRows[12] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16 };
+    draw_box(2, 2, 16, 36, "Node Menu", 1);
+    draw_shadow(2, 2, 16, 36);
+    draw_hdiv(5, 2, 36);
+    draw_hdiv(15, 2, 36);
     char buf[96];
-    for (int i = 0; i < 8; ++i) {
-        sprintf(buf, "\033[%d;4H%s%-30.30s\033[0m",
-                3 + i, (i == menu_sel_) ? sgr_sel() : "", kItems[i]);
+    for (int i = 0; i < 12; ++i) {
+        sprintf(buf, "\033[%d;3H%s%.34s\033[0m",
+                kItemRows[i], (i == menu_sel_) ? sgr_menusel() : "", kItems[i]);
         write_str(buf);
     }
-    write_str("\033[12;4HUp/Dn:Pick Enter:Go Esc:Close");
 }
 
 void PicoConsole::render_settings() {
@@ -414,6 +476,7 @@ void PicoConsole::render_storage() {
     char buf[128];
     write_str("\033[H\033[2J");
     draw_box(2, 4, 18, 72, "Storage Manager (SD / QSPI Flash)", 1);
+    draw_shadow(2, 4, 18, 72);
     sprintf(buf, "\033[4;6HActive Medium : %s", fs->medium_label);
     write_str(buf);
     sprintf(buf, "\033[5;6HSD Card       : %s  | Flash KV: %s",
@@ -438,6 +501,7 @@ void PicoConsole::render_psram() {
     char buf[128];
     write_str("\033[H\033[2J");
     draw_box(2, 4, 16, 72, "PSRAM & Hardware Diagnostics", 1);
+    draw_shadow(2, 4, 16, 72);
     sprintf(buf, "\033[4;6HBoard Profile : %s (%s)", prof->board_id, prof->board_label);
     write_str(buf);
     sprintf(buf, "\033[5;6HFlash / SRAM  : %lu MB Flash | %lu KB SRAM",
@@ -461,6 +525,7 @@ void PicoConsole::render_bootloader() {
     const int auto_cnt = node_->auto_learned_peer_count();
     if (bootloader_pending_) {
         draw_box(8, 12, 7, 56, "BOOTSEL UF2 Reboot", 1);
+        draw_shadow(8, 12, 7, 56);
         sprintf(buf, "\033[10;14HEntering RP2xxx USB BOOTSEL mode...");
         write_str(buf);
         sprintf(buf, "\033[11;14H%s73 de %s\033[0m", sgr_title(), call_s);
@@ -469,6 +534,7 @@ void PicoConsole::render_bootloader() {
     }
     if (auto_cnt > 0) {
         draw_box(6, 6, 11, 68, "Auto-Learned Peers — BOOTSEL", 1);
+        draw_shadow(6, 6, 11, 68);
         sprintf(buf, "\033[8;8H%d auto-learned peer(s) added during this session.", auto_cnt);
         write_str(buf);
         write_str("\033[9;8HSave to peers config, discard, or review before BOOTSEL?");
@@ -476,6 +542,7 @@ void PicoConsole::render_bootloader() {
         write_str("\033[14;8HS:Save & Reboot   D:Discard & Reboot   E:Review Peers   Esc:Cancel");
     } else {
         draw_box(7, 10, 9, 60, "Enter BOOTSEL Mode (UF2 Flash)", 1);
+        draw_shadow(7, 10, 9, 60);
         write_str("\033[9;12HPress Y or Enter to reboot into RP2xxx BOOTSEL mode.");
         write_str("\033[10;12HThe device will mount as RPI-RP2 / RP2350 USB drive.");
         draw_hdiv(13, 10, 60);
@@ -503,6 +570,7 @@ void PicoConsole::render_wizard_modal() {
     for (int i = 0; i < 8; ++i) prog[i] = (i < fill) ? '#' : '.';
     prog[8] = '\0';
     draw_box(5, 10, 14, 60, "Add Interface", 1);
+    draw_shadow(5, 10, 14, 60);
     sprintf(buf, "\033[6;52H%s[%s] %d/4\033[0m", sgr_title(), prog, wiz_step_);
     write_str(buf);
     if (wiz_step_ == 1) {
@@ -535,6 +603,7 @@ void PicoConsole::render_edit_iface_modal() {
     const OykIfaceConfig& ic = draft_.ifaces[settings_sel_];
     char buf[120];
     draw_box(5, 10, 14, 60, "Edit Interface", 1);
+    draw_shadow(5, 10, 14, 60);
     sprintf(buf, "\033[7;12HID: %s  Type: %s", ic.id, ic.type);
     write_str(buf);
     sprintf(buf, "\033[9;12HInbound : %s (I:toggle)  Outbound: %s (O:toggle)",
@@ -549,24 +618,28 @@ void PicoConsole::render_edit_iface_modal() {
 
 void PicoConsole::render_edit_peer_modal() {
     draw_box(6, 10, 12, 60, "Edit Peer", 1);
+    draw_shadow(6, 10, 12, 60);
     write_str("\033[8;12HAllow Inbound / Allow Outbound toggle (I / O)");
     write_str("\033[15;12HEnter:Save   Esc:Cancel");
 }
 
 void PicoConsole::render_terminate_modal() {
     draw_box(6, 10, 12, 60, "Terminate Active Connection", 1);
+    draw_shadow(6, 10, 12, 60);
     write_str("\033[8;12HEnter:Terminate First Session   Esc:Close");
 }
 
 void PicoConsole::render_ban_modal() {
     draw_box(6, 10, 12, 60, "Ban / Unban Callsign (banlist.cfg)", 1);
+    draw_shadow(6, 10, 12, 60);
     write_str("\033[8;12HEnter Callsign to ban or Esc:Close");
 }
 
 void PicoConsole::render_theme_modal() {
     char buf[120];
     draw_box(4, 8, 16, 64, "Theme Settings", 1);
-    sprintf(buf, "\033[6;10HActive Theme : < %-18s > (Lt/Rt:Switch)",
+    draw_shadow(4, 8, 16, 64);
+    sprintf(buf, "\033[6;10HActive Theme : < %-18s >",
             draft_.theme_name[0] ? draft_.theme_name : "dark");
     write_str(buf);
     write_str("\033[7;10HBuilt-in dark/light are never written to node.cfg.");
@@ -575,10 +648,17 @@ void PicoConsole::render_theme_modal() {
     for (int i = 0; i < 6; ++i) {
         char hx[16];
         oyk_theme_format_hex(tc.colors[i], hx, sizeof(hx));
-        sprintf(buf, "\033[%d;10H%-14s %-12s %s", 9 + i,
+        sprintf(buf, "\033[%d;10H%-14s %-12s %s ", 9 + i,
                 oyk_theme_role_label(i), oyk_theme_role_key(i), hx);
         write_str(buf);
+        if (term_type_ >= PICO_TERM_VT220) {
+            write_str(pico_format_sgr(4, tc.colors[i], tc.colors[i], 1, 0, term_type_));
+            write_str("    \033[0m");
+        } else {
+            write_str("[##]");
+        }
     }
+    write_str("\033[16;10HLive preview active (unsaved). Press S/Enter to save or Esc to revert.");
     draw_hdiv(17, 8, 64);
     write_str("\033[18;10HLt/Rt:Theme   S/Enter:Save & Apply   Esc:Cancel");
 }
@@ -586,6 +666,7 @@ void PicoConsole::render_theme_modal() {
 void PicoConsole::render_confirm_format_modal() {
     char buf[112];
     draw_box(8, 12, 8, 56, "Confirm Storage Format", 1);
+    draw_shadow(8, 12, 8, 56);
     write_str("\033[10;14HType FORMAT to erase active storage and press Enter:");
     sprintf(buf, "\033[12;14H> %s%-16s\033[0m", sgr_sel(), prompt_buf_);
     write_str(buf);
@@ -595,6 +676,7 @@ void PicoConsole::render_confirm_format_modal() {
 void PicoConsole::render_text_prompt() {
     char buf[112];
     draw_box(9, 14, 6, 52, "Edit Setting", 1);
+    draw_shadow(9, 14, 6, 52);
     sprintf(buf, "\033[11;16H> %s%-44s\033[0m", sgr_sel(), prompt_buf_);
     write_str(buf);
 }
@@ -756,20 +838,42 @@ void PicoConsole::handle_console_key(int key) {
 }
 
 void PicoConsole::handle_menu_key(int key) {
-    if (key == PK_ESC) { view_ = PICO_VIEW_CONSOLE; render(); }
-    else if (key == PK_UP) { menu_sel_ = (menu_sel_ + 7) % 8; render(); }
-    else if (key == PK_DOWN) { menu_sel_ = (menu_sel_ + 1) % 8; render(); }
-    else if (key == PK_ENTER) {
+    if (key == PK_ESC || key == PK_F10 || key == 'x' || key == 'X') {
         view_ = PICO_VIEW_CONSOLE;
-        if (menu_sel_ == 0 && node_) node_->set_accept_incoming(1);
-        else if (menu_sel_ == 1 && node_) node_->set_accept_incoming(0);
-        else if (menu_sel_ == 2) { open_settings(0); return; }
-        else if (menu_sel_ == 3) view_ = PICO_VIEW_STORAGE;
-        else if (menu_sel_ == 4) view_ = PICO_VIEW_PSRAM;
-        else if (menu_sel_ == 5) { if (node_) draft_ = node_->config(); prompt_kind_ = PICO_PROMPT_THEME; }
-        else if (menu_sel_ == 6) prompt_kind_ = PICO_PROMPT_TERM_SID;
-        else if (menu_sel_ == 7) view_ = PICO_VIEW_BOOTLOADER;
         render();
+        return;
+    }
+    if (key == PK_UP) { menu_sel_ = (menu_sel_ + 11) % 12; render(); return; }
+    if (key == PK_DOWN) { menu_sel_ = (menu_sel_ + 1) % 12; render(); return; }
+    static const int kKeys[12] = { 'a', 'd', 'l', 's', 'e', 'h', 't', 'b', 'p', 'g', 'u', 'x' };
+    int chosen_key = 0;
+    if (key == PK_ENTER) {
+        chosen_key = kKeys[menu_sel_];
+    } else {
+        for (int i = 0; i < 11; ++i) {
+            if (key == kKeys[i] || key == (kKeys[i] - 32)) {
+                chosen_key = kKeys[i];
+                break;
+            }
+        }
+    }
+    if (!chosen_key) return;
+    view_ = PICO_VIEW_CONSOLE;
+    if (chosen_key == 'a' && node_) {
+        node_->set_accept_incoming(1);
+        strcpy(status_fb_, "New incoming connections are now ALLOWED.");
+        render();
+    } else if (chosen_key == 'd' && node_) {
+        node_->set_accept_incoming(0);
+        strcpy(status_fb_, "New incoming connections are now DENIED.");
+        render();
+    } else if (chosen_key == 'l') {
+        view_ = PICO_VIEW_LOCAL_TERM;
+        render();
+    } else if (chosen_key == 'x') {
+        render();
+    } else {
+        handle_console_key(chosen_key);
     }
 }
 

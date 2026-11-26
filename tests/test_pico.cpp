@@ -13,7 +13,7 @@
 #include <string.h>
 
 struct PicoCapture {
-    char buf[16384];
+    char buf[65536];
     size_t len;
 };
 
@@ -180,6 +180,24 @@ static void test_pico_console_inquiry_storage_format_and_bootsel() {
     con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
     assert(con->term_type() == PICO_TERM_XTERM256);
 
+    /* Drop-down Node menu (M) matches ncurses/DOS + shaded drop shadow + live theme preview */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    assert(con->view_mode() == PICO_VIEW_MENU);
+    assert(strstr(cap->buf, " Node ") != NULL);
+    assert(strstr(cap->buf, "Node Menu") != NULL);
+    assert(strstr(cap->buf, "\033[0;90;40m") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
+    assert(con->prompt_kind() == PICO_PROMPT_THEME);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\033[C"), 3); /* Right -> live preview light */
+    assert(strstr(cap->buf, "light") != NULL);
+    assert(strstr(cap->buf, "48;5;231m") != NULL || strstr(cap->buf, "38;5;") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); /* Esc reverts */
+    con->tick(300UL);
+    assert(con->prompt_kind() == PICO_PROMPT_NONE);
+    assert(strcmp(node->config().theme_name, "light") != 0);
+
     con->feed_input(reinterpret_cast<const oyk_u8*>("g"), 1);
     assert(con->view_mode() == PICO_VIEW_STORAGE);
     cap->len = 0; cap->buf[0] = '\0';
@@ -191,12 +209,12 @@ static void test_pico_console_inquiry_storage_format_and_bootsel() {
     assert(strstr(cap->buf, "Storage formatted.") != NULL);
 
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(300UL);
+    con->tick(600UL);
     const int base_bl = pico_board_sim_bootloader_count();
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("uy"), 2);
     assert(strstr(cap->buf, "73 de KR4OYK-7") != NULL);
-    con->tick(1000UL);
+    con->tick(1300UL);
     assert(pico_board_sim_bootloader_count() == base_bl + 1);
 
     delete cap;

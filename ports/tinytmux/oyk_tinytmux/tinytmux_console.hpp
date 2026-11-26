@@ -113,6 +113,7 @@ private:
     void process_ss3_final(char ch);
     void handle_da_csi();
 
+    const OykConfig* active_theme_cfg() const;
     const char* sgr_border() const;
     const char* sgr_title() const;
     const char* sgr_header() const;
@@ -122,6 +123,7 @@ private:
     const char* sgr_sel() const;
     const char* sgr_warn() const;
     void draw_dec_box(int row, int col, int h, int w, const char* title, int clear_interior);
+    void draw_dec_shadow(int row, int col, int h, int w);
     void draw_dec_hdiv(int row, int col, int w);
 
     void render_console();

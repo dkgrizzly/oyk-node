@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
             var showTerminate by remember { mutableStateOf(false) }
             var showBan by remember { mutableStateOf(false) }
             var showTheme by remember { mutableStateOf(false) }
+            var previewTheme by remember { mutableStateOf<Pair<String, List<ThemeConfigState>>?>(null) }
             var showExit by remember { mutableStateOf(false) }
             var acceptIncoming by remember { mutableStateOf(true) }
             var sessions by remember { mutableStateOf<List<SessionState>>(emptyList()) }
@@ -158,7 +159,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            OykAndroidTheme(cfg = cfg) {
+            val activePaletteCfg = previewTheme?.let {
+                cfg.copy(themeName = it.first, customThemes = it.second)
+            } ?: cfg
+            OykAndroidTheme(cfg = activePaletteCfg) {
                 val sysDark = isSystemInDarkTheme()
                 when {
                     showOnboarding -> OnboardingPermissionScreen(
@@ -285,8 +289,15 @@ class MainActivity : ComponentActivity() {
                     ThemeSettingsDialog(
                         cfg = cfg,
                         systemDark = sysDark,
-                        onDismiss = { showTheme = false },
+                        onDismiss = {
+                            previewTheme = null
+                            showTheme = false
+                        },
+                        onPreview = { chosenName, customList ->
+                            previewTheme = chosenName to customList
+                        },
                         onSave = { chosenName, customList ->
+                            previewTheme = null
                             cfg = cfg.copy(themeName = chosenName, customThemes = customList)
                             repo.saveInternal(cfg)
                             showTheme = false
