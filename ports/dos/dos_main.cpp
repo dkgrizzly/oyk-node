@@ -197,6 +197,8 @@ struct DosThemeAttrs {
     oyk_u8 dlg_bdr, dlg_fill, dlg_sel, dlg_inp;
 };
 
+static const OykConfig* g_dos_theme_preview_cfg = NULL;
+
 static oyk_u8 dos_make_pair_attr(OykDosVideo* v, oyk_u32 bg_rgb, oyk_u32 fg_rgb, oyk_u8 mono_fallback) {
     oyk_u8 bg = static_cast<oyk_u8>(oyk_rgb_to_vga16(bg_rgb) & 0x0FU);
     oyk_u8 fg = static_cast<oyk_u8>(oyk_rgb_to_vga16(fg_rgb) & 0x0FU);
@@ -255,7 +257,7 @@ static void render_dos_screen() {
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
 
     DosThemeAttrs ta;
-    resolve_dos_theme_attrs(&g_node.config(), &ta);
+    resolve_dos_theme_attrs(g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config(), &ta);
     oyk_u8 menu_bg  = ta.menu_bg;
     oyk_u8 menu_sel = ta.menu_sel;
     oyk_u8 top_hdr  = ta.top_hdr;
@@ -756,6 +758,7 @@ static int confirm_dos_exit() {
             if (dirty) {
                 dirty = 0;
                 dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+                dos_vid_shadow(g_vid, top, left, h, w);
                 dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Auto-Learned Peers");
                 char l1[68];
                 sprintf(l1, "%d auto-learned peer(s) were added during this session.", auto_cnt);
@@ -831,6 +834,7 @@ static int confirm_dos_exit() {
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Exit OYK Node");
 
             char line1[60];
@@ -1071,6 +1075,7 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
             dirty = 0;
             /* Draw Norton Commander single-pane box with single-line borders */
             dos_vid_box(g_vid, 1, panel_x, 20, panel_w, bdr_at, file_at, 0);
+            dos_vid_shadow(g_vid, 1, panel_x, 20, panel_w);
             dos_vid_title(g_vid, 1, panel_x + 2, panel_w - 4, bdr_at,
                           title ? title : "Select File");
             if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
@@ -1389,6 +1394,7 @@ static void run_dos_approve_incoming_files() {
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, 2, panel_x, 17, panel_w, bdr_at, row_at, 0);
+            dos_vid_shadow(g_vid, 2, panel_x, 17, panel_w);
             dos_vid_title(g_vid, 2, panel_x + 2, panel_w - 4, bdr_at, "Manage BBS Files Area");
 
             vid_puts(3, panel_x + 1, tab_bg, "", panel_w - 2);
@@ -2102,6 +2108,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Add Interface");
             dos_vid_title(g_vid, top, left + w - 18, 16, ttl_at, PROG[st.step]);
 
@@ -2476,6 +2483,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Edit Interface");
             vid_puts(top + 1, left + 2, ttl_at, "Edit interface settings and select Save to update draft:", w - 4);
 
@@ -2748,6 +2756,7 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at,
                           (edit_idx >= 0) ? "Edit Peer" : "Add Peer");
             for (int r = 0; r < 8; ++r) {
@@ -3351,6 +3360,7 @@ static void run_dos_terminate_dialog() {
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 32, ttl_at, "Terminate Active Connection");
             vid_puts(top + 2, left + 2, hdr_at, "ID    Callsign    Port       State", w - 4);
             int list_h = h - 6;
@@ -3417,6 +3427,7 @@ static void run_dos_ban_dialog() {
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_shadow(g_vid, top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 38, ttl_at, "Ban / Unban Callsign (banlist.cfg)");
 
             vid_puts(top + 2, left + 2, fill_at, "Callsign: ", 10);
@@ -3464,6 +3475,7 @@ static void run_dos_ban_dialog() {
             if (confirm_pop && bcnt > 0) {
                 char msg[42];
                 dos_vid_box(g_vid, 9, 17, 6, 46, bdr_at, fill_at, 1);
+                dos_vid_shadow(g_vid, 9, 17, 6, 46);
                 dos_vid_title(g_vid, 9, 19, 18, ttl_at, "Confirm Unban");
                 sprintf(msg, "Unban callsign %s?", g_node.ban_entry(unban_sel).key);
                 vid_puts(11, 19, fill_at, msg, 42);
@@ -3564,7 +3576,8 @@ static void run_dos_theme_dialog() {
     int role_sel = 0;
     int scroll = 0;
     int dirty = 1;
-    char fb[70] = "Lt/Rt:Switch  Enter:Edit #RRGGBB  X:Del Custom  S/F2:Save";
+    char fb[70] = "Live preview active (unsaved). Press S/F2 to save or Esc to revert.";
+    g_dos_theme_preview_cfg = &draft;
 
     while (!g_break_flag) {
         dos_pump_network();
@@ -3599,10 +3612,11 @@ static void run_dos_theme_dialog() {
             dirty = 0;
             render_dos_screen();
             DosThemeAttrs ta;
-            resolve_dos_theme_attrs(&g_node.config(), &ta);
+            resolve_dos_theme_attrs(&draft, &ta);
 
             const int top = 2, left = 3, bh = 21, bw = 74;
             dos_vid_box(g_vid, top, left, bh, bw, ta.dlg_bdr, ta.dlg_fill, 1);
+            dos_vid_shadow(g_vid, top, left, bh, bw);
             dos_vid_title(g_vid, top, left + 2, 18, ta.dlg_bdr, "Theme Settings");
 
             char hdr_line[72];
@@ -3628,7 +3642,7 @@ static void run_dos_theme_dialog() {
             dos_vid_hdiv(g_vid, 19, left, bw, ta.dlg_bdr);
             vid_puts(20, left + 2, ta.dlg_fill, fb, bw - 4);
             vid_puts(21, left + 2, ta.menu_bg,
-                     "Enter:Edit  Lt/Rt:Theme  X:Del  S/F2:Save & Apply  Esc:Cancel", bw - 4);
+                     "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", bw - 4);
             dos_vid_flush(g_vid);
         }
 
@@ -3647,7 +3661,7 @@ static void run_dos_theme_dialog() {
                 ci = (ext == 77) ? ((ci + 1) % n_names) : ((ci + n_names - 1) % n_names);
                 strncpy(active, names[ci], sizeof(active) - 1);
                 active[sizeof(active) - 1] = '\0';
-                sprintf(fb, "Selected '%s' (press S/F2 to save & apply).", active);
+                sprintf(fb, "Previewing '%s' (press S/F2 to save or Esc to revert).", active);
             } else if (ext == 60) { /* F2 */
                 ch = 's';
             }
@@ -3678,7 +3692,7 @@ static void run_dos_theme_dialog() {
                     }
                 }
                 strcpy(active, "dark");
-                strcpy(fb, "Custom theme deleted; reverted to dark.");
+                strcpy(fb, "Custom theme deleted; previewing dark.");
             }
         } else if (ch == '\r' || ch == '\n') {
             char hx[16], pr[40];
@@ -3717,6 +3731,7 @@ static void run_dos_theme_dialog() {
             }
         }
     }
+    g_dos_theme_preview_cfg = NULL;
     render_dos_screen();
 }
 
@@ -3770,7 +3785,7 @@ static void open_dos_node_menu(int* running) {
     int chosen = -1;
     int dirty = 1;
     DosThemeAttrs ta;
-    resolve_dos_theme_attrs(&g_node.config(), &ta);
+    resolve_dos_theme_attrs(g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config(), &ta);
     oyk_u8 menu_bg  = ta.menu_bg;
     oyk_u8 menu_sel = ta.menu_sel;
     while (chosen < 0 && !g_break_flag) {
@@ -3779,6 +3794,7 @@ static void open_dos_node_menu(int* running) {
         if (dirty) {
             dirty = 0;
             dos_vid_box(g_vid, 1, 1, 15, 34, menu_bg, menu_bg, 0);
+            dos_vid_shadow(g_vid, 1, 1, 15, 34);
             dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
             dos_vid_hdiv(g_vid, 13, 1, 34, menu_bg);
             for (int i = 0; i < 11; ++i) {

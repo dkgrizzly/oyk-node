@@ -11,6 +11,8 @@
 
 namespace oyk::ui {
 
+struct ThemeConfig;
+
 // Local ncurses text-mode operator console for the packet node.
 // Runs on the main thread and polls NodeEngine::snapshot() at ~5 Hz.
 class NcursesUI {
@@ -35,6 +37,7 @@ private:
     void draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int h, int w);
 
     void open_node_menu(bool& should_exit);
+    void apply_theme_palette(const ThemeConfig& t);
     void apply_theme_colors();
     void modal_theme();
     void modal_local_terminal();

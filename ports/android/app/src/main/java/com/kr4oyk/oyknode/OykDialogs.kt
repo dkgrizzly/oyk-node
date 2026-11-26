@@ -586,14 +586,18 @@ fun ThemeSettingsCard(
     cfg: NodeConfigState,
     systemDark: Boolean,
     onDismiss: () -> Unit,
-    onSave: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit
+    onSave: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit,
+    onPreview: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit = { _, _ -> }
 ) {
-    val allNames = remember(cfg.customThemes) {
-        listOf("native", "dark", "light") + cfg.customThemes.map { it.name }
-    }
     var selectedName by remember { mutableStateOf(cfg.themeName.ifBlank { "native" }) }
     var customs by remember { mutableStateOf(cfg.customThemes) }
+    val allNames = remember(customs) {
+        listOf("native", "dark", "light") + customs.map { it.name }
+    }
     var selectedRole by remember { mutableStateOf(ThemeRole.BG) }
+    LaunchedEffect(selectedName, customs) {
+        onPreview(selectedName, customs)
+    }
     val activePalette = remember(selectedName, customs, systemDark) {
         when (selectedName.lowercase()) {
             "native" -> BuiltinThemes.builtinPalette("native", systemDark)
@@ -707,10 +711,11 @@ fun ThemeSettingsDialog(
     cfg: NodeConfigState,
     systemDark: Boolean,
     onDismiss: () -> Unit,
-    onSave: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit
+    onSave: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit,
+    onPreview: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit = { _, _ -> }
 ) {
     Dialog(onDismissRequest = onDismiss) {
-        ThemeSettingsCard(cfg, systemDark, onDismiss, onSave)
+        ThemeSettingsCard(cfg, systemDark, onDismiss, onSave, onPreview)
     }
 }
 

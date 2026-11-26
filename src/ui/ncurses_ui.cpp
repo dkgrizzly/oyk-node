@@ -34,7 +34,77 @@ constexpr int CP_NC_PANEL = 8;
 constexpr int CP_NC_DIR   = 9;
 constexpr int CP_NC_SEL   = 10;
 constexpr int CP_BASE     = 11;
-constexpr int CP_PREVIEW  = 12;
+constexpr int CP_SHADOW   = 12;
+constexpr int CP_PREVIEW_BASE = 13; // 13..31 for up to kThemeRoleCount swatches
+
+// Classic 2-col right, 1-row bottom translucent drop shadow for menus and modals.
+struct NcursesShadow {
+    WINDOW* right_win = nullptr;
+    WINDOW* bot_win = nullptr;
+    int y_ = 0;
+    int x_ = 0;
+    int h_ = 0;
+    int w_ = 0;
+    bool has_colors_ = false;
+
+    NcursesShadow(int y, int x, int h, int w, bool has_colors)
+        : y_(y), x_(x), h_(h), w_(w), has_colors_(has_colors) {
+        capture();
+    }
+    ~NcursesShadow() { destroy(); }
+
+    void destroy() {
+        if (right_win) { delwin(right_win); right_win = nullptr; }
+        if (bot_win) { delwin(bot_win); bot_win = nullptr; }
+    }
+
+    void capture() {
+        destroy();
+        int rows = 0, cols = 0;
+        getmaxyx(stdscr, rows, cols);
+        const chtype sattr = has_colors_
+            ? (static_cast<chtype>(COLOR_PAIR(CP_SHADOW)) | (COLORS < 256 ? A_BOLD : 0))
+            : A_DIM;
+        auto sample_cell = [&](int sy, int sx) -> chtype {
+            chtype raw = mvwinch(curscr, sy, sx);
+            chtype ch = raw & (A_CHARTEXT | A_ALTCHARSET);
+            if ((ch & A_CHARTEXT) == 0) ch = ' ';
+            return ch | sattr;
+        };
+
+        const int rx = x_ + w_;
+        const int ry = y_ + 1;
+        const int rw = std::min(2, cols - rx);
+        const int rh = std::min(h_, rows - ry);
+        if (rw > 0 && rh > 0 && ry >= 0 && rx >= 0) {
+            right_win = newwin(rh, rw, ry, rx);
+            if (right_win) {
+                for (int r = 0; r < rh; ++r) {
+                    for (int c = 0; c < rw; ++c) {
+                        mvwaddch(right_win, r, c, sample_cell(ry + r, rx + c));
+                    }
+                }
+            }
+        }
+
+        const int by = y_ + h_;
+        const int bx = x_ + 2;
+        const int bw = std::min(w_ - 2, cols - bx);
+        if (by >= 0 && by < rows && bx >= 0 && bw > 0) {
+            bot_win = newwin(1, bw, by, bx);
+            if (bot_win) {
+                for (int c = 0; c < bw; ++c) {
+                    mvwaddch(bot_win, 0, c, sample_cell(by, bx + c));
+                }
+            }
+        }
+    }
+
+    void noutrefresh() {
+        if (right_win) { touchwin(right_win); wnoutrefresh(right_win); }
+        if (bot_win) { touchwin(bot_win); wnoutrefresh(bot_win); }
+    }
+};
 
 struct CursesGuard {
     CursesGuard() {
@@ -557,6 +627,7 @@ void NcursesUI::open_node_menu(bool& should_exit) {
 
     WINDOW* win = newwin(h, w, 1, 1);
     if (!win) return;
+    NcursesShadow shadow(1, 1, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -575,7 +646,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
         }
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -656,10 +729,8 @@ void NcursesUI::open_node_menu(bool& should_exit) {
     }
 }
 
-void NcursesUI::apply_theme_colors() {
+void NcursesUI::apply_theme_palette(const ThemeConfig& t) {
     if (!has_colors_) return;
-    const node::NodeConfig cfg = engine_.config();
-    const ThemeConfig t = resolve_effective_theme(cfg.theme_name, cfg.themes, false, true);
     auto pick = [&](ThemeRole r) -> int {
         const uint32_t rgb = t.colors[static_cast<std::size_t>(r)];
         if (COLORS >= 256) return rgb_to_xterm256(rgb);
@@ -678,7 +749,19 @@ void NcursesUI::apply_theme_colors() {
     init_pair(CP_NC_PANEL, static_cast<short>(pick(ThemeRole::PanelFg)), static_cast<short>(pick(ThemeRole::PanelBg)));
     init_pair(CP_NC_DIR, static_cast<short>(pick(ThemeRole::Accent)), static_cast<short>(pick(ThemeRole::PanelBg)));
     init_pair(CP_NC_SEL, static_cast<short>(pick(ThemeRole::SelectionFg)), static_cast<short>(pick(ThemeRole::SelectionBg)));
+    if (COLORS >= 256) {
+        init_pair(CP_SHADOW, 240, COLOR_BLACK);
+    } else {
+        init_pair(CP_SHADOW, COLOR_BLACK, COLOR_BLACK);
+    }
     bkgd(COLOR_PAIR(CP_BASE));
+}
+
+void NcursesUI::apply_theme_colors() {
+    if (!has_colors_) return;
+    const node::NodeConfig cfg = engine_.config();
+    const ThemeConfig t = resolve_effective_theme(cfg.theme_name, cfg.themes, false, true);
+    apply_theme_palette(t);
 }
 
 void NcursesUI::modal_theme() {
@@ -700,17 +783,30 @@ void NcursesUI::modal_theme() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(74, cols - 4);
-    const int h = std::min(22, rows - 2);
+    const int h = std::min(21, rows - 3);
     if (w < 54 || h < 14) return;
+    const int wy = std::max(1, (rows - h) / 2);
+    const int wx = std::max(1, (cols - w) / 2);
 
-    WINDOW* win = newwin(h, w, std::max(1, (rows - h) / 2), std::max(1, (cols - w) / 2));
+    WINDOW* win = newwin(h, w, wy, wx);
     if (!win) return;
+    NcursesShadow shadow(wy, wx, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
+    if (has_colors_) wbkgd(win, COLOR_PAIR(CP_BASE));
 
     int role_sel = 0;
     int scroll = 0;
-    std::string fb = "Left/Right:Switch theme  Enter:Edit #RRGGBB  S/F2:Save";
+    bool saved = false;
+    std::string fb = "Live preview active (unsaved). Press S/F2 to save or Esc to revert.";
+
+    auto apply_live_preview = [&]() {
+        if (!has_colors_) return;
+        apply_theme_palette(active_palette());
+        draw_screen(engine_.snapshot());
+        shadow.capture();
+        wbkgd(win, COLOR_PAIR(CP_BASE));
+    };
 
     auto prompt_hex = [&](const std::string& label, std::string& val_io) -> bool {
         echo();
@@ -731,7 +827,7 @@ void NcursesUI::modal_theme() {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
         const std::vector<std::string> names = collect_names();
         const ThemeConfig pal = active_palette();
-        const int vis_rows = h - 9;
+        const int vis_rows = std::max(1, h - 10);
         if (role_sel < scroll) scroll = role_sel;
         if (role_sel >= scroll + vis_rows) scroll = role_sel - vis_rows + 1;
 
@@ -760,12 +856,15 @@ void NcursesUI::modal_theme() {
                       kThemeRoleLabels[idx], kThemeRoleKeys[idx], hx.c_str());
             if (is_sel) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
             if (has_colors_) {
-                const uint32_t rgb = pal.colors[static_cast<std::size_t>(idx)];
-                int sc = (COLORS >= 256) ? rgb_to_xterm256(rgb) : (rgb_to_ansi16(rgb) & 0x07);
-                init_pair(CP_PREVIEW, static_cast<short>(sc), static_cast<short>(sc));
-                wattron(win, COLOR_PAIR(CP_PREVIEW));
-                mvwaddstr(win, 6 + i, 45, "    ");
-                wattroff(win, COLOR_PAIR(CP_PREVIEW));
+                const int pair = CP_PREVIEW_BASE + i;
+                if (pair < COLOR_PAIRS) {
+                    const uint32_t rgb = pal.colors[static_cast<std::size_t>(idx)];
+                    int sc = (COLORS >= 256) ? rgb_to_xterm256(rgb) : (rgb_to_ansi16(rgb) & 0x07);
+                    init_pair(static_cast<short>(pair), static_cast<short>(sc), static_cast<short>(sc));
+                    wattron(win, COLOR_PAIR(pair));
+                    mvwaddstr(win, 6 + i, 45, "    ");
+                    wattroff(win, COLOR_PAIR(pair));
+                }
             }
         }
 
@@ -773,8 +872,10 @@ void NcursesUI::modal_theme() {
         mvwhline(win, h - 4, 1, ACS_HLINE, w - 2);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
         mvwaddnstr(win, h - 3, 2, fb.c_str(), w - 4);
-        mvwaddnstr(win, h - 2, 2, "Enter:Edit  Lt/Rt:Theme  X:Del Custom  S/F2:Save & Apply  Esc:Cancel", w - 4);
-        wrefresh(win);
+        mvwaddnstr(win, h - 2, 2, "Lt/Rt:Theme  Enter:Edit  X:Del Custom  S/F2:Save & Apply  Esc:Cancel", w - 4);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -794,7 +895,8 @@ void NcursesUI::modal_theme() {
             const int n = static_cast<int>(names.size());
             cur_i = (ch == KEY_RIGHT) ? ((cur_i + 1) % n) : ((cur_i + n - 1) % n);
             active_name = names[static_cast<std::size_t>(cur_i)];
-            fb = "Selected theme '" + active_name + "'. Press S/F2 to apply.";
+            apply_live_preview();
+            fb = "Previewing '" + active_name + "' (press S/F2 to save or Esc to revert).";
         } else if (ch == 'x' || ch == 'X') {
             if (is_builtin_theme_name(active_name)) {
                 fb = "Built-in themes cannot be deleted.";
@@ -806,7 +908,8 @@ void NcursesUI::modal_theme() {
                                                   }),
                                    draft.themes.end());
                 active_name = "dark";
-                fb = "Deleted custom theme; reverted to dark.";
+                apply_live_preview();
+                fb = "Deleted custom theme; previewing dark.";
             }
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             std::string hx = format_hex_rgb(pal.colors[static_cast<std::size_t>(role_sel)]);
@@ -828,6 +931,7 @@ void NcursesUI::modal_theme() {
                             break;
                         }
                     }
+                    apply_live_preview();
                     fb = "Updated " + active_name + " (" + kThemeRoleKeys[role_sel] + ").";
                 }
             }
@@ -835,6 +939,7 @@ void NcursesUI::modal_theme() {
             draft.theme_name = active_name;
             auto res = engine_.apply_config(draft, true);
             if (res.applied) {
+                saved = true;
                 apply_theme_colors();
                 set_status(res.saved_to_disk
                                ? ("Theme '" + active_name + "' saved & applied.")
@@ -844,7 +949,11 @@ void NcursesUI::modal_theme() {
             fb = "Apply failed: " + res.error;
         }
     }
+    shadow.destroy();
     delwin(win);
+    if (!saved) {
+        apply_theme_colors();
+    }
 }
 
 bool NcursesUI::modal_file_selector(const std::string& title, std::string& selected_path_out) {
@@ -911,6 +1020,7 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return false;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
     if (has_colors_) wbkgd(win, COLOR_PAIR(CP_NC_PANEL));
@@ -963,7 +1073,9 @@ bool NcursesUI::modal_file_selector(const std::string& title, std::string& selec
 
         mvwhline(win, h - 2, 1, ACS_HLINE, w - 2);
         mvwaddnstr(win, h - 1, 2, clip(" Up/Dn:Move  Enter:Open/Select  Bksp:Up  Esc:Cancel ", w - 4).c_str(), w - 4);
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -1114,8 +1226,11 @@ void NcursesUI::modal_local_terminal() {
         getmaxyx(stdscr, rows, cols);
         int w = std::min(62, cols - 4);
         int h = 9;
-        WINDOW* cw = newwin(h, w, std::max(1, (rows - h) / 2), std::max(1, (cols - w) / 2));
+        int cy = std::max(1, (rows - h) / 2);
+        int cx = std::max(1, (cols - w) / 2);
+        WINDOW* cw = newwin(h, w, cy, cx);
         if (!cw) return;
+        NcursesShadow cshadow(cy, cx, h, w, has_colors_);
         keypad(cw, TRUE);
         wtimeout(cw, 200);
 
@@ -1140,7 +1255,9 @@ void NcursesUI::modal_local_terminal() {
 
             mvwaddnstr(cw, 6, 2, clip("LOCAL, CHAT, CALL, or CALL@ip:port | Tab:Field Enter:Go Esc:Cancel", w - 4).c_str(), w - 4);
             wmove(cw, focus == 0 ? 2 : 4, 12 + static_cast<int>((focus == 0 ? port_in : call_in).size()));
-            wrefresh(cw);
+            cshadow.noutrefresh();
+            wnoutrefresh(cw);
+            doupdate();
 
             int ch = wgetch(cw);
             if (ch == ERR) continue;
@@ -1150,6 +1267,7 @@ void NcursesUI::modal_local_terminal() {
             } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
                 if (!port_in.empty()) {
                     curs_set(0);
+                    cshadow.destroy();
                     delwin(cw);
                     start_connect(port_in, call_in);
                     return;
@@ -1163,6 +1281,7 @@ void NcursesUI::modal_local_terminal() {
             }
         }
         curs_set(0);
+        cshadow.destroy();
         delwin(cw);
     };
 
@@ -1171,8 +1290,11 @@ void NcursesUI::modal_local_terminal() {
         getmaxyx(stdscr, rows, cols);
         int w = std::min(68, cols - 4);
         int h = 7;
-        WINDOW* ow = newwin(h, w, std::max(1, (rows - h) / 2), std::max(1, (cols - w) / 2));
+        int oy = std::max(1, (rows - h) / 2);
+        int ox = std::max(1, (cols - w) / 2);
+        WINDOW* ow = newwin(h, w, oy, ox);
         if (!ow) return false;
+        NcursesShadow oshadow(oy, ox, h, w, has_colors_);
         keypad(ow, TRUE);
         wtimeout(ow, 200);
         bool allow = false;
@@ -1183,12 +1305,15 @@ void NcursesUI::modal_local_terminal() {
             mvwprintw(ow, 0, 2, " YAPP File Already Exists ");
             mvwaddnstr(ow, 2, 2, clip("File: " + path_str, w - 4).c_str(), w - 4);
             mvwaddnstr(ow, 4, 2, "Overwrite existing file?  [Y] Yes   [N] No", w - 4);
-            wrefresh(ow);
+            oshadow.noutrefresh();
+            wnoutrefresh(ow);
+            doupdate();
             int ch = wgetch(ow);
             if (ch == ERR) continue;
             if (ch == 'y' || ch == 'Y') { allow = true; break; }
             if (ch == 'n' || ch == 'N' || ch == 27) { allow = false; break; }
         }
+        oshadow.destroy();
         delwin(ow);
         return allow;
     };
@@ -1445,6 +1570,7 @@ void NcursesUI::modal_terminate_connection() {
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -1479,7 +1605,9 @@ void NcursesUI::modal_terminate_connection() {
         }
 
         mvwaddnstr(win, h - 2, 2, "Up/Down: select | Enter: terminate | Esc: cancel", w - 4);
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -1510,6 +1638,7 @@ void NcursesUI::modal_ban_callsign() {
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -1543,8 +1672,11 @@ void NcursesUI::modal_ban_callsign() {
     auto confirm_unban = [&](const std::string& call_key) -> bool {
         int cw = std::min(46, cols - 4);
         int ch_h = 6;
-        WINDOW* cwin = newwin(ch_h, cw, std::max(1, (rows - ch_h) / 2), std::max(1, (cols - cw) / 2));
+        int cy = std::max(1, (rows - ch_h) / 2);
+        int cx = std::max(1, (cols - cw) / 2);
+        WINDOW* cwin = newwin(ch_h, cw, cy, cx);
         if (!cwin) return false;
+        NcursesShadow cshadow(cy, cx, ch_h, cw, has_colors_);
         keypad(cwin, TRUE);
         wtimeout(cwin, 200);
         bool yes = false;
@@ -1555,13 +1687,17 @@ void NcursesUI::modal_ban_callsign() {
             mvwprintw(cwin, 0, 2, " Confirm Unban ");
             mvwaddnstr(cwin, 2, 2, clip("Unban callsign " + call_key + "?", cw - 4).c_str(), cw - 4);
             mvwaddnstr(cwin, 3, 2, "[Y] Yes   [N] No", cw - 4);
-            wrefresh(cwin);
+            cshadow.noutrefresh();
+            wnoutrefresh(cwin);
+            doupdate();
             int k = wgetch(cwin);
             if (k == ERR) continue;
             if (k == 'y' || k == 'Y') { yes = true; break; }
             if (k == 'n' || k == 'N' || k == 27) { yes = false; break; }
         }
+        cshadow.destroy();
         delwin(cwin);
+        redrawwin(win);
         return yes;
     };
 
@@ -1643,7 +1779,9 @@ void NcursesUI::modal_ban_callsign() {
         } else if (focus == 2) {
             wmove(win, 4, 12 + std::min(field_w - 1, static_cast<int>(reason_input.size())));
         }
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -1718,12 +1856,15 @@ void NcursesUI::modal_ban_callsign() {
 void NcursesUI::modal_approve_incoming_files() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(78, std::max(56, cols - 2));
-    int h = std::min(22, std::max(14, rows - 2));
+    int w = std::min(76, std::max(56, cols - 4));
+    int h = std::min(21, std::max(14, rows - 3));
     if (rows < 12 || cols < 46) return;
+    int y = std::max(1, (rows - h) / 2);
+    int x = std::max(1, (cols - w) / 2);
 
-    WINDOW* win = newwin(h, w, (rows - h) / 2, (cols - w) / 2);
+    WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -1874,7 +2015,9 @@ void NcursesUI::modal_approve_incoming_files() {
             : "Tab/1-2:Tabs  D/Del:Remove Approved File  R:Refresh  Esc:Close";
         mvwaddnstr(win, h - 1, 2, clip(footer, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -1963,17 +2106,18 @@ void NcursesUI::modal_approve_incoming_files() {
 void NcursesUI::modal_rig_control() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(76, cols - 2);
-    int h = std::min(19, rows - 2);
+    int w = std::min(74, cols - 4);
+    int h = std::min(19, rows - 3);
     if (w < 54 || h < 14) {
         set_status("Terminal too small for Radio Control (min 56x16).");
         return;
     }
-    int y = std::max(0, (rows - h) / 2);
-    int x = std::max(0, (cols - w) / 2);
+    int y = std::max(1, (rows - h) / 2);
+    int x = std::max(1, (cols - w) / 2);
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 250);
 
@@ -2070,7 +2214,9 @@ void NcursesUI::modal_rig_control() {
         mvwhline(win, h - 1, 1, ' ', w - 2);
         mvwaddnstr(win, h - 1, 2, "Q/R:Refresh  Esc:Close", w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -2150,17 +2296,18 @@ void NcursesUI::modal_settings(int initial_tab) {
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(78, cols - 2);
-    int h = std::min(20, rows - 2);
+    int w = std::min(76, std::max(56, cols - 4));
+    int h = std::min(20, rows - 3);
     if (w < 56 || h < 14) {
         set_status("Terminal too small for Settings UI (min 58x16).");
         return;
     }
-    int y = std::max(0, (rows - h) / 2);
-    int x = std::max(0, (cols - w) / 2);
+    int y = std::max(1, (rows - h) / 2);
+    int x = std::max(1, (cols - w) / 2);
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -2193,6 +2340,7 @@ void NcursesUI::modal_settings(int initial_tab) {
         int nx = std::max(1, (cols - nw) / 2);
         WINDOW* nwin = newwin(nh, nw, ny, nx);
         if (!nwin) return;
+        NcursesShadow nshadow(ny, nx, nh, nw, has_colors_);
         keypad(nwin, TRUE);
         wtimeout(nwin, 200);
         werase(nwin);
@@ -2205,12 +2353,15 @@ void NcursesUI::modal_settings(int initial_tab) {
             pos += static_cast<std::size_t>(lw);
         }
         mvwaddnstr(nwin, nh - 2, 2, "Press any key to continue...", lw);
-        wrefresh(nwin);
+        nshadow.noutrefresh();
+        wnoutrefresh(nwin);
+        doupdate();
         while (true) {
             if (external_stop_flag_ && external_stop_flag_->load()) break;
             int c = wgetch(nwin);
             if (c != ERR) break;
         }
+        nshadow.destroy();
         delwin(nwin);
     };
 
@@ -2515,7 +2666,9 @@ void NcursesUI::modal_settings(int initial_tab) {
                       : "Tab/Left/Right/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
         mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
@@ -2572,8 +2725,12 @@ void NcursesUI::modal_settings(int initial_tab) {
             if (ch == 'a' || ch == 'A') {
                 radio::RadioInterfaceConfig ic;
                 bool added = modal_add_interface_wizard(draft.interfaces, ic);
+                draw_screen(engine_.snapshot());
+                shadow.capture();
                 touchwin(win);
-                wrefresh(win);
+                shadow.noutrefresh();
+                wnoutrefresh(win);
+                doupdate();
                 if (!added) {
                     feedback = "Add interface cancelled.";
                     continue;
@@ -2586,8 +2743,12 @@ void NcursesUI::modal_settings(int initial_tab) {
                 int idx = sel[3];
                 radio::RadioInterfaceConfig ic;
                 bool updated = modal_edit_interface(draft.interfaces, idx, ic);
+                draw_screen(engine_.snapshot());
+                shadow.capture();
                 touchwin(win);
-                wrefresh(win);
+                shadow.noutrefresh();
+                wnoutrefresh(win);
+                doupdate();
                 if (!updated) {
                     feedback = "Edit interface cancelled.";
                     continue;
@@ -2630,8 +2791,12 @@ void NcursesUI::modal_settings(int initial_tab) {
                     }
                 }
                 bool added = modal_edit_peer(draft.peers, draft.interfaces, -1, np);
+                draw_screen(engine_.snapshot());
+                shadow.capture();
                 touchwin(win);
-                wrefresh(win);
+                shadow.noutrefresh();
+                wnoutrefresh(win);
+                doupdate();
                 if (!added) {
                     feedback = "Add peer cancelled.";
                     continue;
@@ -2644,8 +2809,12 @@ void NcursesUI::modal_settings(int initial_tab) {
                 int idx = sel[4];
                 radio::PeerConfig np = draft.peers[static_cast<std::size_t>(idx)];
                 bool updated = modal_edit_peer(draft.peers, draft.interfaces, idx, np);
+                draw_screen(engine_.snapshot());
+                shadow.capture();
                 touchwin(win);
-                wrefresh(win);
+                shadow.noutrefresh();
+                wnoutrefresh(win);
+                doupdate();
                 if (!updated) {
                     feedback = "Edit peer cancelled.";
                     continue;
@@ -3022,6 +3191,7 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
 
     WINDOW* wiz = newwin(h, w, y, x);
     if (!wiz) return false;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(wiz, TRUE);
     wtimeout(wiz, 200);
 
@@ -3344,7 +3514,9 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
                    std::max(0, w - (bx + 14)));
 
         curs_set((active_text_field(focus) != nullptr) ? 1 : 0);
-        wrefresh(wiz);
+        shadow.noutrefresh();
+        wnoutrefresh(wiz);
+        doupdate();
 
         int ch = wgetch(wiz);
         if (ch == ERR) continue;
@@ -3485,6 +3657,7 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
 
     WINDOW* dlg = newwin(h, w, y, x);
     if (!dlg) return false;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(dlg, TRUE);
     wtimeout(dlg, 200);
 
@@ -3713,7 +3886,9 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
                    std::max(0, w - 30));
 
         curs_set((focus < fcnt && active_text_field(focus) != nullptr) ? 1 : 0);
-        wrefresh(dlg);
+        shadow.noutrefresh();
+        wnoutrefresh(dlg);
+        doupdate();
 
         int ch = wgetch(dlg);
         if (ch == ERR) continue;
@@ -3811,6 +3986,7 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
 
     WINDOW* dlg = newwin(h, w, y, x);
     if (!dlg) return false;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(dlg, TRUE);
     wtimeout(dlg, 200);
 
@@ -3951,7 +4127,9 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
         mvwaddnstr(dlg, h - 1, 2, "Up/Down/Tab:Field  Left/Right/Space:Toggle  Enter:Save  Esc:Cancel", w - 4);
         if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_MENU));
         curs_set((focus == 0 || focus == 1 || focus == 2 || focus == 4 || focus == 5) ? 1 : 0);
-        wrefresh(dlg);
+        shadow.noutrefresh();
+        wnoutrefresh(dlg);
+        doupdate();
 
         int ch = wgetch(dlg);
         if (ch == ERR) continue;
@@ -4033,6 +4211,7 @@ bool NcursesUI::modal_confirm_exit() {
 
         WINDOW* win = newwin(h, w, y, x);
         if (!win) return false;
+        NcursesShadow shadow(y, x, h, w, has_colors_);
         keypad(win, TRUE);
         wtimeout(win, 200);
 
@@ -4063,7 +4242,9 @@ bool NcursesUI::modal_confirm_exit() {
             }
             mvwhline(win, 8, 1, ACS_HLINE, w - 2);
             mvwaddnstr(win, 9, 2, "Left/Right/Tab:Select  Enter:Confirm  S/D/R/Esc", w - 4);
-            wrefresh(win);
+            shadow.noutrefresh();
+            wnoutrefresh(win);
+            doupdate();
 
             int ch = wgetch(win);
             if (ch == ERR) continue;
@@ -4107,6 +4288,7 @@ bool NcursesUI::modal_confirm_exit() {
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return false;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
     keypad(win, TRUE);
     wtimeout(win, 200);
 
@@ -4157,7 +4339,9 @@ bool NcursesUI::modal_confirm_exit() {
         mvwhline(win, 6, 1, ACS_HLINE, w - 2);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
         mvwaddnstr(win, 7, 2, "Left/Right/Tab:Select  Enter:OK  Y/N/Esc", w - 4);
-        wrefresh(win);
+        shadow.noutrefresh();
+        wnoutrefresh(win);
+        doupdate();
 
         int ch = wgetch(win);
         if (ch == ERR) continue;

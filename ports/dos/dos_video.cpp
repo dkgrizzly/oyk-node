@@ -207,6 +207,32 @@ void dos_vid_box(OykDosVideo* v, int top, int left, int h, int w,
     dos_vid_putc(v, bottom, right, border_attr, OYK_BOX_BR);
 }
 
+void dos_vid_shadow(OykDosVideo* v, int top, int left, int h, int w) {
+    if (!v || h < 2 || w < 2) return;
+    int r, c;
+    int r_end = top + h;
+    int c_right = left + w;
+    for (r = top + 1; r <= r_end; ++r) {
+        if (r < 0 || r >= OYK_DOS_VID_ROWS) continue;
+        for (c = c_right; c < c_right + 2; ++c) {
+            if (c < 0 || c >= OYK_DOS_VID_COLS) continue;
+            oyk_u16& cell = v->back[r * OYK_DOS_VID_COLS + c];
+            cell = v->is_color
+                ? static_cast<oyk_u16>((0x08U << 8) | (cell & 0x00FFU))
+                : static_cast<oyk_u16>((0x07U << 8) | 0xB0U);
+        }
+    }
+    if (r_end >= 0 && r_end < OYK_DOS_VID_ROWS) {
+        for (c = left + 2; c < c_right; ++c) {
+            if (c < 0 || c >= OYK_DOS_VID_COLS) continue;
+            oyk_u16& cell = v->back[r_end * OYK_DOS_VID_COLS + c];
+            cell = v->is_color
+                ? static_cast<oyk_u16>((0x08U << 8) | (cell & 0x00FFU))
+                : static_cast<oyk_u16>((0x07U << 8) | 0xB0U);
+        }
+    }
+}
+
 void dos_vid_hdiv(OykDosVideo* v, int row, int left, int w, oyk_u8 attr) {
     if (!v || w < 2) return;
     dos_vid_putc(v, row, left, attr, OYK_BOX_LT);

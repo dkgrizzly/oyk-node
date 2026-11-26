@@ -890,7 +890,7 @@ static void test_vt100_console_full_parity() {
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
     assert(con->has_active_terminal() == 1);
-    assert(strstr(cap->buf, "Tab:Term(ACTIVE)") != NULL);
+    assert(strstr(cap->buf, "Tab/F9:Term(ACTIVE)") != NULL);
 
     /* Misplaced QSPI Flash on CS0 triggers warning banner + startup flag; CS1 flash clears warning */
     tinytmux_psram_set_sim_chips(NULL, 0, 0, 0, NULL, 0, 0, 0);

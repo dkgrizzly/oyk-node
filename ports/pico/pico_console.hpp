@@ -68,11 +68,14 @@ public:
 private:
     void write_str(const char* s);
     void draw_box(int row, int col, int h, int w, const char* title, int clear_interior);
+    void draw_shadow(int row, int col, int h, int w);
     void draw_hdiv(int row, int col, int w);
+    const OykConfig* active_theme_cfg() const;
     const char* sgr_border() const;
     const char* sgr_title() const;
     const char* sgr_header() const;
     const char* sgr_menubar() const;
+    const char* sgr_menusel() const;
     const char* sgr_list_hdr() const;
     const char* sgr_sel() const;
     const char* sgr_warn() const;

@@ -1107,6 +1107,18 @@ static void test_dos_video_dirty_diff_and_attrs() {
     assert(dos_vid_flush_row(v, 10) == 3UL);
     assert(dos_vid_flush(v) == 0UL);
 
+    /* Drop shadow preserves underlying chars in dark grey (0x08), clips edges, is idempotent */
+    dos_vid_shadow(v, 2, 10, 4, 10);
+    dos_vid_flush(v);
+    assert((sim[3 * 80 + 20] & 0xFF00U) == 0x0800U);
+    assert((sim[6 * 80 + 12] & 0xFF00U) == 0x0800U);
+    assert((sim[6 * 80 + 21] & 0xFF00U) == 0x0800U);
+    assert((sim[6 * 80 + 11] & 0xFF00U) != 0x0800U);
+    dos_vid_shadow(v, 2, 10, 4, 10);
+    assert(dos_vid_flush(v) == 0UL);
+    dos_vid_shadow(v, 20, 75, 10, 10);
+    dos_vid_flush(v);
+
     delete v;
     delete[] sim;
     printf("[PASS] test_dos_video_dirty_diff_and_attrs\n");
@@ -1700,10 +1712,11 @@ static void dos_save_capture(const char* name, const oyk_u16* vram) {
 }
 
 static void dos_render_mock_main(OykDosVideo* v) {
-    const oyk_u8 bg = 0x17U, hdr = 0x1FU, mbar = 0x70U, ok = 0x1AU, lhdr = dos_vid_list_hdr_attr(v);
+    const oyk_u8 bg = 0x17U, hdr = 0x1FU, mbar = 0x70U, msel = 0x30U, ok = 0x1AU, lhdr = dos_vid_list_hdr_attr(v);
     dos_vid_clear(v, bg);
     dos_vid_hline(v, 0, 0, 80, mbar, ' ');
-    dos_vid_puts(v, 0, 1, mbar, " [Node]  A:Allow  D:Deny  L:Term  F:Files  R:Rig  S:Set  P:Peers  Q:Exit", 78);
+    dos_vid_puts(v, 0, 1, msel, " Node ", 6);
+    dos_vid_puts(v, 0, 52, mbar, "Tab/F9:Term  F10/M:Menu ", 28);
     dos_vid_puts(v, 1, 1, hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", 56);
     dos_vid_puts(v, 1, 61, ok, "[INCOMING: ALLOW]", 18);
 
@@ -1748,6 +1761,7 @@ static void test_dos_ui_screen_flows() {
     /* 2. Settings (Node tab) */
     dos_render_mock_main(v);
     dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
+    dos_vid_shadow(v, 2, 4, 21, 72);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
     dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Interfaces  5:Peers  6:Rig  7:Print", 70);
     dos_vid_puts(v, 5, 7, fill, "Callsign       : ", 17); dos_vid_puts(v, 5, 24, sel, "KR4OYK-7", 32);
@@ -1764,6 +1778,7 @@ static void test_dos_ui_screen_flows() {
     /* 3. Add Interface Wizard (Step 3/4 matching dos_main.cpp including Learned Policy) */
     dos_render_mock_main(v);
     dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
+    dos_vid_shadow(v, 3, 6, 19, 68);
     dos_vid_title(v, 3, 8, 20, bdr, "Add Interface");
     dos_vid_title(v, 3, 56, 16, bdr, "[######..] 3/4");
     dos_vid_puts(v, 4, 8, bdr,  "Configure AXUDP bind host/DMR, port, netmask, and policy:", 62);
@@ -1784,6 +1799,7 @@ static void test_dos_ui_screen_flows() {
     /* 4. Edit Interface Single View (matching dos_main.cpp field-for-field) */
     dos_render_mock_main(v);
     dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
+    dos_vid_shadow(v, 3, 6, 19, 68);
     dos_vid_title(v, 3, 8, 20, bdr, "Edit Interface");
     dos_vid_puts(v, 4, 8, bdr,  "Edit interface settings and select Save to update draft:", 62);
     dos_vid_puts(v, 6, 9, fill, "Driver (Lt/Rt) : ", 17); dos_vid_puts(v, 6, 26, sel, "< axudp >", 30);
@@ -1805,6 +1821,7 @@ static void test_dos_ui_screen_flows() {
     /* 5. Settings (Peers Tab) */
     dos_render_mock_main(v);
     dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
+    dos_vid_shadow(v, 2, 4, 21, 72);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
     dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Interfaces  [5:Peers]  6:Rig  7:Print", 70);
     dos_vid_puts(v, 5, 5, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", 70);
@@ -1817,6 +1834,7 @@ static void test_dos_ui_screen_flows() {
     /* 6. Edit Peer Modal */
     dos_render_mock_main(v);
     dos_vid_box(v, 4, 10, 17, 60, bdr, fill, 1);
+    dos_vid_shadow(v, 4, 10, 17, 60);
     dos_vid_title(v, 4, 12, 20, bdr, "Edit Peer");
     dos_vid_puts(v, 6, 12, fill, "Peer ID        : ", 17); dos_vid_puts(v, 6, 29, sel, "remote0", 28);
     dos_vid_puts(v, 7, 12, fill, "Callsign       : ", 17); dos_vid_puts(v, 7, 29, inp, "R3MOT-7", 28);
@@ -1832,6 +1850,7 @@ static void test_dos_ui_screen_flows() {
     /* 7. Terminate Active Connection Modal */
     dos_render_mock_main(v);
     dos_vid_box(v, 4, 8, 16, 64, bdr, fill, 1);
+    dos_vid_shadow(v, 4, 8, 16, 64);
     dos_vid_title(v, 4, 10, 32, bdr, "Terminate Active Connection");
     dos_vid_puts(v, 6, 10, lhdr, "ID    Callsign    Port       State", 60);
     dos_vid_puts(v, 7, 10, sel,  "#1    W3TRM-1     axudp0     [CONNECTED]", 60);
@@ -1843,6 +1862,7 @@ static void test_dos_ui_screen_flows() {
     /* 8. Ban / Unban Callsign Modal */
     dos_render_mock_main(v);
     dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
+    dos_vid_shadow(v, 2, 3, 21, 74);
     dos_vid_title(v, 2, 5, 38, bdr, "Ban / Unban Callsign (banlist.cfg)");
     dos_vid_puts(v, 4, 5, fill, "Callsign: ", 10); dos_vid_puts(v, 4, 15, sel, "B4NTST", 12);
     dos_vid_puts(v, 5, 5, fill, "Lift At : ", 10); dos_vid_puts(v, 5, 15, inp, "permanent", 16);
@@ -1860,6 +1880,7 @@ static void test_dos_ui_screen_flows() {
     /* 9. Auto-Learned Peers 3-Way Exit Modal */
     dos_render_mock_main(v);
     dos_vid_box(v, 7, 6, 11, 68, bdr, fill, 1);
+    dos_vid_shadow(v, 7, 6, 11, 68);
     dos_vid_title(v, 7, 8, 24, bdr, "Auto-Learned Peers");
     dos_vid_puts(v, 9, 8, fill, "1 auto-learned peer(s) added during this session.", 60);
     dos_vid_puts(v, 10, 8, fill, "Save to config, discard, or review in Peers?", 60);
@@ -1872,6 +1893,7 @@ static void test_dos_ui_screen_flows() {
     /* 10. Theme Settings Modal */
     dos_render_mock_main(v);
     dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
+    dos_vid_shadow(v, 2, 3, 21, 74);
     dos_vid_title(v, 2, 5, 18, bdr, "Theme Settings");
     dos_vid_puts(v, 4, 5, fill, "Theme  : < dark               > (Built-in (not saved))", 68);
     dos_vid_puts(v, 5, 5, fill, "Editing built-in clones custom-dark or custom-light.", 68);
@@ -1890,8 +1912,8 @@ static void test_dos_ui_screen_flows() {
         }
     }
     dos_vid_hdiv(v, 19, 3, 74, bdr);
-    dos_vid_puts(v, 20, 5, fill, "Lt/Rt:Theme  Enter:Edit #RRGGBB  X:Del Custom  S/F2:Save", 68);
-    dos_vid_puts(v, 21, 5, bar,  "Enter:Edit  Lt/Rt:Theme  X:Del  S/F2:Save & Apply  Esc:Cancel", 68);
+    dos_vid_puts(v, 20, 5, fill, "Live preview active (unsaved). Press S/F2 to save or Esc to revert.", 68);
+    dos_vid_puts(v, 21, 5, bar,  "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", 68);
     assert(dos_vid_flush(v) > 0);
     dos_save_capture("theme", sim_vram);
 

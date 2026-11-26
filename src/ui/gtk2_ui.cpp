@@ -3323,18 +3323,25 @@ void apply_gtk_theme_recursive(GtkWidget* w, const ThemeConfig* t) {
     }
 }
 
-void apply_gtk_theme(GtkAppState* st) {
-    if (!st || !st->engine) return;
-    const node::NodeConfig cfg = st->engine->config();
-    const std::string eff = normalized_port_theme_name(cfg.theme_name, true);
+void apply_gtk_theme_for(GtkAppState* st,
+                         const std::string& theme_name,
+                         const std::vector<ThemeConfig>& custom_themes) {
+    if (!st) return;
+    const std::string eff = normalized_port_theme_name(theme_name, true);
     const ThemeConfig* ptr = nullptr;
     ThemeConfig resolved;
     if (theme_to_lower(eff) != "native") {
-        resolved = resolve_effective_theme(cfg.theme_name, cfg.themes, true, gtk_os_prefers_dark());
+        resolved = resolve_effective_theme(theme_name, custom_themes, true, gtk_os_prefers_dark());
         ptr = &resolved;
     }
     if (st->window) apply_gtk_theme_recursive(st->window, ptr);
     if (st->term_window) apply_gtk_theme_recursive(st->term_window, ptr);
+}
+
+void apply_gtk_theme(GtkAppState* st) {
+    if (!st || !st->engine) return;
+    const node::NodeConfig cfg = st->engine->config();
+    apply_gtk_theme_for(st, cfg.theme_name, cfg.themes);
 }
 
 void on_theme_clicked(GtkWidget*, gpointer user_data) {
@@ -3397,6 +3404,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(vbox), ed_h, FALSE, FALSE, 0);
 
     struct GtkThemeCtx {
+        GtkAppState* st;
         node::NodeConfig* draft;
         std::string* active;
         bool os_dark;
@@ -3409,7 +3417,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
         GtkWidget* dlg;
         std::vector<std::string> names;
         bool populating;
-    } ctx{&draft, &active, os_dark, cb_theme, btn_del, store, tv, e_hex, btn_apply_c, dlg, {}, false};
+    } ctx{st, &draft, &active, os_dark, cb_theme, btn_del, store, tv, e_hex, btn_apply_c, dlg, {}, false};
 
     auto refresh_rows = [&](GtkThemeCtx* c) {
         const ThemeConfig pal = resolve_effective_theme(*c->active, c->draft->themes, true, c->os_dark);
@@ -3508,6 +3516,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
                                    1, kThemeRoleKeys[i], 2, hx.c_str(), 3, hx.c_str(), -1);
             }
             gtk_widget_set_sensitive(c->btn_del, !is_builtin_theme_name(*c->active) ? TRUE : FALSE);
+            apply_gtk_theme_for(c->st, *c->active, c->draft->themes);
         }
     };
     g_signal_connect(cb_theme, "changed", G_CALLBACK(cb_combo_fn), &ctx);
@@ -3567,6 +3576,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
                                1, kThemeRoleKeys[i], 2, nhx.c_str(), 3, nhx.c_str(), -1);
         }
         gtk_widget_set_sensitive(c->btn_del, !is_builtin_theme_name(*c->active) ? TRUE : FALSE);
+        apply_gtk_theme_for(c->st, *c->active, c->draft->themes);
     };
     g_signal_connect(btn_apply_c, "clicked", G_CALLBACK(cb_apply_fn), &ctx);
 
@@ -3621,6 +3631,7 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
                                1, kThemeRoleKeys[i], 2, nhx.c_str(), 3, nhx.c_str(), -1);
         }
         gtk_widget_set_sensitive(c->btn_del, FALSE);
+        apply_gtk_theme_for(c->st, *c->active, c->draft->themes);
     };
     g_signal_connect(btn_del, "clicked", G_CALLBACK(cb_del_fn), &ctx);
 
@@ -3640,7 +3651,11 @@ void on_theme_clicked(GtkWidget*, gpointer user_data) {
             set_status_text(st, res.saved_to_disk
                                     ? ("Theme '" + active + "' saved & applied.")
                                     : ("Theme '" + active + "' applied (memory only)."));
+        } else {
+            apply_gtk_theme(st);
         }
+    } else {
+        apply_gtk_theme(st);
     }
 }
 
