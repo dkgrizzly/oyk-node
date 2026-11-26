@@ -797,6 +797,74 @@ static void refresh_gui() {
     }
 }
 
+#if defined(_WIN32) && !defined(OYK_WIN16)
+static int g_win_ui_test = 0;
+static char g_win_cap_dir[512] = "";
+static int g_win_wiz_step = 0;
+
+static void win_capture_hwnd_bmp(HWND hwnd, const char* tag) {
+    if (!g_win_ui_test || !g_win_cap_dir[0] || !hwnd || !tag || !tag[0]) return;
+    RECT rc;
+    if (!GetWindowRect(hwnd, &rc)) return;
+    int w = static_cast<int>(rc.right - rc.left);
+    int h = static_cast<int>(rc.bottom - rc.top);
+    if (w <= 0 || h <= 0) return;
+
+    /* Move cleanly into view inside the virtual Xvfb desktop before capturing */
+    SetWindowPos(hwnd, HWND_TOPMOST, 48, 48, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
+    MSG pm;
+    while (PeekMessage(&pm, NULL, WM_PAINT, WM_PAINT, PM_REMOVE)) {
+        TranslateMessage(&pm);
+        DispatchMessage(&pm);
+    }
+    Sleep(120);
+    if (!GetWindowRect(hwnd, &rc)) return;
+    w = static_cast<int>(rc.right - rc.left);
+    h = static_cast<int>(rc.bottom - rc.top);
+
+    HDC hdc_scr = GetDC(NULL);
+    if (!hdc_scr) return;
+    HDC hdc_mem = CreateCompatibleDC(hdc_scr);
+    BITMAPINFO bmi;
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = h;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    void* bits = NULL;
+    HBITMAP hbm = CreateDIBSection(hdc_scr, &bmi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (hdc_mem && hbm && bits) {
+        HGDIOBJ old = SelectObject(hdc_mem, hbm);
+        BitBlt(hdc_mem, 0, 0, w, h, hdc_scr, rc.left, rc.top, SRCCOPY);
+        SelectObject(hdc_mem, old);
+
+        DWORD stride = static_cast<DWORD>((w * 3 + 3) & ~3);
+        DWORD img_sz = stride * static_cast<DWORD>(h);
+        BITMAPFILEHEADER bfh;
+        memset(&bfh, 0, sizeof(bfh));
+        bfh.bfType = 0x4D42; /* "BM" */
+        bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        bfh.bfSize = bfh.bfOffBits + img_sz;
+
+        char path[600];
+        sprintf(path, "%s/win_%s.bmp", g_win_cap_dir, tag);
+        FILE* f = fopen(path, "wb");
+        if (f) {
+            fwrite(&bfh, 1, sizeof(bfh), f);
+            fwrite(&bmi.bmiHeader, 1, sizeof(BITMAPINFOHEADER), f);
+            fwrite(bits, 1, img_sz, f);
+            fclose(f);
+        }
+    }
+    if (hbm) DeleteObject(hbm);
+    if (hdc_mem) DeleteDC(hdc_mem);
+    ReleaseDC(NULL, hdc_scr);
+}
+#endif
+
 OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     static oyk_u32 s_ids[OYK_MAX_SESSIONS];
@@ -818,8 +886,21 @@ OYK_DLG_RET TerminateDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             if (s_count > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "terminate");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDOK) {
@@ -862,7 +943,20 @@ OYK_DLG_RET BanDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemText(hdlg, IDC_BAN_REASON, "Banned by sysop.");
             CheckDlgButton(hdlg, IDC_BAN_APPEAL, BST_CHECKED);
             fill_ban_listbox(GetDlgItem(hdlg, IDC_BAN_LIST));
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return TRUE;
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "ban");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_BAN_ADD) {
@@ -2037,8 +2131,21 @@ OYK_DLG_RET EditPeerDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             CheckDlgButton(hdlg, IDC_EP_IN, src.allow_inbound ? 1 : 0);
             CheckDlgButton(hdlg, IDC_EP_OUT, src.allow_outbound ? 1 : 0);
             SetDlgItemText(hdlg, IDC_EP_ERR, "");
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "edit_peer");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDOK) {
@@ -2123,8 +2230,21 @@ OYK_DLG_RET ExitPeersDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                     "Save them to configuration, discard them, or review in Peers?",
                     g_node.auto_learned_peer_count());
             SetDlgItemText(hdlg, IDC_XPR_MSG, msg_b);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "exit");
+                EndDialog(hdlg, IDC_XPR_DISCARD);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDOK || id == IDC_XPR_DISCARD || id == IDC_XPR_REVIEW || id == IDCANCEL) {
@@ -2339,8 +2459,29 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             g_add_if_ok = 0;
             SendMessage(hlist, LB_SETCURSEL, 0, 0);
             sync_win_wiz_ui(hdlg);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) {
+                g_win_wiz_step = 0;
+                SetTimer(hdlg, 99, 180, NULL);
+            }
+#endif
             return FALSE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                if (g_win_wiz_step < 2) {
+                    ++g_win_wiz_step;
+                    PostMessage(hdlg, WM_COMMAND, IDC_AIF_NEXT, 0);
+                } else {
+                    KillTimer(hdlg, 99);
+                    win_capture_hwnd_bmp(hdlg, "add_iface");
+                    EndDialog(hdlg, IDCANCEL);
+                }
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             WORD ntf = OYK_CMD_NOTIFY(wp, lp);
@@ -2529,8 +2670,21 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             }
             sync_win_edit_iface_ui(hdlg, g_edit_if_drv);
             SetFocus(GetDlgItem(hdlg, IDC_EIF_ID));
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
             return FALSE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "edit_iface");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             WORD ntf = OYK_CMD_NOTIFY(wp, lp);
@@ -2916,8 +3070,32 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             populate_settings_peers(hdlg);
             switch_settings_tab(hdlg, (g_settings_initial_tab >= 0 && g_settings_initial_tab < 7)
                                           ? g_settings_initial_tab : 0);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) {
+                SetTimer(hdlg, 99, 200, NULL);
+            }
+#endif
             return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "settings");
+                switch_settings_tab(hdlg, 3);
+                SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_SETCURSEL, 0, 0);
+                SendMessage(hdlg, WM_COMMAND, IDC_SET_IF_ADD, 0);
+                SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_SETCURSEL, 0, 0);
+                SendMessage(hdlg, WM_COMMAND, IDC_SET_IF_EDIT, 0);
+                switch_settings_tab(hdlg, 4);
+                SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_SETCURSEL, 0, 0);
+                win_capture_hwnd_bmp(hdlg, "peers");
+                SendMessage(hdlg, WM_COMMAND, IDC_SET_PEER_EDIT, 0);
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
             if (id == IDC_SET_TAB_NODE)  { switch_settings_tab(hdlg, 0); return TRUE; }
@@ -3282,6 +3460,22 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_node.tick();
             } else if (wp == 2) {
                 refresh_gui();
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            } else if (wp == 99 && g_win_ui_test) {
+                KillTimer(hwnd, 99);
+                refresh_gui();
+                win_capture_hwnd_bmp(hwnd, "main");
+                g_settings_initial_tab = 0;
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                refresh_gui();
+                if (g_node.total_active_connections() > 0) {
+                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINATE), hwnd, (DLGPROC)TerminateDlgProc);
+                    refresh_gui();
+                }
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
+                refresh_gui();
+                PostMessage(hwnd, WM_CLOSE, 0, 0);
+#endif
             }
             return 0;
         case WM_COMMAND: {
@@ -3359,6 +3553,12 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return 0;
             }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+#endif
             char msg_buf[128];
             int active = g_node.total_active_connections();
             if (active > 0) {
@@ -3779,6 +3979,31 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
         ShowWindow(g_hwnd_main, nshow);
         UpdateWindow(g_hwnd_main);
     }
+
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    {
+        const char* tm = getenv("OYK_UI_TEST_MODE");
+        const char* cd = getenv("OYK_UI_CAPTURE_DIR");
+        if (tm && strcmp(tm, "1") == 0) {
+            g_win_ui_test = 1;
+            if (cd && cd[0]) {
+                strncpy(g_win_cap_dir, cd, sizeof(g_win_cap_dir) - 1);
+                g_win_cap_dir[sizeof(g_win_cap_dir) - 1] = '\0';
+            }
+            OykFrame sabm;
+            memset(&sabm, 0, sizeof(sabm));
+            sabm.dst = g_node.config().callsign;
+            oyk_parse_callsign("W3TRM-1", &sabm.src);
+            sabm.is_command = 1;
+            sabm.control = 0x3FU;
+            oyk_u32 peer_ip = 0;
+            oyk_parse_ipv4("127.0.0.5", &peer_ip);
+            g_node.on_rx_frame(0, &sabm, peer_ip, 10093U, 0);
+            refresh_gui();
+            SetTimer(g_hwnd_main, 99, 300, NULL);
+        }
+    }
+#endif
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0) > 0) {

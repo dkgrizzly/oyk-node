@@ -65,3 +65,8 @@ Example in a forked C++ file:
 - **Permitted platform exceptions**:
   - **File dialogs**: Windows and GTK builds may use their respective standard/common OS file selection dialogs, while text-mode builds (ncurses, MS-DOS, TinyTMUX VT100) use the built-in single-pane Norton/Midnight Commander-style file selector.
   - **Mobile platforms**: Future Android or iOS ports may adapt layouts and navigation patterns where required to comply with Android (Material) or iOS (Human Interface) design guidelines.
+
+## 6. UI Gallery Maintenance
+
+- **Keep screenshots synchronized with UI tests**: Whenever UI flow unit tests, dialogs, wizards, or operator screens are added or modified across any port (`tests/test_ncurses_ui.py`, `tests/test_portable.cpp`, `tests/test_tinytmux.cpp`, `src/ui/gtk2_ui.cpp`, or `ports/windows/win_main.cpp`), update the corresponding UI capture hooks and regenerate `docs/user/ui-gallery.md` and `docs/user/images/ui-gallery/*.png` before committing.
+- **Regeneration command**: Run `./scripts/generate_ui_gallery.sh` (using `Xvfb` for X11 GTK+ 2.0 and Wine for Windows captures) and visually inspect representative PNG outputs across all five ports.

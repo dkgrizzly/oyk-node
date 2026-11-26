@@ -2,12 +2,17 @@
 // Copyright (C) 2026 KR4OYK - David Kuder
 
 #include "oyk/ui/gtk2_ui.hpp"
+#include "oyk/ax25/crc.hpp"
 #include "oyk/protocol/yapp.hpp"
 
 #include <gtk/gtk.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <iomanip>
 #include <memory>
@@ -19,6 +24,77 @@
 namespace oyk::ui {
 
 namespace {
+
+struct GtkUiTestCtrl {
+    bool enabled = false;
+    std::string cap_dir;
+    int main_step = 0;
+};
+static GtkUiTestCtrl g_gtk_test;
+
+void gtk_capture_window_png(GtkWidget* widget, const std::string& tag) {
+    if (!g_gtk_test.enabled || g_gtk_test.cap_dir.empty() || !widget || !tag[0]) return;
+    while (gtk_events_pending()) gtk_main_iteration();
+    if (widget->window) {
+        gdk_window_process_all_updates();
+        while (gtk_events_pending()) gtk_main_iteration();
+        gint w = 0, h = 0;
+        gdk_drawable_get_size(GDK_DRAWABLE(widget->window), &w, &h);
+        if (w > 0 && h > 0) {
+            GdkPixbuf* pb = gdk_pixbuf_get_from_drawable(
+                nullptr, GDK_DRAWABLE(widget->window),
+                gtk_widget_get_colormap(widget), 0, 0, 0, 0, w, h);
+            if (pb) {
+                const std::string out = g_gtk_test.cap_dir + "/gtk_" + tag + ".png";
+                gdk_pixbuf_save(pb, out.c_str(), "png", nullptr, nullptr);
+                g_object_unref(pb);
+            }
+        }
+    }
+}
+
+struct GtkSimpleCapCtx {
+    GtkWidget* dlg;
+    std::string tag;
+    gint resp;
+    int ticks;
+};
+
+gboolean on_gtk_simple_dlg_cap(gpointer data) {
+    auto* c = static_cast<GtkSimpleCapCtx*>(data);
+    if (++c->ticks == 1) {
+        gtk_capture_window_png(c->dlg, c->tag);
+        gtk_dialog_response(GTK_DIALOG(c->dlg), c->resp);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+void gtk_inject_demo_sabm(node::NodeEngine* engine) {
+    const auto cfg = engine->config();
+    uint16_t udp_port = 0;
+    for (const auto& ic : cfg.interfaces) {
+        if (ic.type == "axudp") {
+            auto it = ic.params.find("bind_port");
+            if (it != ic.params.end()) udp_port = static_cast<uint16_t>(std::atoi(it->second.c_str()));
+            break;
+        }
+    }
+    if (udp_port == 0) return;
+    auto sabm = ax25::Frame::make_sabm(cfg.callsign, ax25::Callsign("W3TRM", 1));
+    auto raw = sabm.encode();
+    ax25::append_fcs(raw);
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd >= 0) {
+        sockaddr_in dst{};
+        dst.sin_family = AF_INET;
+        dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        dst.sin_port = htons(udp_port);
+        (void)sendto(fd, raw.data(), raw.size(), 0,
+                     reinterpret_cast<const sockaddr*>(&dst), sizeof(dst));
+        close(fd);
+    }
+}
 
 std::string format_hms(std::chrono::system_clock::time_point tp) {
     std::time_t tt = std::chrono::system_clock::to_time_t(tp);
@@ -628,6 +704,8 @@ void on_terminate_clicked(GtkWidget*, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(vbox), combo, FALSE, FALSE, 6);
     gtk_widget_show_all(dlg);
 
+    GtkSimpleCapCtx cap_ctx{dlg, "terminate", GTK_RESPONSE_CANCEL, 0};
+    guint cap_tid = g_gtk_test.enabled ? g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx) : 0;
     if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         gint idx = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
         if (idx >= 0 && static_cast<std::size_t>(idx) < ids.size()) {
@@ -636,6 +714,7 @@ void on_terminate_clicked(GtkWidget*, gpointer user_data) {
             set_status_text(st, msg);
         }
     }
+    if (cap_tid && cap_ctx.ticks == 0) g_source_remove(cap_tid);
     gtk_widget_destroy(dlg);
     refresh_ui(st);
 }
@@ -733,6 +812,8 @@ void on_ban_clicked(GtkWidget*, gpointer user_data) {
     populate_ban_dialog_store(st->engine, ban_store);
     gtk_widget_show_all(dlg);
 
+    GtkSimpleCapCtx cap_ctx{dlg, "ban", GTK_RESPONSE_CLOSE, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
     while (true) {
         gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
         if (resp == 1) {
@@ -1507,6 +1588,8 @@ static void run_gtk_edit_peer_dialog(GtkSettingsCtx* ctx, int edit_idx) {
     gtk_widget_show_all(dlg);
     gtk_widget_hide(lbl_err);
 
+    GtkSimpleCapCtx cap_ctx{dlg, "edit_peer", GTK_RESPONSE_CANCEL, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
     while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         std::string call_s = gtk_entry_get_text(GTK_ENTRY(e_call));
         auto parsed = ax25::Callsign::parse(call_s);
@@ -2038,6 +2121,21 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
     set_err("");
     sync_wizard_ui();
 
+    struct WizCapCtx { GtkWidget* dlg; int ticks; } wiz_cap{dlg, 0};
+    if (g_gtk_test.enabled) {
+        g_timeout_add(140, +[](gpointer p) -> gboolean {
+            auto* c = static_cast<WizCapCtx*>(p);
+            ++c->ticks;
+            if (c->ticks <= 2) {
+                gtk_dialog_response(GTK_DIALOG(c->dlg), WIZ_RESP_NEXT);
+                return TRUE;
+            }
+            gtk_capture_window_png(c->dlg, "add_iface");
+            gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
+            return FALSE;
+        }, &wiz_cap);
+    }
+
     while (true) {
         gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
         if (resp == GTK_RESPONSE_CANCEL || resp == GTK_RESPONSE_DELETE_EVENT) {
@@ -2391,6 +2489,8 @@ void run_gtk_edit_iface_dialog(GtkSettingsCtx* ctx, int edit_idx) {
                      }),
                      &ew);
 
+    GtkSimpleCapCtx cap_ctx{dlg, "edit_iface", GTK_RESPONSE_CANCEL, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
     while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         std::string id = gtk_entry_get_text(GTK_ENTRY(e_id));
         if (id.empty()) {
@@ -2830,6 +2930,59 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
         gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), initial_page);
     }
 
+    struct GtkSettingsTestCtx {
+        GtkWidget* dlg;
+        GtkWidget* nb;
+        GtkWidget* btn_add_if;
+        GtkWidget* btn_edit_if;
+        GtkWidget* if_tree;
+        GtkWidget* btn_edit_peer;
+        GtkWidget* peer_tree;
+        int phase;
+    } st_test{dlg, nb, btn_add_if, btn_edit_if, if_tree, btn_edit_peer, peer_tree, 0};
+    if (g_gtk_test.enabled) {
+        g_timeout_add(160, +[](gpointer p) -> gboolean {
+            auto* c = static_cast<GtkSettingsTestCtx*>(p);
+            auto select_first = [](GtkWidget* tv) {
+                GtkTreePath* path = gtk_tree_path_new_first();
+                gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(tv)), path);
+                gtk_tree_path_free(path);
+            };
+            if (c->phase == 0) {
+                gtk_capture_window_png(c->dlg, "settings");
+                gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 3);
+                c->phase = 1;
+                return TRUE;
+            }
+            if (c->phase == 1) {
+                c->phase = 2;
+                gtk_button_clicked(GTK_BUTTON(c->btn_add_if));
+                return TRUE;
+            }
+            if (c->phase == 2) {
+                c->phase = 3;
+                select_first(c->if_tree);
+                gtk_button_clicked(GTK_BUTTON(c->btn_edit_if));
+                return TRUE;
+            }
+            if (c->phase == 3) {
+                gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 4);
+                select_first(c->peer_tree);
+                c->phase = 4;
+                return TRUE;
+            }
+            if (c->phase == 4) {
+                gtk_capture_window_png(c->dlg, "peers");
+                c->phase = 5;
+                select_first(c->peer_tree);
+                gtk_button_clicked(GTK_BUTTON(c->btn_edit_peer));
+                return TRUE;
+            }
+            gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
+            return FALSE;
+        }, &st_test);
+    }
+
     while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         node::NodeConfig next = draft;
 
@@ -3034,6 +3187,8 @@ bool confirm_and_exit(GtkAppState* st) {
         gtk_misc_set_padding(GTK_MISC(lbl), 14, 12);
         gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
         gtk_widget_show_all(dlg);
+        GtkSimpleCapCtx cap_ctx{dlg, "exit", RESP_DISCARD, 0};
+        if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
         gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
         gtk_widget_destroy(dlg);
         if (resp == RESP_REVIEW) {
@@ -3258,6 +3413,40 @@ bool Gtk2UI::run(int& argc, char**& argv) {
 
     if (have_geom) {
         gtk_window_parse_geometry(GTK_WINDOW(st.window), initial_geometry_.c_str());
+    }
+
+    const char* tmode = std::getenv("OYK_UI_TEST_MODE");
+    const char* cdir = std::getenv("OYK_UI_CAPTURE_DIR");
+    g_gtk_test.enabled = (tmode && std::string(tmode) == "1");
+    g_gtk_test.cap_dir = cdir ? cdir : "";
+    g_gtk_test.main_step = 0;
+    if (g_gtk_test.enabled) {
+        g_timeout_add(250, +[](gpointer p) -> gboolean {
+            auto* app = static_cast<GtkAppState*>(p);
+            switch (g_gtk_test.main_step++) {
+                case 0:
+                    gtk_inject_demo_sabm(app->engine);
+                    return TRUE;
+                case 1:
+                    refresh_ui(app);
+                    gtk_capture_window_png(app->window, "main");
+                    return TRUE;
+                case 2:
+                    on_settings_clicked(nullptr, app);
+                    return TRUE;
+                case 3:
+                    on_terminate_clicked(nullptr, app);
+                    return TRUE;
+                case 4:
+                    on_ban_clicked(nullptr, app);
+                    return TRUE;
+                case 5:
+                    on_exit_clicked(nullptr, app);
+                    return FALSE;
+                default:
+                    return FALSE;
+            }
+        }, &st);
     }
 
     gtk_widget_show_all(st.window);

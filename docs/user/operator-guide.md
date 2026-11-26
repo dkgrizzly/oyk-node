@@ -5,7 +5,7 @@
 
 ## Local Sysop Interface
 
-All local operator consoles — **ncurses** (`oyk-node`), **X11 GTK+ 2.0** (`oyk-node-gtk`), **MS-DOS** (`oyknode.exe`), and **Windows 16/32/64-bit** — share the same layout:
+All local operator consoles — **ncurses** (`oyk-node`), **X11 GTK+ 2.0** (`oyk-node-gtk`), **MS-DOS** (`oyknode.exe`), **Teensy 4.1 TinyTMUX**, and **Windows 16/32/64-bit** — share the same layout (see the [UI Gallery](ui-gallery.md) for side-by-side screenshots across all ports):
 
 1. **Top Menu Bar (`Node`)**: Consistent across all four platforms (open via `F10` / `M` / `Enter` in ncurses and MS-DOS, or click `Node` in GTK+ 2.0 and Windows):
    - **Allow Incoming Connections** (`A`): Allow new incoming connections across all interfaces.

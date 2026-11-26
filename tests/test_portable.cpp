@@ -1627,6 +1627,188 @@ static void test_portable_same_interface_policy() {
     printf("[PASS] test_portable_same_interface_policy\n");
 }
 
+#ifndef __DOS__
+static void dos_save_capture(const char* name, const oyk_u16* vram) {
+    const char* dir = getenv("OYK_UI_CAPTURE_DIR");
+    if (!dir || !dir[0]) return;
+    char path[512];
+    sprintf(path, "%s/dos_%s.dosbuf", dir, name);
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        unsigned char raw[OYK_DOS_VID_CELLS * 2];
+        for (int i = 0; i < OYK_DOS_VID_CELLS; ++i) {
+            raw[i * 2]     = static_cast<unsigned char>(vram[i] & 0xFFU);
+            raw[i * 2 + 1] = static_cast<unsigned char>((vram[i] >> 8) & 0xFFU);
+        }
+        fwrite(raw, 1, sizeof(raw), f);
+        fclose(f);
+    }
+}
+
+static void dos_render_mock_main(OykDosVideo* v) {
+    const oyk_u8 bg = 0x17U, hdr = 0x1FU, mbar = 0x70U, ok = 0x1AU, lhdr = dos_vid_list_hdr_attr(v);
+    dos_vid_clear(v, bg);
+    dos_vid_hline(v, 0, 0, 80, mbar, ' ');
+    dos_vid_puts(v, 0, 1, mbar, " [Node]  A:Allow  D:Deny  L:Term  F:Files  R:Rig  S:Set  P:Peers  Q:Exit", 78);
+    dos_vid_puts(v, 1, 1, hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", 56);
+    dos_vid_puts(v, 1, 61, ok, "[INCOMING: ALLOW]", 18);
+
+    dos_vid_box(v, 2, 0, 6, 48, hdr, bg, 1);
+    dos_vid_title(v, 2, 2, 24, hdr, "Radio Interfaces");
+    dos_vid_puts(v, 3, 1, lhdr, "Port     Type      Conn Status              RX/TX", 46);
+    dos_vid_puts(v, 4, 1, bg,   "axudp0   axudp        1 UP 0.0.0.0:10093    12/8", 46);
+    dos_vid_puts(v, 5, 1, bg,   "kiss0    kiss-ser     0 UP ser0:9600         0/0", 46);
+
+    dos_vid_box(v, 2, 48, 6, 32, hdr, bg, 1);
+    dos_vid_title(v, 2, 50, 26, hdr, "Last 5 New Callsigns Heard");
+    dos_vid_puts(v, 3, 49, lhdr, "#  Callsign  Port   Heard", 30);
+    dos_vid_puts(v, 4, 49, bg,   "1  W3TRM-1   axudp0 20:40:01", 30);
+
+    dos_vid_box(v, 8, 0, 7, 80, hdr, bg, 1);
+    dos_vid_title(v, 8, 2, 34, hdr, "Active Connections (1) | Banned: 0");
+    dos_vid_puts(v, 9, 1, lhdr, "ID   Callsign  Port     Dir      State      Role / Bridge", 78);
+    dos_vid_puts(v, 10, 1, bg,  "#1   W3TRM-1   axudp0   INBOUND  CONNECTED  NODE SHELL", 78);
+
+    dos_vid_box(v, 15, 0, 9, 80, hdr, bg, 1);
+    dos_vid_title(v, 15, 2, 20, hdr, "Node Activity Log");
+    dos_vid_puts(v, 16, 2, bg, "[20:40:01] [INFO] Interface axudp0 (axudp) started: UP 0.0.0.0:10093", 76);
+    dos_vid_puts(v, 17, 2, bg, "[20:40:02] [INFO] Inbound connection #1 from W3TRM-1 on axudp0", 76);
+
+    dos_vid_hline(v, 24, 0, 80, mbar, ' ');
+    dos_vid_puts(v, 24, 1, mbar, "Ready. Press M/F10 for Node menu.", 78);
+}
+
+static void test_dos_ui_screen_flows() {
+    oyk_u16* sim_vram = new oyk_u16[OYK_DOS_VID_CELLS];
+    OykDosVideo* v = new OykDosVideo();
+    dos_vid_init_sim(v, 1, sim_vram);
+    const oyk_u8 lhdr = dos_vid_list_hdr_attr(v);
+    assert(lhdr == 0x8FU);
+    const oyk_u8 bdr = 0x1FU, fill = 0x17U, sel = 0x30U, inp = 0x70U, bar = 0x70U;
+
+    /* 1. Main screen */
+    dos_render_mock_main(v);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("main", sim_vram);
+
+    /* 2. Settings (Node tab) */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
+    dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
+    dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Interfaces  5:Peers  6:Rig  7:Print", 70);
+    dos_vid_puts(v, 5, 7, fill, "Callsign       : ", 17); dos_vid_puts(v, 5, 24, sel, "KR4OYK-7", 32);
+    dos_vid_puts(v, 6, 7, fill, "Alias          : ", 17); dos_vid_puts(v, 6, 24, inp, "OYKNOD", 32);
+    dos_vid_puts(v, 7, 7, fill, "Learn Policy   : < accept >", 40);
+    dos_vid_puts(v, 8, 7, fill, "Interfaces File: interfaces.cfg", 40);
+    dos_vid_puts(v, 9, 7, fill, "Peers File     : peers.cfg", 40);
+    dos_vid_hdiv(v, 20, 4, 72, bdr);
+    dos_vid_puts(v, 21, 6, bar, "[ S/F2 Save ]  [ Esc Cancel ]  1-7:Tab  Enter:Edit", 66);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("settings", sim_vram);
+
+    /* 3. Add Interface Wizard (Step 3/4 showing Same-Iface Fwd) */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
+    dos_vid_title(v, 3, 8, 20, bdr, "Add Interface");
+    dos_vid_title(v, 3, 56, 16, bdr, "[######..] 3/4");
+    dos_vid_puts(v, 4, 8, bdr,  "Configure AXUDP bind host/DMR, port, netmask, and policy:", 62);
+    dos_vid_puts(v, 5, 9, fill, "Interface    : axudp1 (axudp)", 50);
+    dos_vid_puts(v, 7, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 7, 26, sel, "0.0.0.0", 30);
+    dos_vid_puts(v, 8, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 8, 26, inp, "10093", 30);
+    dos_vid_puts(v, 9, 9, fill, "Netmask (opt)  : ", 17); dos_vid_puts(v, 9, 26, inp, "255.0.0.0", 30);
+    dos_vid_puts(v, 11, 9, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, 12, 9, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_puts(v, 13, 9, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_hdiv(v, 19, 6, 68, bdr);
+    dos_vid_puts(v, 20, 8, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("add_iface", sim_vram);
+
+    /* 4. Edit Interface Single View */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
+    dos_vid_title(v, 3, 8, 20, bdr, "Edit Interface");
+    dos_vid_puts(v, 4, 8, bdr,  "Edit all settings for existing interface below:", 60);
+    dos_vid_puts(v, 5, 9, fill, "Driver         : axudp (read-only)", 50);
+    dos_vid_puts(v, 6, 9, fill, "Interface ID   : ", 17); dos_vid_puts(v, 6, 26, sel, "axudp0", 30);
+    dos_vid_puts(v, 8, 9, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 8, 26, inp, "0.0.0.0", 30);
+    dos_vid_puts(v, 9, 9, fill, "UDP Port       : ", 17); dos_vid_puts(v, 9, 26, inp, "10093", 30);
+    dos_vid_puts(v, 12, 9, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, 13, 9, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_puts(v, 14, 9, fill, "Same-Iface Fwd : [OFF]", 30);
+    dos_vid_hdiv(v, 19, 6, 68, bdr);
+    dos_vid_puts(v, 20, 8, bar, "[  Save  ]  [ Cancel ]", 30);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("edit_iface", sim_vram);
+
+    /* 5. Settings (Peers Tab) */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
+    dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
+    dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Interfaces  [5:Peers]  6:Rig  7:Print", 70);
+    dos_vid_puts(v, 5, 5, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", 70);
+    dos_vid_puts(v, 6, 5, sel,  "remote0   R3MOT-7    axudp0  12.34.56.78:10093 ON/ON ", 70);
+    dos_vid_hdiv(v, 20, 4, 72, bdr);
+    dos_vid_puts(v, 21, 6, bar, "A:Add  E/Enter:Edit  K:Del  S/F2:Save  Esc:Close", 66);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("peers", sim_vram);
+
+    /* 6. Edit Peer Modal */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 4, 10, 17, 60, bdr, fill, 1);
+    dos_vid_title(v, 4, 12, 20, bdr, "Edit Peer");
+    dos_vid_puts(v, 6, 12, fill, "Peer ID        : ", 17); dos_vid_puts(v, 6, 29, sel, "remote0", 28);
+    dos_vid_puts(v, 7, 12, fill, "Callsign       : ", 17); dos_vid_puts(v, 7, 29, inp, "R3MOT-7", 28);
+    dos_vid_puts(v, 9, 12, fill, "Interface      : < axudp0 >", 38);
+    dos_vid_puts(v, 10, 12, fill, "Host / DMR ID  : ", 17); dos_vid_puts(v, 10, 29, inp, "12.34.56.78", 28);
+    dos_vid_puts(v, 12, 12, fill, "Allow Inbound  : [ON]", 30);
+    dos_vid_puts(v, 13, 12, fill, "Allow Outbound : [ON]", 30);
+    dos_vid_hdiv(v, 18, 10, 60, bdr);
+    dos_vid_puts(v, 19, 12, bar, "[  Save  ]  [ Cancel ]", 30);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("edit_peer", sim_vram);
+
+    /* 7. Terminate Connection Modal */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 6, 12, 12, 56, bdr, fill, 1);
+    dos_vid_title(v, 6, 14, 24, bdr, "Terminate Connection");
+    dos_vid_puts(v, 8, 13, lhdr, "ID   Callsign   Port     Dir      State", 54);
+    dos_vid_puts(v, 9, 13, sel,  "#1   W3TRM-1    axudp0   INBOUND  CONNECTED", 54);
+    dos_vid_hdiv(v, 15, 12, 56, bdr);
+    dos_vid_puts(v, 16, 14, bar, "[ Terminate ]  [ Cancel ]", 34);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("terminate", sim_vram);
+
+    /* 8. Ban / Unban Callsign Modal */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 5, 10, 15, 60, bdr, fill, 1);
+    dos_vid_title(v, 5, 12, 26, bdr, "Ban / Unban Callsign");
+    dos_vid_puts(v, 7, 12, fill, "Callsign : ", 11); dos_vid_puts(v, 7, 23, sel, "B4NTST", 16);
+    dos_vid_puts(v, 8, 12, fill, "Action   : [H]ard  [S]oft  [U]nban", 40);
+    dos_vid_puts(v, 9, 12, fill, "Reason   : Sysop ban", 40);
+    dos_vid_hdiv(v, 17, 10, 60, bdr);
+    dos_vid_puts(v, 18, 12, bar, "Enter:Ban/Unban  Esc:Cancel", 40);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("ban", sim_vram);
+
+    /* 9. Auto-Learned Peers 3-Way Exit Modal */
+    dos_render_mock_main(v);
+    dos_vid_box(v, 7, 6, 11, 68, bdr, fill, 1);
+    dos_vid_title(v, 7, 8, 24, bdr, "Auto-Learned Peers");
+    dos_vid_puts(v, 9, 8, fill, "1 auto-learned peer(s) added during this session.", 60);
+    dos_vid_puts(v, 10, 8, fill, "Save to config, discard, or review in Peers?", 60);
+    dos_vid_hdiv(v, 15, 6, 68, bdr);
+    dos_vid_puts(v, 16, 8, sel, "[ Save & Exit ]", 15);
+    dos_vid_puts(v, 16, 25, bar, "[ Discard ]  [ Review Peers ]  [ Cancel ]", 42);
+    assert(dos_vid_flush(v) > 0);
+    dos_save_capture("exit", sim_vram);
+
+    delete v;
+    delete[] sim_vram;
+    printf("[PASS] test_dos_ui_screen_flows\n");
+}
+#endif
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1642,6 +1824,9 @@ int oyk_run_portable_tests() {
     test_portable_iface_directions_netmask_and_dmr();
     test_portable_config_include_storage_modes();
     test_portable_same_interface_policy();
+#ifndef __DOS__
+    test_dos_ui_screen_flows();
+#endif
     return 0;
 }
 
