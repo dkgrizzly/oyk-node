@@ -236,9 +236,13 @@ void NcursesUI::run() {
             case 'R':
                 modal_rig_control();
                 break;
+            case 'p':
+            case 'P':
+                modal_settings(4);
+                break;
             case 's':
             case 'S':
-                modal_settings();
+                modal_settings(0);
                 break;
             case 'q':
             case 'Q':
@@ -530,24 +534,25 @@ void NcursesUI::draw_log_pane(const node::NodeSnapshot& snap, int y, int x, int 
 }
 
 void NcursesUI::open_node_menu(bool& should_exit) {
-    static const char* ITEMS[9] = {
+    static const char* ITEMS[10] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
         " [F] Manage Files Area...       ",
         " [R] Radio Control...           ",
         " [S] Settings...                ",
+        " [P] Peers...                   ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
     // Row offsets inside menu window (with separators after Deny and Ban)
-    static const int ITEM_ROWS[9] = { 1, 2, 4, 5, 6, 7, 8, 9, 11 };
+    static const int ITEM_ROWS[10] = { 1, 2, 4, 5, 6, 7, 8, 9, 10, 12 };
 
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     const int w = std::min(36, cols - 2);
-    const int h = 13;
+    const int h = 14;
     if (rows < h + 2 || w < 24) return;
 
     WINDOW* win = newwin(h, w, 1, 1);
@@ -563,9 +568,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         werase(win);
         box(win, 0, 0);
         mvwhline(win, 3, 1, ACS_HLINE, w - 2);
-        mvwhline(win, 10, 1, ACS_HLINE, w - 2);
+        mvwhline(win, 11, 1, ACS_HLINE, w - 2);
 
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < 10; ++i) {
             if (i == sel) wattron(win, A_REVERSE | A_BOLD);
             mvwaddnstr(win, ITEM_ROWS[i], 1, clip(ITEMS[i], w - 2).c_str(), w - 2);
             if (i == sel) wattroff(win, A_REVERSE | A_BOLD);
@@ -576,9 +581,9 @@ void NcursesUI::open_node_menu(bool& should_exit) {
         if (ch == ERR) continue;
         if (ch == 27 || ch == KEY_F(10)) break;
         if (ch == KEY_UP) {
-            sel = (sel + 8) % 9;
+            sel = (sel + 9) % 10;
         } else if (ch == KEY_DOWN) {
-            sel = (sel + 1) % 9;
+            sel = (sel + 1) % 10;
         } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
             chosen = sel;
         } else if (ch == 'a' || ch == 'A') {
@@ -593,12 +598,14 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             chosen = 4;
         } else if (ch == 's' || ch == 'S') {
             chosen = 5;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'p' || ch == 'P') {
             chosen = 6;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 7;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 8;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 9;
         }
     }
 
@@ -623,15 +630,18 @@ void NcursesUI::open_node_menu(bool& should_exit) {
             modal_rig_control();
             break;
         case 5:
-            modal_settings();
+            modal_settings(0);
             break;
         case 6:
-            modal_terminate_connection();
+            modal_settings(4);
             break;
         case 7:
-            modal_ban_callsign();
+            modal_terminate_connection();
             break;
         case 8:
+            modal_ban_callsign();
+            break;
+        case 9:
             if (modal_confirm_exit()) {
                 should_exit = true;
             }
@@ -1939,7 +1949,7 @@ void NcursesUI::modal_rig_control() {
     delwin(win);
 }
 
-void NcursesUI::modal_settings() {
+void NcursesUI::modal_settings(int initial_tab) {
     node::NodeConfig draft = engine_.config();
 
     int rows = 0, cols = 0;
@@ -2031,14 +2041,17 @@ void NcursesUI::modal_settings() {
         return ic.description;
     };
 
-    // Five logical tabs matching GTK/Windows/DOS: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig
-    static const char* TAB_NAMES[6] = { "1:Node", "2:BBS", "3:CHAT", "4:Interfaces", "5:Rig", "6:Printer" };
-    static const char* NODE_LABELS[5] = {
+    static const char* TAB_NAMES[7] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
+    };
+    static const char* NODE_LABELS[7] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
         "Info Message",
-        "Allow Incoming (Default)"
+        "Allow Incoming (Default)",
+        "Learned Peer Policy",
+        "New User Welcome"
     };
     static const char* BBS_LABELS[9] = {
         "Enable Packet BBS",
@@ -2077,10 +2090,11 @@ void NcursesUI::modal_settings() {
     };
 
     auto tab_item_count = [&](int t) -> int {
-        if (t == 0) return 5;
+        if (t == 0) return 7;
         if (t == 1) return 9;
         if (t == 2) return 6;
         if (t == 3) return static_cast<int>(draft.interfaces.size());
+        if (t == 4) return static_cast<int>(draft.peers.size());
         return 6;
     };
 
@@ -2088,8 +2102,8 @@ void NcursesUI::modal_settings() {
         if (t == 0) return NODE_LABELS[idx];
         if (t == 1) return BBS_LABELS[idx];
         if (t == 2) return CHAT_LABELS[idx];
-        if (t == 4) return RIG_LABELS[idx];
-        if (t == 5) return PRN_LABELS[idx];
+        if (t == 5) return RIG_LABELS[idx];
+        if (t == 6) return PRN_LABELS[idx];
         return "";
     };
 
@@ -2101,6 +2115,8 @@ void NcursesUI::modal_settings() {
                 case 2: return draft.welcome_text;
                 case 3: return draft.info_text;
                 case 4: return draft.accept_incoming_default ? "[ON]" : "[OFF]";
+                case 5: return node::learned_peer_policy_to_string(draft.learned_peer_policy);
+                case 6: return draft.new_user_welcome.empty() ? "(use default)" : draft.new_user_welcome;
                 default: return "";
             }
         }
@@ -2131,7 +2147,7 @@ void NcursesUI::modal_settings() {
                 default: return "";
             }
         }
-        if (t == 4) {
+        if (t == 5) {
             switch (idx) {
                 case 0: return draft.rig.enabled ? "[ON]" : "[OFF]";
                 case 1: return radio::rig_protocol_to_string(draft.rig.protocol);
@@ -2142,7 +2158,7 @@ void NcursesUI::modal_settings() {
                 default: return "";
             }
         }
-        if (t == 5) {
+        if (t == 6) {
             switch (idx) {
                 case 0: return draft.logging.printer.enabled ? "[ON]" : "[OFF]";
                 case 1: return draft.logging.printer.device.empty() ? "(none)" : draft.logging.printer.device;
@@ -2160,9 +2176,10 @@ void NcursesUI::modal_settings() {
         return "";
     };
 
-    int tab = 0;
-    int sel[6] = { 0, 0, 0, 0, 0, 0 };
+    int tab = (initial_tab >= 0 && initial_tab < 7) ? initial_tab : 0;
+    int sel[7] = { 0, 0, 0, 0, 0, 0, 0 };
     int if_scroll = 0;
+    int peer_scroll = 0;
     const int content_h = std::max(1, h - 8);
     std::string feedback = "Config: " + (draft.source_path.empty() ? std::string("./node.cfg") : draft.source_path);
 
@@ -2176,15 +2193,19 @@ void NcursesUI::modal_settings() {
             int list_h = std::max(1, content_h - 1);
             if (sel[3] < if_scroll) if_scroll = sel[3];
             if (sel[3] >= if_scroll + list_h) if_scroll = sel[3] - list_h + 1;
+        } else if (tab == 4) {
+            int list_h = std::max(1, content_h - 1);
+            if (sel[4] < peer_scroll) peer_scroll = sel[4];
+            if (sel[4] >= peer_scroll + list_h) peer_scroll = sel[4] - list_h + 1;
         }
 
         werase(win);
         box(win, 0, 0);
         mvwprintw(win, 0, 2, " Node Settings ");
 
-        // Row 1: Tab bar matching GTK tabs (Node | BBS | CHAT | Interfaces | Rig | Printer)
+        // Row 1: Tab bar matching GTK/Windows/DOS/TinyTMUX tabs
         int tx = 2;
-        for (int t = 0; t < 6; ++t) {
+        for (int t = 0; t < 7; ++t) {
             std::string lbl = std::string(" ") + TAB_NAMES[t] + " ";
             if (t == tab) {
                 if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
@@ -2203,7 +2224,7 @@ void NcursesUI::modal_settings() {
         }
         mvwhline(win, 2, 1, ACS_HLINE, w - 2);
 
-        if (tab != 3) {
+        if (tab != 3 && tab != 4) {
             for (int i = 0; i < cnt && i < content_h; ++i) {
                 std::ostringstream row;
                 row << std::left << std::setw(25) << tab_field_label(tab, i)
@@ -2212,7 +2233,7 @@ void NcursesUI::modal_settings() {
                 mvwaddnstr(win, 3 + i, 2, clip(row.str(), w - 4).c_str(), w - 4);
                 if (i == sel[tab]) wattroff(win, A_REVERSE | A_BOLD);
             }
-        } else {
+        } else if (tab == 3) {
             wattron(win, A_BOLD | A_UNDERLINE);
             mvwaddnstr(win, 3, 2,
                        clip("ID           Type         Endpoint / Device             Peers", w - 4).c_str(),
@@ -2225,14 +2246,48 @@ void NcursesUI::modal_settings() {
                 for (int r = 0; r < list_h && if_scroll + r < cnt; ++r) {
                     int idx = if_scroll + r;
                     const auto& ic = draft.interfaces[static_cast<std::size_t>(idx)];
+                    std::size_t pcnt = ic.peers.size();
+                    for (const auto& p : draft.peers) {
+                        if (p.interface_id == ic.id) ++pcnt;
+                    }
                     std::ostringstream row;
                     row << std::left << std::setw(13) << clip(ic.id, 12)
                         << std::setw(13) << clip(ic.type, 12)
                         << std::setw(30) << clip(iface_summary(ic), 29)
-                        << ic.peers.size();
+                        << pcnt;
                     if (idx == sel[3]) wattron(win, A_REVERSE | A_BOLD);
                     mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
                     if (idx == sel[3]) wattroff(win, A_REVERSE | A_BOLD);
+                }
+            }
+        } else {
+            wattron(win, A_BOLD | A_UNDERLINE);
+            mvwaddnstr(win, 3, 2,
+                       clip("ID          Callsign   Iface    Endpoint               ACL    Tag", w - 4).c_str(),
+                       w - 4);
+            wattroff(win, A_BOLD | A_UNDERLINE);
+            int list_h = std::max(1, content_h - 1);
+            if (cnt == 0) {
+                mvwaddnstr(win, 4, 2, "(no peers configured - press A to add)", w - 4);
+            } else {
+                for (int r = 0; r < list_h && peer_scroll + r < cnt; ++r) {
+                    int idx = peer_scroll + r;
+                    const auto& p = draft.peers[static_cast<std::size_t>(idx)];
+                    std::string ep = p.host;
+                    if (!ep.empty() && p.port > 0) ep += ":" + std::to_string(p.port);
+                    if (ep.empty()) ep = "(any)";
+                    std::string acl = std::string(p.allow_inbound ? "IN" : "--") + "/" +
+                                      std::string(p.allow_outbound ? "OUT" : "---");
+                    std::ostringstream row;
+                    row << std::left << std::setw(12) << clip(p.id, 11)
+                        << std::setw(11) << clip(p.callsign, 10)
+                        << std::setw(9) << clip(p.interface_id, 8)
+                        << std::setw(23) << clip(ep, 22)
+                        << std::setw(7) << acl
+                        << (p.auto_learned ? "[AUTO]" : "");
+                    if (idx == sel[4]) wattron(win, A_REVERSE | A_BOLD);
+                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+                    if (idx == sel[4]) wattroff(win, A_REVERSE | A_BOLD);
                 }
             }
         }
@@ -2243,9 +2298,12 @@ void NcursesUI::modal_settings() {
 
         if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
         mvwhline(win, h - 1, 1, ' ', w - 2);
-        const char* help_bar = (tab == 3)
-            ? "Tab/1-6:Tabs  A:Add  Enter/E:Edit  D/Del:Remove  S/F2:Save  Esc:Cancel"
-            : "Tab/Left/Right/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
+        const char* help_bar =
+            (tab == 3)
+                ? "Tab/1-7:Tabs  A:Add  Enter/E:Edit  D/Del:Remove  S/F2:Save  Esc:Cancel"
+                : (tab == 4)
+                      ? "1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc"
+                      : "Tab/Left/Right/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel";
         mvwaddnstr(win, h - 1, 2, clip(help_bar, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
         wrefresh(win);
@@ -2255,14 +2313,14 @@ void NcursesUI::modal_settings() {
         if (ch == 27) break;
 
         if (ch == '\t' || ch == KEY_RIGHT) {
-            tab = (tab + 1) % 6;
+            tab = (tab + 1) % 7;
             continue;
         }
         if (ch == KEY_BTAB || ch == KEY_LEFT) {
-            tab = (tab + 5) % 6;
+            tab = (tab + 6) % 7;
             continue;
         }
-        if (ch >= '1' && ch <= '6') {
+        if (ch >= '1' && ch <= '7') {
             tab = ch - '1';
             continue;
         }
@@ -2350,15 +2408,101 @@ void NcursesUI::modal_settings() {
             continue;
         }
 
+        if (tab == 4) {
+            if (ch == 'a' || ch == 'A') {
+                radio::PeerConfig np;
+                np.allow_inbound = true;
+                np.allow_outbound = true;
+                np.auto_learned = false;
+                for (const auto& ic : draft.interfaces) {
+                    if (ic.type != "telnet" && ic.type != "local") {
+                        np.interface_id = ic.id;
+                        break;
+                    }
+                }
+                bool added = modal_edit_peer(draft.peers, draft.interfaces, -1, np);
+                touchwin(win);
+                wrefresh(win);
+                if (!added) {
+                    feedback = "Add peer cancelled.";
+                    continue;
+                }
+                std::string new_id = np.id;
+                draft.peers.push_back(std::move(np));
+                sel[4] = static_cast<int>(draft.peers.size()) - 1;
+                feedback = "Added peer '" + new_id + "' (press S/F2 to Save & Apply).";
+            } else if ((ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'e' || ch == 'E') && cnt > 0) {
+                int idx = sel[4];
+                radio::PeerConfig np = draft.peers[static_cast<std::size_t>(idx)];
+                bool updated = modal_edit_peer(draft.peers, draft.interfaces, idx, np);
+                touchwin(win);
+                wrefresh(win);
+                if (!updated) {
+                    feedback = "Edit peer cancelled.";
+                    continue;
+                }
+                np.auto_learned = false;
+                std::string new_id = np.id;
+                draft.peers[static_cast<std::size_t>(idx)] = std::move(np);
+                feedback = "Updated peer '" + new_id + "' (press S/F2 to Save & Apply).";
+            } else if ((ch == 'd' || ch == 'D' || ch == KEY_DC) && cnt > 0) {
+                std::string rem_id = draft.peers[static_cast<std::size_t>(sel[4])].id;
+                mvwhline(win, h - 2, 1, ' ', w - 2);
+                mvwaddnstr(win, h - 2, 2, ("Remove peer '" + rem_id + "'? [Y/N]: ").c_str(), w - 4);
+                wrefresh(win);
+                int yn = 0;
+                while (true) {
+                    int c = wgetch(win);
+                    if (c == ERR) continue;
+                    if (c == 'y' || c == 'Y') { yn = 1; break; }
+                    if (c == 'n' || c == 'N' || c == 27) { yn = 0; break; }
+                }
+                if (yn) {
+                    draft.peers.erase(draft.peers.begin() + sel[4]);
+                    feedback = "Removed peer '" + rem_id + "'.";
+                } else {
+                    feedback = "Remove cancelled.";
+                }
+            } else if ((ch == 'i' || ch == 'I') && cnt > 0) {
+                auto& p = draft.peers[static_cast<std::size_t>(sel[4])];
+                p.allow_inbound = !p.allow_inbound;
+                p.auto_learned = false;
+                feedback = "Peer '" + p.id + "' allow_inbound = " + (p.allow_inbound ? "true" : "false");
+            } else if ((ch == 'o' || ch == 'O') && cnt > 0) {
+                auto& p = draft.peers[static_cast<std::size_t>(sel[4])];
+                p.allow_outbound = !p.allow_outbound;
+                p.auto_learned = false;
+                feedback = "Peer '" + p.id + "' allow_outbound = " + (p.allow_outbound ? "true" : "false");
+            } else if (ch == 'k' || ch == 'K') {
+                int kept = 0;
+                for (auto& p : draft.peers) {
+                    if (p.auto_learned) {
+                        p.auto_learned = false;
+                        ++kept;
+                    }
+                }
+                feedback = "Marked " + std::to_string(kept) + " auto-learned peer(s) persistent (press S/F2 to Save).";
+            }
+            continue;
+        }
+
         if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
             int f = sel[tab];
             if (tab == 0 && f == 4) { draft.accept_incoming_default = !draft.accept_incoming_default; continue; }
+            if (tab == 0 && f == 5) {
+                using LPP = radio::LearnedPeerPolicy;
+                if (draft.learned_peer_policy == LPP::None) draft.learned_peer_policy = LPP::Inbound;
+                else if (draft.learned_peer_policy == LPP::Inbound) draft.learned_peer_policy = LPP::Outbound;
+                else if (draft.learned_peer_policy == LPP::Outbound) draft.learned_peer_policy = LPP::Both;
+                else draft.learned_peer_policy = LPP::None;
+                continue;
+            }
             if (tab == 1 && f == 0) { draft.bbs.enabled = !draft.bbs.enabled; continue; }
             if (tab == 1 && f == 4) { draft.bbs.files_enabled = !draft.bbs.files_enabled; continue; }
             if (tab == 1 && f == 5) { draft.bbs.files_case_insensitive = !draft.bbs.files_case_insensitive; continue; }
             if (tab == 2 && f == 0) { draft.chat.enabled = !draft.chat.enabled; continue; }
-            if (tab == 4 && f == 0) { draft.rig.enabled = !draft.rig.enabled; continue; }
-            if (tab == 4 && f == 1) {
+            if (tab == 5 && f == 0) { draft.rig.enabled = !draft.rig.enabled; continue; }
+            if (tab == 5 && f == 1) {
                 if (draft.rig.protocol == radio::RigProtocol::Rigctl) {
                     draft.rig.protocol = radio::RigProtocol::RadioFoundry;
                     if (draft.rig.port == 4532 || draft.rig.port == 0) draft.rig.port = 4191;
@@ -2368,15 +2512,15 @@ void NcursesUI::modal_settings() {
                 }
                 continue;
             }
-            if (tab == 4 && f == 5) { draft.rig.notify = !draft.rig.notify; continue; }
-            if (tab == 5 && f == 0) { draft.logging.printer.enabled = !draft.logging.printer.enabled; continue; }
-            if (tab == 5 && f == 2) {
+            if (tab == 5 && f == 5) { draft.rig.notify = !draft.rig.notify; continue; }
+            if (tab == 6 && f == 0) { draft.logging.printer.enabled = !draft.logging.printer.enabled; continue; }
+            if (tab == 6 && f == 2) {
                 if (draft.logging.printer.protocol == "generic") draft.logging.printer.protocol = "mx80";
                 else if (draft.logging.printer.protocol == "mx80") draft.logging.printer.protocol = "escp2";
                 else draft.logging.printer.protocol = "generic";
                 continue;
             }
-            if (tab == 5 && f == 5) { draft.logging.printer.condensed = !draft.logging.printer.condensed; continue; }
+            if (tab == 6 && f == 5) { draft.logging.printer.condensed = !draft.logging.printer.condensed; continue; }
 
             std::string val;
             if (tab == 0) {
@@ -2384,6 +2528,7 @@ void NcursesUI::modal_settings() {
                 else if (f == 1) val = draft.alias.valid() ? draft.alias.str() : "";
                 else if (f == 2) val = draft.welcome_text;
                 else if (f == 3) val = draft.info_text;
+                else if (f == 6) val = draft.new_user_welcome;
             } else if (tab == 1) {
                 if (f == 1) val = std::to_string(static_cast<int>(draft.bbs.ssid));
                 else if (f == 2) val = draft.bbs.callsign.valid() ? draft.bbs.callsign.str() : "";
@@ -2397,11 +2542,11 @@ void NcursesUI::modal_settings() {
                 else if (f == 3) val = draft.chat.alias.valid() ? draft.chat.alias.str() : "";
                 else if (f == 4) val = draft.chat.default_topic;
                 else if (f == 5) val = draft.chat.welcome;
-            } else if (tab == 4) {
+            } else if (tab == 5) {
                 if (f == 2) val = draft.rig.host;
                 else if (f == 3) val = std::to_string(draft.rig.port);
                 else if (f == 4) val = std::to_string(draft.rig.poll_interval_sec);
-            } else if (tab == 5) {
+            } else if (tab == 6) {
                 if (f == 1) val = draft.logging.printer.device;
                 else if (f == 3) val = std::to_string(draft.logging.printer.baud);
                 else if (f == 4) {
@@ -2426,6 +2571,8 @@ void NcursesUI::modal_settings() {
                     draft.welcome_text = val;
                 } else if (f == 3) {
                     draft.info_text = val;
+                } else if (f == 6) {
+                    draft.new_user_welcome = val;
                 }
             } else if (tab == 1) {
                 if (f == 1) {
@@ -2469,7 +2616,7 @@ void NcursesUI::modal_settings() {
                 } else if (f == 5) {
                     draft.chat.welcome = val;
                 }
-            } else if (tab == 4) {
+            } else if (tab == 5) {
                 if (f == 2) {
                     if (!val.empty()) draft.rig.host = val;
                 } else if (f == 3) {
@@ -2485,7 +2632,7 @@ void NcursesUI::modal_settings() {
                         else draft.rig.poll_interval_sec = static_cast<uint32_t>(iv);
                     } catch (...) { feedback = "Invalid interval."; }
                 }
-            } else if (tab == 5) {
+            } else if (tab == 6) {
                 if (f == 1) {
                     draft.logging.printer.device = val;
                 } else if (f == 3) {
@@ -3244,7 +3391,299 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
     return committed;
 }
 
+bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
+                                const std::vector<radio::RadioInterfaceConfig>& ifaces,
+                                int edit_idx,
+                                radio::PeerConfig& io_peer) {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    const int w = std::min(68, cols - 4);
+    const int h = 16;
+    if (w < 50 || rows < h + 2) return false;
+    const int y = std::max(1, (rows - h) / 2);
+    const int x = std::max(1, (cols - w) / 2);
+
+    WINDOW* dlg = newwin(h, w, y, x);
+    if (!dlg) return false;
+    keypad(dlg, TRUE);
+    wtimeout(dlg, 200);
+
+    std::vector<std::string> valid_ifaces;
+    for (const auto& ic : ifaces) {
+        if (ic.type != "telnet" && ic.type != "local") {
+            valid_ifaces.push_back(ic.id);
+        }
+    }
+
+    std::string f_id = io_peer.id;
+    std::string f_call = io_peer.callsign;
+    std::string f_desc = io_peer.description;
+    std::string f_iface = io_peer.interface_id;
+    if (f_iface.empty() && !valid_ifaces.empty()) f_iface = valid_ifaces[0];
+    std::string f_host = io_peer.host;
+    std::string f_port = (io_peer.port > 0) ? std::to_string(io_peer.port) : "";
+    bool f_in = io_peer.allow_inbound;
+    bool f_out = io_peer.allow_outbound;
+    bool id_custom = (edit_idx >= 0) || !f_id.empty();
+
+    int focus = 1; // Callsign first when adding
+    if (edit_idx >= 0) focus = 0;
+    int btn = 0;
+    bool committed = false;
+    std::string err_msg;
+
+    auto validate_and_save = [&]() {
+        if (f_call.empty()) {
+            err_msg = "Callsign cannot be empty.";
+            return;
+        }
+        auto parsed = ax25::Callsign::parse(f_call);
+        if (!parsed) {
+            err_msg = "Invalid AX.25 callsign '" + f_call + "'.";
+            return;
+        }
+        if (f_id.empty()) {
+            f_id = node::derive_default_peer_id(existing, parsed->str());
+        }
+        for (std::size_t i = 0; i < existing.size(); ++i) {
+            if (static_cast<int>(i) == edit_idx) continue;
+            if (nc_ci_eq(existing[i].id, f_id)) {
+                err_msg = "Peer ID '" + f_id + "' already exists.";
+                return;
+            }
+        }
+        uint16_t pnum = 0;
+        if (!f_port.empty()) {
+            try {
+                int pv = std::stoi(f_port);
+                if (pv < 0 || pv > 65535) {
+                    err_msg = "Port must be 0..65535.";
+                    return;
+                }
+                pnum = static_cast<uint16_t>(pv);
+            } catch (...) {
+                err_msg = "Invalid port number.";
+                return;
+            }
+        }
+        io_peer.id = f_id;
+        io_peer.callsign = parsed->str();
+        io_peer.description = f_desc;
+        io_peer.interface_id = f_iface;
+        io_peer.host = f_host;
+        io_peer.port = pnum;
+        io_peer.allow_inbound = f_in;
+        io_peer.allow_outbound = f_out;
+        io_peer.auto_learned = false;
+        committed = true;
+    };
+
+    static const char* LABELS[8] = {
+        "Peer ID",
+        "Callsign",
+        "Description",
+        "Interface",
+        "Host / DMR ID",
+        "Port (0=default)",
+        "Allow Inbound",
+        "Allow Outbound"
+    };
+
+    while (!committed) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+
+        werase(dlg);
+        box(dlg, 0, 0);
+        mvwprintw(dlg, 0, 2, (edit_idx >= 0) ? " Edit Peer " : " Add Peer ");
+
+        auto val_for = [&](int r) -> std::string {
+            switch (r) {
+                case 0: return f_id;
+                case 1: return f_call;
+                case 2: return f_desc;
+                case 3: return f_iface.empty() ? "(any)" : ("< " + f_iface + " >");
+                case 4: return f_host;
+                case 5: return f_port.empty() ? "(default)" : f_port;
+                case 6: return f_in ? "[ON]" : "[OFF]";
+                case 7: return f_out ? "[ON]" : "[OFF]";
+                default: return "";
+            }
+        };
+
+        for (int r = 0; r < 8; ++r) {
+            std::ostringstream row;
+            row << std::left << std::setw(18) << LABELS[r] << ": " << val_for(r);
+            if (focus == r) wattron(dlg, A_REVERSE | A_BOLD);
+            mvwaddnstr(dlg, 2 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
+            if (focus == r) wattroff(dlg, A_REVERSE | A_BOLD);
+        }
+
+        if (has_colors_) wattron(dlg, COLOR_PAIR(CP_WARN));
+        mvwaddnstr(dlg, 11, 2, clip(err_msg, w - 4).c_str(), w - 4);
+        if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_WARN));
+
+        const std::string b0 = "[ Save ]";
+        const std::string b1 = "[ Cancel ]";
+        int bx = std::max(2, (w - static_cast<int>(b0.size() + 4 + b1.size())) / 2);
+        if (focus == 8 && btn == 0) wattron(dlg, A_REVERSE | A_BOLD);
+        mvwaddnstr(dlg, 12, bx, b0.c_str(), w - bx - 2);
+        if (focus == 8 && btn == 0) wattroff(dlg, A_REVERSE | A_BOLD);
+        if (focus == 8 && btn == 1) wattron(dlg, A_REVERSE | A_BOLD);
+        mvwaddnstr(dlg, 12, bx + static_cast<int>(b0.size()) + 4, b1.c_str(), w - bx - 16);
+        if (focus == 8 && btn == 1) wattroff(dlg, A_REVERSE | A_BOLD);
+
+        if (has_colors_) wattron(dlg, COLOR_PAIR(CP_MENU));
+        mvwhline(dlg, h - 1, 1, ' ', w - 2);
+        mvwaddnstr(dlg, h - 1, 2, "Up/Down/Tab:Field  Left/Right/Space:Toggle  Enter:Save  Esc:Cancel", w - 4);
+        if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_MENU));
+        curs_set((focus == 0 || focus == 1 || focus == 2 || focus == 4 || focus == 5) ? 1 : 0);
+        wrefresh(dlg);
+
+        int ch = wgetch(dlg);
+        if (ch == ERR) continue;
+        if (ch == 27) { committed = false; break; }
+        if (ch == KEY_UP || ch == KEY_BTAB) { focus = (focus + 8) % 9; continue; }
+        if (ch == KEY_DOWN || ch == '\t') { focus = (focus + 1) % 9; continue; }
+
+        if (focus == 8) {
+            if (ch == KEY_LEFT || ch == KEY_RIGHT) btn = 1 - btn;
+            else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
+                if (btn == 1) { committed = false; break; }
+                validate_and_save();
+            }
+            continue;
+        }
+        if (focus == 3) {
+            if (!valid_ifaces.empty() && (ch == KEY_LEFT || ch == KEY_RIGHT || ch == ' ')) {
+                int idx = 0;
+                for (std::size_t i = 0; i < valid_ifaces.size(); ++i) {
+                    if (valid_ifaces[i] == f_iface) { idx = static_cast<int>(i); break; }
+                }
+                idx = (ch == KEY_LEFT) ? (idx + static_cast<int>(valid_ifaces.size()) - 1) % static_cast<int>(valid_ifaces.size())
+                                       : (idx + 1) % static_cast<int>(valid_ifaces.size());
+                f_iface = valid_ifaces[static_cast<std::size_t>(idx)];
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_save();
+            }
+            continue;
+        }
+        if (focus == 6 || focus == 7) {
+            if (ch == ' ' || ch == KEY_LEFT || ch == KEY_RIGHT) {
+                if (focus == 6) f_in = !f_in;
+                else f_out = !f_out;
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                validate_and_save();
+            }
+            continue;
+        }
+
+        std::string* fld = (focus == 0) ? &f_id
+                         : (focus == 1) ? &f_call
+                         : (focus == 2) ? &f_desc
+                         : (focus == 4) ? &f_host
+                                        : &f_port;
+        std::size_t cap = (focus == 0 || focus == 1) ? 16 : ((focus == 5) ? 5 : 48);
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (!fld->empty()) fld->pop_back();
+            if (focus == 0) id_custom = !f_id.empty();
+            if (focus == 1 && !id_custom) {
+                f_id = f_call.empty() ? std::string() : node::derive_default_peer_id(existing, f_call);
+            }
+            err_msg.clear();
+        } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+            validate_and_save();
+        } else if (ch >= 32 && ch < 127 && fld->size() < cap) {
+            fld->push_back(static_cast<char>(ch));
+            if (focus == 0) id_custom = true;
+            if (focus == 1 && !id_custom) {
+                f_id = node::derive_default_peer_id(existing, f_call);
+            }
+            err_msg.clear();
+        }
+    }
+
+    curs_set(0);
+    delwin(dlg);
+    return committed;
+}
+
 bool NcursesUI::modal_confirm_exit() {
+    const std::size_t auto_cnt = engine_.auto_learned_peer_count();
+    if (auto_cnt > 0) {
+        int rows = 0, cols = 0;
+        getmaxyx(stdscr, rows, cols);
+        int w = std::min(72, cols - 4);
+        int h = 11;
+        int y = std::max(1, (rows - h) / 2);
+        int x = std::max(1, (cols - w) / 2);
+
+        WINDOW* win = newwin(h, w, y, x);
+        if (!win) return false;
+        keypad(win, TRUE);
+        wtimeout(win, 200);
+
+        enum class AutoExitAct { Cancel, SaveExit, DiscardExit, Review };
+        AutoExitAct act = AutoExitAct::Cancel;
+        int focus = 2; // Default [ Review Peers ]
+        static const char* BTNS[4] = { "[ Save & Exit ]", "[ Discard & Exit ]", "[ Review Peers ]", "[ Cancel ]" };
+        while (true) {
+            if (external_stop_flag_ && external_stop_flag_->load()) { act = AutoExitAct::DiscardExit; break; }
+            werase(win);
+            if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+            box(win, 0, 0);
+            if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+            wattron(win, A_BOLD);
+            mvwprintw(win, 0, 2, " Auto-Learned Peers ");
+            wattroff(win, A_BOLD);
+
+            std::string l1 = std::to_string(auto_cnt) + " auto-learned peer(s) added this session.";
+            mvwaddnstr(win, 2, 3, l1.c_str(), w - 6);
+            mvwaddnstr(win, 3, 3, "Save them to config, discard them, or review in Peers?", w - 6);
+
+            int bx = 3;
+            for (int i = 0; i < 4; ++i) {
+                if (focus == i) wattron(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+                mvwaddnstr(win, 6, bx, BTNS[i], w - bx - 2);
+                if (focus == i) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+                bx += static_cast<int>(std::string(BTNS[i]).size()) + 2;
+            }
+            mvwhline(win, 8, 1, ACS_HLINE, w - 2);
+            mvwaddnstr(win, 9, 2, "Left/Right/Tab:Select  Enter:Confirm  S/D/R/Esc", w - 4);
+            wrefresh(win);
+
+            int ch = wgetch(win);
+            if (ch == ERR) continue;
+            if (ch == KEY_LEFT || ch == KEY_BTAB) focus = (focus + 3) % 4;
+            else if (ch == KEY_RIGHT || ch == '\t') focus = (focus + 1) % 4;
+            else if (ch == 27 || ch == 'c' || ch == 'C') { act = AutoExitAct::Cancel; break; }
+            else if (ch == 's' || ch == 'S') { act = AutoExitAct::SaveExit; break; }
+            else if (ch == 'd' || ch == 'D') { act = AutoExitAct::DiscardExit; break; }
+            else if (ch == 'r' || ch == 'R') { act = AutoExitAct::Review; break; }
+            else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == ' ') {
+                act = (focus == 0) ? AutoExitAct::SaveExit
+                    : (focus == 1) ? AutoExitAct::DiscardExit
+                    : (focus == 2) ? AutoExitAct::Review
+                                   : AutoExitAct::Cancel;
+                break;
+            }
+        }
+        delwin(win);
+        if (act == AutoExitAct::Cancel) return false;
+        if (act == AutoExitAct::Review) {
+            modal_settings(4);
+            return false;
+        }
+        if (act == AutoExitAct::SaveExit) {
+            std::string err;
+            if (!engine_.persist_auto_learned_peers(&err)) {
+                set_status("Save failed: " + err);
+            }
+            return true;
+        }
+        engine_.discard_auto_learned_peers();
+        return true;
+    }
+
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     int w = std::min(56, cols - 4);

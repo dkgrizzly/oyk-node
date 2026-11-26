@@ -14,6 +14,28 @@
 
 namespace oyk::radio {
 
+enum class LearnedPeerPolicy {
+    Inherit = 0,
+    None,
+    Inbound,
+    Outbound,
+    Both
+};
+
+struct PeerConfig {
+    std::string id;
+    std::string callsign;
+    std::string description;
+    std::string interface_id;
+    std::string host;
+    uint16_t port = 0;
+    bool allow_inbound = true;
+    bool allow_outbound = true;
+    bool auto_learned = false;
+
+    bool operator==(const PeerConfig&) const = default;
+};
+
 struct RadioFrameMeta {
     std::string interface_id;
     std::string peer_endpoint; // Transport-specific return address (e.g. "ip:port" for AXUDP)
@@ -58,6 +80,9 @@ public:
     // transport peer (e.g. "192.0.2.10:10093" for AXUDP) when known.
     virtual bool send_frame(const ax25::Frame& frame,
                             const std::string& target_endpoint = "") = 0;
+
+    // Synchronize static [peer] routes owned by this interface.
+    virtual void sync_peers(const std::vector<PeerConfig>& peers) { (void)peers; }
 
     virtual RadioInterfaceStats stats() const = 0;
 };

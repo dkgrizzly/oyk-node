@@ -2882,6 +2882,159 @@ void test_derive_default_iface_id_node() {
     std::cout << "[PASS] test_derive_default_iface_id_node\n";
 }
 
+void test_peer_sections_acl_migration_and_auto_learn() {
+    namespace fs = std::filesystem;
+    fs::path tmp = fs::temp_directory_path() / "oyk_peer_sections_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    const fs::path cfg_path = tmp / "node.cfg";
+
+    {
+        std::ofstream ofs(cfg_path);
+        ofs << "[node]\n"
+            << "callsign = K7PEER-7\n"
+            << "alias = OYKPR\n"
+            << "welcome = Standard welcome\n"
+            << "new_user_welcome = Welcome first timer!\n"
+            << "learned_peer_policy = inbound\n"
+            << "console_level = ERROR\n\n"
+            << "[interface axudp0]\n"
+            << "type = axudp\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n"
+            << "auto_learn = true\n"
+            << "peer = K1LEG@127.0.0.1:10099\n\n"
+            << "[interface telnet0]\n"
+            << "type = telnet\n"
+            << "bind_host = 127.0.0.1\n"
+            << "bind_port = 0\n\n"
+            << "[peer remote0]\n"
+            << "callsign = R3MOT-7\n"
+            << "description = Remote PoPT Node\n"
+            << "interface = axudp0\n"
+            << "host = 127.0.0.1\n"
+            << "port = 10095\n"
+            << "allow_inbound = false\n"
+            << "allow_outbound = true\n";
+    }
+
+    node::NodeConfig cfg;
+    std::string err;
+    assert(node::NodeConfig::load_from_file(cfg_path, cfg, err));
+    assert(cfg.learned_peer_policy == radio::LearnedPeerPolicy::Inbound);
+    assert(cfg.new_user_welcome == "Welcome first timer!");
+    assert(cfg.peers.size() == 2);
+    assert(cfg.peers[0].id == "remote0");
+    assert(cfg.peers[0].callsign == "R3MOT-7");
+    assert(!cfg.peers[0].allow_inbound);
+    assert(cfg.peers[0].allow_outbound);
+    assert(cfg.peers[1].callsign == "K1LEG");
+    assert(cfg.peers[1].interface_id == "axudp0");
+    assert(cfg.peers[1].port == 10099);
+
+    node::NodeEngine engine(cfg);
+    assert(engine.start(err));
+    auto* ax0 = dynamic_cast<radio::AxudpInterface*>(engine.find_interface("axudp0"));
+    auto* tel0 = dynamic_cast<radio::TelnetInterface*>(engine.find_interface("telnet0"));
+    assert(ax0 && tel0);
+    const uint16_t udp_port = ax0->bound_port();
+    const uint16_t tel_port = tel0->bound_port();
+    assert(udp_port > 0 && tel_port > 0);
+
+    // 1. R3MOT-7 has allow_inbound=false -> SABM rejected with DM
+    TestAxudpClient rem(ax25::Callsign("R3MOT", 7), udp_port);
+    rem.send(ax25::Frame::make_sabm(cfg.callsign, rem.call()));
+    auto dm = rem.recv();
+    assert(dm.has_value() && dm->type() == ax25::FrameType::DM);
+
+    // 2. First connection from N2NEW gets new_user_welcome and auto-learns (inbound=true, outbound=false)
+    {
+        TestAxudpClient newcomer(ax25::Callsign("N2NEW", 0), udp_port);
+        newcomer.send(ax25::Frame::make_sabm(cfg.callsign, newcomer.call()));
+        auto ua = newcomer.recv();
+        assert(ua.has_value() && ua->type() == ax25::FrameType::UA);
+        uint8_t vr = 0;
+        std::string txt = newcomer.recv_all_text(cfg.callsign, vr);
+        assert(txt.find("Welcome first timer!") != std::string::npos);
+        newcomer.send(ax25::Frame::make_disc(cfg.callsign, newcomer.call()));
+        (void)newcomer.recv();
+    }
+    assert(engine.auto_learned_peer_count() == 1);
+
+    // Reconnect of N2NEW receives standard welcome
+    {
+        TestAxudpClient newcomer2(ax25::Callsign("N2NEW", 0), udp_port);
+        newcomer2.send(ax25::Frame::make_sabm(cfg.callsign, newcomer2.call()));
+        auto ua = newcomer2.recv();
+        assert(ua.has_value() && ua->type() == ax25::FrameType::UA);
+        uint8_t vr = 0;
+        std::string txt = newcomer2.recv_all_text(cfg.callsign, vr);
+        assert(txt.find("Standard welcome") != std::string::npos);
+        newcomer2.send(ax25::Frame::make_disc(cfg.callsign, newcomer2.call()));
+        (void)newcomer2.recv();
+    }
+
+    // 3. Telnet and Local Terminal must NEVER auto-create [peer] entries
+    {
+        int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+        assert(sock >= 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(tel_port);
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        assert(::connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+        const char* login = "K8TEL\r\n";
+        (void)::send(sock, login, std::strlen(login), 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        ::close(sock);
+    }
+    {
+        std::string joined;
+        node::NodeEngine::LocalTerminalCallbacks cbs;
+        cbs.on_rx_bytes = [&](uint64_t, const std::vector<uint8_t>& b) {
+            joined.append(reinterpret_cast<const char*>(b.data()), b.size());
+        };
+        uint64_t lsid = 0;
+        assert(engine.open_local_terminal("local", "", cbs, lsid, nullptr, err, nullptr));
+        engine.close_local_terminal(lsid);
+
+        // Outbound connect to auto-learned N2NEW must be denied because allow_outbound=false
+        err.clear();
+        assert(!engine.open_local_terminal("axudp0", "N2NEW", cbs, lsid, nullptr, err, nullptr));
+        assert(err.find("Outbound connections to peer") != std::string::npos);
+    }
+    assert(engine.auto_learned_peer_count() == 1);
+
+    // 4. Discard vs Persist auto-learned peers
+    assert(engine.persist_auto_learned_peers(&err));
+    assert(engine.auto_learned_peer_count() == 0);
+    node::NodeConfig reloaded;
+    assert(node::NodeConfig::load_from_file(cfg_path, reloaded, err));
+    bool found_n2 = false;
+    for (const auto& p : reloaded.peers) {
+        if (p.callsign == "N2NEW") {
+            found_n2 = true;
+            assert(p.allow_inbound && !p.allow_outbound);
+        }
+    }
+    assert(found_n2);
+
+    // Add another auto-learned peer and discard it
+    {
+        TestAxudpClient temp_cl(ax25::Callsign("K9TMP", 0), udp_port);
+        temp_cl.send(ax25::Frame::make_sabm(cfg.callsign, temp_cl.call()));
+        (void)temp_cl.recv();
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }
+    assert(engine.auto_learned_peer_count() == 1);
+    engine.discard_auto_learned_peers();
+    assert(engine.auto_learned_peer_count() == 0);
+
+    engine.stop();
+    fs::remove_all(tmp);
+    std::cout << "[PASS] test_peer_sections_acl_migration_and_auto_learn\n";
+}
+
 } // namespace
 
 int main() {
@@ -2908,6 +3061,7 @@ int main() {
     test_rig_control_rigctl_and_radiofoundry();
     test_direct_printer_logging_pty_and_config();
     test_derive_default_iface_id_node();
+    test_peer_sections_acl_migration_and_auto_learn();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

@@ -46,6 +46,7 @@ public:
 
     // Register a callsign -> IP/host route (or broadcast peer if callsign is empty/"*").
     bool add_peer(const std::string& callsign_or_empty, const std::string& host);
+    void sync_peers(const std::vector<PeerConfig>& peers) override;
 
     // Parses an IPv4 raw socket packet and extracts the protocol-93 payload.
     // Exposed as a static helper for deterministic unit testing without CAP_NET_RAW.
@@ -78,9 +79,15 @@ private:
 
     FrameCallback on_frame_;
 
+    bool add_peer_locked(const std::string& callsign_or_empty,
+                         const std::string& host,
+                         bool record_manual);
+
     mutable std::mutex peer_mutex_;
     std::map<std::string, PeerAddr> callsign_peers_;
     std::vector<PeerAddr> broadcast_peers_;
+    std::map<std::string, PeerAddr> manual_callsign_peers_;
+    std::vector<PeerAddr> manual_broadcast_peers_;
 
     mutable std::mutex stats_mutex_;
     RadioInterfaceStats stats_{};

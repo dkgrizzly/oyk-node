@@ -1380,7 +1380,240 @@ struct GtkSettingsCtx {
     GtkListStore* if_store = nullptr;
     GtkWidget* if_tree = nullptr;
     std::vector<radio::RadioInterfaceConfig>* ifaces = nullptr;
+    GtkListStore* peer_store = nullptr;
+    GtkWidget* peer_tree = nullptr;
+    std::vector<radio::PeerConfig>* peers = nullptr;
 };
+
+bool gtk_iface_ci_eq(const std::string& a, const std::string& b);
+
+static std::string gtk_peer_acl_str(const radio::PeerConfig& p) {
+    return std::string(p.allow_inbound ? "IN" : "--") + "/" +
+           std::string(p.allow_outbound ? "OUT" : "---");
+}
+
+static void repopulate_gtk_peers(GtkSettingsCtx* ctx) {
+    gtk_list_store_clear(ctx->peer_store);
+    for (std::size_t i = 0; i < ctx->peers->size(); ++i) {
+        const auto& p = (*ctx->peers)[i];
+        std::string ep = p.host;
+        if (!ep.empty() && p.port > 0) ep += ":" + std::to_string(p.port);
+        if (ep.empty()) ep = "(any)";
+        GtkTreeIter iter;
+        gtk_list_store_append(ctx->peer_store, &iter);
+        gtk_list_store_set(ctx->peer_store, &iter,
+                           0, p.id.c_str(),
+                           1, p.callsign.c_str(),
+                           2, p.interface_id.c_str(),
+                           3, ep.c_str(),
+                           4, gtk_peer_acl_str(p).c_str(),
+                           5, p.auto_learned ? "AUTO" : "",
+                           6, static_cast<gint>(i),
+                           -1);
+    }
+}
+
+static void run_gtk_edit_peer_dialog(GtkSettingsCtx* ctx, int edit_idx) {
+    const bool is_add = (edit_idx < 0 || static_cast<std::size_t>(edit_idx) >= ctx->peers->size());
+    radio::PeerConfig src;
+    if (!is_add) {
+        src = (*ctx->peers)[static_cast<std::size_t>(edit_idx)];
+    } else {
+        src.allow_inbound = true;
+        src.allow_outbound = true;
+        src.auto_learned = false;
+        for (const auto& ic : *ctx->ifaces) {
+            if (ic.type != "telnet" && ic.type != "local") {
+                src.interface_id = ic.id;
+                break;
+            }
+        }
+    }
+
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        is_add ? "Add Peer" : "Edit Peer",
+        GTK_WINDOW(ctx->dlg),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        GTK_STOCK_SAVE, GTK_RESPONSE_ACCEPT,
+        static_cast<const char*>(nullptr));
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 420, -1);
+
+    GtkWidget* tbl = gtk_table_new(9, 2, FALSE);
+    gtk_container_set_border_width(GTK_CONTAINER(tbl), 10);
+    gtk_table_set_row_spacings(GTK_TABLE(tbl), 6);
+    gtk_table_set_col_spacings(GTK_TABLE(tbl), 8);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), tbl, TRUE, TRUE, 0);
+
+    auto attach = [&](int r, const char* lbl, GtkWidget* w) {
+        GtkWidget* l = gtk_label_new(lbl);
+        gtk_misc_set_alignment(GTK_MISC(l), 0.0f, 0.5f);
+        gtk_table_attach(GTK_TABLE(tbl), l, 0, 1, r, r + 1, GTK_FILL, GTK_FILL, 0, 0);
+        gtk_table_attach(GTK_TABLE(tbl), w, 1, 2, r, r + 1,
+                         static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_FILL), GTK_FILL, 0, 0);
+    };
+
+    GtkWidget* e_id = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_id), src.id.c_str());
+    attach(0, "Peer ID:", e_id);
+
+    GtkWidget* e_call = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_call), src.callsign.c_str());
+    attach(1, "Callsign:", e_call);
+
+    GtkWidget* e_desc = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_desc), src.description.c_str());
+    attach(2, "Description:", e_desc);
+
+    GtkWidget* cb_iface = gtk_combo_box_new_text();
+    std::vector<std::string> iface_opts;
+    int active_if = -1;
+    for (const auto& ic : *ctx->ifaces) {
+        if (ic.type == "telnet" || ic.type == "local") continue;
+        iface_opts.push_back(ic.id);
+        gtk_combo_box_append_text(GTK_COMBO_BOX(cb_iface), ic.id.c_str());
+        if (ic.id == src.interface_id) active_if = static_cast<int>(iface_opts.size()) - 1;
+    }
+    if (active_if < 0 && !src.interface_id.empty()) {
+        iface_opts.push_back(src.interface_id);
+        gtk_combo_box_append_text(GTK_COMBO_BOX(cb_iface), src.interface_id.c_str());
+        active_if = static_cast<int>(iface_opts.size()) - 1;
+    }
+    if (active_if < 0 && !iface_opts.empty()) active_if = 0;
+    if (active_if >= 0) gtk_combo_box_set_active(GTK_COMBO_BOX(cb_iface), active_if);
+    attach(3, "Interface:", cb_iface);
+
+    GtkWidget* e_host = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_host), src.host.c_str());
+    attach(4, "Host / DMR ID:", e_host);
+
+    GtkWidget* e_port = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_port), (src.port > 0) ? std::to_string(src.port).c_str() : "");
+    attach(5, "Port (0=default):", e_port);
+
+    GtkWidget* chk_in = gtk_check_button_new_with_label("Allow inbound connections from this peer");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_in), src.allow_inbound ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(tbl), chk_in, 0, 2, 6, 7, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* chk_out = gtk_check_button_new_with_label("Allow outbound connections to this peer");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_out), src.allow_outbound ? TRUE : FALSE);
+    gtk_table_attach(GTK_TABLE(tbl), chk_out, 0, 2, 7, 8, GTK_FILL, GTK_FILL, 0, 0);
+
+    GtkWidget* lbl_err = gtk_label_new("");
+    gtk_misc_set_alignment(GTK_MISC(lbl_err), 0.0f, 0.5f);
+    gtk_table_attach(GTK_TABLE(tbl), lbl_err, 0, 2, 8, 9, GTK_FILL, GTK_FILL, 0, 0);
+
+    gtk_widget_show_all(dlg);
+    gtk_widget_hide(lbl_err);
+
+    while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+        std::string call_s = gtk_entry_get_text(GTK_ENTRY(e_call));
+        auto parsed = ax25::Callsign::parse(call_s);
+        if (!parsed) {
+            gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Invalid AX.25 callsign.</b></span>");
+            gtk_widget_show(lbl_err);
+            continue;
+        }
+        std::string id_s = gtk_entry_get_text(GTK_ENTRY(e_id));
+        if (id_s.empty()) {
+            id_s = node::derive_default_peer_id(*ctx->peers, parsed->str());
+        }
+        bool dup = false;
+        for (std::size_t i = 0; i < ctx->peers->size(); ++i) {
+            if (!is_add && i == static_cast<std::size_t>(edit_idx)) continue;
+            if (gtk_iface_ci_eq((*ctx->peers)[i].id, id_s)) { dup = true; break; }
+        }
+        if (dup) {
+            std::string mk = "<span foreground=\"#cc0000\"><b>Peer ID '" + escape_markup(id_s) + "' already exists.</b></span>";
+            gtk_label_set_markup(GTK_LABEL(lbl_err), mk.c_str());
+            gtk_widget_show(lbl_err);
+            continue;
+        }
+        uint16_t pnum = 0;
+        std::string port_s = gtk_entry_get_text(GTK_ENTRY(e_port));
+        if (!port_s.empty()) {
+            try {
+                int pv = std::stoi(port_s);
+                if (pv < 0 || pv > 65535) {
+                    gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Port must be 0..65535.</b></span>");
+                    gtk_widget_show(lbl_err);
+                    continue;
+                }
+                pnum = static_cast<uint16_t>(pv);
+            } catch (...) {
+                gtk_label_set_markup(GTK_LABEL(lbl_err), "<span foreground=\"#cc0000\"><b>Invalid port number.</b></span>");
+                gtk_widget_show(lbl_err);
+                continue;
+            }
+        }
+        gchar* iface_raw = gtk_combo_box_get_active_text(GTK_COMBO_BOX(cb_iface));
+        std::string iface_s = iface_raw ? iface_raw : "";
+        if (iface_raw) g_free(iface_raw);
+
+        radio::PeerConfig next_p;
+        next_p.id = id_s;
+        next_p.callsign = parsed->str();
+        next_p.description = gtk_entry_get_text(GTK_ENTRY(e_desc));
+        next_p.interface_id = iface_s;
+        next_p.host = gtk_entry_get_text(GTK_ENTRY(e_host));
+        next_p.port = pnum;
+        next_p.allow_inbound = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_in)) != FALSE;
+        next_p.allow_outbound = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_out)) != FALSE;
+        next_p.auto_learned = false;
+
+        if (is_add) {
+            ctx->peers->push_back(std::move(next_p));
+        } else {
+            (*ctx->peers)[static_cast<std::size_t>(edit_idx)] = std::move(next_p);
+        }
+        repopulate_gtk_peers(ctx);
+        break;
+    }
+    gtk_widget_destroy(dlg);
+}
+
+void on_settings_add_peer_clicked(GtkWidget*, gpointer user_data) {
+    run_gtk_edit_peer_dialog(static_cast<GtkSettingsCtx*>(user_data), -1);
+}
+
+void on_settings_edit_peer_clicked(GtkWidget*, gpointer user_data) {
+    auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
+    GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ctx->peer_tree));
+    GtkTreeModel* model = nullptr;
+    GtkTreeIter iter;
+    if (!gtk_tree_selection_get_selected(sel, &model, &iter)) return;
+    gint idx = -1;
+    gtk_tree_model_get(model, &iter, 6, &idx, -1);
+    if (idx >= 0 && static_cast<std::size_t>(idx) < ctx->peers->size()) {
+        run_gtk_edit_peer_dialog(ctx, idx);
+    }
+}
+
+void on_settings_peer_row_activated(GtkTreeView*, GtkTreePath*, GtkTreeViewColumn*, gpointer user_data) {
+    on_settings_edit_peer_clicked(nullptr, user_data);
+}
+
+void on_settings_rem_peer_clicked(GtkWidget*, gpointer user_data) {
+    auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
+    GtkTreeSelection* sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ctx->peer_tree));
+    GtkTreeModel* model = nullptr;
+    GtkTreeIter iter;
+    if (!gtk_tree_selection_get_selected(sel, &model, &iter)) return;
+    gint idx = -1;
+    gtk_tree_model_get(model, &iter, 6, &idx, -1);
+    if (idx >= 0 && static_cast<std::size_t>(idx) < ctx->peers->size()) {
+        ctx->peers->erase(ctx->peers->begin() + idx);
+        repopulate_gtk_peers(ctx);
+    }
+}
+
+void on_settings_keep_auto_peers_clicked(GtkWidget*, gpointer user_data) {
+    auto* ctx = static_cast<GtkSettingsCtx*>(user_data);
+    for (auto& p : *ctx->peers) {
+        p.auto_learned = false;
+    }
+    repopulate_gtk_peers(ctx);
+}
 
 void repopulate_gtk_ifaces(GtkSettingsCtx* ctx) {
     gtk_list_store_clear(ctx->if_store);
@@ -2069,8 +2302,7 @@ void on_settings_rem_iface_clicked(GtkWidget*, gpointer user_data) {
     }
 }
 
-void on_settings_clicked(GtkWidget*, gpointer user_data) {
-    auto* st = static_cast<GtkAppState*>(user_data);
+void open_settings_dialog(GtkAppState* st, int initial_page) {
     node::NodeConfig draft = st->engine->config();
 
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
@@ -2080,7 +2312,7 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
         "Save & Apply", GTK_RESPONSE_ACCEPT,
         static_cast<const char*>(nullptr));
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 560, 400);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 600, 430);
 
     GtkWidget* nb = gtk_notebook_new();
     gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), nb, TRUE, TRUE, 6);
@@ -2101,7 +2333,7 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     };
 
     // Tab 1: Node
-    GtkWidget* t_node = make_table(5);
+    GtkWidget* t_node = make_table(7);
     GtkWidget* e_call = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e_call), draft.callsign.str().c_str());
     attach_row(t_node, 0, "Node Callsign (CALL-SSID):", e_call);
@@ -2118,9 +2350,25 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     gtk_entry_set_text(GTK_ENTRY(e_info), draft.info_text.c_str());
     attach_row(t_node, 3, "Info Message:", e_info);
 
+    GtkWidget* cb_learn_pol = gtk_combo_box_new_text();
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_learn_pol), "none");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_learn_pol), "inbound");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_learn_pol), "outbound");
+    gtk_combo_box_append_text(GTK_COMBO_BOX(cb_learn_pol), "both");
+    int lp_idx = 1;
+    if (draft.learned_peer_policy == radio::LearnedPeerPolicy::None) lp_idx = 0;
+    else if (draft.learned_peer_policy == radio::LearnedPeerPolicy::Outbound) lp_idx = 2;
+    else if (draft.learned_peer_policy == radio::LearnedPeerPolicy::Both) lp_idx = 3;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb_learn_pol), lp_idx);
+    attach_row(t_node, 4, "Learned Peer Policy:", cb_learn_pol);
+
+    GtkWidget* e_new_welc = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(e_new_welc), draft.new_user_welcome.c_str());
+    attach_row(t_node, 5, "New User Welcome:", e_new_welc);
+
     GtkWidget* chk_accept = gtk_check_button_new_with_label("Allow incoming connections by default");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_accept), draft.accept_incoming_default ? TRUE : FALSE);
-    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 4, 5, GTK_FILL, GTK_FILL, 0, 0);
+    gtk_table_attach(GTK_TABLE(t_node), chk_accept, 0, 2, 6, 7, GTK_FILL, GTK_FILL, 0, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), t_node, gtk_label_new("Node"));
 
     // Tab 2: BBS
@@ -2216,7 +2464,36 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(if_vbox), if_btns, FALSE, FALSE, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), if_vbox, gtk_label_new("Interfaces"));
 
-    // Tab 5: Rig Control
+    // Tab 5: Peers
+    GtkWidget* peer_vbox = gtk_vbox_new(FALSE, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(peer_vbox), 8);
+    GtkListStore* peer_store = gtk_list_store_new(7, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+                                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+    GtkWidget* peer_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(peer_store));
+    add_text_column(GTK_TREE_VIEW(peer_tree), "ID", 0, 80);
+    add_text_column(GTK_TREE_VIEW(peer_tree), "Callsign", 1, 80);
+    add_text_column(GTK_TREE_VIEW(peer_tree), "Iface", 2, 70);
+    add_text_column(GTK_TREE_VIEW(peer_tree), "Host / Port", 3, 140);
+    add_text_column(GTK_TREE_VIEW(peer_tree), "ACL", 4, 65);
+    add_text_column(GTK_TREE_VIEW(peer_tree), "Tag", 5, 55);
+    GtkWidget* peer_sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(peer_sc), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(peer_sc), peer_tree);
+    gtk_box_pack_start(GTK_BOX(peer_vbox), peer_sc, TRUE, TRUE, 0);
+
+    GtkWidget* peer_btns = gtk_hbox_new(FALSE, 6);
+    GtkWidget* btn_add_peer = gtk_button_new_with_label("Add Peer...");
+    GtkWidget* btn_edit_peer = gtk_button_new_with_label("Edit Selected...");
+    GtkWidget* btn_rem_peer = gtk_button_new_with_label("Remove Selected");
+    GtkWidget* btn_keep_peer = gtk_button_new_with_label("Keep Auto");
+    gtk_box_pack_start(GTK_BOX(peer_btns), btn_add_peer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(peer_btns), btn_edit_peer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(peer_btns), btn_rem_peer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(peer_btns), btn_keep_peer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(peer_vbox), peer_btns, FALSE, FALSE, 0);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), peer_vbox, gtk_label_new("Peers"));
+
+    // Tab 6: Rig Control
     GtkWidget* t_rig = make_table(6);
     GtkWidget* chk_rig = gtk_check_button_new_with_label("Enable Radio / Rig Control");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk_rig), draft.rig.enabled ? TRUE : FALSE);
@@ -2288,13 +2565,25 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     sctx.if_store = if_store;
     sctx.if_tree = if_tree;
     sctx.ifaces = &draft.interfaces;
+    sctx.peer_store = peer_store;
+    sctx.peer_tree = peer_tree;
+    sctx.peers = &draft.peers;
     repopulate_gtk_ifaces(&sctx);
+    repopulate_gtk_peers(&sctx);
     g_signal_connect(btn_add_if, "clicked", G_CALLBACK(on_settings_add_iface_clicked), &sctx);
     g_signal_connect(btn_edit_if, "clicked", G_CALLBACK(on_settings_edit_iface_clicked), &sctx);
     g_signal_connect(btn_rem_if, "clicked", G_CALLBACK(on_settings_rem_iface_clicked), &sctx);
     g_signal_connect(if_tree, "row-activated", G_CALLBACK(on_settings_if_row_activated), &sctx);
+    g_signal_connect(btn_add_peer, "clicked", G_CALLBACK(on_settings_add_peer_clicked), &sctx);
+    g_signal_connect(btn_edit_peer, "clicked", G_CALLBACK(on_settings_edit_peer_clicked), &sctx);
+    g_signal_connect(btn_rem_peer, "clicked", G_CALLBACK(on_settings_rem_peer_clicked), &sctx);
+    g_signal_connect(btn_keep_peer, "clicked", G_CALLBACK(on_settings_keep_auto_peers_clicked), &sctx);
+    g_signal_connect(peer_tree, "row-activated", G_CALLBACK(on_settings_peer_row_activated), &sctx);
 
     gtk_widget_show_all(dlg);
+    if (initial_page >= 0 && initial_page < 7) {
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), initial_page);
+    }
 
     while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         node::NodeConfig next = draft;
@@ -2327,6 +2616,15 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
         }
         next.welcome_text = gtk_entry_get_text(GTK_ENTRY(e_welcome));
         next.info_text = gtk_entry_get_text(GTK_ENTRY(e_info));
+        {
+            int lpi = gtk_combo_box_get_active(GTK_COMBO_BOX(cb_learn_pol));
+            next.learned_peer_policy =
+                (lpi == 0) ? radio::LearnedPeerPolicy::None :
+                (lpi == 2) ? radio::LearnedPeerPolicy::Outbound :
+                (lpi == 3) ? radio::LearnedPeerPolicy::Both :
+                             radio::LearnedPeerPolicy::Inbound;
+        }
+        next.new_user_welcome = gtk_entry_get_text(GTK_ENTRY(e_new_welc));
         next.accept_incoming_default = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_accept)) != FALSE;
 
         next.bbs.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(chk_bbs)) != FALSE;
@@ -2457,10 +2755,58 @@ void on_settings_clicked(GtkWidget*, gpointer user_data) {
     }
 
     g_object_unref(if_store);
+    g_object_unref(peer_store);
     gtk_widget_destroy(dlg);
 }
 
+void on_settings_clicked(GtkWidget*, gpointer user_data) {
+    open_settings_dialog(static_cast<GtkAppState*>(user_data), 0);
+}
+
+void on_peers_clicked(GtkWidget*, gpointer user_data) {
+    open_settings_dialog(static_cast<GtkAppState*>(user_data), 4);
+}
+
 bool confirm_and_exit(GtkAppState* st) {
+    const std::size_t auto_cnt = st->engine->auto_learned_peer_count();
+    if (auto_cnt > 0) {
+        enum { RESP_SAVE = 10, RESP_DISCARD = 11, RESP_REVIEW = 12 };
+        GtkWidget* dlg = gtk_dialog_new_with_buttons(
+            "Auto-Learned Peers",
+            GTK_WINDOW(st->window),
+            static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+            "Save & Exit", RESP_SAVE,
+            "Discard & Exit", RESP_DISCARD,
+            "Review Peers", RESP_REVIEW,
+            GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+            static_cast<const char*>(nullptr));
+        std::string msg = std::to_string(auto_cnt) +
+                          " auto-learned peer(s) were added during this session.\n"
+                          "Save them to configuration, discard them, or review in Peers?";
+        GtkWidget* lbl = gtk_label_new(msg.c_str());
+        gtk_misc_set_padding(GTK_MISC(lbl), 14, 12);
+        gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
+        gtk_widget_show_all(dlg);
+        gint resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        gtk_widget_destroy(dlg);
+        if (resp == RESP_REVIEW) {
+            open_settings_dialog(st, 4);
+            return false;
+        }
+        if (resp == RESP_SAVE) {
+            std::string err;
+            (void)st->engine->persist_auto_learned_peers(&err);
+            gtk_main_quit();
+            return true;
+        }
+        if (resp == RESP_DISCARD) {
+            st->engine->discard_auto_learned_peers();
+            gtk_main_quit();
+            return true;
+        }
+        return false;
+    }
+
     auto snap = st->engine->snapshot();
     std::string msg = (snap.total_active_connections > 0)
                           ? ("Exit node? (" + std::to_string(snap.total_active_connections) + " active)")
@@ -2538,6 +2884,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     GtkWidget* mi_files = gtk_menu_item_new_with_mnemonic("Manage _Files Area...");
     GtkWidget* mi_rig   = gtk_menu_item_new_with_mnemonic("_Radio Control...");
     GtkWidget* mi_sett  = gtk_menu_item_new_with_mnemonic("_Settings...");
+    GtkWidget* mi_peers = gtk_menu_item_new_with_mnemonic("_Peers...");
     GtkWidget* mi_term  = gtk_menu_item_new_with_mnemonic("_Terminate Connection...");
     GtkWidget* mi_ban   = gtk_menu_item_new_with_mnemonic("_Ban / Unban Callsign...");
     GtkWidget* mi_sep2  = gtk_separator_menu_item_new();
@@ -2549,6 +2896,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_signal_connect(mi_files, "activate", G_CALLBACK(on_approve_files_clicked), &st);
     g_signal_connect(mi_rig,   "activate", G_CALLBACK(on_rig_control_clicked), &st);
     g_signal_connect(mi_sett,  "activate", G_CALLBACK(on_settings_clicked), &st);
+    g_signal_connect(mi_peers, "activate", G_CALLBACK(on_peers_clicked), &st);
     g_signal_connect(mi_term,  "activate", G_CALLBACK(on_terminate_clicked), &st);
     g_signal_connect(mi_ban,   "activate", G_CALLBACK(on_ban_clicked), &st);
     g_signal_connect(mi_exit,  "activate", G_CALLBACK(on_exit_clicked), &st);
@@ -2560,6 +2908,7 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_files);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_rig);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sett);
+    gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_peers);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_term);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_ban);
     gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), mi_sep2);

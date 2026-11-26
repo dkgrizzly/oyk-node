@@ -20,6 +20,46 @@ std::string to_upper(std::string s) {
     return s;
 }
 
+std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+bool parse_bool_str(const std::string& v, bool fallback) {
+    std::string lv = to_lower(v);
+    if (lv == "1" || lv == "true" || lv == "yes" || lv == "on") return true;
+    if (lv == "0" || lv == "false" || lv == "no" || lv == "off") return false;
+    return fallback;
+}
+
+void split_endpoint_host_port(const std::string& endpoint, std::string& host_out, uint16_t& port_out) {
+    host_out.clear();
+    port_out = 0;
+    if (endpoint.empty()) return;
+    auto colon = endpoint.rfind(':');
+    if (colon != std::string::npos && endpoint.find(':') == colon && colon > 0 && colon + 1 < endpoint.size()) {
+        host_out = endpoint.substr(0, colon);
+        try {
+            int pv = std::clamp(std::stoi(endpoint.substr(colon + 1)), 0, 65535);
+            port_out = static_cast<uint16_t>(pv);
+        } catch (...) {
+        }
+    } else {
+        host_out = endpoint;
+    }
+}
+
+bool peer_call_matches(const std::string& peer_call, const ax25::Callsign& call) {
+    if (peer_call.empty() || peer_call == "*") return false;
+    std::string pc = to_upper(peer_call);
+    if (pc == call.str()) return true;
+    if (pc.find('-') == std::string::npos && call.ssid() == 0 && pc == call.base()) {
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 NodeEngine::NodeEngine(NodeConfig config)
@@ -105,6 +145,12 @@ bool NodeEngine::start(std::string& error_out) {
 
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        migrate_legacy_interface_peers_locked(config_);
+        for (const auto& p : config_.peers) {
+            if (!p.auto_learned && !p.callsign.empty() && p.callsign != "*") {
+                welcomed_calls_.insert(to_upper(p.callsign));
+            }
+        }
         if (interfaces_.empty()) {
             auto& reg = radio::InterfaceRegistry::instance();
             for (const auto& raw_icfg : config_.interfaces) {
@@ -129,6 +175,7 @@ bool NodeEngine::start(std::string& error_out) {
                 interfaces_.push_back(std::move(iface));
             }
         }
+        sync_peers_to_interfaces_locked();
     }
 
     std::vector<radio::RadioInterface*> started;
@@ -499,18 +546,97 @@ void NodeEngine::record_heard_locked(const ax25::Callsign& src,
     }
 }
 
-std::string NodeEngine::welcome_banner() const {
+std::string NodeEngine::welcome_banner(bool is_new_user) const {
     std::ostringstream oss;
     oss << "*** Connected to " << config_.callsign.str();
     if (config_.alias.valid()) {
         oss << " (" << config_.alias.str() << ")";
     }
     oss << " Packet Node\r";
-    if (!config_.welcome_text.empty()) {
-        oss << config_.welcome_text << "\r";
+    const std::string& wmsg =
+        (is_new_user && !config_.new_user_welcome.empty())
+            ? config_.new_user_welcome
+            : config_.welcome_text;
+    if (!wmsg.empty()) {
+        oss << wmsg << "\r";
     }
     oss << prompt_string();
     return oss.str();
+}
+
+radio::LearnedPeerPolicy NodeEngine::effective_learned_policy_locked(const std::string& iface_id) const {
+    for (const auto& ic : config_.interfaces) {
+        if (to_lower(ic.id) == to_lower(iface_id)) {
+            auto it = ic.params.find("learned_peer_policy");
+            if (it != ic.params.end()) {
+                auto pol = parse_learned_peer_policy(it->second, radio::LearnedPeerPolicy::Inherit);
+                if (pol != radio::LearnedPeerPolicy::Inherit) {
+                    return pol;
+                }
+            }
+            break;
+        }
+    }
+    return config_.learned_peer_policy;
+}
+
+radio::PeerConfig* NodeEngine::find_peer_locked(const std::string& iface_id, const ax25::Callsign& call) {
+    for (auto& p : config_.peers) {
+        if (!p.interface_id.empty() && to_lower(p.interface_id) != to_lower(iface_id)) continue;
+        if (peer_call_matches(p.callsign, call)) return &p;
+    }
+    return nullptr;
+}
+
+const radio::PeerConfig* NodeEngine::find_peer_locked(const std::string& iface_id, const ax25::Callsign& call) const {
+    for (const auto& p : config_.peers) {
+        if (!p.interface_id.empty() && to_lower(p.interface_id) != to_lower(iface_id)) continue;
+        if (peer_call_matches(p.callsign, call)) return &p;
+    }
+    return nullptr;
+}
+
+void NodeEngine::migrate_legacy_interface_peers_locked(NodeConfig& cfg) const {
+    for (auto& ic : cfg.interfaces) {
+        if (ic.peers.empty()) continue;
+        uint16_t def_port = (ic.type == "axudp") ? 10093 : 0;
+        auto pit = ic.params.find("bind_port");
+        if (pit == ic.params.end()) pit = ic.params.find("port");
+        if (pit != ic.params.end() && !pit->second.empty()) {
+            try {
+                int pv = std::clamp(std::stoi(pit->second), 0, 65535);
+                if (pv > 0) def_port = static_cast<uint16_t>(pv);
+            } catch (...) {
+            }
+        }
+        for (const auto& raw_spec : ic.peers) {
+            radio::PeerConfig p;
+            if (parse_legacy_peer_spec(raw_spec, ic.id, def_port, cfg.peers, p)) {
+                bool dup = false;
+                for (const auto& ex : cfg.peers) {
+                    if (to_lower(ex.interface_id) == to_lower(p.interface_id) &&
+                        to_lower(ex.callsign) == to_lower(p.callsign) &&
+                        ex.host == p.host && ex.port == p.port) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    cfg.peers.push_back(std::move(p));
+                }
+            }
+        }
+        ic.peers.clear();
+    }
+}
+
+void NodeEngine::sync_peers_to_interfaces_locked() {
+    for (const auto& ic : config_.interfaces) {
+        auto it = iface_by_id_.find(ic.id);
+        if (it != iface_by_id_.end() && it->second) {
+            it->second->sync_peers(config_.peers);
+        }
+    }
 }
 
 std::string NodeEngine::prompt_string() const {
@@ -793,6 +919,18 @@ bool NodeEngine::open_local_terminal(const std::string& port_spec,
                 error_out = "Invalid callsign '" + call_part + "'";
                 return false;
             }
+            if (const auto* peer = find_peer_locked(port_id, *parsed_target)) {
+                if (!peer->allow_outbound) {
+                    error_out = "Outbound connections to peer '" + parsed_target->str() + "' are disabled";
+                    return false;
+                }
+                if (endpoint.empty() && !peer->host.empty()) {
+                    endpoint = peer->host;
+                    if (peer->port > 0) {
+                        endpoint += ":" + std::to_string(peer->port);
+                    }
+                }
+            }
 
             SessionParams sp{
                 config_.paclen,
@@ -971,6 +1109,21 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                 auto ev = existing->on_frame(frame);
                 process_session_events(*existing, ev, pending, pending_cmds, pending_local);
             } else {
+                const auto* existing_peer = find_peer_locked(meta.interface_id, frame.source);
+                if (existing_peer && !existing_peer->allow_inbound) {
+                    log_msg(LOG_WARNING, "Denied incoming connection from " + frame.source.str() +
+                                         " on " + meta.interface_id + " (peer allow_inbound=false)");
+                    if (auto it = iface_by_id_.find(meta.interface_id); it != iface_by_id_.end()) {
+                        pending.push_back(PendingTx{
+                            it->second,
+                            ax25::Frame::make_dm(frame.source, frame.destination, frame.pf()),
+                            meta.peer_endpoint});
+                    }
+                    dispatch_tx(pending);
+                    dispatch_local_events(pending_local);
+                    return;
+                }
+
                 const BanAccessDecision decision = ban_list_.evaluate_access(frame.source, now_tp);
 
                 if (decision.action == BanAccessAction::RejectHardBan) {
@@ -1048,6 +1201,66 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                         }
                     }
                 } else {
+                    bool is_telnet_iface = false;
+                    bool auto_learn_if = true;
+                    if (auto if_it = iface_by_id_.find(meta.interface_id); if_it != iface_by_id_.end() && if_it->second) {
+                        if (to_lower(if_it->second->type()) == "telnet") is_telnet_iface = true;
+                    }
+                    for (const auto& ic : config_.interfaces) {
+                        if (to_lower(ic.id) == to_lower(meta.interface_id)) {
+                            if (to_lower(ic.type) == "telnet") is_telnet_iface = true;
+                            if (auto p_it = ic.params.find("auto_learn"); p_it != ic.params.end()) {
+                                auto_learn_if = parse_bool_str(p_it->second, !is_telnet_iface);
+                            } else {
+                                auto_learn_if = !is_telnet_iface;
+                            }
+                            break;
+                        }
+                    }
+
+                    if (!existing_peer && !is_telnet_iface && auto_learn_if &&
+                        frame.source.valid() && !is_own_callsign(frame.source)) {
+                        radio::LearnedPeerPolicy pol = effective_learned_policy_locked(meta.interface_id);
+                        std::string ep_host;
+                        uint16_t ep_port = 0;
+                        split_endpoint_host_port(meta.peer_endpoint, ep_host, ep_port);
+
+                        radio::PeerConfig lp;
+                        lp.id = derive_default_peer_id(config_.peers, frame.source.str());
+                        lp.callsign = frame.source.str();
+                        lp.interface_id = meta.interface_id;
+                        lp.host = ep_host;
+                        lp.port = ep_port;
+                        lp.allow_inbound = (pol == radio::LearnedPeerPolicy::Inbound ||
+                                            pol == radio::LearnedPeerPolicy::Both);
+                        lp.allow_outbound = (pol == radio::LearnedPeerPolicy::Outbound ||
+                                             pol == radio::LearnedPeerPolicy::Both);
+                        lp.auto_learned = true;
+                        config_.peers.push_back(lp);
+                        sync_peers_to_interfaces_locked();
+                        log_msg(LOG_INFO, "Auto-learned peer " + lp.id + " (" + lp.callsign +
+                                          ") on " + lp.interface_id +
+                                          (lp.allow_inbound ? " [in:on" : " [in:off") +
+                                          (lp.allow_outbound ? " out:on]" : " out:off]"));
+
+                        if (!lp.allow_inbound) {
+                            log_msg(LOG_WARNING, "Denied incoming connection from auto-learned peer " +
+                                                 frame.source.str() + " on " + meta.interface_id +
+                                                 " (policy denies inbound)");
+                            if (auto it = iface_by_id_.find(meta.interface_id); it != iface_by_id_.end()) {
+                                pending.push_back(PendingTx{
+                                    it->second,
+                                    ax25::Frame::make_dm(frame.source, frame.destination, frame.pf()),
+                                    meta.peer_endpoint});
+                            }
+                            dispatch_tx(pending);
+                            dispatch_local_events(pending_local);
+                            return;
+                        }
+                    }
+
+                    const bool is_first_time = welcomed_calls_.insert(frame.source.str()).second;
+
                     SessionParams sp{
                         config_.paclen,
                         config_.maxframe,
@@ -1089,7 +1302,7 @@ void NodeEngine::on_radio_frame(const ax25::Frame& frame, const radio::RadioFram
                     } else {
                         log_msg(LOG_INFO, "Session #" + std::to_string(sid) + " connected: " +
                                           frame.source.str() + " on " + meta.interface_id);
-                        auto banner_ev = raw->queue_text(welcome_banner());
+                        auto banner_ev = raw->queue_text(welcome_banner(is_first_time));
                         queue_session_frames(*raw, banner_ev.tx_frames, pending);
                     }
                 }
@@ -1411,6 +1624,22 @@ void NodeEngine::start_outbound_connect(Session& inbound_sess,
         return;
     }
 
+    std::string peer_ep;
+    if (const auto* peer = find_peer_locked(port_id, *target)) {
+        if (!peer->allow_outbound) {
+            auto ev = inbound_sess.queue_text(
+                "Outbound connections to peer '" + target->str() + "' are disabled.\r" + prompt_string());
+            queue_session_frames(inbound_sess, ev.tx_frames, pending);
+            log_msg(LOG_WARNING, "Blocked outbound connect to " + target->str() +
+                                 " on " + port_id + " (peer allow_outbound=false)");
+            return;
+        }
+        if (!peer->host.empty()) {
+            peer_ep = peer->host;
+            if (peer->port > 0) peer_ep += ":" + std::to_string(peer->port);
+        }
+    }
+
     SessionParams sp{
         config_.paclen,
         config_.maxframe,
@@ -1424,7 +1653,7 @@ void NodeEngine::start_outbound_connect(Session& inbound_sess,
         port_id,
         config_.callsign,
         *target,
-        "",
+        peer_ep,
         SessionDirection::Outbound,
         sp);
     out_sess->set_bridged_session_id(inbound_sess.id());
@@ -1721,6 +1950,7 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         old_cfg = config_;
+        migrate_legacy_interface_peers_locked(new_cfg);
         if (new_cfg.source_path.empty()) {
             new_cfg.source_path = old_cfg.source_path;
         }
@@ -1980,6 +2210,7 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
         }
 
         config_ = std::move(new_cfg);
+        sync_peers_to_interfaces_locked();
 
         // Reconfigure BBS
         bbs_server_.set_files_enabled(config_.bbs.files_enabled);
@@ -2033,6 +2264,51 @@ ConfigApplyResult NodeEngine::apply_config(NodeConfig new_cfg, bool save_to_disk
 
     result.applied = true;
     return result;
+}
+
+std::size_t NodeEngine::auto_learned_peer_count() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    std::size_t cnt = 0;
+    for (const auto& p : config_.peers) {
+        if (p.auto_learned) ++cnt;
+    }
+    return cnt;
+}
+
+bool NodeEngine::persist_auto_learned_peers(std::string* error_out) {
+    NodeConfig snapshot_cfg;
+    std::string target_path;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        for (auto& p : config_.peers) {
+            p.auto_learned = false;
+        }
+        snapshot_cfg = config_;
+        target_path = !config_.source_path.empty() ? config_.source_path : "./node.cfg";
+    }
+    if (!snapshot_cfg.save_to_file(target_path)) {
+        if (error_out) {
+            *error_out = "Unable to write config file: " + target_path;
+        }
+        log_msg(LOG_WARNING, "Failed to persist auto-learned peers to " + target_path);
+        return false;
+    }
+    log_msg(LOG_INFO, "Saved auto-learned peers to " + target_path);
+    return true;
+}
+
+void NodeEngine::discard_auto_learned_peers() {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    std::size_t before = config_.peers.size();
+    config_.peers.erase(
+        std::remove_if(config_.peers.begin(), config_.peers.end(),
+                       [](const radio::PeerConfig& p) { return p.auto_learned; }),
+        config_.peers.end());
+    sync_peers_to_interfaces_locked();
+    std::size_t removed = before - config_.peers.size();
+    if (removed > 0) {
+        log_msg(LOG_INFO, "Discarded " + std::to_string(removed) + " auto-learned peer(s)");
+    }
 }
 
 } // namespace oyk::node

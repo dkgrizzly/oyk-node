@@ -1174,6 +1174,85 @@ static void test_format_peer_spec() {
     printf("[PASS] test_format_peer_spec\n");
 }
 
+static void test_portable_peer_sections_and_auto_learn() {
+    const char* path = "t_peers.cfg";
+    FILE* fp = fopen(path, "wb");
+    assert(fp != NULL);
+    fprintf(fp,
+            "[node]\n"
+            "callsign=K7PORT-7\n"
+            "welcome=Standard port\n"
+            "new_user_welcome=Welcome new op!\n"
+            "learned_peer_policy=inbound\n\n"
+            "[interface axudp0]\n"
+            "type=axudp\n"
+            "bind_host=127.0.0.1\n"
+            "bind_port=10093\n"
+            "peer=K1LEG@10.1.2.3:10094\n\n"
+            "[peer remote0]\n"
+            "callsign=R3MOT-7\n"
+            "description=Remote PoPT\n"
+            "interface=axudp0\n"
+            "host=12.34.56.78\n"
+            "allow_inbound=false\n"
+            "allow_outbound=true\n");
+    fclose(fp);
+
+    OykConfig* cfg = new OykConfig;
+    char err[64];
+    assert(oyk_config_load(path, cfg, err, sizeof(err)) == 1);
+    assert(cfg->learned_peer_policy == OYK_LEARN_INBOUND);
+    assert(strcmp(cfg->new_user_welcome, "Welcome new op!") == 0);
+    assert(cfg->peer_count == 2);
+    assert(strcmp(cfg->peers[0].id, "remote0") == 0);
+    assert(strcmp(cfg->peers[0].callsign, "R3MOT-7") == 0);
+    assert(cfg->peers[0].allow_inbound == 0);
+    assert(cfg->peers[0].allow_outbound == 1);
+    assert(strcmp(cfg->peers[1].callsign, "K1LEG") == 0);
+
+    OykPortableNode* node = new OykPortableNode;
+    assert(node->init(cfg, NULL, NULL, err, sizeof(err)) == 1);
+
+    /* Inbound SABM from R3MOT-7 (allow_inbound=0) yields DM */
+    OykFrame sabm_den;
+    memset(&sabm_den, 0, sizeof(sabm_den));
+    sabm_den.dst = cfg->callsign;
+    assert(oyk_parse_callsign("R3MOT-7", &sabm_den.src));
+    sabm_den.is_command = 1;
+    sabm_den.control = 0x3FU;
+    node->on_rx_frame(0, &sabm_den, 0x0C22384EUL, 10093, 0);
+
+    /* Inbound SABM from N2NEW auto-learns and sends new_user_welcome */
+    OykFrame sabm_new;
+    memset(&sabm_new, 0, sizeof(sabm_new));
+    sabm_new.dst = cfg->callsign;
+    assert(oyk_parse_callsign("N2NEW", &sabm_new.src));
+    sabm_new.is_command = 1;
+    sabm_new.control = 0x3FU;
+    node->on_rx_frame(0, &sabm_new, 0x7F000001UL, 10099, 0);
+    assert(node->auto_learned_peer_count() == 1);
+
+    assert(node->persist_auto_learned_peers(err, sizeof(err)) == 1);
+    assert(node->auto_learned_peer_count() == 0);
+
+    OykConfig* reloaded = new OykConfig;
+    assert(oyk_config_load(path, reloaded, err, sizeof(err)) == 1);
+    assert(reloaded->peer_count == 3);
+    delete reloaded;
+
+    /* Another auto-learn then discard */
+    assert(oyk_parse_callsign("K9TMP", &sabm_new.src));
+    node->on_rx_frame(0, &sabm_new, 0x7F000001UL, 10098, 0);
+    assert(node->auto_learned_peer_count() == 1);
+    node->discard_auto_learned_peers();
+    assert(node->auto_learned_peer_count() == 0);
+
+    delete node;
+    delete cfg;
+    remove(path);
+    printf("[PASS] test_portable_peer_sections_and_auto_learn\n");
+}
+
 int oyk_run_portable_tests() {
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
@@ -1185,6 +1264,7 @@ int oyk_run_portable_tests() {
     test_dos_video_dirty_diff_and_attrs();
     test_derive_default_iface_id();
     test_format_peer_spec();
+    test_portable_peer_sections_and_auto_learn();
     return 0;
 }
 

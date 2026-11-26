@@ -659,7 +659,82 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
     }
 }
 
+static void run_dos_settings(int initial_tab = 0);
+
 static int confirm_dos_exit() {
+    const int auto_cnt = g_node.auto_learned_peer_count();
+    if (auto_cnt > 0) {
+        const int top = 6, left = 4, h = 11, w = 72;
+        oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+        oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+        oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+        oyk_u8 warn_at = dos_vid_attr(g_vid, 0x1EU, 0x0FU);
+        oyk_u8 btn_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+        oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+
+        static const char* BTNS[4] = {
+            "[ Save & Exit ]", "[ Discard & Exit ]", "[ Review Peers ]", "[ Cancel ]"
+        };
+        int focus = 2; /* Review Peers */
+        int act = 3;   /* Cancel */
+        int dirty = 1;
+        while (!g_break_flag) {
+            dos_pump_network();
+            g_node.tick();
+            if (dirty) {
+                dirty = 0;
+                dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+                dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Auto-Learned Peers");
+                char l1[68];
+                sprintf(l1, "%d auto-learned peer(s) were added during this session.", auto_cnt);
+                vid_puts(top + 2, left + 3, warn_at, l1, w - 6);
+                vid_puts(top + 3, left + 3, fill_at,
+                         "Save them to configuration, discard them, or review in Peers?", w - 6);
+                int bx = left + 3;
+                for (int i = 0; i < 4; ++i) {
+                    int bl = static_cast<int>(strlen(BTNS[i]));
+                    vid_puts(top + 6, bx, (focus == i) ? sel_at : btn_at, BTNS[i], bl);
+                    bx += bl + 2;
+                }
+                dos_vid_hdiv(g_vid, top + 8, left, w, bdr_at);
+                vid_puts(top + 9, left + 2, fill_at,
+                         "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc", w - 4);
+                dos_vid_flush(g_vid);
+            }
+            if (!kbhit()) continue;
+            dirty = 1;
+            int ch = getch();
+            if (ch == 0 || ch == 0xE0) {
+                int ext = getch();
+                if (ext == 75) focus = (focus + 3) % 4;
+                else if (ext == 77) focus = (focus + 1) % 4;
+                continue;
+            }
+            if (ch == '\t') focus = (focus + 1) % 4;
+            else if (ch == 27 || ch == 'c' || ch == 'C') { act = 3; break; }
+            else if (ch == 's' || ch == 'S') { act = 0; break; }
+            else if (ch == 'd' || ch == 'D') { act = 1; break; }
+            else if (ch == 'r' || ch == 'R') { act = 2; break; }
+            else if (ch == '\r' || ch == '\n' || ch == ' ') { act = focus; break; }
+        }
+        if (act == 2) {
+            run_dos_settings(4);
+            render_dos_screen();
+            return 0;
+        }
+        if (act == 0) {
+            char err[64];
+            g_node.persist_auto_learned_peers(err, sizeof(err));
+            return 1;
+        }
+        if (act == 1) {
+            g_node.discard_auto_learned_peers();
+            return 1;
+        }
+        render_dos_screen();
+        return 0;
+    }
+
     const int top = 7, left = 12, h = 9, w = 56;
     oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
     oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
@@ -2274,18 +2349,245 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
     return 0;
 }
 
-static void run_dos_settings() {
-    static OykConfig draft;
+struct DosEditPeerState {
+    char id[20];
+    char callsign[16];
+    char desc[48];
+    char iface[16];
+    char host[48];
+    char port[8];
+    int allow_in;
+    int allow_out;
+    int id_custom;
+    char err[68];
+};
+
+static int dos_edit_peer_save(const OykConfig* draft,
+                              int edit_idx,
+                              DosEditPeerState* st,
+                              OykPeerConfig* out_p) {
+    OykCallsign cs;
+    if (!oyk_parse_callsign(st->callsign, &cs)) {
+        strcpy(st->err, "Invalid AX.25 callsign.");
+        return 0;
+    }
+    char cfmt[16];
+    oyk_format_callsign(&cs, cfmt, sizeof(cfmt));
+    if (!st->id[0]) {
+        oyk_derive_default_peer_id(draft, cfmt, st->id, sizeof(st->id));
+    }
+    for (int i = 0; i < draft->peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+        if (i == edit_idx) continue;
+        if (stricmp(draft->peers[i].id, st->id) == 0) {
+            sprintf(st->err, "Peer ID '%s' already exists.", st->id);
+            return 0;
+        }
+    }
+    oyk_u16 pnum = 0;
+    if (st->port[0]) {
+        long pv = atol(st->port);
+        if (pv < 0L || pv > 65535L) {
+            strcpy(st->err, "Port must be 0..65535.");
+            return 0;
+        }
+        pnum = static_cast<oyk_u16>(pv);
+    }
+    memset(out_p, 0, sizeof(*out_p));
+    strncpy(out_p->id, st->id, sizeof(out_p->id) - 1);
+    strncpy(out_p->callsign, cfmt, sizeof(out_p->callsign) - 1);
+    strncpy(out_p->description, st->desc, sizeof(out_p->description) - 1);
+    strncpy(out_p->interface_id, st->iface, sizeof(out_p->interface_id) - 1);
+    strncpy(out_p->host, st->host, sizeof(out_p->host) - 1);
+    out_p->port = pnum;
+    out_p->allow_inbound = st->allow_in ? 1 : 0;
+    out_p->allow_outbound = st->allow_out ? 1 : 0;
+    out_p->auto_learned = 0;
+    return 1;
+}
+
+static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPeerConfig* out_p) {
+    DosEditPeerState st;
+    memset(&st, 0, sizeof(st));
+    if (edit_idx >= 0 && edit_idx < draft->peer_count) {
+        const OykPeerConfig& src = draft->peers[edit_idx];
+        strncpy(st.id, src.id, sizeof(st.id) - 1);
+        strncpy(st.callsign, src.callsign, sizeof(st.callsign) - 1);
+        strncpy(st.desc, src.description, sizeof(st.desc) - 1);
+        strncpy(st.iface, src.interface_id, sizeof(st.iface) - 1);
+        strncpy(st.host, src.host, sizeof(st.host) - 1);
+        if (src.port > 0) sprintf(st.port, "%u", static_cast<unsigned int>(src.port));
+        st.allow_in = src.allow_inbound ? 1 : 0;
+        st.allow_out = src.allow_outbound ? 1 : 0;
+        st.id_custom = 1;
+    } else {
+        st.allow_in = 1;
+        st.allow_out = 1;
+        for (int i = 0; i < draft->iface_count; ++i) {
+            if (stricmp(draft->ifaces[i].type, "telnet") != 0 &&
+                stricmp(draft->ifaces[i].type, "local") != 0) {
+                strncpy(st.iface, draft->ifaces[i].id, sizeof(st.iface) - 1);
+                break;
+            }
+        }
+    }
+
+    const char* valid_if[OYK_MAX_INTERFACES];
+    int valid_cnt = 0;
+    for (int i = 0; i < draft->iface_count && valid_cnt < OYK_MAX_INTERFACES; ++i) {
+        if (stricmp(draft->ifaces[i].type, "telnet") != 0 &&
+            stricmp(draft->ifaces[i].type, "local") != 0) {
+            valid_if[valid_cnt++] = draft->ifaces[i].id;
+        }
+    }
+
+    static const char* PLABELS[8] = {
+        "Peer ID", "Callsign", "Description", "Interface",
+        "Host / DMR ID", "Port (0=default)", "Allow Inbound", "Allow Outbound"
+    };
+
+    const int top = 4, left = 6, h = 17, w = 68;
+    oyk_u8 bdr_at  = dos_vid_attr(g_vid, 0x1FU, 0x0FU);
+    oyk_u8 fill_at = dos_vid_attr(g_vid, 0x17U, 0x07U);
+    oyk_u8 ttl_at  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
+    oyk_u8 sel_at  = dos_vid_attr(g_vid, 0x30U, 0x70U);
+    oyk_u8 err_at  = dos_vid_attr(g_vid, 0x4FU, 0x70U);
+    oyk_u8 bar_at  = dos_vid_attr(g_vid, 0x70U, 0x07U);
+
+    int focus = (edit_idx >= 0) ? 0 : 1;
+    int btn = 0;
+    int committed = 0;
+    int dirty = 1;
+
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        if (dirty) {
+            dirty = 0;
+            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
+            dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at,
+                          (edit_idx >= 0) ? "Edit Peer" : "Add Peer");
+            for (int r = 0; r < 8; ++r) {
+                char vbuf[50], row[66];
+                if (r == 0) strncpy(vbuf, st.id, 46);
+                else if (r == 1) strncpy(vbuf, st.callsign, 46);
+                else if (r == 2) strncpy(vbuf, st.desc, 46);
+                else if (r == 3) sprintf(vbuf, "< %s >", st.iface[0] ? st.iface : "(any)");
+                else if (r == 4) strncpy(vbuf, st.host, 46);
+                else if (r == 5) strcpy(vbuf, st.port[0] ? st.port : "(default)");
+                else if (r == 6) strcpy(vbuf, st.allow_in ? "[ON]" : "[OFF]");
+                else strcpy(vbuf, st.allow_out ? "[ON]" : "[OFF]");
+                vbuf[46] = '\0';
+                sprintf(row, " %-16.16s: %-45.45s", PLABELS[r], vbuf);
+                vid_puts(top + 2 + r, left + 2, (focus == r) ? sel_at : fill_at, row, w - 4);
+            }
+            if (st.err[0]) vid_puts(top + 11, left + 2, err_at, st.err, w - 4);
+            vid_puts(top + 13, left + 20, (focus == 8 && btn == 0) ? sel_at : bar_at, "[ Save ]", 8);
+            vid_puts(top + 13, left + 36, (focus == 8 && btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
+            dos_vid_hdiv(g_vid, top + 14, left, w, bdr_at);
+            vid_puts(top + 15, left + 2, fill_at,
+                     "Up/Dn/Tab:Field  Lt/Rt/Spc:Toggle  Enter:Save  Esc:Cancel", w - 4);
+            dos_vid_flush(g_vid);
+        }
+        if (!kbhit()) continue;
+        dirty = 1;
+        int ch = getch();
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72) focus = (focus + 8) % 9;
+            else if (ext == 80) focus = (focus + 1) % 9;
+            else if (ext == 75 || ext == 77) {
+                if (focus == 8) btn = 1 - btn;
+                else if (focus == 3 && valid_cnt > 0) {
+                    int idx = 0;
+                    for (int i = 0; i < valid_cnt; ++i) {
+                        if (stricmp(valid_if[i], st.iface) == 0) { idx = i; break; }
+                    }
+                    idx = (ext == 75) ? (idx + valid_cnt - 1) % valid_cnt : (idx + 1) % valid_cnt;
+                    strncpy(st.iface, valid_if[idx], sizeof(st.iface) - 1);
+                } else if (focus == 6) st.allow_in = !st.allow_in;
+                else if (focus == 7) st.allow_out = !st.allow_out;
+            }
+            continue;
+        }
+        if (ch == 27) break;
+        if (ch == '\t') { focus = (focus + 1) % 9; continue; }
+        if (focus == 8) {
+            if (ch == '\r' || ch == '\n' || ch == ' ') {
+                if (btn == 1) break;
+                if (dos_edit_peer_save(draft, edit_idx, &st, out_p)) { committed = 1; break; }
+            }
+            continue;
+        }
+        if (focus == 3 && ch == ' ' && valid_cnt > 0) {
+            int idx = 0;
+            for (int i = 0; i < valid_cnt; ++i) {
+                if (stricmp(valid_if[i], st.iface) == 0) { idx = i; break; }
+            }
+            idx = (idx + 1) % valid_cnt;
+            strncpy(st.iface, valid_if[idx], sizeof(st.iface) - 1);
+            continue;
+        }
+        if ((focus == 6 || focus == 7) && ch == ' ') {
+            if (focus == 6) st.allow_in = !st.allow_in;
+            else st.allow_out = !st.allow_out;
+            continue;
+        }
+        if (ch == '\r' || ch == '\n') {
+            if (dos_edit_peer_save(draft, edit_idx, &st, out_p)) { committed = 1; break; }
+            continue;
+        }
+        char* fld = NULL;
+        size_t cap = 0;
+        if (focus == 0) { fld = st.id; cap = sizeof(st.id) - 1; }
+        else if (focus == 1) { fld = st.callsign; cap = sizeof(st.callsign) - 1; }
+        else if (focus == 2) { fld = st.desc; cap = sizeof(st.desc) - 1; }
+        else if (focus == 4) { fld = st.host; cap = sizeof(st.host) - 1; }
+        else if (focus == 5) { fld = st.port; cap = sizeof(st.port) - 1; }
+        if (fld) {
+            size_t len = strlen(fld);
+            if (ch == '\b' || ch == 127) {
+                if (len > 0) fld[len - 1] = '\0';
+                if (focus == 0) st.id_custom = (st.id[0] != '\0');
+                if (focus == 1 && !st.id_custom) {
+                    if (st.callsign[0]) oyk_derive_default_peer_id(draft, st.callsign, st.id, sizeof(st.id));
+                    else st.id[0] = '\0';
+                }
+                st.err[0] = '\0';
+            } else if (ch >= 32 && ch < 127 && len < cap) {
+                fld[len] = static_cast<char>(ch);
+                fld[len + 1] = '\0';
+                if (focus == 0) st.id_custom = 1;
+                if (focus == 1 && !st.id_custom) {
+                    oyk_derive_default_peer_id(draft, st.callsign, st.id, sizeof(st.id));
+                }
+                st.err[0] = '\0';
+            }
+        }
+    }
+    return committed;
+}
+
+static void run_dos_settings(int initial_tab) {
+    struct DraftGuard {
+        OykConfig* p;
+        DraftGuard() : p(new OykConfig) {}
+        ~DraftGuard() { delete p; }
+    } draft_guard;
+    if (!draft_guard.p) return;
+    OykConfig& draft = *draft_guard.p;
     draft = g_node.config();
 
-    /* Six logical tabs matching GTK/ncurses/Windows/TinyTMUX: 0=Node, 1=BBS, 2=CHAT, 3=Interfaces, 4=Rig, 5=Printer */
-    static const char* TAB_NAMES[6] = { " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Interfaces ", " 5:Rig ", " 6:Printer " };
-    static const char* NODE_LABELS[5] = {
+    static const char* TAB_NAMES[7] = {
+        " 1:Node ", " 2:BBS ", " 3:CHAT ", " 4:Ifaces ", " 5:Peers ", " 6:Rig ", " 7:Printer "
+    };
+    static const char* NODE_LABELS[7] = {
         "Node Callsign",
         "Node Alias",
         "Welcome Message",
         "Info Message",
-        "Allow Incoming (Default)"
+        "Allow Incoming (Default)",
+        "Learned Peer Policy",
+        "New User Welcome"
     };
     static const char* BBS_LABELS[8] = {
         "Enable Packet BBS",
@@ -2322,8 +2624,8 @@ static void run_dos_settings() {
         "Condensed 132-Col Mode"
     };
 
-    int tab = 0;
-    int sel[6] = { 0, 0, 0, 0, 0, 0 };
+    int tab = (initial_tab >= 0 && initial_tab < 7) ? initial_tab : 0;
+    int sel[7] = { 0, 0, 0, 0, 0, 0, 0 };
     int dirty = 1;
     char fb[78];
     sprintf(fb, "Config: %.68s", draft.source_path[0] ? draft.source_path : "node.cfg");
@@ -2340,7 +2642,7 @@ static void run_dos_settings() {
         dos_pump_network();
         g_node.tick();
 
-        int cnt = (tab == 0) ? 5 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : 6)));
+        int cnt = (tab == 0) ? 7 : ((tab == 1) ? 8 : ((tab == 2) ? 6 : ((tab == 3) ? draft.iface_count : ((tab == 4) ? draft.peer_count : 6))));
         if (cnt <= 0) sel[tab] = 0;
         else if (sel[tab] >= cnt) sel[tab] = cnt - 1;
 
@@ -2352,7 +2654,7 @@ static void run_dos_settings() {
             /* Row 1: Tab bar */
             vid_puts(1, 0, tab_bg, "", 80);
             int tx = 1;
-            for (int t = 0; t < 6; ++t) {
+            for (int t = 0; t < 7; ++t) {
                 int tlen = static_cast<int>(strlen(TAB_NAMES[t]));
                 vid_puts(1, tx, (t == tab) ? tab_hi : tab_bg, TAB_NAMES[t], tlen);
                 tx += tlen + 1;
@@ -2360,44 +2662,49 @@ static void run_dos_settings() {
 
             dos_vid_box(g_vid, 2, 0, 20, 80, bdr_at, fill_at, 0);
 
-            if (tab != 3) {
-                const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
+            if (tab != 3 && tab != 4) {
+                const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 5) ? RIG_LABELS : PRN_LABELS)));
                 for (int i = 0; i < cnt; ++i) {
                     char val[56], cs[16], row[82];
                     val[0] = '\0';
                     if (tab == 0) {
                         if (i == 0) oyk_format_callsign(&draft.callsign, val, sizeof(val));
                         else if (i == 1) { if (draft.alias.base[0]) oyk_format_callsign(&draft.alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                        else if (i == 2) { strncpy(val, draft.welcome_text, 48); val[48] = '\0'; }
-                        else if (i == 3) { strncpy(val, draft.info_text, 48); val[48] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.welcome_text, 46); val[46] = '\0'; }
+                        else if (i == 3) { strncpy(val, draft.info_text, 46); val[46] = '\0'; }
                         else if (i == 4) strcpy(val, draft.accept_incoming ? "[ON]" : "[OFF]");
+                        else if (i == 5) strcpy(val, oyk_format_learned_policy(draft.learned_peer_policy));
+                        else if (i == 6) {
+                            if (draft.new_user_welcome[0]) { strncpy(val, draft.new_user_welcome, 46); val[46] = '\0'; }
+                            else strcpy(val, "(use default)");
+                        }
                     } else if (tab == 1) {
                         if (i == 0) strcpy(val, draft.bbs_enabled ? "[ON]" : "[OFF]");
                         else if (i == 1) { OykCallsign bc; oyk_config_resolved_bbs_callsign(&draft, &bc); oyk_format_callsign(&bc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.bbs_ssid), cs); }
                         else if (i == 2) { if (draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                         else if (i == 3) { if (draft.bbs_alias.base[0]) oyk_format_callsign(&draft.bbs_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
                         else if (i == 4) strcpy(val, draft.bbs_files_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 5) { strncpy(val, draft.bbs_files_path, 48); val[48] = '\0'; }
-                        else if (i == 6) { strncpy(val, draft.bbs_mail_path, 48); val[48] = '\0'; }
-                        else if (i == 7) { strncpy(val, draft.bbs_welcome, 48); val[48] = '\0'; }
+                        else if (i == 5) { strncpy(val, draft.bbs_files_path, 46); val[46] = '\0'; }
+                        else if (i == 6) { strncpy(val, draft.bbs_mail_path, 46); val[46] = '\0'; }
+                        else if (i == 7) { strncpy(val, draft.bbs_welcome, 46); val[46] = '\0'; }
                     } else if (tab == 2) {
                         if (i == 0) strcpy(val, draft.chat_enabled ? "[ON]" : "[OFF]");
                         else if (i == 1) { OykCallsign cc; oyk_config_resolved_chat_callsign(&draft, &cc); oyk_format_callsign(&cc, cs, sizeof(cs)); sprintf(val, "%u (%s)", static_cast<unsigned int>(draft.chat_ssid), cs); }
                         else if (i == 2) { if (draft.chat_callsign.base[0]) oyk_format_callsign(&draft.chat_callsign, val, sizeof(val)); else strcpy(val, "(auto)"); }
                         else if (i == 3) { if (draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, val, sizeof(val)); else strcpy(val, "(none)"); }
-                        else if (i == 4) { strncpy(val, draft.chat_topic, 48); val[48] = '\0'; }
-                        else if (i == 5) { strncpy(val, draft.chat_welcome, 48); val[48] = '\0'; }
-                    } else if (tab == 4) {
+                        else if (i == 4) { strncpy(val, draft.chat_topic, 46); val[46] = '\0'; }
+                        else if (i == 5) { strncpy(val, draft.chat_welcome, 46); val[46] = '\0'; }
+                    } else if (tab == 5) {
                         if (i == 0) strcpy(val, draft.rig_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 48); val[48] = '\0'; }
-                        else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 48); val[48] = '\0'; }
+                        else if (i == 1) { strncpy(val, draft.rig_protocol[0] ? draft.rig_protocol : "rigctl", 46); val[46] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.rig_host[0] ? draft.rig_host : "127.0.0.1", 46); val[46] = '\0'; }
                         else if (i == 3) sprintf(val, "%u", static_cast<unsigned int>(draft.rig_port));
                         else if (i == 4) sprintf(val, "%u s", static_cast<unsigned int>(draft.rig_poll_sec));
                         else if (i == 5) strcpy(val, draft.rig_notify ? "[ON]" : "[OFF]");
                     } else {
                         if (i == 0) strcpy(val, draft.printer_enabled ? "[ON]" : "[OFF]");
-                        else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 48); val[48] = '\0'; }
-                        else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 48); val[48] = '\0'; }
+                        else if (i == 1) { strncpy(val, draft.printer_device[0] ? draft.printer_device : "(none)", 46); val[46] = '\0'; }
+                        else if (i == 2) { strncpy(val, draft.printer_protocol[0] ? draft.printer_protocol : "generic", 46); val[46] = '\0'; }
                         else if (i == 3) sprintf(val, "%lu", static_cast<unsigned long>(draft.printer_baud ? draft.printer_baud : 9600UL));
                         else if (i == 4) sprintf(val, "0x%lX", static_cast<unsigned long>(draft.printer_level));
                         else if (i == 5) strcpy(val, draft.printer_condensed ? "[ON]" : "[OFF]");
@@ -2405,13 +2712,17 @@ static void run_dos_settings() {
                     sprintf(row, " %-29.29s: %-46.46s", labels[i], val);
                     vid_puts(3 + i, 1, (i == sel[tab]) ? sel_at : fill_at, row, 78);
                 }
-            } else {
+            } else if (tab == 3) {
                 vid_puts(3, 1, hdr_at, " #  ID          Type         Endpoint / Device             Peers", 78);
                 if (draft.iface_count == 0) {
                     vid_puts(4, 1, fill_at, " (no interfaces configured - press A to add)", 78);
                 } else {
                     for (int i = 0; i < draft.iface_count && i < 16; ++i) {
                         const OykIfaceConfig& ic = draft.ifaces[i];
+                        int pcnt = ic.peer_count;
+                        for (int pi = 0; pi < draft.peer_count && pi < OYK_MAX_CONFIG_PEERS; ++pi) {
+                            if (stricmp(draft.peers[pi].interface_id, ic.id) == 0) ++pcnt;
+                        }
                         char row[82], ep[32];
                         if (strcmp(ic.type, "kiss-serial") == 0 || strcmp(ic.type, "usb-cdc-serial") == 0) {
                             sprintf(ep, "%.14s @%lu", ic.device[0] ? ic.device : "COM1",
@@ -2421,17 +2732,37 @@ static void run_dos_settings() {
                                     static_cast<unsigned int>(ic.port));
                         }
                         sprintf(row, " %-2d %-11.11s %-12.12s %-29.29s %d",
-                                i + 1, ic.id, ic.type, ep, ic.peer_count);
+                                i + 1, ic.id, ic.type, ep, pcnt);
                         vid_puts(4 + i, 1, (i == sel[3]) ? sel_at : fill_at, row, 78);
+                    }
+                }
+            } else {
+                vid_puts(3, 1, hdr_at, " ID         Callsign  Iface    Endpoint               ACL     Tag", 78);
+                if (draft.peer_count == 0) {
+                    vid_puts(4, 1, fill_at, " (no peers configured - press A to add)", 78);
+                } else {
+                    for (int i = 0; i < draft.peer_count && i < 16; ++i) {
+                        const OykPeerConfig& pc = draft.peers[i];
+                        char ep[28], acl[10], row[82];
+                        if (pc.host[0] && pc.port > 0) sprintf(ep, "%.15s:%u", pc.host, static_cast<unsigned int>(pc.port));
+                        else if (pc.host[0]) sprintf(ep, "%.21s", pc.host);
+                        else strcpy(ep, "(any)");
+                        sprintf(acl, "%s/%s", pc.allow_inbound ? "IN" : "--", pc.allow_outbound ? "OUT" : "---");
+                        sprintf(row, " %-10.10s %-9.9s %-8.8s %-22.22s %-7.7s %s",
+                                pc.id, pc.callsign, pc.interface_id, ep, acl,
+                                pc.auto_learned ? "[AUTO]" : "");
+                        vid_puts(4 + i, 1, (i == sel[4]) ? sel_at : fill_at, row, 78);
                     }
                 }
             }
 
             vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
             if (tab == 3) {
-                vid_puts(24, 0, tab_bg, " Tab/1-6:Tabs  A:Add  Enter/E:Edit  D:Remove  S/F2:Save  Esc:Cancel ", 80);
+                vid_puts(24, 0, tab_bg, " Tab/1-7:Tabs  A:Add  Enter/E:Edit  D:Remove  S/F2:Save  Esc:Cancel ", 80);
+            } else if (tab == 4) {
+                vid_puts(24, 0, tab_bg, " 1-7:Tabs A:Add E:Edit D:Del I:In O:Out K:KeepAuto S/F2:Save Esc:Cancel", 80);
             } else {
-                vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-6:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
+                vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
             }
             dos_vid_flush(g_vid);
         }
@@ -2443,15 +2774,15 @@ static void run_dos_settings() {
             int ext = getch();
             if (ext == 72 && sel[tab] > 0) --sel[tab];             /* Up */
             else if (ext == 80 && sel[tab] + 1 < cnt) ++sel[tab];  /* Down */
-            else if (ext == 75) tab = (tab + 5) % 6;               /* Left */
-            else if (ext == 77) tab = (tab + 1) % 6;               /* Right */
+            else if (ext == 75) tab = (tab + 6) % 7;               /* Left */
+            else if (ext == 77) tab = (tab + 1) % 7;               /* Right */
             else if (ext == 60) ch = 'S';                          /* F2 */
             else continue;
             if (ch != 'S') continue;
         }
         if (ch == 27) break;
-        if (ch == '\t') { tab = (tab + 1) % 6; continue; }
-        if (ch >= '1' && ch <= '6') { tab = ch - '1'; continue; }
+        if (ch == '\t') { tab = (tab + 1) % 7; continue; }
+        if (ch >= '1' && ch <= '7') { tab = ch - '1'; continue; }
 
         if (ch == 's' || ch == 'S') {
             static OykConfigApplyResult res;
@@ -2518,14 +2849,79 @@ static void run_dos_settings() {
             continue;
         }
 
+        if (tab == 4) {
+            if (ch == 'a' || ch == 'A') {
+                if (draft.peer_count >= OYK_MAX_CONFIG_PEERS) {
+                    strcpy(fb, "Maximum peer count reached.");
+                    continue;
+                }
+                OykPeerConfig pc;
+                if (run_dos_edit_peer_dialog(&draft, -1, &pc)) {
+                    draft.peers[draft.peer_count++] = pc;
+                    sel[4] = draft.peer_count - 1;
+                    sprintf(fb, "Added peer %s (press S/F2 to Save & Apply).", pc.id);
+                } else {
+                    strcpy(fb, "Add peer cancelled.");
+                }
+            } else if ((ch == '\r' || ch == '\n' || ch == 'e' || ch == 'E') && draft.peer_count > 0) {
+                if (sel[4] >= 0 && sel[4] < draft.peer_count) {
+                    OykPeerConfig pc;
+                    if (run_dos_edit_peer_dialog(&draft, sel[4], &pc)) {
+                        draft.peers[sel[4]] = pc;
+                        sprintf(fb, "Updated peer %s (press S/F2 to Save & Apply).", pc.id);
+                    } else {
+                        strcpy(fb, "Edit peer cancelled.");
+                    }
+                }
+            } else if ((ch == 'd' || ch == 'D') && draft.peer_count > 0) {
+                char yn[4], pr[48];
+                sprintf(pr, "Remove peer %s? [Y/N]: ", draft.peers[sel[4]].id);
+                prompt_line(pr, yn, sizeof(yn));
+                if (yn[0] == 'y' || yn[0] == 'Y') {
+                    for (int i = sel[4] + 1; i < draft.peer_count; ++i) {
+                        draft.peers[i - 1] = draft.peers[i];
+                    }
+                    draft.peer_count--;
+                    strcpy(fb, "Peer removed.");
+                }
+            } else if ((ch == 'i' || ch == 'I') && draft.peer_count > 0) {
+                OykPeerConfig& pc = draft.peers[sel[4]];
+                pc.allow_inbound = pc.allow_inbound ? 0 : 1;
+                pc.auto_learned = 0;
+                sprintf(fb, "Peer %s allow_inbound=%s", pc.id, pc.allow_inbound ? "true" : "false");
+            } else if ((ch == 'o' || ch == 'O') && draft.peer_count > 0) {
+                OykPeerConfig& pc = draft.peers[sel[4]];
+                pc.allow_outbound = pc.allow_outbound ? 0 : 1;
+                pc.auto_learned = 0;
+                sprintf(fb, "Peer %s allow_outbound=%s", pc.id, pc.allow_outbound ? "true" : "false");
+            } else if (ch == 'k' || ch == 'K') {
+                int kept = 0;
+                for (int i = 0; i < draft.peer_count && i < OYK_MAX_CONFIG_PEERS; ++i) {
+                    if (draft.peers[i].auto_learned) {
+                        draft.peers[i].auto_learned = 0;
+                        ++kept;
+                    }
+                }
+                sprintf(fb, "Marked %d auto-learned peer(s) persistent.", kept);
+            }
+            continue;
+        }
+
         if (ch == '\r' || ch == '\n' || ch == ' ') {
             int f = sel[tab];
             if (tab == 0 && f == 4) { draft.accept_incoming = !draft.accept_incoming; continue; }
+            if (tab == 0 && f == 5) {
+                if (draft.learned_peer_policy == OYK_LEARN_NONE) draft.learned_peer_policy = OYK_LEARN_INBOUND;
+                else if (draft.learned_peer_policy == OYK_LEARN_INBOUND) draft.learned_peer_policy = OYK_LEARN_OUTBOUND;
+                else if (draft.learned_peer_policy == OYK_LEARN_OUTBOUND) draft.learned_peer_policy = OYK_LEARN_BOTH;
+                else draft.learned_peer_policy = OYK_LEARN_NONE;
+                continue;
+            }
             if (tab == 1 && f == 0) { draft.bbs_enabled = !draft.bbs_enabled; continue; }
             if (tab == 1 && f == 4) { draft.bbs_files_enabled = !draft.bbs_files_enabled; continue; }
             if (tab == 2 && f == 0) { draft.chat_enabled = !draft.chat_enabled; continue; }
-            if (tab == 4 && f == 0) { draft.rig_enabled = !draft.rig_enabled; continue; }
-            if (tab == 4 && f == 1) {
+            if (tab == 5 && f == 0) { draft.rig_enabled = !draft.rig_enabled; continue; }
+            if (tab == 5 && f == 1) {
                 if (oyk_rig_parse_protocol(draft.rig_protocol) == OYK_RIG_PROTO_RIGCTL) {
                     strcpy(draft.rig_protocol, "radiofoundry");
                     if (draft.rig_port == 4532 || draft.rig_port == 0) draft.rig_port = 4191;
@@ -2535,18 +2931,18 @@ static void run_dos_settings() {
                 }
                 continue;
             }
-            if (tab == 4 && f == 5) { draft.rig_notify = !draft.rig_notify; continue; }
-            if (tab == 5 && f == 0) { draft.printer_enabled = !draft.printer_enabled; continue; }
-            if (tab == 5 && f == 2) {
+            if (tab == 5 && f == 5) { draft.rig_notify = !draft.rig_notify; continue; }
+            if (tab == 6 && f == 0) { draft.printer_enabled = !draft.printer_enabled; continue; }
+            if (tab == 6 && f == 2) {
                 int pp = oyk_printer_parse_protocol(draft.printer_protocol);
                 if (pp == OYK_PRN_GENERIC) strcpy(draft.printer_protocol, "mx80");
                 else if (pp == OYK_PRN_MX80) strcpy(draft.printer_protocol, "escp2");
                 else strcpy(draft.printer_protocol, "generic");
                 continue;
             }
-            if (tab == 5 && f == 5) { draft.printer_condensed = !draft.printer_condensed; continue; }
+            if (tab == 6 && f == 5) { draft.printer_condensed = !draft.printer_condensed; continue; }
 
-            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 4) ? RIG_LABELS : PRN_LABELS)));
+            const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 5) ? RIG_LABELS : PRN_LABELS)));
             char ed[96];
             ed[0] = '\0';
             if (tab == 0) {
@@ -2554,6 +2950,7 @@ static void run_dos_settings() {
                 else if (f == 1 && draft.alias.base[0]) oyk_format_callsign(&draft.alias, ed, sizeof(ed));
                 else if (f == 2) { strncpy(ed, draft.welcome_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 3) { strncpy(ed, draft.info_text, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
+                else if (f == 6) { strncpy(ed, draft.new_user_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) sprintf(ed, "%u", static_cast<unsigned int>(draft.bbs_ssid));
                 else if (f == 2 && draft.bbs_callsign.base[0]) oyk_format_callsign(&draft.bbs_callsign, ed, sizeof(ed));
@@ -2567,7 +2964,7 @@ static void run_dos_settings() {
                 else if (f == 3 && draft.chat_alias.base[0]) oyk_format_callsign(&draft.chat_alias, ed, sizeof(ed));
                 else if (f == 4) { strncpy(ed, draft.chat_topic, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 5) { strncpy(ed, draft.chat_welcome, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
-            } else if (tab == 4) {
+            } else if (tab == 5) {
                 if (f == 2) { strncpy(ed, draft.rig_host, sizeof(ed) - 1); ed[sizeof(ed) - 1] = '\0'; }
                 else if (f == 3) sprintf(ed, "%u", static_cast<unsigned int>(draft.rig_port));
                 else if (f == 4) sprintf(ed, "%u", static_cast<unsigned int>(draft.rig_poll_sec));
@@ -2588,6 +2985,7 @@ static void run_dos_settings() {
                 else if (f == 1) { if (!ed[0]) memset(&draft.alias, 0, sizeof(draft.alias)); else if (!oyk_parse_callsign(ed, &draft.alias)) strcpy(fb, "Invalid alias."); }
                 else if (f == 2) { strncpy(draft.welcome_text, ed, sizeof(draft.welcome_text) - 1); draft.welcome_text[sizeof(draft.welcome_text) - 1] = '\0'; }
                 else if (f == 3) { strncpy(draft.info_text, ed, sizeof(draft.info_text) - 1); draft.info_text[sizeof(draft.info_text) - 1] = '\0'; }
+                else if (f == 6) { strncpy(draft.new_user_welcome, ed, sizeof(draft.new_user_welcome) - 1); draft.new_user_welcome[sizeof(draft.new_user_welcome) - 1] = '\0'; }
             } else if (tab == 1) {
                 if (f == 1) { int sv = atoi(ed); if (sv >= 0 && sv <= 15) draft.bbs_ssid = static_cast<oyk_u8>(sv); else strcpy(fb, "SSID must be 0..15."); }
                 else if (f == 2) { if (!ed[0]) memset(&draft.bbs_callsign, 0, sizeof(draft.bbs_callsign)); else if (!oyk_parse_callsign_with_default_ssid(ed, draft.bbs_ssid, &draft.bbs_callsign)) strcpy(fb, "Invalid BBS callsign."); }
@@ -2601,7 +2999,7 @@ static void run_dos_settings() {
                 else if (f == 3) { if (!ed[0]) memset(&draft.chat_alias, 0, sizeof(draft.chat_alias)); else if (!oyk_parse_callsign(ed, &draft.chat_alias)) strcpy(fb, "Invalid CHAT alias."); }
                 else if (f == 4) { if (ed[0]) { strncpy(draft.chat_topic, ed, sizeof(draft.chat_topic) - 1); draft.chat_topic[sizeof(draft.chat_topic) - 1] = '\0'; } }
                 else if (f == 5) { strncpy(draft.chat_welcome, ed, sizeof(draft.chat_welcome) - 1); draft.chat_welcome[sizeof(draft.chat_welcome) - 1] = '\0'; }
-            } else if (tab == 4) {
+            } else if (tab == 5) {
                 if (f == 2) { if (ed[0]) { strncpy(draft.rig_host, ed, sizeof(draft.rig_host) - 1); draft.rig_host[sizeof(draft.rig_host) - 1] = '\0'; } }
                 else if (f == 3) { long pv = atol(ed); if (pv > 0L && pv <= 65535L) draft.rig_port = static_cast<oyk_u16>(pv); else strcpy(fb, "Port must be 1..65535."); }
                 else if (f == 4) { long iv = atol(ed); if (iv >= 0L && iv <= 3600L) draft.rig_poll_sec = static_cast<oyk_u16>(iv); }
@@ -2629,15 +3027,17 @@ static void run_dos_menu_action(int chosen, int* running) {
     } else if (chosen == 4) {
         run_dos_rig_control();
     } else if (chosen == 5) {
-        run_dos_settings();
+        run_dos_settings(0);
     } else if (chosen == 6) {
+        run_dos_settings(4);
+    } else if (chosen == 7) {
         char id_buf[12];
         prompt_line("Terminate session ID (Esc=cancel): ", id_buf, sizeof(id_buf));
         if (id_buf[0]) {
             g_node.terminate_session(static_cast<oyk_u32>(atol(id_buf)),
                                      g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 7) {
+    } else if (chosen == 8) {
         char call_buf[16];
         prompt_line("Ban callsign (prefix '-' to unban): ", call_buf, sizeof(call_buf));
         if (call_buf[0] == '-' && call_buf[1]) {
@@ -2657,7 +3057,7 @@ static void run_dos_menu_action(int chosen, int* running) {
                                 lift_buf[0] ? lift_buf : "permanent",
                                 g_status_line, sizeof(g_status_line));
         }
-    } else if (chosen == 8) {
+    } else if (chosen == 9) {
         if (confirm_dos_exit()) {
             *running = 0;
         }
@@ -2665,18 +3065,19 @@ static void run_dos_menu_action(int chosen, int* running) {
 }
 
 static void open_dos_node_menu(int* running) {
-    static const char* ITEMS[9] = {
+    static const char* ITEMS[10] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
         " [F] Manage Files Area...       ",
         " [R] Radio Control...           ",
         " [S] Settings...                ",
+        " [P] Peers...                   ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [X] Exit                       "
     };
-    static const int ITEM_ROWS[9] = { 2, 3, 5, 6, 7, 8, 9, 10, 12 };
+    static const int ITEM_ROWS[10] = { 2, 3, 5, 6, 7, 8, 9, 10, 11, 13 };
 
     int sel = 0;
     int chosen = -1;
@@ -2688,10 +3089,10 @@ static void open_dos_node_menu(int* running) {
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, 1, 1, 13, 34, menu_bg, menu_bg, 0);
+            dos_vid_box(g_vid, 1, 1, 14, 34, menu_bg, menu_bg, 0);
             dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
-            dos_vid_hdiv(g_vid, 11, 1, 34, menu_bg);
-            for (int i = 0; i < 9; ++i) {
+            dos_vid_hdiv(g_vid, 12, 1, 34, menu_bg);
+            for (int i = 0; i < 10; ++i) {
                 dos_vid_putc(g_vid, ITEM_ROWS[i], 1, menu_bg, OYK_BOX_V);
                 vid_puts(ITEM_ROWS[i], 2, (i == sel) ? menu_sel : menu_bg, ITEMS[i], 32);
                 dos_vid_putc(g_vid, ITEM_ROWS[i], 34, menu_bg, OYK_BOX_V);
@@ -2704,8 +3105,8 @@ static void open_dos_node_menu(int* running) {
         int ch = getch();
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72) sel = (sel + 8) % 9;      /* Up arrow */
-            else if (ext == 80) sel = (sel + 1) % 9; /* Down arrow */
+            if (ext == 72) sel = (sel + 9) % 10;      /* Up arrow */
+            else if (ext == 80) sel = (sel + 1) % 10; /* Down arrow */
             else if (ext == 68) break;               /* F10 closes menu */
         } else if (ch == 27) {
             break;
@@ -2723,12 +3124,14 @@ static void open_dos_node_menu(int* running) {
             chosen = 4;
         } else if (ch == 's' || ch == 'S') {
             chosen = 5;
-        } else if (ch == 't' || ch == 'T') {
+        } else if (ch == 'p' || ch == 'P') {
             chosen = 6;
-        } else if (ch == 'b' || ch == 'B') {
+        } else if (ch == 't' || ch == 'T') {
             chosen = 7;
-        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+        } else if (ch == 'b' || ch == 'B') {
             chosen = 8;
+        } else if (ch == 'x' || ch == 'X' || ch == 'q' || ch == 'Q') {
+            chosen = 9;
         }
     }
 
@@ -2782,7 +3185,16 @@ static oyk_u32 dos_screen_signature() {
 }
 
 int main(int argc, char* argv[]) {
-    static OykConfig cfg;
+    struct MainCfgGuard {
+        OykConfig* p;
+        MainCfgGuard() : p(new OykConfig) {}
+        ~MainCfgGuard() { delete p; }
+    } cfg_guard;
+    if (!cfg_guard.p) {
+        printf("Out of memory allocating node config.\n");
+        return 1;
+    }
+    OykConfig& cfg = *cfg_guard.p;
     char cfg_path[128];
     char override_call[16];
     char override_alias[16];
@@ -2985,12 +3397,14 @@ int main(int argc, char* argv[]) {
                     run_dos_menu_action(4, &running);
                 } else if (ch == 's' || ch == 'S') {
                     run_dos_menu_action(5, &running);
-                } else if (ch == 't' || ch == 'T') {
+                } else if (ch == 'p' || ch == 'P') {
                     run_dos_menu_action(6, &running);
-                } else if (ch == 'b' || ch == 'B') {
+                } else if (ch == 't' || ch == 'T') {
                     run_dos_menu_action(7, &running);
-                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                } else if (ch == 'b' || ch == 'B') {
                     run_dos_menu_action(8, &running);
+                } else if (ch == 'q' || ch == 'Q' || ch == 'x' || ch == 'X') {
+                    run_dos_menu_action(9, &running);
                 }
                 render_dos_screen();
                 last_sig = dos_screen_signature();

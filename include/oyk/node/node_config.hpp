@@ -57,6 +57,8 @@ struct NodeConfig {
 
     bool accept_incoming_default = true;
     bool allow_flash_logging = false;
+    radio::LearnedPeerPolicy learned_peer_policy = radio::LearnedPeerPolicy::Inbound;
+    std::string new_user_welcome;
     std::size_t paclen = 236;
     uint8_t maxframe = 4;
     uint32_t t1_ms = 3000;
@@ -66,6 +68,7 @@ struct NodeConfig {
 
     std::vector<std::string> banned_callsigns; // Legacy inline ban= support if present
     std::vector<radio::RadioInterfaceConfig> interfaces;
+    std::vector<radio::PeerConfig> peers;
 
     // Resolves banlist.cfg path: explicit `banlist=` override if set,
     // otherwise `banlist.cfg` in the same directory as `source_path` (or `./banlist.cfg`).
@@ -107,5 +110,21 @@ struct NodeConfig {
 // Derives the next unused interface ID (e.g. "axudp1", "kiss0") from a driver type.
 std::string derive_default_iface_id(const std::vector<radio::RadioInterfaceConfig>& existing,
                                     const std::string& iface_type);
+
+// Derives the next unused peer instance ID (e.g. "r3mot-7") from a callsign.
+std::string derive_default_peer_id(const std::vector<radio::PeerConfig>& existing,
+                                   const std::string& callsign);
+
+radio::LearnedPeerPolicy parse_learned_peer_policy(
+    std::string_view text,
+    radio::LearnedPeerPolicy fallback = radio::LearnedPeerPolicy::Inbound);
+std::string learned_peer_policy_to_string(radio::LearnedPeerPolicy policy);
+
+// Splits a legacy inline peer spec ("CALL@host:port", "CALL host:port", "host:port") into a PeerConfig.
+bool parse_legacy_peer_spec(const std::string& raw,
+                            const std::string& iface_id,
+                            uint16_t default_port,
+                            const std::vector<radio::PeerConfig>& existing,
+                            radio::PeerConfig& out);
 
 } // namespace oyk::node

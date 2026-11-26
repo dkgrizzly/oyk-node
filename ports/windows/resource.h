@@ -12,6 +12,7 @@
 #define IDM_APPROVE_FILES   207
 #define IDM_RIG_CONTROL     209
 #define IDM_SETTINGS        208
+#define IDM_PEERS           210
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -74,6 +75,7 @@
 #define IDC_SET_TAB_BBS     452
 #define IDC_SET_TAB_CHAT    453
 #define IDC_SET_TAB_IF      454
+#define IDC_SET_TAB_PEERS   497
 #define IDC_SET_TAB_RIG     494
 #define IDC_SET_TAB_PRN     495
 #define IDC_SET_TAB_BOX     455
@@ -86,6 +88,10 @@
 #define IDC_SET_WELCOME     461
 #define IDC_SET_L_INFO      462
 #define IDC_SET_INFO        463
+#define IDC_SET_L_LPOL      498
+#define IDC_SET_LEARN_POL   499
+#define IDC_SET_L_NWELC     507
+#define IDC_SET_NEW_WELC    508
 #define IDC_SET_ACCEPT      464
 
 #define IDC_SET_BBS_EN      465
@@ -197,5 +203,30 @@
 #define IDC_EIF_L_PEER      598
 #define IDC_EIF_PEER        599
 #define IDC_EIF_ERR         600
+
+/* Peers Tab & Edit Peer Dialog */
+#define IDC_SET_L_PEER      610
+#define IDC_SET_PEER_LIST   611
+#define IDC_SET_PEER_ADD    612
+#define IDC_SET_PEER_EDIT   613
+#define IDC_SET_PEER_REM    614
+#define IDC_SET_PEER_KEEP   615
+
+#define IDD_EDIT_PEER       620
+#define IDC_EP_ID           621
+#define IDC_EP_CALL         622
+#define IDC_EP_DESC         623
+#define IDC_EP_IFACE        624
+#define IDC_EP_HOST         625
+#define IDC_EP_PORT         626
+#define IDC_EP_IN           627
+#define IDC_EP_OUT          628
+#define IDC_EP_ERR          629
+
+/* Auto-Learned Peers Exit Review Dialog */
+#define IDD_EXIT_PEERS      640
+#define IDC_XPR_MSG         641
+#define IDC_XPR_DISCARD     642
+#define IDC_XPR_REVIEW      643
 
 #endif /* OYK_WIN_RESOURCE_H */

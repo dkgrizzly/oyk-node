@@ -147,11 +147,13 @@ void AxipInterface::parse_peer_spec(const std::string& raw) {
     }
 
     if (!host_str.empty()) {
-        add_peer(call_str, host_str);
+        add_peer_locked(call_str, host_str, false);
     }
 }
 
-bool AxipInterface::add_peer(const std::string& callsign_or_empty, const std::string& host) {
+bool AxipInterface::add_peer_locked(const std::string& callsign_or_empty,
+                                    const std::string& host,
+                                    bool record_manual) {
     PeerAddr peer;
     if (!resolve_host(host, peer)) {
         return false;
@@ -160,6 +162,7 @@ bool AxipInterface::add_peer(const std::string& callsign_or_empty, const std::st
     std::lock_guard<std::mutex> lock(peer_mutex_);
     if (callsign_or_empty.empty() || callsign_or_empty == "*") {
         broadcast_peers_.push_back(peer);
+        if (record_manual) manual_broadcast_peers_.push_back(peer);
         return true;
     }
     auto parsed = ax25::Callsign::parse(callsign_or_empty);
@@ -167,10 +170,29 @@ bool AxipInterface::add_peer(const std::string& callsign_or_empty, const std::st
         return false;
     }
     callsign_peers_[parsed->str()] = peer;
+    if (record_manual) manual_callsign_peers_[parsed->str()] = peer;
     if (parsed->ssid() == 0) {
         callsign_peers_[parsed->base()] = peer;
+        if (record_manual) manual_callsign_peers_[parsed->base()] = peer;
     }
     return true;
+}
+
+bool AxipInterface::add_peer(const std::string& callsign_or_empty, const std::string& host) {
+    return add_peer_locked(callsign_or_empty, host, true);
+}
+
+void AxipInterface::sync_peers(const std::vector<PeerConfig>& peers) {
+    {
+        std::lock_guard<std::mutex> lock(peer_mutex_);
+        callsign_peers_ = manual_callsign_peers_;
+        broadcast_peers_ = manual_broadcast_peers_;
+    }
+    for (const auto& p : peers) {
+        if (!p.interface_id.empty() && p.interface_id != id_) continue;
+        if (p.host.empty()) continue;
+        (void)add_peer_locked(p.callsign, p.host, false);
+    }
 }
 
 bool AxipInterface::start(FrameCallback on_frame, std::string& error_out) {

@@ -43,12 +43,16 @@ private:
     void modal_ban_callsign();
     void modal_approve_incoming_files();
     void modal_rig_control();
-    void modal_settings();
+    void modal_settings(int initial_tab = 0);
     bool modal_add_interface_wizard(const std::vector<radio::RadioInterfaceConfig>& existing,
                                     radio::RadioInterfaceConfig& out_iface);
     bool modal_edit_interface(const std::vector<radio::RadioInterfaceConfig>& existing,
                               int edit_idx,
                               radio::RadioInterfaceConfig& out_iface);
+    bool modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
+                         const std::vector<radio::RadioInterfaceConfig>& ifaces,
+                         int edit_idx,
+                         radio::PeerConfig& io_peer);
     bool modal_confirm_exit();
 
     void draw_box(int y, int x, int h, int w, const std::string& title);

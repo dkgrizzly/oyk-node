@@ -15,6 +15,7 @@ BEGIN
         MENUITEM "Manage &Files Area...",        IDM_APPROVE_FILES
         MENUITEM "&Radio Control...",            IDM_RIG_CONTROL
         MENUITEM "&Settings...",                 IDM_SETTINGS
+        MENUITEM "&Peers...",                    IDM_PEERS
         MENUITEM "&Terminate Connection...",     IDM_TERMINATE
         MENUITEM "&Ban / Unban Callsign...",     IDM_BAN
         MENUITEM SEPARATOR
@@ -115,26 +116,31 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "OYK Node Settings"
 FONT 8, "MS Sans Serif"
 BEGIN
-    /* Top Tab Bar matching GTK tabs: Node | BBS | CHAT | Interfaces | Rig | Printer */
-    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 52, 15
-    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 60, 6, 46, 15
-    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 108, 6, 48, 15
-    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 158, 6, 62, 15
-    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 222, 6, 50, 15
+    /* Top Tab Bar matching GTK/ncurses/DOS/TinyTMUX tabs */
+    PUSHBUTTON      "[ Node ]", IDC_SET_TAB_NODE, 6, 6, 42, 15
+    PUSHBUTTON      "BBS", IDC_SET_TAB_BBS, 50, 6, 36, 15
+    PUSHBUTTON      "CHAT", IDC_SET_TAB_CHAT, 88, 6, 40, 15
+    PUSHBUTTON      "Interfaces", IDC_SET_TAB_IF, 130, 6, 52, 15
+    PUSHBUTTON      "Peers", IDC_SET_TAB_PEERS, 184, 6, 44, 15
+    PUSHBUTTON      "Rig", IDC_SET_TAB_RIG, 230, 6, 42, 15
     PUSHBUTTON      "Printer", IDC_SET_TAB_PRN, 274, 6, 68, 15
 
     GROUPBOX        "Node", IDC_SET_TAB_BOX, 6, 24, 336, 152
 
     /* Tab 1: Node */
-    LTEXT           "Node Callsign (CALL-SSID):", IDC_SET_L_CALL, 14, 42, 92, 10
-    EDITTEXT        IDC_SET_CALL, 110, 40, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Node Alias:", IDC_SET_L_ALIAS, 14, 62, 92, 10
-    EDITTEXT        IDC_SET_ALIAS, 110, 60, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Welcome Message:", IDC_SET_L_WELC, 14, 82, 92, 10
-    EDITTEXT        IDC_SET_WELCOME, 110, 80, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    LTEXT           "Info Message:", IDC_SET_L_INFO, 14, 102, 92, 10
-    EDITTEXT        IDC_SET_INFO, 110, 100, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
-    CHECKBOX        "Allow incoming connections by default", IDC_SET_ACCEPT, 14, 124, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "Node Callsign (CALL-SSID):", IDC_SET_L_CALL, 14, 36, 92, 10
+    EDITTEXT        IDC_SET_CALL, 110, 34, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Node Alias:", IDC_SET_L_ALIAS, 14, 53, 92, 10
+    EDITTEXT        IDC_SET_ALIAS, 110, 51, 110, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Welcome Message:", IDC_SET_L_WELC, 14, 70, 92, 10
+    EDITTEXT        IDC_SET_WELCOME, 110, 68, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Info Message:", IDC_SET_L_INFO, 14, 87, 92, 10
+    EDITTEXT        IDC_SET_INFO, 110, 85, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Learned Peer Policy:", IDC_SET_L_LPOL, 14, 104, 92, 10
+    COMBOBOX        IDC_SET_LEARN_POL, 110, 102, 110, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "New User Welcome:", IDC_SET_L_NWELC, 14, 122, 92, 10
+    EDITTEXT        IDC_SET_NEW_WELC, 110, 120, 224, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Allow incoming connections by default", IDC_SET_ACCEPT, 14, 140, 190, 11, BS_AUTOCHECKBOX | WS_TABSTOP
 
     /* Tab 2: BBS */
     CHECKBOX        "Enable Packet BBS", IDC_SET_BBS_EN, 14, 38, 120, 11, BS_AUTOCHECKBOX | WS_TABSTOP
@@ -172,7 +178,15 @@ BEGIN
     PUSHBUTTON      "&Edit Selected...", IDC_SET_IF_EDIT, 94, 152, 74, 15
     PUSHBUTTON      "&Remove Selected", IDC_SET_IF_REM, 174, 152, 78, 15
 
-    /* Tab 5: Rig Control */
+    /* Tab 5: Peers */
+    LTEXT           "Configured peer routes and connection policies:", IDC_SET_L_PEER, 14, 38, 220, 10
+    LISTBOX         IDC_SET_PEER_LIST, 14, 52, 320, 94, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "&Add Peer...", IDC_SET_PEER_ADD, 14, 152, 66, 15
+    PUSHBUTTON      "&Edit Peer...", IDC_SET_PEER_EDIT, 84, 152, 66, 15
+    PUSHBUTTON      "&Remove Peer", IDC_SET_PEER_REM, 154, 152, 68, 15
+    PUSHBUTTON      "&Keep Auto", IDC_SET_PEER_KEEP, 226, 152, 64, 15
+
+    /* Tab 6: Rig Control */
     CHECKBOX        "Enable Radio / Rig Control", IDC_SET_RIG_EN, 14, 38, 160, 11, BS_AUTOCHECKBOX | WS_TABSTOP
     LTEXT           "Protocol:", IDC_SET_L_RPROTO, 14, 58, 76, 10
     COMBOBOX        IDC_SET_RIG_PROTO, 94, 56, 110, 52, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
@@ -279,4 +293,40 @@ BEGIN
     LTEXT           "", IDC_EIF_ERR, 8, 118, 260, 10
     DEFPUSHBUTTON   "&Save", IDOK, 152, 134, 56, 14
     PUSHBUTTON      "Cancel", IDCANCEL, 212, 134, 56, 14
+END
+
+IDD_EDIT_PEER DIALOG 24, 24, 276, 174
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Edit Peer"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "Peer ID:", -1, 8, 10, 62, 10
+    EDITTEXT        IDC_EP_ID, 74, 8, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Callsign:", -1, 8, 28, 62, 10
+    EDITTEXT        IDC_EP_CALL, 74, 26, 194, 13, ES_UPPERCASE | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Description:", -1, 8, 46, 62, 10
+    EDITTEXT        IDC_EP_DESC, 74, 44, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Interface:", -1, 8, 64, 62, 10
+    COMBOBOX        IDC_EP_IFACE, 74, 62, 194, 68, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Host / DMR ID:", -1, 8, 82, 62, 10
+    EDITTEXT        IDC_EP_HOST, 74, 80, 194, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Port (0=def):", -1, 8, 100, 62, 10
+    EDITTEXT        IDC_EP_PORT, 74, 98, 80, 13, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    CHECKBOX        "Allow Inbound", IDC_EP_IN, 74, 116, 90, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    CHECKBOX        "Allow Outbound", IDC_EP_OUT, 170, 116, 98, 11, BS_AUTOCHECKBOX | WS_TABSTOP
+    LTEXT           "", IDC_EP_ERR, 8, 134, 260, 10
+    DEFPUSHBUTTON   "&Save", IDOK, 152, 152, 56, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 212, 152, 56, 14
+END
+
+IDD_EXIT_PEERS DIALOG 24, 24, 288, 92
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Auto-Learned Peers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "", IDC_XPR_MSG, 10, 12, 268, 36
+    DEFPUSHBUTTON   "&Save && Exit", IDOK, 8, 66, 66, 15
+    PUSHBUTTON      "&Discard && Exit", IDC_XPR_DISCARD, 78, 66, 68, 15
+    PUSHBUTTON      "&Review Peers", IDC_XPR_REVIEW, 150, 66, 68, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 222, 66, 58, 15
 END
