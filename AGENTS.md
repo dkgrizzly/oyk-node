@@ -77,3 +77,10 @@ Example in a forked C++ file:
 
 - **Keep screenshots synchronized with UI tests**: Whenever UI flow unit tests, dialogs, wizards, or operator screens are added or modified across any port (`tests/test_ncurses_ui.py`, `tests/test_portable.cpp`, `tests/test_tinytmux.cpp`, `tests/test_pico.cpp`, `src/ui/gtk2_ui.cpp`, `ports/windows/win_main.cpp`, or `ports/android/app/src/test/java/com/kr4oyk/oyknode/OykUiGalleryTest.kt`), update the corresponding UI capture hooks and regenerate `docs/user/ui-gallery.md` and `docs/user/images/ui-gallery/*.png` before committing.
 - **Regeneration & parity check command**: Run `./scripts/generate_ui_gallery.sh` (which runs `scripts/check_tui_parity.py` across all TUI captures, `Xvfb` for GTK+ 2.0, Wine for Windows, and Robolectric for Android) and visually inspect representative PNG outputs and per-port contact sheets side-by-side before committing.
+
+## 7. Secrets, Credentials & Privileged Information
+
+- **Never commit secrets or credentials**: Do NOT commit API keys, personal access tokens, OAuth/JWT secrets, SSH/PGP/TLS private keys, Android `.jks`/`.keystore` signing files, Wi-Fi passwords/PSKs, `.env` files, `local.properties`, `google-services.json`, or live operator configs (`node.cfg`, `peers.cfg`, `banlist.cfg`) containing real passwords or private infrastructure endpoints.
+- **No hardcoded local paths or identities**: Never hardcode personal machine paths (`/home/<user>/`, `/Users/<user>/`, `C:\Users\<user>\`) in source code, unit tests, configs, or scripts; use relative paths, environment variables, or CMake variables instead.
+- **Runtime secret injection**: Load signing keys, passwords, and API credentials exclusively from environment variables (e.g., `OYK_ANDROID_KEYSTORE_PASS`, `OYK_ANDROID_KEY_PASS`) or gitignored local files.
+- **Mandatory pre-commit & pre-push scan**: Run `python3 scripts/check_secrets.py` before every commit, and `python3 scripts/check_secrets.py --history` before pushing or tagging a release. If any secret or privileged credential is ever found in the working tree or history, stop immediately and alert the user so the credential can be rotated and scrubbed.

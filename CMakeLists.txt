@@ -396,7 +396,9 @@ if(BUILD_TESTS AND NOT WIN32)
     add_executable(oyk_node_tests tests/test_node.cpp)
     target_link_libraries(oyk_node_tests PRIVATE oyknode_core)
     target_compile_options(oyk_node_tests PRIVATE -Wall -Wextra -Wpedantic)
-    add_test(NAME oyk_node_tests COMMAND oyk_node_tests)
+    add_test(NAME oyk_node_tests
+        COMMAND oyk_node_tests
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     # Strict C++98 verification of the portable MS-DOS / Win16 / Win32 shared core
     add_executable(oyk_portable_tests

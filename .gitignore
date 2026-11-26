@@ -26,3 +26,15 @@ ports/android/local.properties
 ports/android/build/
 ports/android/app/build/
 ports/android/app/.cxx/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+google-services.json
+secrets.*
+*credentials*
+*.secret
