@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
+# OpenWatcom v2 / 1.9 WMAKE Makefile for 386+ Graphical MS-DOS Build (oyknodeg.exe)
+#
+# Target: 80386 or newer (16-bit Large memory model with -3 instructions),
+# optional XMS -> LIM EMS 4.0 extended memory, and VESA VBE -> VGA 12h -> EGA 10h
+# video fallback. Retains 100% native mTCP (optional) and Bret Johnson USB compatibility.
+#
+# Usage:
+#   wmake -f makefile.gfx oyknodeg.exe USE_MTCP=0
+#   wmake -f makefile.gfx all MTCP_DIR=$HOME/mTCP
+
+!ifndef MTCP_DIR
+!ifdef %HOME
+MTCP_DIR = $(%HOME)/mTCP
+!else
+MTCP_DIR = ../../third_party/mtcp
+!endif
+!endif
+
+!ifndef MTCP_SRC
+MTCP_SRC = $(MTCP_DIR)/src
+!endif
+
+!ifndef USE_MTCP
+!if exist($(MTCP_SRC)/TCPLIB/PACKET.CPP)
+USE_MTCP = 1
+!else
+USE_MTCP = 0
+!endif
+!endif
+
+CPU = -3
+CC  = wpp
+AS  = wasm
+LD  = wlink
+
+CFLAGS_COMMON = $(CPU) -ml -os -zm -zt32 -bt=dos -wx -zq -DOYK_DOS_GFX_BUILD=1 -I../compat
+
+!ifdef __UNIX__
+MTCP_INC_FLAGS = -I. -Imtcp_inc -I$(MTCP_SRC)/TCPINC -I$(MTCP_SRC)/INCLUDE
+CFG_DEF        = '-DCFG_H="oyk_mtcp.cfg"'
+!else
+MTCP_INC_FLAGS = -I. -I$(MTCP_SRC)/TCPINC -I$(MTCP_SRC)/INCLUDE
+CFG_DEF        = -DCFG_H="oyk_mtcp.cfg"
+!endif
+
+CFLAGS_MTCP     = $(CPU) -ml -os -zm -zt32 -bt=dos -zq -DOYK_DOS_GFX_BUILD=1 -DOYK_DOS_HAS_MTCP=1 $(CFG_DEF) $(MTCP_INC_FLAGS) -I../compat
+CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS)
+
+NODE_OBJS = gfxdos_main.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_ems.obj &
+            dos_xms.obj dos_font8x16.obj dos_gfx.obj &
+            gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj
+
+TEST_OBJS = gfxdos_test.obj gfxdos_test_portable.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_ems.obj &
+            dos_xms.obj dos_font8x16.obj dos_gfx.obj &
+            gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj
+
+MTCP_OBJS = &
+    gfx_mtcp_packet.obj &
+    gfx_mtcp_arp.obj &
+    gfx_mtcp_eth.obj &
+    gfx_mtcp_ip.obj &
+    gfx_mtcp_udp.obj &
+    gfx_mtcp_tcp.obj &
+    gfx_mtcp_tcpsockm.obj &
+    gfx_mtcp_timer.obj &
+    gfx_mtcp_utils.obj &
+    gfx_mtcp_trace.obj &
+    gfx_mtcp_ipasm.obj
+
+all: oyknodeg.exe testdosg.exe
+
+!if $(USE_MTCP) == 1
+!ifdef __UNIX__
+mtcp_inc_stamp: prep_mtcp_inc.py
+    python3 prep_mtcp_inc.py "$(MTCP_SRC)" mtcp_inc
+    touch mtcp_inc_stamp
+!else
+mtcp_inc_stamp: .SYMBOLIC
+    @%null
+!endif
+
+gfxdos_main.obj: mtcp_inc_stamp dos_main.cpp oyk_mtcp.cfg dos_usb.hpp dos_video.hpp ems.hpp dos_xms.hpp dos_font8x16.hpp dos_gfx.hpp ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
+    $(CC) $(CFLAGS_MTCP) -fo=gfxdos_main.obj dos_main.cpp
+!else
+gfxdos_main.obj: dos_main.cpp dos_usb.hpp dos_video.hpp ems.hpp dos_xms.hpp dos_font8x16.hpp dos_gfx.hpp ../compat/oyk_portable.hpp ../compat/oyk_yapp.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_main.obj dos_main.cpp
+!endif
+
+gfxdos_usb.obj: dos_usb.cpp dos_usb.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_usb.obj dos_usb.cpp
+
+gfxdos_video.obj: dos_video.cpp dos_video.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_video.obj dos_video.cpp
+
+gfxdos_ems.obj: ems.cpp ems.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_ems.obj ems.cpp
+
+dos_xms.obj: dos_xms.cpp dos_xms.hpp ems.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=dos_xms.obj dos_xms.cpp
+
+dos_font8x16.obj: dos_font8x16.cpp dos_font8x16.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=dos_font8x16.obj dos_font8x16.cpp
+
+dos_gfx.obj: dos_gfx.cpp dos_gfx.hpp dos_font8x16.hpp dos_video.hpp dos_xms.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=dos_gfx.obj dos_gfx.cpp
+
+gfxdos_portable.obj: ../compat/oyk_portable.cpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_portable.obj ../compat/oyk_portable.cpp
+
+gfxdos_yapp.obj: ../compat/oyk_yapp.cpp ../compat/oyk_yapp.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_yapp.obj ../compat/oyk_yapp.cpp
+
+gfxdos_rig.obj: ../compat/oyk_rig.cpp ../compat/oyk_rig.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_rig.obj ../compat/oyk_rig.cpp
+
+gfxdos_printer.obj: ../compat/oyk_printer.cpp ../compat/oyk_printer.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_printer.obj ../compat/oyk_printer.cpp
+
+gfxdos_test.obj: test_dos.cpp dos_usb.hpp dos_video.hpp ems.hpp dos_xms.hpp dos_gfx.hpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_test.obj test_dos.cpp
+
+gfxdos_test_portable.obj: ../../tests/test_portable.cpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp dos_video.hpp dos_xms.hpp dos_gfx.hpp
+    $(CC) $(CFLAGS_COMMON) -DOYK_PORTABLE_TESTS_AS_LIBRARY -fo=gfxdos_test_portable.obj ../../tests/test_portable.cpp
+
+!if $(USE_MTCP) == 1
+gfx_mtcp_packet.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/PACKET.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_packet.obj $(MTCP_SRC)/TCPLIB/PACKET.CPP
+
+gfx_mtcp_arp.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/ARP.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_arp.obj $(MTCP_SRC)/TCPLIB/ARP.CPP
+
+gfx_mtcp_eth.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/ETH.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_eth.obj $(MTCP_SRC)/TCPLIB/ETH.CPP
+
+gfx_mtcp_ip.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/IP.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_ip.obj $(MTCP_SRC)/TCPLIB/IP.CPP
+
+gfx_mtcp_udp.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/UDP.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_udp.obj $(MTCP_SRC)/TCPLIB/UDP.CPP
+
+gfx_mtcp_tcp.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/TCP.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_tcp.obj $(MTCP_SRC)/TCPLIB/TCP.CPP
+
+gfx_mtcp_tcpsockm.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/TCPSOCKM.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_tcpsockm.obj $(MTCP_SRC)/TCPLIB/TCPSOCKM.CPP
+
+gfx_mtcp_timer.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/TIMER.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_timer.obj $(MTCP_SRC)/TCPLIB/TIMER.CPP
+
+gfx_mtcp_utils.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/UTILS.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_utils.obj $(MTCP_SRC)/TCPLIB/UTILS.CPP
+
+gfx_mtcp_trace.obj: mtcp_inc_stamp oyk_mtcp.cfg $(MTCP_SRC)/TCPLIB/TRACE.CPP
+    $(CC) $(CFLAGS_MTCP_LIB) -fo=gfx_mtcp_trace.obj $(MTCP_SRC)/TCPLIB/TRACE.CPP
+
+gfx_mtcp_ipasm.obj: $(MTCP_SRC)/TCPLIB/IPASM.ASM
+    $(AS) -0 -ml -zq -fo=gfx_mtcp_ipasm.obj $(MTCP_SRC)/TCPLIB/IPASM.ASM
+
+oyknodeg.exe: $(NODE_OBJS) $(MTCP_OBJS)
+    $(LD) system dos option map,eliminate,stack=8192 name oyknodeg.exe file { $(NODE_OBJS) $(MTCP_OBJS) }
+!else
+oyknodeg.exe: $(NODE_OBJS)
+    $(LD) system dos option map,eliminate,stack=8192 name oyknodeg.exe file { $(NODE_OBJS) }
+!endif
+
+testdosg.exe: $(TEST_OBJS)
+    $(LD) system dos option map,eliminate,stack=8192 name testdosg.exe file { $(TEST_OBJS) }
+
+clean: .SYMBOLIC
+!ifdef __UNIX__
+    rm -rf mtcp_inc mtcp_inc_stamp gfxdos_*.obj dos_xms.obj dos_font8x16.obj dos_gfx.obj gfx_mtcp_*.obj *.err *.map oyknodeg.exe testdosg.exe
+!else
+    del gfxdos_*.obj dos_xms.obj dos_font8x16.obj dos_gfx.obj gfx_mtcp_*.obj *.err *.map oyknodeg.exe testdosg.exe
+!endif

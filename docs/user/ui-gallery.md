@@ -17,6 +17,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![MS-DOS (80x25 Text) — 1. Operator Console (Main View)](images/ui-gallery/dos_main.png)
 
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 1. Operator Console (Main View)](images/ui-gallery/dos_gfx_main.png)
+
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 1. Operator Console (Main View)](images/ui-gallery/tinytmux_main.png)
@@ -46,6 +50,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### MS-DOS (80x25 Text)
 
 ![MS-DOS (80x25 Text) — 2. Settings — Node Tab](images/ui-gallery/dos_settings.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 2. Settings — Node Tab](images/ui-gallery/dos_gfx_settings.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
@@ -77,6 +85,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![MS-DOS (80x25 Text) — 3. Add Interface Wizard](images/ui-gallery/dos_add_iface.png)
 
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 3. Add Interface Wizard](images/ui-gallery/dos_gfx_add_iface.png)
+
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 3. Add Interface Wizard](images/ui-gallery/tinytmux_add_iface.png)
@@ -106,6 +118,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### MS-DOS (80x25 Text)
 
 ![MS-DOS (80x25 Text) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/dos_edit_iface.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/dos_gfx_edit_iface.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
@@ -137,6 +153,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![MS-DOS (80x25 Text) — 5. Settings — Peers Tab](images/ui-gallery/dos_peers.png)
 
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 5. Settings — Peers Tab](images/ui-gallery/dos_gfx_peers.png)
+
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 5. Settings — Peers Tab](images/ui-gallery/tinytmux_peers.png)
@@ -166,6 +186,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### MS-DOS (80x25 Text)
 
 ![MS-DOS (80x25 Text) — 6. Edit / Add Peer Dialog](images/ui-gallery/dos_edit_peer.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 6. Edit / Add Peer Dialog](images/ui-gallery/dos_gfx_edit_peer.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
@@ -197,6 +221,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![MS-DOS (80x25 Text) — 7. Terminate Connection Modal](images/ui-gallery/dos_terminate.png)
 
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 7. Terminate Connection Modal](images/ui-gallery/dos_gfx_terminate.png)
+
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 7. Terminate Connection Modal](images/ui-gallery/tinytmux_terminate.png)
@@ -226,6 +254,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### MS-DOS (80x25 Text)
 
 ![MS-DOS (80x25 Text) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/dos_ban.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/dos_gfx_ban.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
@@ -257,6 +289,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![MS-DOS (80x25 Text) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/dos_exit.png)
 
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/dos_gfx_exit.png)
+
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 
 ![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/tinytmux_exit.png)
@@ -286,6 +322,10 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### MS-DOS (80x25 Text)
 
 ![MS-DOS (80x25 Text) — 10. Theme Settings Dialog](images/ui-gallery/dos_theme.png)
+
+### MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 10. Theme Settings Dialog](images/ui-gallery/dos_gfx_theme.png)
 
 ### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
 

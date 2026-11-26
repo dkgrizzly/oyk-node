@@ -11,6 +11,11 @@
 #include "oyk_printer.hpp"
 #include "../ports/dos/dos_usb.hpp"
 #include "../ports/dos/dos_video.hpp"
+#if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
+  #include "../ports/dos/dos_xms.hpp"
+  #include "../ports/dos/dos_font8x16.hpp"
+  #include "../ports/dos/dos_gfx.hpp"
+#endif
 #ifndef __DOS__
   #include "../ports/windows/win_service.hpp"
 #endif
@@ -1693,12 +1698,103 @@ static void test_portable_theme_config_and_cloning() {
     printf("[PASS] test_portable_theme_config_and_cloning\n");
 }
 
+#if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
+static void test_dos_gfx_renderer_and_smooth_scroll() {
+    assert(oyk_dos_is_386_or_newer() == 1);
+    assert(dos_gfx_parse_video_arg("auto") == OYK_GFX_MODE_NONE);
+    assert(dos_gfx_parse_video_arg("vbe24") == OYK_GFX_MODE_VBE24);
+    assert(dos_gfx_parse_video_arg("vbe16") == OYK_GFX_MODE_VBE16);
+    assert(dos_gfx_parse_video_arg("vbe8") == OYK_GFX_MODE_VBE8);
+    assert(dos_gfx_parse_video_arg("vga") == OYK_GFX_MODE_VGA16);
+    assert(dos_gfx_parse_video_arg("ega") == OYK_GFX_MODE_EGA16);
+    assert(dos_gfx_parse_video_arg("bogus") == -1);
+
+    /* XMS / EMS / host sim extended memory odd-length roundtrip */
+    OykDosExtMem xm;
+    int xm_ok = xm.init(32768UL);
 #ifndef __DOS__
-static void dos_save_capture(const char* name, const oyk_u16* vram) {
+    assert(xm_ok == 1);
+#endif
+    if (xm_ok) {
+        assert(xm.available() == 1);
+        const char pat[] = "OYK-XMS-UNALIGNED-TEST-PATTERN-386";
+        char rbuf[48];
+        memset(rbuf, 0, sizeof(rbuf));
+        assert(xm.write_block(17UL, pat, static_cast<oyk_u16>(strlen(pat) + 1)) == 1);
+        assert(xm.read_block(17UL, rbuf, static_cast<oyk_u16>(strlen(pat) + 1)) == 1);
+        assert(strcmp(rbuf, pat) == 0);
+        xm.shutdown();
+        assert(xm.available() == 0);
+    } else {
+        assert(xm.available() == 0);
+    }
+
+    /* Font glyphs in 8x16 and EGA 8x14 */
+    OykDosFont fnt;
+    oyk_dos_font_init(&fnt);
+    oyk_u8 g16[16], g14[14];
+    oyk_dos_font_get_glyph(&fnt, 16, 'K', g16);
+    oyk_dos_font_get_glyph(&fnt, 14, OYK_BOX_TL, g14);
+    int nonzero_16 = 0, nonzero_14 = 0;
+    for (int i = 0; i < 16; ++i) if (g16[i] != 0) ++nonzero_16;
+    for (int i = 0; i < 14; ++i) if (g14[i] != 0) ++nonzero_14;
+    assert(nonzero_16 > 4 && nonzero_14 > 3);
+    oyk_dos_font_shutdown(&fnt);
+
+#ifndef __DOS__
+    /* Graphical renderer sim + alpha pixel shadow + smooth scroll + BMP output */
+    OykDosGfx* g = new OykDosGfx;
+    oyk_u16* v1 = new oyk_u16[OYK_DOS_VID_CELLS];
+    oyk_u16* v2 = new oyk_u16[OYK_DOS_VID_CELLS];
+    OykDosVideo* vid = new OykDosVideo;
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE24) == 1);
+    assert(g->width == 640 && g->height == 480 && g->char_h == 16);
+    OykThemeConfig tc;
+    oyk_theme_init_builtin(&tc, 0);
+    dos_gfx_set_theme(g, &tc, 0);
+    dos_vid_init_sim(vid, 0, v1);
+    dos_vid_clear(vid, 0x07U);
+    dos_vid_box(vid, 4, 10, 6, 30, 0x59U, 0x58U, 1);
+    dos_gfx_add_shadow(g, 4, 10, 6, 30);
+    dos_vid_puts(vid, 6, 12, 0x58U, "Line A", 12);
+    dos_vid_flush(vid);
+    dos_gfx_present(g, v1, 1);
+
+    /* Verify pixel alpha drop shadow right of box (col 40, row 5 => 50% darker than BG) */
+    const oyk_u8* spx = g->sim_rgb + ((5 * 16 + 4) * 640 + (40 * 8 + 2)) * 3;
+    oyk_u8 bg_r = static_cast<oyk_u8>((tc.colors[OYK_TR_BG] >> 16) & 0xFFUL);
+    assert(spx[0] <= (bg_r / 2 + 1));
+
+    memcpy(v2, v1, sizeof(oyk_u16) * OYK_DOS_VID_CELLS);
+    dos_vid_puts(vid, 6, 12, 0x58U, "Line B", 12);
+    dos_vid_flush(vid);
+    int steps = dos_gfx_smooth_scroll(g, v2, v1, 5, 11, 4, 28, 1);
+    assert(steps >= 3);
+    assert(dos_gfx_write_bmp(g, "/tmp/oyk_test_dos_gfx.bmp") == 1);
+    remove("/tmp/oyk_test_dos_gfx.bmp");
+
+    dos_gfx_shutdown(g);
+    /* Also verify EGA 640x350 8x14 mode */
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_EGA16) == 1);
+    assert(g->width == 640 && g->height == 350 && g->char_h == 14);
+    dos_gfx_shutdown(g);
+
+    delete vid;
+    delete[] v2;
+    delete[] v1;
+    delete g;
+#endif
+    printf("[PASS] test_dos_gfx_renderer_and_smooth_scroll\n");
+}
+#endif
+
+#ifndef __DOS__
+static void dos_save_capture_prefixed(const char* prefix, const char* name,
+                                      const oyk_u16* vram, const OykDosGfx* gfx) {
     const char* dir = getenv("OYK_UI_CAPTURE_DIR");
     if (!dir || !dir[0]) return;
     char path[512];
-    sprintf(path, "%s/dos_%s.dosbuf", dir, name);
+    sprintf(path, "%s/%s_%s.dosbuf", dir, prefix, name);
     FILE* f = fopen(path, "wb");
     if (f) {
         unsigned char raw[OYK_DOS_VID_CELLS * 2];
@@ -1709,59 +1805,77 @@ static void dos_save_capture(const char* name, const oyk_u16* vram) {
         fwrite(raw, 1, sizeof(raw), f);
         fclose(f);
     }
+    if (gfx && gfx->active) {
+        sprintf(path, "%s/%s_%s.bmp", dir, prefix, name);
+        dos_gfx_write_bmp(gfx, path);
+    }
 }
 
-static void dos_render_mock_main(OykDosVideo* v) {
-    const oyk_u8 bg = 0x17U, hdr = 0x1FU, mbar = 0x70U, msel = 0x30U, ok = 0x1AU, lhdr = dos_vid_list_hdr_attr(v);
-    dos_vid_clear(v, bg);
-    dos_vid_hline(v, 0, 0, 80, mbar, ' ');
-    dos_vid_puts(v, 0, 1, msel, " Node ", 6);
-    dos_vid_puts(v, 0, 52, mbar, "Tab/F9:Term  F10/M:Menu ", 28);
-    dos_vid_puts(v, 1, 1, hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", 56);
-    dos_vid_puts(v, 1, 61, ok, "[INCOMING: ALLOW]", 18);
+struct DosMockPalette {
+    oyk_u8 bg, hdr, mbar, msel, ok, lhdr, stat;
+    oyk_u8 bdr, fill, sel, inp, bar;
+};
 
-    dos_vid_box(v, 2, 0, 6, 48, hdr, bg, 1);
-    dos_vid_title(v, 2, 2, 24, hdr, "Radio Interfaces");
-    dos_vid_puts(v, 3, 1, lhdr, "Port     Type      Conn Status              RX/TX", 46);
-    dos_vid_puts(v, 4, 1, bg,   "axudp0   axudp        1 UP 0.0.0.0:10093    12/8", 46);
-    dos_vid_puts(v, 5, 1, bg,   "kiss0    kiss-ser     0 UP ser0:9600         0/0", 46);
+static void dos_render_mock_main_pal(OykDosVideo* v, OykDosGfx* g, const DosMockPalette& p) {
+    if (g) {
+        dos_gfx_clear_shadows(g);
+        dos_gfx_clear_cell_rgb(g);
+    }
+    dos_vid_clear(v, p.bg);
+    dos_vid_hline(v, 0, 0, 80, p.mbar, ' ');
+    dos_vid_puts(v, 0, 1, p.msel, " Node ", 6);
+    dos_vid_puts(v, 0, 52, p.mbar, "Tab/F9:Term  F10/M:Menu ", 28);
+    dos_vid_puts(v, 1, 1, p.hdr, "OYK Node KR4OYK-7 (OYKNOD) | Up 00:05:12 | Conn: 1", 56);
+    dos_vid_puts(v, 1, 61, p.ok, "[INCOMING: ALLOW]", 18);
 
-    dos_vid_box(v, 2, 48, 6, 32, hdr, bg, 1);
-    dos_vid_title(v, 2, 50, 26, hdr, "Last 5 New Callsigns Heard");
-    dos_vid_puts(v, 3, 49, lhdr, "#  Callsign  Port   Heard", 30);
-    dos_vid_puts(v, 4, 49, bg,   "1  W3TRM-1   axudp0 20:40:01", 30);
+    dos_vid_box(v, 2, 0, 6, 48, p.hdr, p.bg, 1);
+    dos_vid_title(v, 2, 2, 24, p.hdr, "Radio Interfaces");
+    dos_vid_puts(v, 3, 1, p.lhdr, "Port     Type      Conn Status              RX/TX", 46);
+    dos_vid_puts(v, 4, 1, p.bg,   "axudp0   axudp        1 UP 0.0.0.0:10093    12/8", 46);
+    dos_vid_puts(v, 5, 1, p.bg,   "kiss0    kiss-ser     0 UP ser0:9600         0/0", 46);
 
-    dos_vid_box(v, 8, 0, 7, 80, hdr, bg, 1);
-    dos_vid_title(v, 8, 2, 34, hdr, "Active Connections (1) | Banned: 0");
-    dos_vid_puts(v, 9, 1, lhdr, "ID   Callsign  Port     Dir      State      Role / Bridge", 78);
-    dos_vid_puts(v, 10, 1, bg,  "#1   W3TRM-1   axudp0   INBOUND  CONNECTED  NODE SHELL", 78);
+    dos_vid_box(v, 2, 48, 6, 32, p.hdr, p.bg, 1);
+    dos_vid_title(v, 2, 50, 26, p.hdr, "Last 5 New Callsigns Heard");
+    dos_vid_puts(v, 3, 49, p.lhdr, "#  Callsign  Port   Heard", 30);
+    dos_vid_puts(v, 4, 49, p.bg,   "1  W3TRM-1   axudp0 20:40:01", 30);
 
-    dos_vid_box(v, 15, 0, 9, 80, hdr, bg, 1);
-    dos_vid_title(v, 15, 2, 20, hdr, "Node Activity Log");
-    dos_vid_puts(v, 16, 2, bg, "[20:40:01] [INFO] Interface axudp0 (axudp) started: UP 0.0.0.0:10093", 76);
-    dos_vid_puts(v, 17, 2, bg, "[20:40:02] [INFO] Inbound connection #1 from W3TRM-1 on axudp0", 76);
+    dos_vid_box(v, 8, 0, 7, 80, p.hdr, p.bg, 1);
+    dos_vid_title(v, 8, 2, 34, p.hdr, "Active Connections (1) | Banned: 0");
+    dos_vid_puts(v, 9, 1, p.lhdr, "ID   Callsign  Port     Dir      State      Role / Bridge", 78);
+    dos_vid_puts(v, 10, 1, p.bg,  "#1   W3TRM-1   axudp0   INBOUND  CONNECTED  NODE SHELL", 78);
 
-    dos_vid_hline(v, 24, 0, 80, mbar, ' ');
-    dos_vid_puts(v, 24, 1, mbar, "Ready. Press M/F10 for Node menu.", 78);
+    dos_vid_box(v, 15, 0, 9, 80, p.hdr, p.bg, 1);
+    dos_vid_title(v, 15, 2, 20, p.hdr, "Node Activity Log");
+    dos_vid_puts(v, 16, 2, p.bg, "[20:40:01] [INFO] Interface axudp0 (axudp) started: UP 0.0.0.0:10093", 76);
+    dos_vid_puts(v, 17, 2, p.bg, "[20:40:02] [INFO] Inbound connection #1 from W3TRM-1 on axudp0", 76);
+
+    dos_vid_hline(v, 24, 0, 80, p.stat, ' ');
+    dos_vid_puts(v, 24, 1, p.stat, "Ready. Press M/F10 for Node menu.", 78);
 }
 
-static void test_dos_ui_screen_flows() {
+static void dos_box_with_shadow(OykDosVideo* v, OykDosGfx* g, int top, int left,
+                                int h, int w, oyk_u8 bdr, oyk_u8 fill) {
+    dos_vid_box(v, top, left, h, w, bdr, fill, 1);
+    dos_vid_shadow(v, top, left, h, w);
+    if (g) dos_gfx_add_shadow(g, top, left, h, w);
+}
+
+static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosMockPalette& p) {
     oyk_u16* sim_vram = new oyk_u16[OYK_DOS_VID_CELLS];
     OykDosVideo* v = new OykDosVideo();
-    dos_vid_init_sim(v, 1, sim_vram);
-    const oyk_u8 lhdr = dos_vid_list_hdr_attr(v);
-    assert(lhdr == 0x8FU);
-    const oyk_u8 bdr = 0x1FU, fill = 0x17U, sel = 0x30U, inp = 0x70U, bar = 0x70U;
+    dos_vid_init_sim(v, g ? 0 : 1, sim_vram);
+
+    const oyk_u8 bdr = p.bdr, fill = p.fill, sel = p.sel, inp = p.inp, bar = p.bar, lhdr = p.lhdr;
 
     /* 1. Main screen */
-    dos_render_mock_main(v);
+    dos_render_mock_main_pal(v, g, p);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("main", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "main", sim_vram, g);
 
     /* 2. Settings (Node tab) */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
-    dos_vid_shadow(v, 2, 4, 21, 72);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 2, 4, 21, 72, bdr, fill);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
     dos_vid_puts(v, 3, 5, bar, " [1:Node]  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", 70);
     dos_vid_puts(v, 5, 7, fill, "Callsign       : ", 17); dos_vid_puts(v, 5, 24, sel, "KR4OYK-7", 32);
@@ -1773,12 +1887,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 20, 4, 72, bdr);
     dos_vid_puts(v, 21, 6, bar, "[ S/F2 Save ]  [ Esc Cancel ]  1-7:Tab  Enter:Edit", 66);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("settings", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings", sim_vram, g);
 
-    /* 3. Add Interface Wizard (Step 3/4 matching dos_main.cpp including Learned Policy) */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
-    dos_vid_shadow(v, 3, 6, 19, 68);
+    /* 3. Add Interface Wizard */
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 3, 6, 19, 68, bdr, fill);
     dos_vid_title(v, 3, 8, 20, bdr, "Add Interface");
     dos_vid_title(v, 3, 56, 16, bdr, "[######..] 3/4");
     dos_vid_puts(v, 4, 8, bdr,  "Configure AXUDP bind host/DMR, port, netmask, and policy:", 62);
@@ -1794,12 +1908,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 19, 6, 68, bdr);
     dos_vid_puts(v, 20, 8, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("add_iface", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "add_iface", sim_vram, g);
 
-    /* 4. Edit Interface Single View (matching dos_main.cpp field-for-field) */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 3, 6, 19, 68, bdr, fill, 1);
-    dos_vid_shadow(v, 3, 6, 19, 68);
+    /* 4. Edit Interface Modal */
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 3, 6, 19, 68, bdr, fill);
     dos_vid_title(v, 3, 8, 20, bdr, "Edit Interface");
     dos_vid_puts(v, 4, 8, bdr,  "Edit interface settings and select Save to update draft:", 62);
     dos_vid_puts(v, 6, 9, fill, "Driver (Lt/Rt) : ", 17); dos_vid_puts(v, 6, 26, sel, "< axudp >", 30);
@@ -1816,12 +1930,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 19, 6, 68, bdr);
     dos_vid_puts(v, 20, 8, bar, "[  Save  ]  [ Cancel ]", 30);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("edit_iface", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "edit_iface", sim_vram, g);
 
     /* 5. Settings (Peers Tab) */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 2, 4, 21, 72, bdr, fill, 1);
-    dos_vid_shadow(v, 2, 4, 21, 72);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 2, 4, 21, 72, bdr, fill);
     dos_vid_title(v, 2, 6, 30, bdr, "Node Settings [Tab:Switch]");
     dos_vid_puts(v, 3, 5, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  [5:Peers]  6:Rig  7:Prn", 70);
     dos_vid_puts(v, 5, 5, lhdr, "ID        Callsign   Iface   Endpoint          In/Out", 70);
@@ -1829,12 +1943,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 20, 4, 72, bdr);
     dos_vid_puts(v, 21, 6, bar, "A:Add  E/Enter:Edit  K:Del  S/F2:Save  Esc:Close", 66);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("peers", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "peers", sim_vram, g);
 
     /* 6. Edit Peer Modal */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 4, 10, 17, 60, bdr, fill, 1);
-    dos_vid_shadow(v, 4, 10, 17, 60);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 4, 10, 17, 60, bdr, fill);
     dos_vid_title(v, 4, 12, 20, bdr, "Edit Peer");
     dos_vid_puts(v, 6, 12, fill, "Peer ID        : ", 17); dos_vid_puts(v, 6, 29, sel, "remote0", 28);
     dos_vid_puts(v, 7, 12, fill, "Callsign       : ", 17); dos_vid_puts(v, 7, 29, inp, "R3MOT-7", 28);
@@ -1845,24 +1959,24 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 18, 10, 60, bdr);
     dos_vid_puts(v, 19, 12, bar, "[  Save  ]  [ Cancel ]", 30);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("edit_peer", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "edit_peer", sim_vram, g);
 
     /* 7. Terminate Active Connection Modal */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 4, 8, 16, 64, bdr, fill, 1);
-    dos_vid_shadow(v, 4, 8, 16, 64);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 4, 8, 16, 64, bdr, fill);
     dos_vid_title(v, 4, 10, 32, bdr, "Terminate Active Connection");
     dos_vid_puts(v, 6, 10, lhdr, "ID    Callsign    Port       State", 60);
     dos_vid_puts(v, 7, 10, sel,  "#1    W3TRM-1     axudp0     [CONNECTED]", 60);
     dos_vid_hdiv(v, 17, 8, 64, bdr);
     dos_vid_puts(v, 18, 10, bar, "Up/Down: select | Enter: terminate | Esc: cancel", 60);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("terminate", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "terminate", sim_vram, g);
 
     /* 8. Ban / Unban Callsign Modal */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
-    dos_vid_shadow(v, 2, 3, 21, 74);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 2, 3, 21, 74, bdr, fill);
     dos_vid_title(v, 2, 5, 38, bdr, "Ban / Unban Callsign (banlist.cfg)");
     dos_vid_puts(v, 4, 5, fill, "Callsign: ", 10); dos_vid_puts(v, 4, 15, sel, "B4NTST", 12);
     dos_vid_puts(v, 5, 5, fill, "Lift At : ", 10); dos_vid_puts(v, 5, 15, inp, "permanent", 16);
@@ -1875,12 +1989,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_hdiv(v, 21, 3, 74, bdr);
     dos_vid_puts(v, 22, 5, bar, "Enter: BAN | Tab: next field | Esc: close", 68);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("ban", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "ban", sim_vram, g);
 
     /* 9. Auto-Learned Peers 3-Way Exit Modal */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 7, 6, 11, 68, bdr, fill, 1);
-    dos_vid_shadow(v, 7, 6, 11, 68);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 7, 6, 11, 68, bdr, fill);
     dos_vid_title(v, 7, 8, 24, bdr, "Auto-Learned Peers");
     dos_vid_puts(v, 9, 8, fill, "1 auto-learned peer(s) added during this session.", 60);
     dos_vid_puts(v, 10, 8, fill, "Save to config, discard, or review in Peers?", 60);
@@ -1888,12 +2002,12 @@ static void test_dos_ui_screen_flows() {
     dos_vid_puts(v, 16, 8, sel, "[ Save & Exit ]", 15);
     dos_vid_puts(v, 16, 25, bar, "[ Discard ]  [ Review Peers ]  [ Cancel ]", 42);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("exit", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "exit", sim_vram, g);
 
     /* 10. Theme Settings Modal */
-    dos_render_mock_main(v);
-    dos_vid_box(v, 2, 3, 21, 74, bdr, fill, 1);
-    dos_vid_shadow(v, 2, 3, 21, 74);
+    dos_render_mock_main_pal(v, g, p);
+    dos_box_with_shadow(v, g, 2, 3, 21, 74, bdr, fill);
     dos_vid_title(v, 2, 5, 18, bdr, "Theme Settings");
     dos_vid_puts(v, 4, 5, fill, "Theme  : < dark               > (Built-in (not saved))", 68);
     dos_vid_puts(v, 5, 5, fill, "Editing built-in clones custom-dark or custom-light.", 68);
@@ -1909,17 +2023,45 @@ static void test_dos_ui_screen_flows() {
             dos_vid_puts(v, 8 + r, 5, (r == 0) ? sel : fill, row_s, 44);
             oyk_u8 sw = static_cast<oyk_u8>((oyk_rgb_to_vga16(dt.colors[r]) << 4) | oyk_rgb_to_vga16(dt.colors[r]));
             dos_vid_puts(v, 8 + r, 50, sw, "    ", 4);
+            if (g) dos_gfx_set_cell_rgb(g, 8 + r, 50, 4, dt.colors[r], dt.colors[r]);
         }
     }
     dos_vid_hdiv(v, 19, 3, 74, bdr);
     dos_vid_puts(v, 20, 5, fill, "Live preview active (unsaved). Press S/F2 to save or Esc to revert.", 68);
     dos_vid_puts(v, 21, 5, bar,  "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", 68);
     assert(dos_vid_flush(v) > 0);
-    dos_save_capture("theme", sim_vram);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "theme", sim_vram, g);
 
     delete v;
     delete[] sim_vram;
+}
+
+static void test_dos_ui_screen_flows() {
+    DosMockPalette p;
+    p.bg   = 0x17U; p.hdr  = 0x1FU; p.mbar = 0x70U; p.msel = 0x30U; p.ok = 0x1AU;
+    p.lhdr = 0x8FU; p.stat = 0x70U; p.bdr  = 0x1FU; p.fill = 0x17U;
+    p.sel  = 0x30U; p.inp  = 0x70U; p.bar  = 0x70U;
+    run_dos_mock_flow_suite("dos", NULL, p);
     printf("[PASS] test_dos_ui_screen_flows\n");
+}
+
+static void test_dos_gfx_ui_screen_flows() {
+    OykDosGfx* g = new OykDosGfx;
+    assert(dos_gfx_init_sim(g, OYK_GFX_MODE_VBE24) == 1);
+    OykThemeConfig dt;
+    oyk_theme_init_builtin(&dt, 0);
+    dos_gfx_set_theme(g, &dt, 0);
+
+    DosMockPalette p;
+    p.bg   = 0x07U; p.hdr  = 0x1FU; p.mbar = 0xDFU; p.msel = 0x3FU; p.ok = 0x2FU;
+    p.lhdr = 0x5BU; p.stat = 0x6EU; p.bdr  = 0x59U; p.fill = 0x58U;
+    p.sel  = 0x3FU; p.inp  = 0x07U; p.bar  = 0xDFU;
+    run_dos_mock_flow_suite("dos_gfx", g, p);
+
+    dos_gfx_shutdown(g);
+    delete g;
+    printf("[PASS] test_dos_gfx_ui_screen_flows\n");
 }
 
 static void test_win_service_cmdline_builder() {
@@ -1965,8 +2107,12 @@ int oyk_run_portable_tests() {
     test_portable_config_include_storage_modes();
     test_portable_same_interface_policy();
     test_portable_theme_config_and_cloning();
+#if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
+    test_dos_gfx_renderer_and_smooth_scroll();
+#endif
 #ifndef __DOS__
     test_dos_ui_screen_flows();
+    test_dos_gfx_ui_screen_flows();
     test_win_service_cmdline_builder();
 #endif
     return 0;

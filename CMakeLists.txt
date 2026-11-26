@@ -14,6 +14,7 @@ option(BUILD_TESTS        "Build unit and integration tests" ON)
 
 # Retro & Windows ports are ONLY built when explicitly requested
 option(BUILD_MSDOS_PORT    "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP) executable" OFF)
+option(BUILD_MSDOS_GFX_PORT "Add target to build 386+ graphical MS-DOS (OpenWatcom + VBE/VGA/EGA) executable" OFF)
 option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) executable" OFF)
 option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
 option(BUILD_TINYTMUX_PORT "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
@@ -409,6 +410,10 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_printer.cpp
         ports/dos/dos_usb.cpp
         ports/dos/dos_video.cpp
+        ports/dos/ems.cpp
+        ports/dos/dos_xms.cpp
+        ports/dos/dos_font8x16.cpp
+        ports/dos/dos_gfx.cpp
         ports/windows/win_service.cpp
     )
     target_include_directories(oyk_portable_tests PRIVATE

@@ -18,7 +18,7 @@ per-target binary release archives plus GitHub-matching source archives.
 Options:
   --out-dir <dir>    Destination directory for release archives (default: ./dist)
   --targets <csv>    Comma-separated subset of targets to build:
-                     linux-ncurses,linux-gtk,win64,win32,win16,dos,teensy41,
+                     linux-ncurses,linux-gtk,win64,win32,win16,dos,dos-gfx,teensy41,
                      pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
                      android-playstore,android-sideload
   --skip-src         Do not generate source release archives
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -96,6 +96,7 @@ cleanup() {
     if [[ "${DOS_BUILT}" -eq 1 && -n "${WATCOM_DIR:-}" ]]; then
         (export WATCOM="${WATCOM_DIR}" INCLUDE="${WATCOM_DIR}/h" EDPATH="${WATCOM_DIR}/eddat" PATH="${WATCOM_DIR}/binl64:${WATCOM_DIR}/binl:${PATH}"
          cd "${ROOT_DIR}/ports/dos" && wmake -h -f makefile clean </dev/null >/dev/null 2>&1 || true
+         cd "${ROOT_DIR}/ports/dos" && wmake -h -f makefile.gfx clean </dev/null >/dev/null 2>&1 || true
          rm -rf "${ROOT_DIR}/ports/dos/mtcp_inc")
     fi
     if [[ "${WIN16_BUILT}" -eq 1 && -n "${WATCOM_DIR:-}" ]]; then
@@ -450,6 +451,43 @@ if target_requested "dos"; then
         PACKAGED+=("oyknode-${VER}-dos.zip")
     else
         SKIPPED+=("dos (OpenWatcom 16-bit DOS compiler not found)")
+    fi
+fi
+
+# 2b. 386+ Graphical MS-DOS (OpenWatcom + VBE/VGA/EGA)
+if target_requested "dos-gfx"; then
+    if [[ "${HAS_WATCOM_DOS}" -eq 1 ]]; then
+        echo "Building 386+ graphical MS-DOS target (OpenWatcom)..."
+        MTCP_FLAG="USE_MTCP=0"
+        if [[ -f "${MTCP_DIR:-${HOME}/mTCP}/src/TCPLIB/PACKET.CPP" ]]; then
+            MTCP_FLAG="USE_MTCP=1"
+        fi
+        DOS_BUILT=1
+        (
+            export WATCOM="${WATCOM_DIR}"
+            export INCLUDE="${WATCOM_DIR}/h"
+            export EDPATH="${WATCOM_DIR}/eddat"
+            export PATH="${WATCOM_DIR}/binl64:${WATCOM_DIR}/binl:${PATH}"
+            cd "${ROOT_DIR}/ports/dos"
+            wmake -h -f makefile.gfx clean </dev/null >/dev/null 2>&1 || true
+            wmake -h -f makefile.gfx "${MTCP_FLAG}" oyknodeg.exe </dev/null
+        )
+        st="$(stage_binary_tree "dos-gfx" "dos_gfx")"
+        cp "${ROOT_DIR}/ports/dos/oyknodeg.exe" "${st}/"
+        (
+            export WATCOM="${WATCOM_DIR}"
+            export INCLUDE="${WATCOM_DIR}/h"
+            export EDPATH="${WATCOM_DIR}/eddat"
+            export PATH="${WATCOM_DIR}/binl64:${WATCOM_DIR}/binl:${PATH}"
+            cd "${ROOT_DIR}/ports/dos"
+            wmake -h -f makefile.gfx clean </dev/null >/dev/null 2>&1 || true
+            rm -rf "${ROOT_DIR}/ports/dos/mtcp_inc"
+        )
+        DOS_BUILT=0
+        package_zip "dos-gfx"
+        PACKAGED+=("oyknode-${VER}-dos-gfx.zip")
+    else
+        SKIPPED+=("dos-gfx (OpenWatcom DOS compiler not found)")
     fi
 fi
 

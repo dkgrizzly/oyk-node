@@ -22,6 +22,10 @@
 #include "dos_usb.hpp"
 #include "dos_video.hpp"
 #include "ems.hpp"
+#ifdef OYK_DOS_GFX_BUILD
+#include "dos_xms.hpp"
+#include "dos_gfx.hpp"
+#endif
 
 #include <conio.h>
 #include <direct.h>
@@ -180,6 +184,13 @@ static void dos_pump_network();
 /* ==================== Direct 80x25 Text Video RAM UI (Dirty-Diff, Zero Snow-Blank) ==================== */
 
 static OykDosVideo* g_vid = NULL;
+#ifdef OYK_DOS_GFX_BUILD
+static OykDosGfx* g_gfx = NULL;
+static oyk_u16* g_gfx_vram = NULL;
+static oyk_u16* g_gfx_scroll_tmp = NULL;
+static int g_gfx_video_req = OYK_GFX_MODE_NONE;
+static int g_gfx_last_log_count = -1;
+#endif
 
 static void vid_puts(int row, int col, oyk_u8 attr, const char* s, int max_w) {
     if (g_vid) dos_vid_puts(g_vid, row, col, attr, s, max_w);
@@ -187,6 +198,57 @@ static void vid_puts(int row, int col, oyk_u8 attr, const char* s, int max_w) {
 
 static void vid_clear(oyk_u8 attr) {
     if (g_vid) dos_vid_clear(g_vid, attr);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        dos_gfx_clear_shadows(g_gfx);
+        dos_gfx_clear_cell_rgb(g_gfx);
+    }
+#endif
+}
+
+static void vid_box(int top, int left, int h, int w, oyk_u8 border_attr, oyk_u8 fill_attr, int clear_interior) {
+    if (g_vid) dos_vid_box(g_vid, top, left, h, w, border_attr, fill_attr, clear_interior);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        /* Clear per-cell RGB overrides inside the newly drawn box interior */
+        for (int r = top; r < top + h && r < OYK_DOS_VID_ROWS; ++r) {
+            if (r < 0) continue;
+            for (int c = left; c < left + w && c < OYK_DOS_VID_COLS; ++c) {
+                if (c < 0) continue;
+                g_gfx->cell_has_rgb[r * OYK_DOS_VID_COLS + c] = 0U;
+            }
+        }
+    }
+#endif
+}
+
+static void vid_shadow(int top, int left, int h, int w) {
+    if (g_vid) dos_vid_shadow(g_vid, top, left, h, w);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) dos_gfx_add_shadow(g_gfx, top, left, h, w);
+#endif
+}
+
+static void vid_flush() {
+    if (!g_vid) return;
+    oyk_u32 changed = dos_vid_flush(g_vid);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx && g_gfx_vram) {
+        dos_gfx_present(g_gfx, g_gfx_vram, changed ? 0 : 0);
+    }
+#else
+    (void)changed;
+#endif
+}
+
+static void vid_flush_row(int row) {
+    if (!g_vid) return;
+    dos_vid_flush_row(g_vid, row);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx && g_gfx_vram) {
+        dos_gfx_present(g_gfx, g_gfx_vram, 0);
+    }
+#endif
 }
 
 static int dos_local_term_is_active();
@@ -211,6 +273,9 @@ static oyk_u8 dos_make_pair_attr(OykDosVideo* v, oyk_u32 bg_rgb, oyk_u32 fg_rgb,
 static void resolve_dos_theme_attrs(const OykConfig* cfg, DosThemeAttrs* out) {
     const char* tn = (cfg && cfg->theme_name[0]) ? cfg->theme_name : "dark";
     if (tn[0] && (strcmp(tn, "native") == 0 || strcmp(tn, "NATIVE") == 0)) {
+#ifdef OYK_DOS_GFX_BUILD
+        if (g_gfx) dos_gfx_set_theme(g_gfx, NULL, 1);
+#endif
         out->menu_bg  = dos_vid_attr(g_vid, 0x70U, 0x70U);
         out->menu_sel = dos_vid_attr(g_vid, 0x30U, 0x0FU);
         out->top_hdr  = dos_vid_attr(g_vid, 0x1FU, 0x70U);
@@ -232,6 +297,29 @@ static void resolve_dos_theme_attrs(const OykConfig* cfg, DosThemeAttrs* out) {
     }
     OykThemeConfig tc;
     oyk_theme_resolve_effective(cfg, 0, 1, &tc);
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx && g_gfx->active) {
+        dos_gfx_set_theme(g_gfx, &tc, 0);
+        out->menu_bg  = tc.is_dark_base ? 0xDFU : 0xD7U;
+        out->menu_sel = 0x3FU;
+        out->top_hdr  = 0x1FU;
+        out->allow_at = 0x2FU;
+        out->deny_at  = 0x4FU;
+        out->bdr      = 0x09U;
+        out->ttl      = 0x0BU;
+        out->list_hdr = 0x5BU;
+        out->norm     = 0x07U;
+        out->dim      = 0x0BU;
+        out->run_up   = 0x0AU;
+        out->run_dn   = 0x0CU;
+        out->stat     = 0x6EU;
+        out->dlg_bdr  = 0x59U;
+        out->dlg_fill = 0x58U;
+        out->dlg_sel  = 0x3FU;
+        out->dlg_inp  = 0x07U;
+        return;
+    }
+#endif
     out->menu_bg  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_BUTTON_BG], tc.colors[OYK_TR_BUTTON_FG], 0x70U);
     out->menu_sel = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_SELECTION_BG], tc.colors[OYK_TR_SELECTION_FG], 0x0FU);
     out->top_hdr  = dos_make_pair_attr(g_vid, tc.colors[OYK_TR_HEADER_BG], tc.colors[OYK_TR_HEADER_FG], 0x70U);
@@ -255,6 +343,13 @@ static void render_dos_screen() {
     char line[82];
     char call_s[16];
     oyk_format_callsign(&g_node.config().callsign, call_s, sizeof(call_s));
+
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        dos_gfx_clear_shadows(g_gfx);
+        dos_gfx_clear_cell_rgb(g_gfx);
+    }
+#endif
 
     DosThemeAttrs ta;
     resolve_dos_theme_attrs(g_dos_theme_preview_cfg ? g_dos_theme_preview_cfg : &g_node.config(), &ta);
@@ -282,12 +377,22 @@ static void render_dos_screen() {
     }
 
     /* Row 1: Header bar */
+#ifdef OYK_DOS_GFX_BUILD
+    sprintf(line, " OYK NODE (DOS-GFX:%s): %-8s | Up:%lus | C:%d | %s",
+            g_gfx ? dos_gfx_mode_name(g_gfx->mode) : "txt",
+            call_s,
+            static_cast<unsigned long>(g_node.uptime_seconds()),
+            g_node.total_active_connections(),
+            g_gfx && g_gfx->extmem.available() ? g_gfx->extmem.backend_name()
+                                               : (g_mtcp_active ? "mTCP" : "STD"));
+#else
     sprintf(line, " OYK NODE (DOS): %-9s | Up:%lus | C:%d | %s%s",
             call_s,
             static_cast<unsigned long>(g_node.uptime_seconds()),
             g_node.total_active_connections(),
             g_ems.available() ? "EMS " : "",
             g_usb_stack.installed ? "USB" : (g_mtcp_active ? "mTCP" : "STD"));
+#endif
     vid_puts(1, 0, top_hdr, line, 61);
     vid_puts(1, 61, g_node.accept_incoming() ? allow_at : deny_at,
              g_node.accept_incoming() ? " [INCOMING: ALLOW] " : " [INCOMING: DENY]  ", 19);
@@ -377,6 +482,13 @@ static void render_dos_screen() {
     dos_vid_title(g_vid, 16, 2, 76, ttl_at, "Node Activity Log");
     int total_logs = g_node.console_log_count();
     int start = (total_logs > 6) ? (total_logs - 6) : 0;
+#ifdef OYK_DOS_GFX_BUILD
+    int do_smooth_log = (g_gfx && g_gfx_vram && g_gfx_scroll_tmp &&
+                         g_gfx_last_log_count >= 6 && total_logs > g_gfx_last_log_count);
+    if (do_smooth_log) {
+        memcpy(g_gfx_scroll_tmp, g_gfx_vram, sizeof(oyk_u16) * OYK_DOS_VID_CELLS);
+    }
+#endif
     for (int r = 0; r < 6; ++r) {
         int idx = start + r;
         dos_vid_putc(g_vid, 17 + r, 0, bdr_at, OYK_BOX_V);
@@ -389,7 +501,14 @@ static void render_dos_screen() {
 
     /* Row 24: Status message line */
     vid_puts(24, 0, stat_at, g_status_line, 80);
-    dos_vid_flush(g_vid);
+#ifdef OYK_DOS_GFX_BUILD
+    if (do_smooth_log) {
+        vid_flush();
+        dos_gfx_smooth_scroll(g_gfx, g_gfx_scroll_tmp, g_gfx_vram, 17, 1, 6, 78, 1);
+    }
+    g_gfx_last_log_count = total_logs;
+#endif
+    vid_flush();
 }
 
 /* ==================== Transport Bridge (Optional mTCP / USB CDC / Serial) ==================== */
@@ -710,7 +829,7 @@ static int dos_rig_refresh(char* err_out, size_t err_sz) {
 
 static void prompt_line(const char* prompt, char* out, int max_len) {
     vid_puts(24, 0, 0x4F, prompt, 80);
-    dos_vid_flush_row(g_vid, 24);
+    vid_flush_row(24);
     int len = 0;
     out[0] = '\0';
     int pcol = static_cast<int>(strlen(prompt));
@@ -729,7 +848,7 @@ static void prompt_line(const char* prompt, char* out, int max_len) {
             out[len] = '\0';
         }
         vid_puts(24, pcol, 0x4F, out, 80 - pcol);
-        dos_vid_flush_row(g_vid, 24);
+        vid_flush_row(24);
     }
 }
 
@@ -757,8 +876,8 @@ static int confirm_dos_exit() {
             g_node.tick();
             if (dirty) {
                 dirty = 0;
-                dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-                dos_vid_shadow(g_vid, top, left, h, w);
+                vid_box(top, left, h, w, bdr_at, fill_at, 1);
+                vid_shadow(top, left, h, w);
                 dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Auto-Learned Peers");
                 char l1[68];
                 sprintf(l1, "%d auto-learned peer(s) were added during this session.", auto_cnt);
@@ -774,7 +893,7 @@ static int confirm_dos_exit() {
                 dos_vid_hdiv(g_vid, top + 8, left, w, bdr_at);
                 vid_puts(top + 9, left + 2, fill_at,
                          "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc", w - 4);
-                dos_vid_flush(g_vid);
+                vid_flush();
             }
             if (!kbhit()) continue;
             dirty = 1;
@@ -833,8 +952,8 @@ static int confirm_dos_exit() {
         }
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at, "Exit OYK Node");
 
             char line1[60];
@@ -858,7 +977,7 @@ static int confirm_dos_exit() {
             dos_vid_hdiv(g_vid, top + 6, left, w, bdr_at);
             vid_puts(top + 7, left + 2, fill_at,
                      "Left/Right/Tab:Select   Enter:OK   Y/N/Esc", w - 4);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -945,7 +1064,7 @@ static int dos_yapp_overwrite_cb(const char* target_path, const char* /*filename
     char prompt[80];
     sprintf(prompt, "Overwrite %.48s? [Y/N]: ", target_path);
     vid_puts(24, 0, 0x4F, prompt, 80);
-    dos_vid_flush_row(g_vid, 24);
+    vid_flush_row(24);
     while (!g_break_flag) {
         dos_pump_network();
         if (kbhit()) {
@@ -1074,8 +1193,8 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
         if (dirty) {
             dirty = 0;
             /* Draw Norton Commander single-pane box with single-line borders */
-            dos_vid_box(g_vid, 1, panel_x, 20, panel_w, bdr_at, file_at, 0);
-            dos_vid_shadow(g_vid, 1, panel_x, 20, panel_w);
+            vid_box(1, panel_x, 20, panel_w, bdr_at, file_at, 0);
+            vid_shadow(1, panel_x, 20, panel_w);
             dos_vid_title(g_vid, 1, panel_x + 2, panel_w - 4, bdr_at,
                           title ? title : "Select File");
             if (!getcwd(cur_dir, sizeof(cur_dir))) strcpy(cur_dir, ".");
@@ -1115,7 +1234,7 @@ static int dos_file_selector(const char* title, char* out_path, size_t out_sz) {
             }
             vid_puts(21, panel_x, dos_vid_attr(g_vid, 0x30U, 0x70U),
                      " Up/Dn:Move  Enter:Open/Pick  Bksp:Up  Esc:Cancel              ", panel_w);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -1188,7 +1307,7 @@ static void render_dos_terminal(const char* input_buf) {
     }
     vid_puts(0, 0, top_hdr, hdr, 80);
 
-    dos_vid_box(g_vid, 1, 0, 21, 80, bdr_at, 0x07U, 0);
+    vid_box(1, 0, 21, 80, bdr_at, 0x07U, 0);
     dos_vid_title(g_vid, 1, 2, 76, ttl_at, "Terminal Output");
 
     int body_h = 19;
@@ -1215,7 +1334,7 @@ static void render_dos_terminal(const char* input_buf) {
     vid_puts(23, 0, 0x0FU, in_row, 80);
     vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x07U),
              "F9/Esc switches to Console without closing active terminal session.", 80);
-    dos_vid_flush(g_vid);
+    vid_flush();
 }
 
 static void run_dos_local_terminal() {
@@ -1393,8 +1512,8 @@ static void run_dos_approve_incoming_files() {
 
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, 2, panel_x, 17, panel_w, bdr_at, row_at, 0);
-            dos_vid_shadow(g_vid, 2, panel_x, 17, panel_w);
+            vid_box(2, panel_x, 17, panel_w, bdr_at, row_at, 0);
+            vid_shadow(2, panel_x, 17, panel_w);
             dos_vid_title(g_vid, 2, panel_x + 2, panel_w - 4, bdr_at, "Manage BBS Files Area");
 
             vid_puts(3, panel_x + 1, tab_bg, "", panel_w - 2);
@@ -1445,7 +1564,7 @@ static void run_dos_approve_incoming_files() {
                          : " Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close           ",
                      panel_w);
             vid_puts(24, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), feedback, 80);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -1558,7 +1677,7 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
     int avail = 80 - pcol;
     int start = (len > avail) ? (len - avail) : 0;
     vid_puts(24, pcol, 0x4F, buf + start, avail);
-    dos_vid_flush_row(g_vid, 24);
+    vid_flush_row(24);
     if (accepted_out) *accepted_out = 0;
     while (!g_break_flag) {
         dos_pump_network();
@@ -1576,7 +1695,7 @@ static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int*
         }
         start = (len > avail) ? (len - avail) : 0;
         vid_puts(24, pcol, 0x4F, buf + start, avail);
-        dos_vid_flush_row(g_vid, 24);
+        vid_flush_row(24);
     }
 }
 
@@ -1694,7 +1813,7 @@ static void run_dos_rig_control() {
             vid_clear(fill_at);
             vid_puts(0, 0, top_at, " OYK RADIO / RIG CONTROL (MS-DOS)                              Esc:Close", 80);
 
-            dos_vid_box(g_vid, 2, 0, 19, 80, bdr_at, fill_at, 0);
+            vid_box(2, 0, 19, 80, bdr_at, fill_at, 0);
             dos_vid_title(g_vid, 2, 2, 76, val_at, "Radio / Rig Control");
 
             char row[82];
@@ -1746,7 +1865,7 @@ static void run_dos_rig_control() {
             vid_puts(23, 0, dos_vid_attr(g_vid, 0x0EU, 0x0FU), fb, 80);
             vid_puts(24, 0, dos_vid_attr(g_vid, 0x70U, 0x70U),
                      " Q/R:Refresh  Esc:Return to Operator Console                                    ", 80);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -2107,8 +2226,8 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
 
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Add Interface");
             dos_vid_title(g_vid, top, left + w - 18, 16, ttl_at, PROG[st.step]);
 
@@ -2233,7 +2352,7 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             vid_puts(top + 17, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
             vid_puts(top + 17, left + 38, fill_at,
                      (st.step > 0) ? "PgUp/F3/Ctrl+B:Back" : "Up/Dn/1-5:Pick", w - 40);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -2482,8 +2601,8 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
 
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 20, ttl_at, "Edit Interface");
             vid_puts(top + 1, left + 2, ttl_at, "Edit interface settings and select Save to update draft:", w - 4);
 
@@ -2541,7 +2660,7 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             vid_puts(top + 17, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
             vid_puts(top + 17, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
             vid_puts(top + 17, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -2755,8 +2874,8 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, w - 4, ttl_at,
                           (edit_idx >= 0) ? "Edit Peer" : "Add Peer");
             for (int r = 0; r < 8; ++r) {
@@ -2779,7 +2898,7 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
             dos_vid_hdiv(g_vid, top + 14, left, w, bdr_at);
             vid_puts(top + 15, left + 2, fill_at,
                      "Up/Dn/Tab:Field  Lt/Rt/Spc:Toggle  Enter:Save  Esc:Cancel", w - 4);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
         if (!kbhit()) continue;
         dirty = 1;
@@ -2956,7 +3075,7 @@ static void run_dos_settings(int initial_tab) {
                 tx += tlen + 1;
             }
 
-            dos_vid_box(g_vid, 2, 0, 20, 80, bdr_at, fill_at, 0);
+            vid_box(2, 0, 20, 80, bdr_at, fill_at, 0);
 
             if (tab != 3 && tab != 4) {
                 const char** labels = (tab == 0) ? NODE_LABELS : ((tab == 1) ? BBS_LABELS : ((tab == 2) ? CHAT_LABELS : ((tab == 5) ? RIG_LABELS : PRN_LABELS)));
@@ -3069,7 +3188,7 @@ static void run_dos_settings(int initial_tab) {
             } else {
                 vid_puts(24, 0, tab_bg, " Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel ", 80);
             }
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -3106,7 +3225,7 @@ static void run_dos_settings(int initial_tab) {
                 vid_puts(10, 4, 0x4F, "Changes have been applied to the running node in memory only", 72);
                 vid_puts(11, 4, 0x4F, "and will be lost when the software exits.", 72);
                 vid_puts(14, 4, 0x4E, "Press any key to continue...", 72);
-                dos_vid_flush(g_vid);
+                vid_flush();
                 getch();
                 strcpy(g_status_line, "Settings applied IN MEMORY ONLY (config not writable).");
             } else {
@@ -3359,8 +3478,8 @@ static void run_dos_terminate_dialog() {
 
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 32, ttl_at, "Terminate Active Connection");
             vid_puts(top + 2, left + 2, hdr_at, "ID    Callsign    Port       State", w - 4);
             int list_h = h - 6;
@@ -3375,7 +3494,7 @@ static void run_dos_terminate_dialog() {
             }
             dos_vid_hdiv(g_vid, top + h - 3, left, w, bdr_at);
             vid_puts(top + h - 2, left + 2, bar_at, "Up/Down: select | Enter: terminate | Esc: cancel", w - 4);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -3426,8 +3545,8 @@ static void run_dos_ban_dialog() {
 
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, top, left, h, w, bdr_at, fill_at, 1);
-            dos_vid_shadow(g_vid, top, left, h, w);
+            vid_box(top, left, h, w, bdr_at, fill_at, 1);
+            vid_shadow(top, left, h, w);
             dos_vid_title(g_vid, top, left + 2, 38, ttl_at, "Ban / Unban Callsign (banlist.cfg)");
 
             vid_puts(top + 2, left + 2, fill_at, "Callsign: ", 10);
@@ -3474,14 +3593,14 @@ static void run_dos_ban_dialog() {
 
             if (confirm_pop && bcnt > 0) {
                 char msg[42];
-                dos_vid_box(g_vid, 9, 17, 6, 46, bdr_at, fill_at, 1);
-                dos_vid_shadow(g_vid, 9, 17, 6, 46);
+                vid_box(9, 17, 6, 46, bdr_at, fill_at, 1);
+                vid_shadow(9, 17, 6, 46);
                 dos_vid_title(g_vid, 9, 19, 18, ttl_at, "Confirm Unban");
                 sprintf(msg, "Unban callsign %s?", g_node.ban_entry(unban_sel).key);
                 vid_puts(11, 19, fill_at, msg, 42);
                 vid_puts(12, 19, sel_at, "[Y] Yes   [N] No", 20);
             }
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -3615,8 +3734,8 @@ static void run_dos_theme_dialog() {
             resolve_dos_theme_attrs(&draft, &ta);
 
             const int top = 2, left = 3, bh = 21, bw = 74;
-            dos_vid_box(g_vid, top, left, bh, bw, ta.dlg_bdr, ta.dlg_fill, 1);
-            dos_vid_shadow(g_vid, top, left, bh, bw);
+            vid_box(top, left, bh, bw, ta.dlg_bdr, ta.dlg_fill, 1);
+            vid_shadow(top, left, bh, bw);
             dos_vid_title(g_vid, top, left + 2, 18, ta.dlg_bdr, "Theme Settings");
 
             char hdr_line[72];
@@ -3637,13 +3756,18 @@ static void run_dos_theme_dialog() {
                 vid_puts(8 + r, left + 2, (idx == role_sel) ? ta.dlg_sel : ta.dlg_fill, row_s, 44);
                 oyk_u8 sw = dos_make_pair_attr(g_vid, pal.colors[idx], pal.colors[idx], ta.dlg_fill);
                 vid_puts(8 + r, left + 47, sw, "    ", 4);
+#ifdef OYK_DOS_GFX_BUILD
+                if (g_gfx) {
+                    dos_gfx_set_cell_rgb(g_gfx, 8 + r, left + 47, 4, pal.colors[idx], pal.colors[idx]);
+                }
+#endif
             }
 
             dos_vid_hdiv(g_vid, 19, left, bw, ta.dlg_bdr);
             vid_puts(20, left + 2, ta.dlg_fill, fb, bw - 4);
             vid_puts(21, left + 2, ta.menu_bg,
                      "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", bw - 4);
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -3793,8 +3917,8 @@ static void open_dos_node_menu(int* running) {
         g_node.tick();
         if (dirty) {
             dirty = 0;
-            dos_vid_box(g_vid, 1, 1, 15, 34, menu_bg, menu_bg, 0);
-            dos_vid_shadow(g_vid, 1, 1, 15, 34);
+            vid_box(1, 1, 15, 34, menu_bg, menu_bg, 0);
+            vid_shadow(1, 1, 15, 34);
             dos_vid_hdiv(g_vid, 4, 1, 34, menu_bg);
             dos_vid_hdiv(g_vid, 13, 1, 34, menu_bg);
             for (int i = 0; i < 11; ++i) {
@@ -3802,7 +3926,7 @@ static void open_dos_node_menu(int* running) {
                 vid_puts(ITEM_ROWS[i], 2, (i == sel) ? menu_sel : menu_bg, ITEMS[i], 32);
                 dos_vid_putc(g_vid, ITEM_ROWS[i], 34, menu_bg, OYK_BOX_V);
             }
-            dos_vid_flush(g_vid);
+            vid_flush();
         }
 
         if (!kbhit()) continue;
@@ -3865,13 +3989,21 @@ static void resolve_dos_config_path(char* out, size_t out_sz) {
 }
 
 static void print_dos_usage(const char* prog) {
+#ifdef OYK_DOS_GFX_BUILD
+    printf("OYK Amateur Radio Packet Node (386+ Graphical MS-DOS)\n");
+    printf("Usage: %s [options]\n\n", prog ? prog : "oyknodeg.exe");
+#else
     printf("OYK Amateur Radio Packet Node (MS-DOS)\n");
     printf("Usage: %s [options]\n\n", prog ? prog : "oyknode.exe");
+#endif
     printf("Options:\n");
     printf("  -c, --config <path>      Load configuration file\n");
     printf("      --callsign <CALL>    Override node callsign (e.g. N0CALL or N0CALL-7; default SSID 7)\n");
     printf("      --alias <ALIAS>      Override node alias (e.g. OYKNOD)\n");
     printf("      --port <UDP_PORT>    Override first AXUDP bind port (default 10093)\n");
+#ifdef OYK_DOS_GFX_BUILD
+    printf("      --video <mode>       Video fallback start (auto, vbe24, vbe16, vbe8, vga, ega)\n");
+#endif
     printf("      --headless           Run without full-screen UI (log to stdout)\n");
     printf("  -h, --help               Show this help\n");
 }
@@ -3952,6 +4084,22 @@ int main(int argc, char* argv[]) {
             override_port = static_cast<oyk_u16>(pv);
         } else if (strcmp(a, "--headless") == 0) {
             headless = 1;
+#ifdef OYK_DOS_GFX_BUILD
+        } else if (strcmp(a, "--video") == 0 && i + 1 < argc) {
+            int vm = dos_gfx_parse_video_arg(argv[++i]);
+            if (vm < 0) {
+                printf("Invalid --video mode: %s (expected auto, vbe24, vbe16, vbe8, vga, ega)\n", argv[i]);
+                return 1;
+            }
+            g_gfx_video_req = vm;
+        } else if (strncmp(a, "--video=", 8) == 0 && eq) {
+            int vm = dos_gfx_parse_video_arg(eq + 1);
+            if (vm < 0) {
+                printf("Invalid --video mode: %s (expected auto, vbe24, vbe16, vbe8, vga, ega)\n", eq + 1);
+                return 1;
+            }
+            g_gfx_video_req = vm;
+#endif
         } else {
             printf("Unknown or incomplete argument: %s\n", a);
             print_dos_usage(argv[0]);
@@ -4085,6 +4233,20 @@ int main(int argc, char* argv[]) {
             }
         }
     } else {
+#ifdef OYK_DOS_GFX_BUILD
+        if (!oyk_dos_is_386_or_newer()) {
+            printf("80386 or newer CPU required for graphical oyknodeg.exe (use oyknode.exe on 8086/286).\n");
+            g_node.finish_shutdown();
+#ifdef OYK_DOS_HAS_MTCP
+            if (g_mtcp_active) Utils::endStack();
+#endif
+            oyk_dos_serial_close(&g_serial);
+            dos_printer_close();
+            oyk_dos_pktdrv_shutdown(&g_pktdrv);
+            g_ems.shutdown();
+            return 1;
+        }
+#endif
         g_vid = new OykDosVideo;
         if (!g_vid) {
             printf("Out of memory allocating video buffer.\n");
@@ -4098,11 +4260,48 @@ int main(int argc, char* argv[]) {
             g_ems.shutdown();
             return 1;
         }
+#ifdef OYK_DOS_GFX_BUILD
+        g_gfx = new OykDosGfx;
+        g_gfx_vram = new oyk_u16[OYK_DOS_VID_CELLS];
+        g_gfx_scroll_tmp = new oyk_u16[OYK_DOS_VID_CELLS];
+        if (!g_gfx || !g_gfx_vram || !dos_gfx_init(g_gfx, g_gfx_video_req)) {
+            printf("No compatible VESA/VGA/EGA graphics mode available (try --headless).\n");
+            if (g_gfx) { dos_gfx_shutdown(g_gfx); delete g_gfx; g_gfx = NULL; }
+            delete[] g_gfx_scroll_tmp; g_gfx_scroll_tmp = NULL;
+            delete[] g_gfx_vram; g_gfx_vram = NULL;
+            delete g_vid; g_vid = NULL;
+            g_node.finish_shutdown();
+#ifdef OYK_DOS_HAS_MTCP
+            if (g_mtcp_active) Utils::endStack();
+#endif
+            oyk_dos_serial_close(&g_serial);
+            dos_printer_close();
+            oyk_dos_pktdrv_shutdown(&g_pktdrv);
+            g_ems.shutdown();
+            return 1;
+        }
+        dos_vid_init_sim(g_vid, 0, g_gfx_vram);
+        if (g_gfx->mode == OYK_GFX_MODE_VBE24 || g_gfx->mode == OYK_GFX_MODE_VBE16 || g_gfx->mode == OYK_GFX_MODE_VBE8) {
+            sprintf(g_status_line, "GFX:%s (%s) | Press F10/M for Node menu.",
+                    dos_gfx_mode_name(g_gfx->mode),
+                    g_gfx->extmem.available() ? g_gfx->extmem.backend_name() : "CONV");
+        } else {
+            sprintf(g_status_line, "GFX:%s (16-col) | Press F10/M for Node menu.",
+                    dos_gfx_mode_name(g_gfx->mode));
+        }
+#else
         dos_vid_init(g_vid);
+#endif
 
         int running = 1;
         render_dos_screen();
         oyk_u32 last_sig = dos_screen_signature();
+#ifdef OYK_DOS_GFX_BUILD
+        const char* smoke_env = getenv("OYK_DOS_SMOKE_EXIT");
+        if (smoke_env && smoke_env[0] == '1') {
+            running = 0;
+        }
+#endif
 
         while (running && !g_break_flag) {
             dos_pump_network();
@@ -4192,6 +4391,17 @@ int main(int argc, char* argv[]) {
         delete g_vid;
         g_vid = NULL;
     }
+#ifdef OYK_DOS_GFX_BUILD
+    if (g_gfx) {
+        dos_gfx_shutdown(g_gfx);
+        delete g_gfx;
+        g_gfx = NULL;
+    }
+    delete[] g_gfx_scroll_tmp;
+    g_gfx_scroll_tmp = NULL;
+    delete[] g_gfx_vram;
+    g_gfx_vram = NULL;
+#endif
     {
         char signoff_call[24];
         oyk_format_callsign(&g_node.config().callsign, signoff_call, sizeof(signoff_call));

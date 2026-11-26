@@ -146,7 +146,7 @@ echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
 
 FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme)
-PORTS=(ncurses dos tinytmux pico gtk win android)
+PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -175,6 +175,7 @@ port_label() {
     case "$1" in
         ncurses)  echo "POSIX ncurses" ;;
         dos)      echo "MS-DOS (80x25 Text)" ;;
+        dos_gfx)  echo "MS-DOS 386+ Graphical (VBE/VGA/EGA)" ;;
         tinytmux) echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
         pico)     echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
         gtk)      echo "X11 GTK+ 2.0" ;;
