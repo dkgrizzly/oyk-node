@@ -311,8 +311,18 @@ static void gs_draw_console(OykGsosUiState *ui) {
     ui->last_console_bg = ui->active_theme.colors[OYK_GSOS_TR_BG];
     gs_reset_hits(ui);
 
-    gs_fill_rect(0, 13, 640, 187, GS_CLR_BG);
+    gs_fill_rect(0, 13, 640, 187, GS_CLR_PANEL);
     gs_draw_menubar(node);
+
+    /* Framed GS/OS Platinum Desktop Window */
+    gs_fill_rect(6, 16, 632, 184, GS_CLR_FG);
+    gs_fill_rect(4, 14, 632, 184, GS_CLR_BG);
+    gs_frame_rect(4, 14, 632, 184, GS_CLR_FG);
+    gs_fill_rect(5, 15, 630, 11, GS_CLR_ACCENT);
+    gs_hline(4, 635, 26, GS_CLR_FG);
+    gs_fill_rect(9, 17, 9, 7, GS_CLR_BG);
+    gs_frame_rect(9, 17, 9, 7, GS_CLR_FG);
+    gs_draw_text(24, 16, "OYK Amateur Radio Packet Node", GS_CLR_BG, GS_CLR_ACCENT, 40);
 
     /* Top Status Banner with canonical header + right incoming badge */
     oyk_gsos_format_callsign(&node->cfg.callsign, cs, sizeof(cs));
@@ -321,17 +331,17 @@ static void gs_draw_console(OykGsosUiState *ui) {
                                    hdr, sizeof(hdr));
     pill = oyk_gsos_format_incoming_pill(node->cfg.accept_incoming);
     pill_w = (int)strlen(pill) * 7 + 10;
-    gs_fill_rect(6, 15, 628, 12, GS_CLR_ACCENT);
-    gs_frame_rect(6, 15, 628, 12, GS_CLR_FG);
-    gs_draw_text(12, 16, hdr, GS_CLR_BG, GS_CLR_ACCENT, (620 - pill_w) / 7);
-    gs_fill_rect(630 - pill_w, 16, pill_w, 10, GS_CLR_PANEL);
-    gs_frame_rect(630 - pill_w, 16, pill_w, 10, GS_CLR_FG);
-    gs_draw_text(634 - pill_w, 16, pill, GS_CLR_FG, GS_CLR_PANEL, (int)strlen(pill));
+    gs_fill_rect(10, 28, 620, 11, GS_CLR_ACCENT);
+    gs_frame_rect(10, 28, 620, 11, GS_CLR_FG);
+    gs_draw_text(16, 29, hdr, GS_CLR_BG, GS_CLR_ACCENT, (612 - pill_w) / 7);
+    gs_fill_rect(626 - pill_w, 29, pill_w, 9, GS_CLR_PANEL);
+    gs_frame_rect(626 - pill_w, 29, pill_w, 9, GS_CLR_FG);
+    gs_draw_text(630 - pill_w, 29, pill, GS_CLR_FG, GS_CLR_PANEL, (int)strlen(pill));
 
     /* Side-by-side Interfaces & Last 5 New Callsigns Heard */
-    gs_draw_box(6, 29, 310, 52, "Interfaces");
-    gs_draw_text(12, 41, "Port     Type     State  RX/TX", GS_CLR_FG, GS_CLR_BG, 40);
-    for (i = 0; i < node->cfg.iface_count && i < 3; ++i) {
+    gs_draw_box(10, 41, 307, 47, "Interfaces");
+    gs_draw_text(16, 53, "Port     Type     State  RX/TX", GS_CLR_FG, GS_CLR_BG, 40);
+    for (i = 0; i < node->cfg.iface_count && i < 2; ++i) {
         char row[64];
         sprintf(row, "%-8s %-8s %-5s  %lu/%lu",
                 node->cfg.ifaces[i].id,
@@ -339,22 +349,22 @@ static void gs_draw_console(OykGsosUiState *ui) {
                 node->iface_rt[i].running ? "UP" : "DOWN",
                 (unsigned long)node->iface_rt[i].rx_frames,
                 (unsigned long)node->iface_rt[i].tx_frames);
-        gs_draw_text(12, 51 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
+        gs_draw_text(16, 63 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
     }
 
-    gs_draw_box(322, 29, 312, 52, "Last 5 New Callsigns Heard");
-    gs_draw_text(328, 41, "#  Callsign  Port     Heard", GS_CLR_FG, GS_CLR_BG, 40);
-    for (i = 0; i < node->heard_count && i < 3; ++i) {
+    gs_draw_box(323, 41, 307, 47, "Last 5 New Callsigns Heard");
+    gs_draw_text(329, 53, "#  Callsign  Port     Heard", GS_CLR_FG, GS_CLR_BG, 40);
+    for (i = 0; i < node->heard_count && i < 2; ++i) {
         char row[64];
         sprintf(row, "%-2d %-9s %-8s %s", i + 1,
                 node->heard[i].callsign, node->heard[i].iface_id, node->heard[i].time_hms);
-        gs_draw_text(328, 51 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
+        gs_draw_text(329, 63 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
     }
 
     /* Active Connections */
-    gs_draw_box(6, 83, 628, 44, "Active Connections");
-    gs_draw_text(12, 95, "ID   Callsign   Port     Dir    State      Since",
-                 GS_CLR_FG, GS_CLR_BG, 80);
+    gs_draw_box(10, 90, 620, 41, "Active Connections");
+    gs_draw_text(16, 102, "ID   Callsign   Port     Dir    State      Since",
+                 GS_CLR_FG, GS_CLR_BG, 78);
     shown_c = 0;
     for (i = 0; i < OYK_GSOS_MAX_SESSIONS && shown_c < 2; ++i) {
         const OykGsosSession *s = &node->sessions[i];
@@ -368,27 +378,27 @@ static void gs_draw_console(OykGsosUiState *ui) {
                 s->is_local_term ? "LOCAL" : "IN",
                 (s->state == 2) ? "CONNECTED" : "OPENING",
                 s->since_hms);
-        gs_draw_text(12, 105 + shown_c * 9, row, GS_CLR_FG, GS_CLR_BG, 80);
+        gs_draw_text(16, 112 + shown_c * 9, row, GS_CLR_FG, GS_CLR_BG, 78);
         ++shown_c;
     }
 
     /* Node Activity Log */
-    gs_draw_box(6, 129, 628, 50, "Node Activity Log");
+    gs_draw_box(10, 133, 620, 44, "Node Activity Log");
     {
         int start = (node->log_count > 3) ? (node->log_count - 3) : 0;
         for (i = start; i < node->log_count; ++i) {
-            gs_draw_text(12, 141 + (i - start) * 10, node->logs[i],
-                         GS_CLR_FG, GS_CLR_BG, 82);
+            gs_draw_text(16, 146 + (i - start) * 9, node->logs[i],
+                         GS_CLR_FG, GS_CLR_BG, 80);
         }
     }
 
-    /* Bottom Footer Quick Buttons */
-    gs_draw_button(6,   183, 86, 13, "Terminal", 1); gs_add_hit(ui, 6,   183, 86, 13, OYK_GSOS_SCR_TERMINAL);
-    gs_draw_button(98,  183, 86, 13, "Files",    0); gs_add_hit(ui, 98,  183, 86, 13, OYK_GSOS_SCR_FILES);
-    gs_draw_button(190, 183, 86, 13, "Settings", 0); gs_add_hit(ui, 190, 183, 86, 13, OYK_GSOS_SCR_SETTINGS);
-    gs_draw_button(282, 183, 86, 13, "Theme",    0); gs_add_hit(ui, 282, 183, 86, 13, OYK_GSOS_SCR_THEME);
-    gs_draw_button(374, 183, 86, 13, "Peers",    0); gs_add_hit(ui, 374, 183, 86, 13, OYK_GSOS_SCR_PEERS);
-    gs_draw_text(470, 184, "SCC .A/.B | GS/OS", GS_CLR_FG, GS_CLR_BG, 24);
+    /* Bottom Footer Quick Buttons inside window client area */
+    gs_draw_button(10,  180, 84, 13, "Terminal", 1); gs_add_hit(ui, 10,  180, 84, 13, OYK_GSOS_SCR_TERMINAL);
+    gs_draw_button(100, 180, 84, 13, "Files",    0); gs_add_hit(ui, 100, 180, 84, 13, OYK_GSOS_SCR_FILES);
+    gs_draw_button(190, 180, 84, 13, "Settings", 0); gs_add_hit(ui, 190, 180, 84, 13, OYK_GSOS_SCR_SETTINGS);
+    gs_draw_button(280, 180, 84, 13, "Theme",    0); gs_add_hit(ui, 280, 180, 84, 13, OYK_GSOS_SCR_THEME);
+    gs_draw_button(370, 180, 84, 13, "Peers",    0); gs_add_hit(ui, 370, 180, 84, 13, OYK_GSOS_SCR_PEERS);
+    gs_draw_text(464, 182, "SCC .A/.B | GS/OS", GS_CLR_FG, GS_CLR_BG, 22);
 }
 
 static void gs_draw_modal(OykGsosUiState *ui) {

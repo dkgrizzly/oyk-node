@@ -36,6 +36,16 @@ struct OykAtariUiState {
     short               ap_id;
     short               vdi;
     short               win_handle;
+    short               modal_win_handle;
+    int                 modal_scr;
+    short               desk_x;
+    short               desk_y;
+    short               desk_w;
+    short               desk_h;
+    short               wx;
+    short               wy;
+    short               ww;
+    short               wh;
     int                 scr_w;
     int                 scr_h;
     int                 colors;
@@ -68,6 +78,8 @@ struct OykAtariUiState {
     int                 char_w;
     int                 char_h;
     int                 capture_mode;
+    char                main_title[64];
+    char                modal_title[64];
 };
 
 void oyk_atari_query_os_native_theme(short vdi_handle, int colors, OykThemeConfig* out_pal) {
@@ -377,26 +389,27 @@ static void at_draw_button(const OykAtariUiState* ui, int x, int y, int w, int h
     }
 }
 
-static void at_draw_console(OykAtariUiState* ui) {
+static void at_draw_console_body(OykAtariUiState* ui) {
     OykPortableNode* node = ui->node;
     const OykConfig& cfg = node->config();
-    int w = ui->scr_w;
-    int h = ui->scr_h;
+    int cx = (ui->ww > 0) ? ui->wx : 0;
+    int cy = (ui->wh > 0) ? ui->wy : 0;
+    int w  = (ui->ww > 0) ? ui->ww : ui->scr_w;
+    int h  = (ui->wh > 0) ? ui->wh : ui->scr_h;
+    int top = cy + 4;
 
-    ++ui->console_draw_count;
-    ui->last_console_bg = ui->active_theme.colors[OYK_TR_BG];
-    at_reset_hits(ui);
-
-    /* Repaint entire GEM screen workspace + top menu bar */
-    at_fill_rect(ui, 0, 0, w, h, ui->pen_bg);
-    at_fill_rect(ui, 0, 0, w, 19, ui->pen_menu_bg);
-    at_hline(ui, 0, w - 1, 19, ui->pen_fg);
-    at_draw_text(ui, 10, 2, "Desk  File  Edit  Node  View  Window  Help",
-                 ui->pen_menu_fg, 46);
-    {
-        char rstat[32];
-        sprintf(rstat, "%s", (ui->tier == OYK_ATARI_MONO) ? "ST-HIGH (Mono)" : "VDI-16 Color");
-        at_draw_text(ui, w - 124, 2, rstat, ui->pen_menu_fg, 14);
+    at_fill_rect(ui, cx, cy, w, h, ui->pen_bg);
+    if (ui->win_handle < 0) {
+        at_fill_rect(ui, cx, cy, w, 19, ui->pen_menu_bg);
+        at_hline(ui, cx, cx + w - 1, cy + 19, ui->pen_fg);
+        at_draw_text(ui, cx + 10, cy + 2, "Desk  File  Edit  Node  View  Window  Help",
+                     ui->pen_menu_fg, 46);
+        {
+            char rstat[32];
+            sprintf(rstat, "%s", (ui->tier == OYK_ATARI_MONO) ? "ST-HIGH (Mono)" : "VDI-16 Color");
+            at_draw_text(ui, cx + w - 124, cy + 2, rstat, ui->pen_menu_fg, 14);
+        }
+        top = cy + 23;
     }
 
     /* Status banner with canonical header + right incoming badge */
@@ -407,20 +420,24 @@ static void at_draw_console(OykAtariUiState* ui) {
             cs, al, node->total_active_connections());
     const char* pill = oyk_gui_format_incoming_pill(node->accept_incoming(), 0);
     int pill_w = static_cast<int>(strlen(pill)) * 8 + 10;
-    at_fill_rect(ui, 8, 23, w - 16, 22, ui->pen_status_bg);
-    at_frame_rect(ui, 8, 23, w - 16, 22, ui->pen_fg);
-    at_draw_text(ui, 14, 26, hdr, ui->pen_status_fg, (w - pill_w - 36) / 8);
-    at_fill_rect(ui, w - 12 - pill_w, 25, pill_w, 18, ui->pen_panel);
-    at_frame_rect(ui, w - 12 - pill_w, 25, pill_w, 18, ui->pen_fg);
-    at_draw_text(ui, w - 7 - pill_w, 26, pill, ui->pen_fg, static_cast<int>(strlen(pill)));
+    int bx = cx + 8;
+    int bw = w - 16;
+    at_fill_rect(ui, bx, top, bw, 22, ui->pen_status_bg);
+    at_frame_rect(ui, bx, top, bw, 22, ui->pen_fg);
+    at_draw_text(ui, bx + 6, top + 3, hdr, ui->pen_status_fg, (bw - pill_w - 20) / 8);
+    at_fill_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, 18, ui->pen_panel);
+    at_frame_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, 18, ui->pen_fg);
+    at_draw_text(ui, bx + bw + 1 - pill_w, top + 3, pill, ui->pen_fg, static_cast<int>(strlen(pill)));
 
     /* Side-by-side Interfaces & Last 5 Heard */
-    int half = (w - 22) / 2;
-    int y0 = 49;
-    int top_h = (h >= 440) ? 116 : 92;
-    at_draw_box(ui, 8, y0, half, top_h, "Interfaces");
-    at_draw_text(ui, 14, y0 + 22, "Port    Type        State RX/TX", ui->pen_fg, (half - 16) / 8);
-    for (int i = 0; i < cfg.iface_count && i < 3; ++i) {
+    int half = (bw - 6) / 2;
+    int y0 = top + 26;
+    int top_h = (h >= 380) ? 104 : 84;
+    at_draw_box(ui, bx, y0, half, top_h, "Interfaces");
+    at_draw_text(ui, bx + 6, y0 + 22, "Port    Type        State RX/TX", ui->pen_fg, (half - 16) / 8);
+    int max_top = (top_h - 44) / 17;
+    if (max_top < 2) max_top = 2;
+    for (int i = 0; i < cfg.iface_count && i < max_top; ++i) {
         const OykIfaceRuntime& rt = node->iface(i);
         char row[80];
         sprintf(row, "%-7s %-11s %-4s  %lu/%lu",
@@ -428,13 +445,13 @@ static void at_draw_console(OykAtariUiState* ui) {
                 rt.running ? "UP" : "DN",
                 static_cast<unsigned long>(rt.rx_frames),
                 static_cast<unsigned long>(rt.tx_frames));
-        at_draw_text(ui, 14, y0 + 40 + i * 17, row, ui->pen_fg, (half - 16) / 8);
+        at_draw_text(ui, bx + 6, y0 + 40 + i * 17, row, ui->pen_fg, (half - 16) / 8);
     }
 
-    int rx = 14 + half;
+    int rx = bx + half + 6;
     at_draw_box(ui, rx, y0, half, top_h, "Last 5 New Callsigns Heard");
     at_draw_text(ui, rx + 6, y0 + 22, "#  Callsign  Port    Heard", ui->pen_fg, (half - 16) / 8);
-    for (int i = 0; i < node->new_heard_count() && i < 3; ++i) {
+    for (int i = 0; i < node->new_heard_count() && i < max_top; ++i) {
         const OykNewHeard& he = node->new_heard(i);
         char row[64];
         sprintf(row, "%-2d %-9s %-7s %s", i + 1, he.callsign, he.iface_id, he.time_hms);
@@ -442,13 +459,15 @@ static void at_draw_console(OykAtariUiState* ui) {
     }
 
     /* Active Connections */
-    int cy = y0 + top_h + 6;
-    int ch_box = (h >= 440) ? 114 : 92;
-    at_draw_box(ui, 8, cy, w - 16, ch_box, "Active Connections");
-    at_draw_text(ui, 14, cy + 22, "ID   Callsign   Port     Dir    State      Since",
-                 ui->pen_fg, (w - 32) / 8);
+    int conn_y = y0 + top_h + 6;
+    int ch_box = (h >= 380) ? 102 : 84;
+    at_draw_box(ui, bx, conn_y, bw, ch_box, "Active Connections");
+    at_draw_text(ui, bx + 6, conn_y + 22, "ID   Callsign   Port     Dir    State      Since",
+                 ui->pen_fg, (bw - 16) / 8);
+    int max_conn = (ch_box - 44) / 17;
+    if (max_conn < 2) max_conn = 2;
     int shown_c = 0;
-    for (int i = 0; i < node->max_sessions() && shown_c < 3; ++i) {
+    for (int i = 0; i < node->max_sessions() && shown_c < max_conn; ++i) {
         const OykSession& s = node->session_slot(i);
         if (s.state == OYK_SESS_FREE) continue;
         char scs[16], row[96];
@@ -460,33 +479,33 @@ static void at_draw_console(OykAtariUiState* ui) {
                 s.is_local_term ? "LOCAL" : "IN",
                 (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
                 s.since_hms);
-        at_draw_text(ui, 14, cy + 40 + shown_c * 17, row, ui->pen_fg, (w - 32) / 8);
+        at_draw_text(ui, bx + 6, conn_y + 40 + shown_c * 17, row, ui->pen_fg, (bw - 16) / 8);
         ++shown_c;
     }
 
     /* Node Activity Log */
-    int ly = cy + ch_box + 6;
-    int bar_y = h - 28;
+    int ly = conn_y + ch_box + 6;
+    int bar_y = cy + h - 26;
     int lh = bar_y - ly - 6;
-    if (lh > 46) {
-        at_draw_box(ui, 8, ly, w - 16, lh, "Node Activity Log");
+    if (lh > 44) {
+        at_draw_box(ui, bx, ly, bw, lh, "Node Activity Log");
         int max_r = (lh - 26) / 17;
         int total = node->console_log_count();
         int start = (total > max_r) ? (total - max_r) : 0;
         for (int i = start; i < total; ++i) {
             const char* ln = node->console_log_line(i);
-            if (ln) at_draw_text(ui, 14, ly + 22 + (i - start) * 17, ln, ui->pen_fg, (w - 32) / 8);
+            if (ln) at_draw_text(ui, bx + 6, ly + 22 + (i - start) * 17, ln, ui->pen_fg, (bw - 16) / 8);
         }
     }
 
-    at_draw_button(ui, 8,   bar_y, 88, 22, "Terminal", 1); at_add_hit(ui, 8,   bar_y, 88, 22, OYK_SCR_TERMINAL);
-    at_draw_button(ui, 102, bar_y, 68, 22, "Files",    0); at_add_hit(ui, 102, bar_y, 68, 22, OYK_SCR_FILES);
-    at_draw_button(ui, 176, bar_y, 88, 22, "Settings", 0); at_add_hit(ui, 176, bar_y, 88, 22, OYK_SCR_SETTINGS);
-    at_draw_button(ui, 270, bar_y, 68, 22, "Theme",    0); at_add_hit(ui, 270, bar_y, 68, 22, OYK_SCR_THEME);
-    at_draw_button(ui, 344, bar_y, 68, 22, "Peers",    0); at_add_hit(ui, 344, bar_y, 68, 22, OYK_SCR_PEERS);
-    at_draw_text(ui, 424, bar_y + 3,
+    at_draw_button(ui, bx,       bar_y, 88, 22, "Terminal", 1); at_add_hit(ui, bx,       bar_y, 88, 22, OYK_SCR_TERMINAL);
+    at_draw_button(ui, bx + 94,  bar_y, 68, 22, "Files",    0); at_add_hit(ui, bx + 94,  bar_y, 68, 22, OYK_SCR_FILES);
+    at_draw_button(ui, bx + 168, bar_y, 88, 22, "Settings", 0); at_add_hit(ui, bx + 168, bar_y, 88, 22, OYK_SCR_SETTINGS);
+    at_draw_button(ui, bx + 262, bar_y, 68, 22, "Theme",    0); at_add_hit(ui, bx + 262, bar_y, 68, 22, OYK_SCR_THEME);
+    at_draw_button(ui, bx + 336, bar_y, 68, 22, "Peers",    0); at_add_hit(ui, bx + 336, bar_y, 68, 22, OYK_SCR_PEERS);
+    at_draw_text(ui, bx + 416, bar_y + 3,
                  ui->net ? ui->net->caps.backend_summary : "ATARI GEM",
-                 ui->pen_fg, 25);
+                 ui->pen_fg, (bw - 420) / 8);
 }
 
 static int at_swatch_pen_for_role(const OykAtariUiState* ui, int role_idx) {
@@ -508,7 +527,49 @@ static int at_swatch_pen_for_role(const OykAtariUiState* ui, int role_idx) {
     return (c == 0xFFFFFFUL) ? 0 : ((c == 0x000000UL) ? 1 : (2 + (role_idx % 12)));
 }
 
-static void at_draw_modal(OykAtariUiState* ui) {
+static void at_sync_modal_window(OykAtariUiState* ui) {
+    if (!ui) return;
+#ifdef __ATARI__
+    if (ui->ap_id < 0) return;
+    int scr = ui->active_screen;
+    if (scr == OYK_SCR_MAIN) {
+        if (ui->modal_win_handle >= 0) {
+            wind_close(ui->modal_win_handle);
+            wind_delete(ui->modal_win_handle);
+            ui->modal_win_handle = -1;
+            ui->modal_scr = OYK_SCR_MAIN;
+        }
+        return;
+    }
+    if (ui->modal_win_handle >= 0 && ui->modal_scr == scr) {
+        return;
+    }
+    if (ui->modal_win_handle >= 0) {
+        wind_close(ui->modal_win_handle);
+        wind_delete(ui->modal_win_handle);
+        ui->modal_win_handle = -1;
+        ui->modal_scr = OYK_SCR_MAIN;
+    }
+    short mw = static_cast<short>(ui->desk_w - 56);
+    short mh = static_cast<short>(ui->desk_h - 40);
+    if (mw < 480) mw = ui->desk_w - 16;
+    if (mh < 260) mh = ui->desk_h - 16;
+    short mx = static_cast<short>(ui->desk_x + (ui->desk_w - mw) / 2);
+    short my = static_cast<short>(ui->desk_y + (ui->desk_h - mh) / 2);
+    const char* raw_title = oyk_gui_screen_title(scr);
+    if (scr == OYK_SCR_PEERS) raw_title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    sprintf(ui->modal_title, " %s ", raw_title ? raw_title : "Dialog");
+    ui->modal_win_handle = wind_create(NAME | CLOSER | MOVER,
+                                       ui->desk_x, ui->desk_y, ui->desk_w, ui->desk_h);
+    if (ui->modal_win_handle >= 0) {
+        wind_set_str(ui->modal_win_handle, WF_NAME, ui->modal_title);
+        wind_open(ui->modal_win_handle, mx, my, mw, mh);
+        ui->modal_scr = scr;
+    }
+#endif
+}
+
+static void at_draw_modal_body(OykAtariUiState* ui) {
     int scr = ui->active_screen;
     int mx = 36, my = 30;
     int mw = ui->scr_w - 72;
@@ -516,24 +577,40 @@ static void at_draw_modal(OykAtariUiState* ui) {
     const char* title = oyk_gui_screen_title(scr);
     if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
 
-    ++ui->modal_draw_count;
-    ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
-
-    at_fill_rect(ui, mx + 5, my + 4, mw, mh, ui->pen_shadow);
-    at_fill_rect(ui, mx, my, mw, mh, ui->pen_panel);
-    at_frame_rect(ui, mx, my, mw, mh, ui->pen_fg);
-    at_fill_rect(ui, mx + 1, my + 1, mw - 2, 20, ui->pen_accent);
-    at_hline(ui, mx, mx + mw - 1, my + 21, ui->pen_fg);
-    at_draw_text(ui, mx + 10, my + 2, title, ui->pen_accent_fg, (mw - 48) / 8);
-    at_fill_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_panel);
-    at_frame_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_fg);
-    at_draw_text(ui, mx + mw - 29, my + 2, "[X]", ui->pen_fg, 3);
-    at_add_hit(ui, mx + mw - 32, my + 2, 29, 17, 999);
-
     int lx = mx + 12;
     int ty = my + 28;
     int bw = mw - 24;
     int by = my + mh - 30;
+
+    if (ui->modal_win_handle >= 0) {
+#ifdef __ATARI__
+        short mwx = 0, mwy = 0, mww = 0, mwh = 0;
+        wind_get(ui->modal_win_handle, WF_WORKXYWH, &mwx, &mwy, &mww, &mwh);
+        if (mww > 0 && mwh > 0) {
+            mx = mwx;
+            my = mwy;
+            mw = mww;
+            mh = mwh;
+        }
+#endif
+        at_fill_rect(ui, mx, my, mw, mh, ui->pen_panel);
+        lx = mx + 10;
+        ty = my + 6;
+        bw = mw - 20;
+        by = my + mh - 28;
+    } else {
+        at_fill_rect(ui, mx + 5, my + 4, mw, mh, ui->pen_shadow);
+        at_fill_rect(ui, mx, my, mw, mh, ui->pen_panel);
+        at_frame_rect(ui, mx, my, mw, mh, ui->pen_fg);
+        at_fill_rect(ui, mx + 1, my + 1, mw - 2, 20, ui->pen_accent);
+        at_hline(ui, mx, mx + mw - 1, my + 21, ui->pen_fg);
+        at_draw_text(ui, mx + 10, my + 2, title, ui->pen_accent_fg, (mw - 48) / 8);
+        at_fill_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_panel);
+        at_frame_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_fg);
+        at_draw_text(ui, mx + mw - 29, my + 2, "[X]", ui->pen_fg, 3);
+        at_add_hit(ui, mx + mw - 32, my + 2, 29, 17, 999);
+    }
+
     const OykConfig& cfg = ui->node->config();
     char cs[16], al[16], buf[128], nbuf[32];
 
@@ -829,20 +906,70 @@ static void at_redraw(OykAtariUiState* ui) {
     if (!ui || !ui->node) return;
     oyk_gui_theme_resolve(&ui->theme_ctrl, &ui->active_theme);
     at_apply_palette(ui);
+    at_sync_modal_window(ui);
+    ++ui->console_draw_count;
+    ui->last_console_bg = ui->active_theme.colors[OYK_TR_BG];
+    if (ui->active_screen != OYK_SCR_MAIN) {
+        ++ui->modal_draw_count;
+        ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
+    }
 #ifdef __ATARI__
     if (!ui->capture_mode) {
         if (ui->ap_id >= 0) graf_mouse(M_OFF, NULL);
         if (ui->vdi > 0) v_hide_c(ui->vdi);
     }
-#endif
-    at_draw_console(ui);
-    if (ui->active_screen != OYK_SCR_MAIN) {
-        at_draw_modal(ui);
+    if (ui->win_handle >= 0) {
+        wind_update(BEG_UPDATE);
+        short clip[4];
+        short rx = 0, ry = 0, rw = 0, rh = 0;
+        wind_get(ui->win_handle, WF_FIRSTXYWH, &rx, &ry, &rw, &rh);
+        while (rw > 0 && rh > 0) {
+            clip[0] = rx;
+            clip[1] = ry;
+            clip[2] = static_cast<short>(rx + rw - 1);
+            clip[3] = static_cast<short>(ry + rh - 1);
+            vs_clip(ui->vdi, 1, clip);
+            at_reset_hits(ui);
+            at_draw_console_body(ui);
+            wind_get(ui->win_handle, WF_NEXTXYWH, &rx, &ry, &rw, &rh);
+        }
+        vs_clip(ui->vdi, 0, clip);
+        if (ui->active_screen != OYK_SCR_MAIN) {
+            if (ui->modal_win_handle >= 0) {
+                int saved_hits = ui->hit_count;
+                wind_get(ui->modal_win_handle, WF_FIRSTXYWH, &rx, &ry, &rw, &rh);
+                while (rw > 0 && rh > 0) {
+                    clip[0] = rx;
+                    clip[1] = ry;
+                    clip[2] = static_cast<short>(rx + rw - 1);
+                    clip[3] = static_cast<short>(ry + rh - 1);
+                    vs_clip(ui->vdi, 1, clip);
+                    ui->hit_count = saved_hits;
+                    at_draw_modal_body(ui);
+                    wind_get(ui->modal_win_handle, WF_NEXTXYWH, &rx, &ry, &rw, &rh);
+                }
+                vs_clip(ui->vdi, 0, clip);
+            } else {
+                at_draw_modal_body(ui);
+            }
+        }
+        wind_update(END_UPDATE);
+    } else {
+        at_reset_hits(ui);
+        at_draw_console_body(ui);
+        if (ui->active_screen != OYK_SCR_MAIN) {
+            at_draw_modal_body(ui);
+        }
     }
-#ifdef __ATARI__
     if (!ui->capture_mode) {
         if (ui->vdi > 0) v_show_c(ui->vdi, 1);
         if (ui->ap_id >= 0) graf_mouse(M_ON, NULL);
+    }
+#else
+    at_reset_hits(ui);
+    at_draw_console_body(ui);
+    if (ui->active_screen != OYK_SCR_MAIN) {
+        at_draw_modal_body(ui);
     }
 #endif
 }
@@ -949,6 +1076,9 @@ int oyk_atari_ui_run(OykPortableNode* node,
     ui->running = 1;
     ui->active_screen = OYK_SCR_MAIN;
     ui->ap_id = -1;
+    ui->win_handle = -1;
+    ui->modal_win_handle = -1;
+    ui->modal_scr = OYK_SCR_MAIN;
     ui->scr_w = 640;
     ui->scr_h = 400;
     ui->colors = 2;
@@ -973,6 +1103,31 @@ int oyk_atari_ui_run(OykPortableNode* node,
     ui->tier = oyk_atari_classify_display(ui->scr_w, ui->scr_h, ui->colors);
     ui->char_w = wchar;
     ui->char_h = hchar;
+    ui->wx = 0;
+    ui->wy = 0;
+    ui->ww = static_cast<short>(ui->scr_w);
+    ui->wh = static_cast<short>(ui->scr_h);
+    if (ui->ap_id >= 0) {
+        wind_get(0, WF_WORKXYWH, &ui->desk_x, &ui->desk_y, &ui->desk_w, &ui->desk_h);
+        if (ui->desk_w <= 0 || ui->desk_h <= 0) {
+            ui->desk_x = 0;
+            ui->desk_y = 19;
+            ui->desk_w = static_cast<short>(ui->scr_w);
+            ui->desk_h = static_cast<short>(ui->scr_h - 19);
+        }
+        ui->win_handle = wind_create(NAME | CLOSER | MOVER,
+                                     ui->desk_x, ui->desk_y, ui->desk_w, ui->desk_h);
+        if (ui->win_handle >= 0) {
+            short ox = static_cast<short>(ui->desk_x + 4);
+            short oy = static_cast<short>(ui->desk_y + 2);
+            short ow = static_cast<short>(ui->desk_w - 8);
+            short oh = static_cast<short>(ui->desk_h - 4);
+            at_copy(ui->main_title, sizeof(ui->main_title), " OYK Amateur Radio Packet Node ");
+            wind_set_str(ui->win_handle, WF_NAME, ui->main_title);
+            wind_open(ui->win_handle, ox, oy, ow, oh);
+            wind_get(ui->win_handle, WF_WORKXYWH, &ui->wx, &ui->wy, &ui->ww, &ui->wh);
+        }
+    }
     oyk_atari_query_os_native_theme(ui->vdi, ui->colors, &ui->os_native_pal);
 #else
     oyk_atari_query_os_native_theme(0, 16, &ui->os_native_pal);
@@ -1004,6 +1159,16 @@ int oyk_atari_ui_run(OykPortableNode* node,
         }
         oyk_atari_finish_test();
 #ifdef __ATARI__
+        if (ui->modal_win_handle >= 0) {
+            wind_close(ui->modal_win_handle);
+            wind_delete(ui->modal_win_handle);
+            ui->modal_win_handle = -1;
+        }
+        if (ui->win_handle >= 0) {
+            wind_close(ui->win_handle);
+            wind_delete(ui->win_handle);
+            ui->win_handle = -1;
+        }
         if (ui->vdi > 0) v_clsvwk(ui->vdi);
         if (ui->ap_id >= 0) appl_exit();
 #endif
@@ -1025,8 +1190,21 @@ int oyk_atari_ui_run(OykPortableNode* node,
         if (ev & MU_MESAG) {
             if (msg[0] == WM_REDRAW || msg[0] == WM_TOPPED) {
                 at_redraw(ui);
-            } else if (msg[0] == AP_TERM || msg[0] == WM_CLOSED) {
+            } else if (msg[0] == WM_MOVED) {
+                wind_set(msg[3], WF_CURRXYWH, msg[4], msg[5], msg[6], msg[7]);
+                if (ui->win_handle >= 0) {
+                    wind_get(ui->win_handle, WF_WORKXYWH, &ui->wx, &ui->wy, &ui->ww, &ui->wh);
+                }
+                at_redraw(ui);
+            } else if (msg[0] == AP_TERM) {
                 ui->running = 0;
+            } else if (msg[0] == WM_CLOSED) {
+                if (ui->modal_win_handle >= 0 && msg[3] == ui->modal_win_handle) {
+                    ui->active_screen = OYK_SCR_MAIN;
+                    at_redraw(ui);
+                } else {
+                    ui->running = 0;
+                }
             }
         }
         if (ev & MU_BUTTON) {
@@ -1076,6 +1254,16 @@ int oyk_atari_ui_run(OykPortableNode* node,
         }
         oyk_atari_net_poll(net);
     }
+    if (ui->modal_win_handle >= 0) {
+        wind_close(ui->modal_win_handle);
+        wind_delete(ui->modal_win_handle);
+        ui->modal_win_handle = -1;
+    }
+    if (ui->win_handle >= 0) {
+        wind_close(ui->win_handle);
+        wind_delete(ui->win_handle);
+        ui->win_handle = -1;
+    }
     if (ui->vdi > 0) v_clsvwk(ui->vdi);
     if (ui->ap_id >= 0) appl_exit();
 #endif
@@ -1100,6 +1288,9 @@ int oyk_atari_ui_run_theme_preview_self_test(OykPortableNode* node,
     ui->node = node;
     ui->net = net;
     ui->ap_id = -1;
+    ui->win_handle = -1;
+    ui->modal_win_handle = -1;
+    ui->modal_scr = OYK_SCR_MAIN;
     ui->vdi = vdi_handle;
     ui->scr_w = 640;
     ui->scr_h = (colors <= 2) ? 400 : 480;

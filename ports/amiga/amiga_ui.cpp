@@ -51,9 +51,14 @@ struct OykAmigaUiState {
     int                locked_to_native;
     int                scr_w;
     int                scr_h;
+    int                cli_x;
+    int                cli_y;
+    int                cli_w;
+    int                cli_h;
     int                scr_depth;
     int                scr_colors;
     int                active_screen;
+    int                modal_scr;
     int                settings_tab;
     int                sel_peer;
     int                running;
@@ -77,11 +82,14 @@ struct OykAmigaUiState {
     int                pen_accent_fg;
     int                pen_status_bg;
     int                pen_status_fg;
+    char               modal_title[64];
 #ifdef __AMIGA__
     struct Screen*     scr;
     struct Screen*     owned_scr;
     struct Window*     win;
     struct RastPort*   rp;
+    struct Window*     modal_win;
+    struct RastPort*   modal_rp;
     APTR               vi;
     struct Menu*       menu_strip;
     struct Library*    gt_lib;
@@ -442,27 +450,19 @@ static void am_draw_button(const OykAmigaUiState* ui, int x, int y, int w, int h
 static void am_draw_console(OykAmigaUiState* ui) {
     OykPortableNode* node = ui->node;
     const OykConfig& cfg = node->config();
-    int top = 14; /* Below Amiga window title/menu bar */
-    int cw = ui->scr_w - 8;
-    int ch = ui->scr_h - top - 4;
-    if (cw < 400) cw = 632;
-    if (ch < 180) ch = 238;
+    int cx = (ui->cli_w > 0) ? ui->cli_x : 0;
+    int cy = (ui->cli_h > 0) ? ui->cli_y : 0;
+    int cw = (ui->cli_w > 0) ? ui->cli_w : ui->scr_w;
+    int ch = (ui->cli_h > 0) ? ui->cli_h : ui->scr_h;
+    if (cw < 400) cw = 620;
+    if (ch < 160) ch = 224;
 
     ++ui->console_draw_count;
     ui->last_console_bg = ui->active_theme.colors[OYK_TR_BG];
     am_reset_hits(ui);
 
-    /* Repaint entire window interior (full-screen background repaint on theme change) */
-    am_fill_rect(ui, 0, 0, ui->scr_w, 13, ui->pen_shine);
-    am_draw_text(ui, 8, 2, "Project  Edit  Node  View  Window  Help",
-                 ui->pen_fg, ui->pen_shine, 46);
-    {
-        char rstat[32];
-        sprintf(rstat, "WB KS%d %dclr", ui->exec_ver, ui->scr_colors);
-        am_draw_text(ui, ui->scr_w - 120, 2, rstat, ui->pen_fg, ui->pen_shine, 14);
-    }
-
-    am_fill_rect(ui, 0, top, ui->scr_w, ui->scr_h - top, ui->pen_bg);
+    /* Repaint entire window client interior (full-screen background repaint on theme change) */
+    am_fill_rect(ui, cx, cy, cw, ch, ui->pen_bg);
 
     /* Top Status Banner with canonical header + right incoming badge */
     char cs[16], al[16], hdr[128];
@@ -472,20 +472,23 @@ static void am_draw_console(OykAmigaUiState* ui) {
             cs, al, node->total_active_connections());
     const char* pill = oyk_gui_format_incoming_pill(node->accept_incoming(), 0);
     int pill_w = static_cast<int>(strlen(pill)) * 8 + 8;
-    am_fill_rect(ui, 6, top + 2, ui->scr_w - 12, 13, ui->pen_status_bg);
-    am_bevel_box(ui, 6, top + 2, ui->scr_w - 12, 13, 0);
-    am_draw_text(ui, 12, top + 4, hdr, ui->pen_status_fg, ui->pen_status_bg,
-                 (ui->scr_w - pill_w - 28) / 8);
-    am_fill_rect(ui, ui->scr_w - 10 - pill_w, top + 3, pill_w, 11, ui->pen_panel);
-    am_bevel_box(ui, ui->scr_w - 10 - pill_w, top + 3, pill_w, 11, 0);
-    am_draw_text(ui, ui->scr_w - 6 - pill_w, top + 4, pill, ui->pen_fg, ui->pen_panel,
+    int bx = cx + 6;
+    int bw = cw - 12;
+    int by_top = cy + 2;
+    am_fill_rect(ui, bx, by_top, bw, 13, ui->pen_status_bg);
+    am_bevel_box(ui, bx, by_top, bw, 13, 0);
+    am_draw_text(ui, bx + 6, by_top + 2, hdr, ui->pen_status_fg, ui->pen_status_bg,
+                 (bw - pill_w - 16) / 8);
+    am_fill_rect(ui, bx + bw - 4 - pill_w, by_top + 1, pill_w, 11, ui->pen_panel);
+    am_bevel_box(ui, bx + bw - 4 - pill_w, by_top + 1, pill_w, 11, 0);
+    am_draw_text(ui, bx + bw - pill_w, by_top + 2, pill, ui->pen_fg, ui->pen_panel,
                  static_cast<int>(strlen(pill)));
 
-    int y0 = top + 18;
-    int half = (ui->scr_w - 18) / 2;
-    int top_h = (ui->scr_h >= 360) ? 88 : 54;
-    am_draw_panel(ui, 6, y0, half, top_h, "Interfaces");
-    am_draw_text(ui, 12, y0 + 14, "Port    Type       State RX/TX", ui->pen_fg, ui->pen_panel, (half - 12) / 8);
+    int y0 = by_top + 16;
+    int half = (bw - 6) / 2;
+    int top_h = (ch >= 320) ? 88 : 50;
+    am_draw_panel(ui, bx, y0, half, top_h, "Interfaces");
+    am_draw_text(ui, bx + 6, y0 + 14, "Port    Type       State RX/TX", ui->pen_fg, ui->pen_panel, (half - 12) / 8);
     int max_top_rows = (top_h - 24) / 10;
     for (int i = 0; i < cfg.iface_count && i < max_top_rows; ++i) {
         const OykIfaceRuntime& rt = node->iface(i);
@@ -495,10 +498,10 @@ static void am_draw_console(OykAmigaUiState* ui) {
                 rt.running ? "UP" : "DN",
                 static_cast<unsigned long>(rt.rx_frames),
                 static_cast<unsigned long>(rt.tx_frames));
-        am_draw_text(ui, 12, y0 + 24 + i * 10, row, ui->pen_fg, ui->pen_panel, (half - 12) / 8);
+        am_draw_text(ui, bx + 6, y0 + 24 + i * 10, row, ui->pen_fg, ui->pen_panel, (half - 12) / 8);
     }
 
-    int rx = 12 + half;
+    int rx = bx + half + 6;
     am_draw_panel(ui, rx, y0, half, top_h, "Last 5 New Callsigns Heard");
     am_draw_text(ui, rx + 6, y0 + 14, "#  Callsign  Port   Heard", ui->pen_fg, ui->pen_panel, (half - 12) / 8);
     for (int i = 0; i < node->new_heard_count() && i < max_top_rows; ++i) {
@@ -508,11 +511,11 @@ static void am_draw_console(OykAmigaUiState* ui) {
         am_draw_text(ui, rx + 6, y0 + 24 + i * 10, row, ui->pen_fg, ui->pen_panel, (half - 12) / 8);
     }
 
-    int cy = y0 + top_h + 4;
-    int ch_box = (ui->scr_h >= 360) ? 86 : 52;
-    am_draw_panel(ui, 6, cy, ui->scr_w - 12, ch_box, "Active Connections");
-    am_draw_text(ui, 12, cy + 14, "ID   Callsign   Port    Dir   State      Since",
-                 ui->pen_fg, ui->pen_panel, (ui->scr_w - 24) / 8);
+    int conn_y = y0 + top_h + 3;
+    int ch_box = (ch >= 320) ? 86 : 48;
+    am_draw_panel(ui, bx, conn_y, bw, ch_box, "Active Connections");
+    am_draw_text(ui, bx + 6, conn_y + 14, "ID   Callsign   Port    Dir   State      Since",
+                 ui->pen_fg, ui->pen_panel, (bw - 12) / 8);
     int max_conn_rows = (ch_box - 24) / 10;
     int shown_c = 0;
     for (int i = 0; i < node->max_sessions() && shown_c < max_conn_rows; ++i) {
@@ -527,32 +530,91 @@ static void am_draw_console(OykAmigaUiState* ui) {
                 s.is_local_term ? "LOCAL" : "IN",
                 (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
                 s.since_hms);
-        am_draw_text(ui, 12, cy + 24 + shown_c * 10, row, ui->pen_fg, ui->pen_panel, (ui->scr_w - 24) / 8);
+        am_draw_text(ui, bx + 6, conn_y + 24 + shown_c * 10, row, ui->pen_fg, ui->pen_panel, (bw - 12) / 8);
         ++shown_c;
     }
 
-    int ly = cy + ch_box + 4;
-    int bar_y = ui->scr_h - 20;
-    int lh = bar_y - ly - 4;
+    int ly = conn_y + ch_box + 3;
+    int bar_y = cy + ch - 18;
+    int lh = bar_y - ly - 3;
     if (lh > 28) {
-        am_draw_panel(ui, 6, ly, ui->scr_w - 12, lh, "Node Activity Log");
+        am_draw_panel(ui, bx, ly, bw, lh, "Node Activity Log");
         int max_r = (lh - 16) / 10;
         int total = node->console_log_count();
         int start = (total > max_r) ? (total - max_r) : 0;
         for (int i = start; i < total; ++i) {
             const char* ln = node->console_log_line(i);
-            if (ln) am_draw_text(ui, 12, ly + 14 + (i - start) * 10, ln, ui->pen_fg, ui->pen_panel, (ui->scr_w - 24) / 8);
+            if (ln) am_draw_text(ui, bx + 6, ly + 14 + (i - start) * 10, ln, ui->pen_fg, ui->pen_panel, (bw - 12) / 8);
         }
     }
 
-    am_draw_button(ui, 6,   bar_y, 78, 15, "Terminal", 1); am_add_hit(ui, 6,   bar_y, 78, 15, OYK_SCR_TERMINAL);
-    am_draw_button(ui, 90,  bar_y, 64, 15, "Files",    0); am_add_hit(ui, 90,  bar_y, 64, 15, OYK_SCR_FILES);
-    am_draw_button(ui, 160, bar_y, 78, 15, "Settings", 0); am_add_hit(ui, 160, bar_y, 78, 15, OYK_SCR_SETTINGS);
-    am_draw_button(ui, 244, bar_y, 64, 15, "Theme",    0); am_add_hit(ui, 244, bar_y, 64, 15, OYK_SCR_THEME);
-    am_draw_button(ui, 314, bar_y, 64, 15, "Peers",    0); am_add_hit(ui, 314, bar_y, 64, 15, OYK_SCR_PEERS);
-    am_draw_text(ui, 390, bar_y + 3,
+    am_draw_button(ui, bx,       bar_y, 78, 15, "Terminal", 1); am_add_hit(ui, bx,       bar_y, 78, 15, OYK_SCR_TERMINAL);
+    am_draw_button(ui, bx + 84,  bar_y, 64, 15, "Files",    0); am_add_hit(ui, bx + 84,  bar_y, 64, 15, OYK_SCR_FILES);
+    am_draw_button(ui, bx + 154, bar_y, 78, 15, "Settings", 0); am_add_hit(ui, bx + 154, bar_y, 78, 15, OYK_SCR_SETTINGS);
+    am_draw_button(ui, bx + 238, bar_y, 64, 15, "Theme",    0); am_add_hit(ui, bx + 238, bar_y, 64, 15, OYK_SCR_THEME);
+    am_draw_button(ui, bx + 308, bar_y, 64, 15, "Peers",    0); am_add_hit(ui, bx + 308, bar_y, 64, 15, OYK_SCR_PEERS);
+    am_draw_text(ui, bx + 384, bar_y + 3,
                  ui->is_private_screen ? "Screen:PRIVATE" : "Screen:Workbench (Priv:OFF)",
-                 ui->pen_fg, ui->pen_bg, 30);
+                 ui->pen_fg, ui->pen_bg, (bw - 386) / 8);
+}
+
+static void am_sync_modal_window(OykAmigaUiState* ui) {
+    if (!ui) return;
+    int scr = ui->active_screen;
+#ifdef __AMIGA__
+    if (scr == OYK_SCR_MAIN) {
+        if (ui->modal_win) {
+            CloseWindow(ui->modal_win);
+            ui->modal_win = NULL;
+            ui->modal_rp = NULL;
+            ui->modal_scr = OYK_SCR_MAIN;
+        }
+        return;
+    }
+    if (ui->modal_win && ui->modal_scr == scr) {
+        return;
+    }
+    if (ui->modal_win) {
+        CloseWindow(ui->modal_win);
+        ui->modal_win = NULL;
+        ui->modal_rp = NULL;
+        ui->modal_scr = OYK_SCR_MAIN;
+    }
+    const char* title = oyk_gui_screen_title(scr);
+    if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    strncpy(ui->modal_title, title ? title : "Dialog", sizeof(ui->modal_title) - 1);
+    ui->modal_title[sizeof(ui->modal_title) - 1] = '\0';
+
+    int bar_h = (ui->scr && ui->scr->BarHeight > 0) ? (ui->scr->BarHeight + 2) : 12;
+    int mw = (ui->scr_w > 590) ? 580 : (ui->scr_w - 20);
+    int mh = (ui->scr_h >= 360) ? 280 : (ui->scr_h - bar_h - 10);
+    int mx = (ui->scr_w - mw) / 2;
+    int my = bar_h + 2 + (ui->scr_h - bar_h - 4 - mh) / 2;
+    if (my < bar_h + 2) my = bar_h + 2;
+
+    struct NewWindow mnw;
+    memset(&mnw, 0, sizeof(mnw));
+    mnw.LeftEdge = static_cast<WORD>(mx);
+    mnw.TopEdge = static_cast<WORD>(my);
+    mnw.Width = static_cast<WORD>(mw);
+    mnw.Height = static_cast<WORD>(mh);
+    mnw.DetailPen = 0;
+    mnw.BlockPen = 1;
+    mnw.IDCMPFlags = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS | IDCMP_REFRESHWINDOW;
+    mnw.Flags = WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH;
+    mnw.Title = reinterpret_cast<STRPTR>(ui->modal_title);
+    mnw.Screen = ui->scr;
+    mnw.Type = ui->scr ? (ui->owned_scr ? CUSTOMSCREEN : PUBLICSCREEN) : WBENCHSCREEN;
+    if (!ui->scr && ui->exec_ver < 36) mnw.Type = WBENCHSCREEN;
+
+    ui->modal_win = OpenWindow(&mnw);
+    if (ui->modal_win) {
+        ui->modal_rp = ui->modal_win->RPort;
+        ui->modal_scr = scr;
+    }
+#else
+    (void)scr;
+#endif
 }
 
 static void am_draw_modal(OykAmigaUiState* ui) {
@@ -563,24 +625,24 @@ static void am_draw_modal(OykAmigaUiState* ui) {
     if (mw < 420) mw = 560;
     if (mh < 160) mh = 206;
 
-    const char* title = oyk_gui_screen_title(scr);
-    if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+#ifdef __AMIGA__
+    struct RastPort* saved_rp = ui->rp;
+    if (ui->modal_win && ui->modal_rp) {
+        ui->rp = ui->modal_rp;
+        mx = ui->modal_win->BorderLeft;
+        my = ui->modal_win->BorderTop;
+        mw = ui->modal_win->Width - ui->modal_win->BorderLeft - ui->modal_win->BorderRight;
+        mh = ui->modal_win->Height - ui->modal_win->BorderTop - ui->modal_win->BorderBottom;
+    }
+#endif
 
     ++ui->modal_draw_count;
     ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
 
-    am_fill_rect(ui, mx + 4, my + 3, mw, mh, ui->pen_shadow);
     am_fill_rect(ui, mx, my, mw, mh, ui->pen_panel);
-    am_bevel_box(ui, mx, my, mw, mh, 0);
-    am_fill_rect(ui, mx + 2, my + 2, mw - 4, 13, ui->pen_accent);
-    am_draw_text(ui, mx + 8, my + 4, title, ui->pen_accent_fg, ui->pen_accent, (mw - 42) / 8);
-    am_fill_rect(ui, mx + mw - 30, my + 3, 26, 11, ui->pen_panel);
-    am_bevel_box(ui, mx + mw - 30, my + 3, 26, 11, 0);
-    am_draw_text(ui, mx + mw - 28, my + 4, "[X]", ui->pen_fg, ui->pen_panel, 3);
-    am_add_hit(ui, mx + mw - 30, my + 3, 26, 11, 999);
 
     int lx = mx + 10;
-    int ty = my + 19;
+    int ty = my + 6;
     int bw = mw - 20;
     int by = my + mh - 20;
     const OykConfig& cfg = ui->node->config();
@@ -877,6 +939,9 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Close", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     }
+#ifdef __AMIGA__
+    ui->rp = saved_rp;
+#endif
 }
 
 static void am_redraw(OykAmigaUiState* ui) {
@@ -884,6 +949,7 @@ static void am_redraw(OykAmigaUiState* ui) {
     oyk_gui_theme_resolve(&ui->theme_ctrl, &ui->active_theme);
     am_apply_pens_and_palette(ui);
     am_draw_console(ui);
+    am_sync_modal_window(ui);
     if (ui->active_screen != OYK_SCR_MAIN) {
         am_draw_modal(ui);
     }
@@ -948,16 +1014,21 @@ static int am_open_display(OykAmigaUiState* ui, int use_private, int force_depth
         }
     }
 
+    int scr_w = ui->scr ? ui->scr->Width : 640;
+    int scr_h = ui->scr ? ui->scr->Height : 256;
+    int bar_h = (ui->scr && ui->scr->BarHeight > 0) ? (ui->scr->BarHeight + 2) : 12;
+
     struct NewWindow nw;
     memset(&nw, 0, sizeof(nw));
-    nw.LeftEdge = 0;
-    nw.TopEdge = 0;
-    nw.Width = ui->scr ? ui->scr->Width : 640;
-    nw.Height = ui->scr ? ui->scr->Height : 256;
+    nw.LeftEdge = 4;
+    nw.TopEdge = static_cast<WORD>(bar_h);
+    nw.Width = static_cast<WORD>(scr_w - 8);
+    nw.Height = static_cast<WORD>(scr_h - bar_h - 2);
     nw.DetailPen = 0;
     nw.BlockPen = 1;
     nw.IDCMPFlags = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS | IDCMP_REFRESHWINDOW | IDCMP_MENUPICK;
-    nw.Flags = WFLG_BORDERLESS | WFLG_BACKDROP | WFLG_ACTIVATE | WFLG_SMART_REFRESH;
+    nw.Flags = WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH;
+    nw.Title = const_cast<STRPTR>("OYK Amateur Radio Packet Node");
     nw.Screen = ui->scr;
     nw.Type = ui->scr ? (ui->owned_scr ? CUSTOMSCREEN : PUBLICSCREEN) : WBENCHSCREEN;
     if (!ui->scr && ui->exec_ver < 36) nw.Type = WBENCHSCREEN;
@@ -966,8 +1037,12 @@ static int am_open_display(OykAmigaUiState* ui, int use_private, int force_depth
     if (!ui->win) return 0;
     if (!ui->scr) ui->scr = ui->win->WScreen;
     ui->rp = ui->win->RPort;
-    ui->scr_w = ui->win->Width;
-    ui->scr_h = ui->win->Height;
+    ui->scr_w = ui->scr ? ui->scr->Width : ui->win->Width;
+    ui->scr_h = ui->scr ? ui->scr->Height : ui->win->Height;
+    ui->cli_x = ui->win->BorderLeft;
+    ui->cli_y = ui->win->BorderTop;
+    ui->cli_w = ui->win->Width - ui->win->BorderLeft - ui->win->BorderRight;
+    ui->cli_h = ui->win->Height - ui->win->BorderTop - ui->win->BorderBottom;
     if (ui->scr && ui->scr->RastPort.BitMap) {
         ui->scr_depth = (ui->exec_ver >= 39)
                             ? static_cast<int>(GetBitMapAttr(ui->scr->RastPort.BitMap, BMA_DEPTH))
@@ -980,6 +1055,12 @@ static int am_open_display(OykAmigaUiState* ui, int use_private, int force_depth
 }
 
 static void am_close_display(OykAmigaUiState* ui) {
+    if (ui->modal_win) {
+        CloseWindow(ui->modal_win);
+        ui->modal_win = NULL;
+        ui->modal_rp = NULL;
+        ui->modal_scr = OYK_SCR_MAIN;
+    }
     if (ui->win) {
         CloseWindow(ui->win);
         ui->win = NULL;
@@ -1156,62 +1237,80 @@ int oyk_amiga_ui_run(OykPortableNode* node,
     am_redraw(ui);
 #ifdef __AMIGA__
     while (ui->running) {
-        WaitPort(ui->win->UserPort);
-        struct IntuiMessage* imsg;
-        while ((imsg = reinterpret_cast<struct IntuiMessage*>(GetMsg(ui->win->UserPort))) != NULL) {
-            ULONG cls = imsg->Class;
-            UWORD code = imsg->Code;
-            WORD mx_ev = imsg->MouseX;
-            WORD my_ev = imsg->MouseY;
-            ReplyMsg(reinterpret_cast<struct Message*>(imsg));
-            if (cls == IDCMP_CLOSEWINDOW) {
-                ui->running = 0;
-            } else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
-                int act = -1;
-                for (int hi = ui->hit_count - 1; hi >= 0; --hi) {
-                    const AmHitZone& z = ui->hits[hi];
-                    if (mx_ev >= z.x && mx_ev < z.x + z.w && my_ev >= z.y && my_ev < z.y + z.h) {
-                        act = z.action;
-                        break;
-                    }
-                }
-                if (act == 999) {
-                    ui->active_screen = OYK_SCR_MAIN;
-                    am_redraw(ui);
-                } else if (act >= 100 && act < 107) {
-                    ui->active_screen = OYK_SCR_SETTINGS;
-                    ui->settings_tab = act - 100;
-                    am_redraw(ui);
-                } else if (act >= 200 && act < 205) {
-                    oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), act - 200);
-                    am_redraw(ui);
-                } else if (act == 401 && !ui->locked_to_native) {
-                    oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
-                } else if (act == 402 && !ui->locked_to_native) {
-                    oyk_gui_theme_cycle(&ui->theme_ctrl, 1);
-                } else if (act >= 0 && act < 100) {
-                    ui->active_screen = act;
-                    if (act == OYK_SCR_PEERS) ui->settings_tab = 4;
-                    am_redraw(ui);
-                }
-            } else if (cls == IDCMP_VANILLAKEY) {
-                if (code == 'q' || code == 'Q' || code == 27) {
-                    if (ui->active_screen != OYK_SCR_MAIN) {
+        ULONG sigmask = (1UL << ui->win->UserPort->mp_SigBit);
+        if (ui->modal_win && ui->modal_win->UserPort) {
+            sigmask |= (1UL << ui->modal_win->UserPort->mp_SigBit);
+        }
+        Wait(sigmask);
+        struct MsgPort* ports[2];
+        ports[0] = (ui->modal_win && ui->modal_win->UserPort) ? ui->modal_win->UserPort : NULL;
+        ports[1] = ui->win->UserPort;
+        for (int pi = 0; pi < 2; ++pi) {
+            struct MsgPort* mp = ports[pi];
+            if (!mp) continue;
+            int from_modal = (pi == 0);
+            struct IntuiMessage* imsg;
+            while ((imsg = reinterpret_cast<struct IntuiMessage*>(GetMsg(mp))) != NULL) {
+                ULONG cls = imsg->Class;
+                UWORD code = imsg->Code;
+                WORD mx_ev = imsg->MouseX;
+                WORD my_ev = imsg->MouseY;
+                ReplyMsg(reinterpret_cast<struct Message*>(imsg));
+                if (cls == IDCMP_CLOSEWINDOW) {
+                    if (from_modal && ui->active_screen != OYK_SCR_MAIN) {
                         ui->active_screen = OYK_SCR_MAIN;
                         am_redraw(ui);
                     } else {
                         ui->running = 0;
                     }
-                } else if ((ui->active_screen == OYK_SCR_SETTINGS || ui->active_screen == OYK_SCR_PEERS) &&
-                           code >= '1' && code <= '7') {
-                    ui->active_screen = OYK_SCR_SETTINGS;
-                    ui->settings_tab = static_cast<int>(code - '1');
+                } else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
+                    int act = -1;
+                    for (int hi = ui->hit_count - 1; hi >= 0; --hi) {
+                        const AmHitZone& z = ui->hits[hi];
+                        if (mx_ev >= z.x && mx_ev < z.x + z.w && my_ev >= z.y && my_ev < z.y + z.h) {
+                            act = z.action;
+                            break;
+                        }
+                    }
+                    if (act == 999) {
+                        ui->active_screen = OYK_SCR_MAIN;
+                        am_redraw(ui);
+                    } else if (act >= 100 && act < 107) {
+                        ui->active_screen = OYK_SCR_SETTINGS;
+                        ui->settings_tab = act - 100;
+                        am_redraw(ui);
+                    } else if (act >= 200 && act < 205) {
+                        oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), act - 200);
+                        am_redraw(ui);
+                    } else if (act == 401 && !ui->locked_to_native) {
+                        oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
+                    } else if (act == 402 && !ui->locked_to_native) {
+                        oyk_gui_theme_cycle(&ui->theme_ctrl, 1);
+                    } else if (act >= 0 && act < 100) {
+                        ui->active_screen = act;
+                        if (act == OYK_SCR_PEERS) ui->settings_tab = 4;
+                        am_redraw(ui);
+                    }
+                } else if (cls == IDCMP_VANILLAKEY) {
+                    if (code == 'q' || code == 'Q' || code == 27) {
+                        if (ui->active_screen != OYK_SCR_MAIN) {
+                            ui->active_screen = OYK_SCR_MAIN;
+                            am_redraw(ui);
+                        } else {
+                            ui->running = 0;
+                        }
+                    } else if ((ui->active_screen == OYK_SCR_SETTINGS || ui->active_screen == OYK_SCR_PEERS) &&
+                               code >= '1' && code <= '7') {
+                        ui->active_screen = OYK_SCR_SETTINGS;
+                        ui->settings_tab = static_cast<int>(code - '1');
+                        am_redraw(ui);
+                    }
+                } else if (cls == IDCMP_REFRESHWINDOW) {
+                    struct Window* rw = (from_modal && ui->modal_win) ? ui->modal_win : ui->win;
+                    BeginRefresh(rw);
                     am_redraw(ui);
+                    EndRefresh(rw, TRUE);
                 }
-            } else if (cls == IDCMP_REFRESHWINDOW) {
-                BeginRefresh(ui->win);
-                am_redraw(ui);
-                EndRefresh(ui->win, TRUE);
             }
         }
         oyk_amiga_net_poll(net);

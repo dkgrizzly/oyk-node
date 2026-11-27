@@ -92,6 +92,8 @@ struct OykMacUiState {
     OykPortableNode* node;
     OykMacNetState* net;
     WindowPtr main_win;
+    WindowPtr modal_win;
+    int modal_win_screen;
     int scr_w;
     int scr_h;
     int has_color;
@@ -467,72 +469,6 @@ static void mc_draw_box(OykMacUiState* ui, int x, int y, int w, int h, const cha
     mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
 }
 
-static void mc_draw_modal_frame(OykMacUiState* ui, int mw, int mh,
-                                const char* title, Rect* out_rect) {
-    int left = (ui->scr_w - mw) / 2;
-    int top = (ui->scr_h - 24 - mh) / 2;
-    if (left < 8) left = 8;
-    if (top < 6) top = 6;
-
-    /* Classic dim backdrop over live console on 1-bit B&W; keep Color QD crisp */
-    if (!ui->has_color) {
-        Rect win_r = ui->main_win->portRect;
-        PenPat(&qd.gray);
-        PenMode(notPatBic);
-        PaintRect(&win_r);
-        PenNormal();
-    }
-
-    Rect shadow;
-    SetRect(&shadow, static_cast<short>(left + 3), static_cast<short>(top + 3),
-            static_cast<short>(left + mw + 3), static_cast<short>(top + mh + 3));
-    mc_fill_color(ui, &shadow, 0x111111UL, &qd.black);
-
-    Rect box;
-    SetRect(&box, static_cast<short>(left), static_cast<short>(top),
-            static_cast<short>(left + mw), static_cast<short>(top + mh));
-    mc_fill_color(ui, &box, ui->active_theme.colors[OYK_TR_BG], &qd.white);
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
-    PenSize(2, 2);
-    FrameRect(&box);
-    PenNormal();
-    Rect inner = box;
-    InsetRect(&inner, 3, 3);
-    FrameRect(&inner);
-
-    /* Title bar + classic close square on left & [X] on right */
-    Rect tbar;
-    SetRect(&tbar, static_cast<short>(left + 3), static_cast<short>(top + 3),
-            static_cast<short>(left + mw - 3), static_cast<short>(top + 21));
-    if (ui->has_color) {
-        mc_fill_color(ui, &tbar, ui->active_theme.colors[OYK_TR_HEADER_BG], &qd.black);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_HEADER_FG]);
-    } else {
-        FillRect(&tbar, &qd.black);
-        TextMode(srcBic);
-    }
-    TextFont(0);
-    TextSize(10);
-    mc_draw_text_clip(left + 12, top + 16, title, (mw - 42) / 6);
-    TextMode(srcOr);
-
-    /* Close button */
-    Rect close_r;
-    SetRect(&close_r, static_cast<short>(left + mw - 20), static_cast<short>(top + 6),
-            static_cast<short>(left + mw - 7), static_cast<short>(top + 18));
-    mc_fill_color(ui, &close_r, 0xFFFFFFUL, &qd.white);
-    ForeColor(blackColor);
-    FrameRect(&close_r);
-    MoveTo(close_r.left + 2, close_r.top + 2);
-    LineTo(close_r.right - 3, close_r.bottom - 3);
-    MoveTo(close_r.right - 3, close_r.top + 2);
-    LineTo(close_r.left + 2, close_r.bottom - 3);
-    mc_add_hit(ui, close_r, MC_HIT_CLOSE_MODAL, 0);
-
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-    if (out_rect) *out_rect = box;
-}
-
 static void mc_append_term_line(OykMacUiState* ui, const char* line) {
     if (!ui || !line) return;
     if (ui->term_line_count >= 28) {
@@ -600,8 +536,8 @@ static void mc_draw_main_console(OykMacUiState* ui) {
 
     /* Side-by-side: Interfaces (left) & Last 5 New Callsigns Heard (right) */
     int mid_x = (w * 54) / 100;
-    int top_h = (h * 34) / 100;
-    if (top_h < 84) top_h = 84;
+    int top_h = (h >= 340) ? (h * 32) / 100 : 72;
+    if (top_h < 68) top_h = 68;
     mc_draw_box(ui, 4, 28, mid_x - 6, top_h, "Interfaces");
     mc_draw_box(ui, mid_x + 2, 28, w - mid_x - 6, top_h, "Last 5 New Callsigns Heard");
 
@@ -648,8 +584,8 @@ static void mc_draw_main_console(OykMacUiState* ui) {
 
     /* Middle: Active Connections */
     int conn_y = 28 + top_h + 4;
-    int conn_h = (h * 26) / 100;
-    if (conn_h < 68) conn_h = 68;
+    int conn_h = (h >= 340) ? (h * 25) / 100 : 62;
+    if (conn_h < 56) conn_h = 56;
     mc_draw_box(ui, 4, conn_y, w - 8, conn_h, "Active Connections");
     char hdr_c[96];
     sprintf(hdr_c, "%-4s %-10s %-8s %-7s %-10s %-8s",
@@ -686,7 +622,7 @@ static void mc_draw_main_console(OykMacUiState* ui) {
 
     /* Bottom: Node Activity Log + Action Bar */
     int log_y = conn_y + conn_h + 4;
-    int bar_y = h - 26;
+    int bar_y = h - 25;
     int log_h = bar_y - log_y - 4;
     if (log_h > 36) {
         mc_draw_box(ui, 4, log_y, w - 8, log_h, "Node Activity Log");
@@ -714,23 +650,68 @@ static void mc_draw_main_console(OykMacUiState* ui) {
     mc_draw_button(ui, bx, bar_y, bw, 20, "Peers", 0, MC_HIT_SET_SCREEN, OYK_SCR_PEERS);
 }
 
-static void mc_draw_modal_content(OykMacUiState* ui) {
-    int mw = (ui->scr_w >= 620) ? 540 : 464;
-    int mh = (ui->scr_h >= 460) ? 350 : 264;
-    Rect box;
-    const OykConfig& cfg = ui->node->config();
+static void mc_sync_modal_window(OykMacUiState* ui) {
+    if (!ui) return;
     int scr = ui->active_screen;
+    if (scr == OYK_SCR_MAIN) {
+        if (ui->modal_win) {
+            DisposeWindow(ui->modal_win);
+            ui->modal_win = 0;
+            ui->modal_win_screen = OYK_SCR_MAIN;
+        }
+        return;
+    }
+    if (ui->modal_win && ui->modal_win_screen == scr) {
+        return;
+    }
+    if (ui->modal_win) {
+        DisposeWindow(ui->modal_win);
+        ui->modal_win = 0;
+        ui->modal_win_screen = OYK_SCR_MAIN;
+    }
+    int mw = (ui->scr_w >= 620) ? 540 : 464;
+    int mh = (ui->scr_h >= 460) ? 350 : 258;
+    int left = (ui->scr_w - mw) / 2;
+    int top = (ui->scr_h - mh) / 2 + 10;
+    if (left < 12) left = 12;
+    if (top < 44) top = 44;
+    if (top + mh > ui->scr_h - 6) {
+        top = ui->scr_h - 6 - mh;
+        if (top < 42) top = 42;
+    }
+    Rect mrect;
+    SetRect(&mrect, static_cast<short>(left), static_cast<short>(top),
+            static_cast<short>(left + mw), static_cast<short>(top + mh));
     const char* title = oyk_gui_screen_title(scr);
     if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    Str255 ptitle;
+    mu_c2p(title ? title : "Dialog", ptitle);
+    if (ui->has_color) {
+        ui->modal_win = NewCWindow(0, &mrect, ptitle, true, noGrowDocProc,
+                                   reinterpret_cast<WindowPtr>(-1L), true, 0L);
+    } else {
+        ui->modal_win = NewWindow(0, &mrect, ptitle, true, noGrowDocProc,
+                                  reinterpret_cast<WindowPtr>(-1L), true, 0L);
+    }
+    ui->modal_win_screen = scr;
+}
+
+static void mc_draw_modal_content(OykMacUiState* ui) {
+    if (!ui || !ui->modal_win) return;
+    Rect box = ui->modal_win->portRect;
+    int mh = box.bottom - box.top;
+    const OykConfig& cfg = ui->node->config();
+    int scr = ui->active_screen;
 
     ++ui->modal_draw_count;
     ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
 
-    mc_draw_modal_frame(ui, mw, mh, title, &box);
-    int lx = box.left + 14;
-    int ty = box.top + 38;
-    int bw = box.right - box.left - 28;
-    int by = box.bottom - 30;
+    mc_fill_color(ui, &box, ui->active_theme.colors[OYK_TR_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    int lx = box.left + 12;
+    int ty = box.top + 20;
+    int bw = box.right - box.left - 24;
+    int by = box.bottom - 28;
     TextFont(4);
     TextSize(9);
 
@@ -1163,8 +1144,14 @@ static void mc_redraw(OykMacUiState* ui) {
     mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
 
     mc_draw_main_console(ui);
-    if (ui->active_screen != OYK_SCR_MAIN) {
+    mc_sync_modal_window(ui);
+    if (ui->active_screen != OYK_SCR_MAIN && ui->modal_win) {
+        SetPort(ui->modal_win);
+        ui->hit_count = 0;
+        mc_set_bg(ui, ui->active_theme.colors[OYK_TR_BG]);
+        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
         mc_draw_modal_content(ui);
+        SetPort(ui->main_win);
     }
 }
 
@@ -1412,16 +1399,16 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
     }
 
     Rect wrect;
-    SetRect(&wrect, 4, 22, static_cast<short>(ui->scr_w - 4),
-            static_cast<short>(ui->scr_h - 4));
+    SetRect(&wrect, 6, 42, static_cast<short>(ui->scr_w - 6),
+            static_cast<short>(ui->scr_h - 6));
     Str255 wtitle;
     mu_c2p(oyk_gui_screen_title(OYK_SCR_MAIN), wtitle);
     if (ui->has_color) {
         ui->main_win = NewCWindow(NULL, &wrect, wtitle, true, noGrowDocProc,
-                                  reinterpret_cast<WindowPtr>(-1L), false, 0L);
+                                  reinterpret_cast<WindowPtr>(-1L), true, 0L);
     } else {
         ui->main_win = NewWindow(NULL, &wrect, wtitle, true, noGrowDocProc,
-                                 reinterpret_cast<WindowPtr>(-1L), false, 0L);
+                                 reinterpret_cast<WindowPtr>(-1L), true, 0L);
     }
     if (!ui->main_win) {
         delete ui;
@@ -1441,6 +1428,7 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
 
     if (ui_test_mode) {
         mc_run_capture_tour(ui);
+        if (ui->modal_win) DisposeWindow(ui->modal_win);
         DisposeWindow(ui->main_win);
         delete ui;
         return 0;
@@ -1465,12 +1453,25 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                     mc_handle_menu(ui, MenuSelect(ev.where));
                 } else if (part == inSysWindow) {
                     SystemClick(&ev, wp);
+                } else if (part == inGoAway) {
+                    if (TrackGoAway(wp, ev.where)) {
+                        if (wp == ui->modal_win) {
+                            if (ui->active_screen == OYK_SCR_THEME) {
+                                oyk_gui_theme_revert(&ui->theme_ctrl);
+                            }
+                            ui->active_screen = OYK_SCR_MAIN;
+                            mc_redraw(ui);
+                        } else if (wp == ui->main_win) {
+                            ui->running = 0;
+                        }
+                    }
                 } else if (part == inDrag) {
                     Rect drag_r = qd.screenBits.bounds;
                     InsetRect(&drag_r, 4, 24);
                     DragWindow(wp, ev.where, &drag_r);
-                } else if (part == inContent && wp == ui->main_win) {
-                    SetPort(ui->main_win);
+                } else if (part == inContent && (wp == ui->main_win || wp == ui->modal_win)) {
+                    if (wp != FrontWindow()) SelectWindow(wp);
+                    SetPort(wp);
                     Point pt = ev.where;
                     GlobalToLocal(&pt);
                     for (int i = ui->hit_count - 1; i >= 0; --i) {
@@ -1607,14 +1608,14 @@ int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
     }
 
     Rect wrect;
-    SetRect(&wrect, 4, 22, static_cast<short>(ui->scr_w - 4),
-            static_cast<short>(ui->scr_h - 4));
+    SetRect(&wrect, 6, 42, static_cast<short>(ui->scr_w - 6),
+            static_cast<short>(ui->scr_h - 6));
     if (ui->has_color) {
         ui->main_win = NewCWindow(NULL, &wrect, "\pOYK Theme Test", true, noGrowDocProc,
-                                  reinterpret_cast<WindowPtr>(-1L), false, 0L);
+                                  reinterpret_cast<WindowPtr>(-1L), true, 0L);
     } else {
         ui->main_win = NewWindow(NULL, &wrect, "\pOYK Theme Test", true, noGrowDocProc,
-                                 reinterpret_cast<WindowPtr>(-1L), false, 0L);
+                                 reinterpret_cast<WindowPtr>(-1L), true, 0L);
     }
     if (!ui->main_win) {
         delete ui;
@@ -1642,8 +1643,9 @@ int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
     RGBColor prev_mpx = {0, 0, 0};
     if (ui->has_color) {
         SetPort(ui->main_win);
-        GetCPixel(12, 32, &prev_cpx);
-        GetCPixel(static_cast<short>(ui->scr_w / 2), static_cast<short>(ui->scr_h / 2), &prev_mpx);
+        GetCPixel(12, 12, &prev_cpx);
+        SetPort(ui->modal_win ? ui->modal_win : ui->main_win);
+        GetCPixel(20, 20, &prev_mpx);
     }
 
     const char* seq[4] = { "dark", "light", NULL, "native" };
@@ -1659,7 +1661,7 @@ int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
             if (ui->has_color) {
                 RGBColor cur_cpx;
                 SetPort(ui->main_win);
-                GetCPixel(12, 32, &cur_cpx);
+                GetCPixel(12, 12, &cur_cpx);
                 if (memcmp(&cur_cpx, &prev_cpx, sizeof(RGBColor)) != 0) ++bg_changes;
                 prev_cpx = cur_cpx;
             } else {
@@ -1669,8 +1671,8 @@ int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
         if (ui->modal_draw_count > prev_mdraw && ui->last_modal_bg != prev_mbg) {
             if (ui->has_color) {
                 RGBColor cur_mpx;
-                SetPort(ui->main_win);
-                GetCPixel(static_cast<short>(ui->scr_w / 2), static_cast<short>(ui->scr_h / 2), &cur_mpx);
+                SetPort(ui->modal_win ? ui->modal_win : ui->main_win);
+                GetCPixel(20, 20, &cur_mpx);
                 if (memcmp(&cur_mpx, &prev_mpx, sizeof(RGBColor)) != 0) ++fg_changes;
                 prev_mpx = cur_mpx;
             } else {
@@ -1696,6 +1698,7 @@ int oyk_mac_ui_run_theme_preview_self_test(OykPortableNode* node,
     if (out_fg_changes) *out_fg_changes = fg_changes;
     if (bg_changes < 4 || fg_changes < 4) ok = 0;
 
+    if (ui->modal_win) DisposeWindow(ui->modal_win);
     DisposeWindow(ui->main_win);
     delete ui;
     return ok;

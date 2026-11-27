@@ -148,11 +148,31 @@ def check_unit_test_parity(errors):
             errors.append(f"tests/test_gsos.cpp: missing host GS/OS parity check '{req}'")
 
 
+def check_native_window_framing(errors):
+    checks = (
+        ("src/ui/gtk2_ui.cpp", ("gdk_window_get_frame_extents", "gdk_get_default_root_window"), ()),
+        ("ports/windows/win_main.cpp", ("UnionRect",), ()),
+        ("scripts/generate_ui_gallery.sh", ("xfwm4", "explorer /desktop="), ()),
+        ("ports/macclassic/mac_ui.cpp", ("modal_win", "SetRect(&wrect, 6, 42,"), ()),
+        ("ports/amiga/amiga_ui.cpp", ("WFLG_DRAGBAR", "WFLG_CLOSEGADGET"), ("WFLG_BORDERLESS",)),
+        ("ports/atarist/atari_ui.cpp", ("wind_create", "wind_open"), ()),
+    )
+    for rel_path, required_tokens, forbidden_tokens in checks:
+        src = read_text(rel_path)
+        for tok in required_tokens:
+            if tok not in src:
+                errors.append(f"{rel_path}: missing native window framing token '{tok}'")
+        for tok in forbidden_tokens:
+            if tok in src:
+                errors.append(f"{rel_path}: forbidden unframed window token '{tok}'")
+
+
 def main():
     errors = []
     check_gallery_completeness(errors)
     check_retro_gui_parity(errors)
     check_native_and_android_parity(errors)
+    check_native_window_framing(errors)
     check_unit_test_parity(errors)
     if errors:
         for err in errors:

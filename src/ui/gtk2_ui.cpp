@@ -33,6 +33,7 @@ struct GtkUiTestCtrl {
     bool enabled = false;
     std::string cap_dir;
     int main_step = 0;
+    GtkWidget* main_win = nullptr;
 };
 static GtkUiTestCtrl g_gtk_test;
 
@@ -40,19 +41,60 @@ void gtk_capture_window_png(GtkWidget* widget, const std::string& tag) {
     if (!g_gtk_test.enabled || g_gtk_test.cap_dir.empty() || !widget || !tag[0]) return;
     while (gtk_events_pending()) gtk_main_iteration();
     if (widget->window) {
+        if (g_gtk_test.main_win && g_gtk_test.main_win->window && widget != g_gtk_test.main_win) {
+            GdkRectangle mr{};
+            GdkRectangle dr{};
+            gdk_window_get_frame_extents(g_gtk_test.main_win->window, &mr);
+            gdk_window_get_frame_extents(widget->window, &dr);
+            const gint cx = std::max<gint>(24, mr.x + (mr.width - dr.width) / 2);
+            const gint cy = std::max<gint>(24, mr.y + (mr.height - dr.height) / 2);
+            gtk_window_move(GTK_WINDOW(widget), cx, cy);
+            gtk_window_present(GTK_WINDOW(widget));
+        }
         gdk_window_process_all_updates();
+        gdk_flush();
         while (gtk_events_pending()) gtk_main_iteration();
-        gint w = 0, h = 0;
-        gdk_drawable_get_size(GDK_DRAWABLE(widget->window), &w, &h);
-        if (w > 0 && h > 0) {
-            GdkPixbuf* pb = gdk_pixbuf_get_from_drawable(
-                nullptr, GDK_DRAWABLE(widget->window),
-                gtk_widget_get_colormap(widget), 0, 0, 0, 0, w, h);
-            if (pb) {
-                const std::string out = g_gtk_test.cap_dir + "/gtk_" + tag + ".png";
-                gdk_pixbuf_save(pb, out.c_str(), "png", nullptr, nullptr);
-                g_object_unref(pb);
+        g_usleep(120000);
+        gdk_window_process_all_updates();
+        gdk_flush();
+        while (gtk_events_pending()) gtk_main_iteration();
+
+        GdkWindow* root = gdk_get_default_root_window();
+        gint rw = 0, rh = 0;
+        if (root) gdk_drawable_get_size(GDK_DRAWABLE(root), &rw, &rh);
+        GdkRectangle dlg_r{};
+        gdk_window_get_frame_extents(widget->window, &dlg_r);
+        GdkRectangle cap_r = dlg_r;
+        if (g_gtk_test.main_win && g_gtk_test.main_win->window && widget != g_gtk_test.main_win) {
+            GdkRectangle main_r{};
+            gdk_window_get_frame_extents(g_gtk_test.main_win->window, &main_r);
+            gdk_rectangle_union(&dlg_r, &main_r, &cap_r);
+        }
+        GdkPixbuf* pb = nullptr;
+        if (root && rw > 0 && rh > 0 && cap_r.width > 0 && cap_r.height > 0) {
+            const gint x0 = std::max<gint>(0, cap_r.x);
+            const gint y0 = std::max<gint>(0, cap_r.y);
+            const gint cw = std::min<gint>(rw - x0, cap_r.x + cap_r.width - x0);
+            const gint ch = std::min<gint>(rh - y0, cap_r.y + cap_r.height - y0);
+            if (cw > 0 && ch > 0) {
+                pb = gdk_pixbuf_get_from_drawable(
+                    nullptr, GDK_DRAWABLE(root),
+                    gdk_drawable_get_colormap(root), x0, y0, 0, 0, cw, ch);
             }
+        }
+        if (!pb) {
+            gint w = 0, h = 0;
+            gdk_drawable_get_size(GDK_DRAWABLE(widget->window), &w, &h);
+            if (w > 0 && h > 0) {
+                pb = gdk_pixbuf_get_from_drawable(
+                    nullptr, GDK_DRAWABLE(widget->window),
+                    gtk_widget_get_colormap(widget), 0, 0, 0, 0, w, h);
+            }
+        }
+        if (pb) {
+            const std::string out = g_gtk_test.cap_dir + "/gtk_" + tag + ".png";
+            gdk_pixbuf_save(pb, out.c_str(), "png", nullptr, nullptr);
+            g_object_unref(pb);
         }
     }
 }
@@ -4217,7 +4259,9 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     g_gtk_test.enabled = (tmode && std::string(tmode) == "1");
     g_gtk_test.cap_dir = cdir ? cdir : "";
     g_gtk_test.main_step = 0;
+    g_gtk_test.main_win = st.window;
     if (g_gtk_test.enabled) {
+        gtk_window_move(GTK_WINDOW(st.window), 40, 40);
         g_timeout_add(250, +[](gpointer p) -> gboolean {
             auto* app = static_cast<GtkAppState*>(p);
             switch (g_gtk_test.main_step++) {

@@ -64,9 +64,22 @@ OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_pico_tests"
 
 echo "[4/5] Capturing X11 GTK+ 2.0 screens under Xvfb..."
 if [[ -x "${BUILD_DIR}/oyk-node-gtk" ]] && command -v xvfb-run >/dev/null 2>&1; then
-    timeout 45 xvfb-run -a -s "-screen 0 1280x960x24" \
-        env OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR="${TMP_CAP}" \
-        "${BUILD_DIR}/oyk-node-gtk" --config "${TMP_WORK}/node.cfg"
+    timeout 60 xvfb-run -a -s "-screen 0 1280x960x24" \
+        bash -c '
+            WM_PID=""
+            if command -v xfwm4 >/dev/null 2>&1; then
+                xfwm4 --compositor=off >/dev/null 2>&1 &
+                WM_PID=$!
+                sleep 0.8
+            fi
+            OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR="$1" "$2" --config "$3"
+            rc=$?
+            if [[ -n "${WM_PID}" ]] && kill -0 "${WM_PID}" 2>/dev/null; then
+                kill "${WM_PID}" >/dev/null 2>&1 || true
+                wait "${WM_PID}" >/dev/null 2>&1 || true
+            fi
+            exit $rc
+        ' _ "${TMP_CAP}" "${BUILD_DIR}/oyk-node-gtk" "${TMP_WORK}/node.cfg"
 else
     echo "Warning: oyk-node-gtk or xvfb-run unavailable; skipping GTK+ 2.0 capture." >&2
 fi
@@ -112,13 +125,29 @@ EOF
     WINEPREFIX="${WIN_PREFIX}" wineserver -k >/dev/null 2>&1 || true
     (
         cd "${TMP_WORK}"
+        WIN_EXE_Z="Z:${WIN_EXE//\//\\}"
         WIN_CFG_Z="Z:${TMP_WORK//\//\\}\\win_node.cfg"
         WIN_CAP_Z="Z:${TMP_CAP//\//\\}"
-        timeout 45 env WINEPREFIX="${WIN_PREFIX}" WINEDEBUG=-all \
+        timeout 60 env WINEPREFIX="${WIN_PREFIX}" WINEDEBUG=-all \
             OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR="${WIN_CAP_Z}" \
             xvfb-run -a -s "-screen 0 1280x960x24 -ac" \
-            bash -c '"$@"; rc=$?; wineserver -k >/dev/null 2>&1 || true; exit $rc' \
-            _ wine "${WIN_EXE}" --config "${WIN_CFG_Z}"
+            bash -c '
+                wine explorer /desktop=OYK,1280x960 "$1" --config "$2" >/dev/null 2>&1 &
+                EXP_PID=$!
+                waited=0
+                while kill -0 "${EXP_PID}" 2>/dev/null && [[ "${waited}" -lt 80 ]]; do
+                    cnt=$(ls -1 "$3"/win_*.bmp 2>/dev/null | wc -l)
+                    if [[ "${cnt}" -ge 12 ]]; then
+                        sleep 0.6
+                        break
+                    fi
+                    sleep 0.4
+                    waited=$((waited + 1))
+                done
+                wineserver -k >/dev/null 2>&1 || true
+                wait "${EXP_PID}" >/dev/null 2>&1 || true
+                exit 0
+            ' _ "${WIN_EXE_Z}" "${WIN_CFG_Z}" "${TMP_CAP}"
     )
     WINEPREFIX="${WIN_PREFIX}" wineserver -k >/dev/null 2>&1 || true
 else

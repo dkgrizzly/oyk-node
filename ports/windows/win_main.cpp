@@ -982,18 +982,50 @@ static void win_capture_hwnd_bmp(HWND hwnd, const char* tag) {
     int h = static_cast<int>(rc.bottom - rc.top);
     if (w <= 0 || h <= 0) return;
 
-    /* Move cleanly into view inside the virtual Xvfb desktop before capturing */
-    SetWindowPos(hwnd, HWND_TOPMOST, 48, 48, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    /* Position main window cleanly and center modal dialogs over it for full-frame capture */
+    if (hwnd == g_hwnd_main || g_hwnd_main == NULL || !IsWindow(g_hwnd_main)) {
+        SetWindowPos(hwnd, HWND_TOP, 40, 40, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    } else {
+        RECT mrc;
+        SetWindowPos(g_hwnd_main, HWND_TOP, 40, 40, 0, 0,
+                     SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        if (GetWindowRect(g_hwnd_main, &mrc)) {
+            int cx = static_cast<int>(mrc.left) + (static_cast<int>(mrc.right - mrc.left) - w) / 2;
+            int cy = static_cast<int>(mrc.top) + (static_cast<int>(mrc.bottom - mrc.top) - h) / 2;
+            if (cx < 16) cx = 16;
+            if (cy < 16) cy = 16;
+            SetWindowPos(hwnd, HWND_TOPMOST, cx, cy, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        } else {
+            SetWindowPos(hwnd, HWND_TOPMOST, 80, 80, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        }
+        RedrawWindow(g_hwnd_main, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
+    }
     RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
     MSG pm;
     while (PeekMessage(&pm, NULL, WM_PAINT, WM_PAINT, PM_REMOVE)) {
         TranslateMessage(&pm);
         DispatchMessage(&pm);
     }
-    Sleep(120);
-    if (!GetWindowRect(hwnd, &rc)) return;
-    w = static_cast<int>(rc.right - rc.left);
-    h = static_cast<int>(rc.bottom - rc.top);
+    Sleep(140);
+
+    RECT dlg_rc, cap_rc;
+    if (!GetWindowRect(hwnd, &dlg_rc)) return;
+    cap_rc = dlg_rc;
+    if (hwnd != g_hwnd_main && g_hwnd_main != NULL && IsWindow(g_hwnd_main)) {
+        RECT main_rc;
+        if (GetWindowRect(g_hwnd_main, &main_rc)) {
+            UnionRect(&cap_rc, &dlg_rc, &main_rc);
+        }
+    }
+    int scr_w = GetSystemMetrics(SM_CXSCREEN);
+    int scr_h = GetSystemMetrics(SM_CYSCREEN);
+    if (cap_rc.left < 0) cap_rc.left = 0;
+    if (cap_rc.top < 0) cap_rc.top = 0;
+    if (scr_w > 0 && cap_rc.right > scr_w) cap_rc.right = scr_w;
+    if (scr_h > 0 && cap_rc.bottom > scr_h) cap_rc.bottom = scr_h;
+    w = static_cast<int>(cap_rc.right - cap_rc.left);
+    h = static_cast<int>(cap_rc.bottom - cap_rc.top);
+    if (w <= 0 || h <= 0) return;
 
     HDC hdc_scr = GetDC(NULL);
     if (!hdc_scr) return;
@@ -1010,7 +1042,7 @@ static void win_capture_hwnd_bmp(HWND hwnd, const char* tag) {
     HBITMAP hbm = CreateDIBSection(hdc_scr, &bmi, DIB_RGB_COLORS, &bits, NULL, 0);
     if (hdc_mem && hbm && bits) {
         HGDIOBJ old = SelectObject(hdc_mem, hbm);
-        BitBlt(hdc_mem, 0, 0, w, h, hdc_scr, rc.left, rc.top, SRCCOPY);
+        BitBlt(hdc_mem, 0, 0, w, h, hdc_scr, cap_rc.left, cap_rc.top, SRCCOPY);
         SelectObject(hdc_mem, old);
 
         DWORD stride = static_cast<DWORD>((w * 3 + 3) & ~3);
