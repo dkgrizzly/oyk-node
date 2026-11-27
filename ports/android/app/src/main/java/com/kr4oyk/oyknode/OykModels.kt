@@ -3,6 +3,8 @@
 
 package com.kr4oyk.oyknode
 
+import java.io.File
+
 /**
  * UI, configuration, and node runtime state models mirroring the C++20/C++98 OYK-Node schema.
  */
@@ -259,5 +261,130 @@ object PeerValidator {
         val b2 = (dmrId shr 8) and 0xFF
         val b3 = dmrId and 0xFF
         return "44.$b1.$b2.$b3"
+    }
+}
+
+data class OykBbsDirEntryState(
+    val name: String,
+    val sizeBytes: Long,
+    val isDir: Boolean,
+    val isParent: Boolean = false
+)
+
+object OykJailedFileBrowser {
+    fun normalizeRel(relDir: String): String? {
+        val parts = mutableListOf<String>()
+        for (raw in relDir.replace('\\', '/').split('/')) {
+            if (raw.isEmpty() || raw == ".") continue
+            if (raw == "..") {
+                if (parts.isEmpty()) return null
+                parts.removeAt(parts.lastIndex)
+            } else {
+                parts.add(raw)
+            }
+        }
+        return parts.joinToString("/")
+    }
+
+    private fun resolveInsideJail(root: File, normRel: String): File? {
+        val rootCanon = runCatching { root.canonicalFile }.getOrElse { return null }
+        val target = if (normRel.isEmpty()) root else File(root, normRel)
+        val tgtCanon = runCatching { target.canonicalFile }.getOrElse { return null }
+        val rp = rootCanon.path
+        val tp = tgtCanon.path
+        return if (tp == rp || tp.startsWith(rp + File.separator)) tgtCanon else null
+    }
+
+    fun listDir(root: File, relDir: String): Pair<String, List<OykBbsDirEntryState>>? {
+        val norm = normalizeRel(relDir) ?: return null
+        val dir = resolveInsideJail(root, norm) ?: return null
+        if (!dir.exists() || !dir.isDirectory) return norm to emptyList()
+        val out = mutableListOf<OykBbsDirEntryState>()
+        if (norm.isNotEmpty()) {
+            out.add(OykBbsDirEntryState("..", 0L, isDir = true, isParent = true))
+        }
+        val children = dir.listFiles()?.sortedWith(
+            compareBy<File>({ !it.isDirectory }, { it.name.lowercase() })
+        ).orEmpty()
+        for (f in children) {
+            if (f.name == "." || f.name == "..") continue
+            val canon = runCatching { f.canonicalFile }.getOrNull() ?: continue
+            val rootCanon = root.canonicalFile
+            if (canon.path != rootCanon.path && !canon.path.startsWith(rootCanon.path + File.separator)) {
+                continue
+            }
+            out.add(OykBbsDirEntryState(f.name, if (f.isDirectory) 0L else f.length(), f.isDirectory, false))
+        }
+        return norm to out
+    }
+
+    fun enterSubdir(root: File, curRel: String, child: String): Result<String> {
+        val normCur = normalizeRel(curRel)
+            ?: return Result.failure(IllegalArgumentException("Path outside jail"))
+        if (child == "..") {
+            if (normCur.isEmpty()) {
+                return Result.failure(IllegalStateException("Already at assigned root directory"))
+            }
+            val slash = normCur.lastIndexOf('/')
+            return Result.success(if (slash >= 0) normCur.substring(0, slash) else "")
+        }
+        if (child.isEmpty() || child == "." || child.contains('/') || child.contains('\\')) {
+            return Result.failure(IllegalArgumentException("Invalid directory name"))
+        }
+        val nextRel = if (normCur.isEmpty()) child else "$normCur/$child"
+        val resolved = resolveInsideJail(root, nextRel)
+            ?: return Result.failure(SecurityException("Symlink or path escapes jail"))
+        if (!resolved.exists() || !resolved.isDirectory) {
+            return Result.failure(IllegalArgumentException("Directory does not exist"))
+        }
+        return Result.success(nextRel)
+    }
+
+    fun approveRelFile(incRoot: File, incRel: String, filesRoot: File, destRelDir: String): Result<File> {
+        val normInc = normalizeRel(incRel) ?: return Result.failure(SecurityException("Invalid incoming path"))
+        val normDstDir = normalizeRel(destRelDir) ?: return Result.failure(SecurityException("Invalid destination path"))
+        val src = resolveInsideJail(incRoot, normInc) ?: return Result.failure(SecurityException("Source escapes jail"))
+        val dstDir = resolveInsideJail(filesRoot, normDstDir) ?: return Result.failure(SecurityException("Dest escapes jail"))
+        if (!src.isFile) return Result.failure(IllegalArgumentException("Select a file"))
+        dstDir.mkdirs()
+        val dst = File(dstDir, src.name)
+        src.copyTo(dst, overwrite = true)
+        src.delete()
+        return Result.success(dst)
+    }
+
+    fun mkdir(root: File, curRel: String, name: String): Result<File> {
+        val normCur = normalizeRel(curRel) ?: return Result.failure(SecurityException("Path escapes jail"))
+        if (name.isEmpty() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
+            return Result.failure(IllegalArgumentException("Invalid folder name"))
+        }
+        val dir = resolveInsideJail(root, normCur) ?: return Result.failure(SecurityException("Path escapes jail"))
+        val created = File(dir, name)
+        created.mkdirs()
+        return Result.success(created)
+    }
+
+    fun rename(root: File, curRel: String, oldName: String, newName: String): Result<File> {
+        val normCur = normalizeRel(curRel) ?: return Result.failure(SecurityException("Path escapes jail"))
+        if (oldName == ".." || newName.isEmpty() || newName == ".." || newName.contains('/') || newName.contains('\\')) {
+            return Result.failure(IllegalArgumentException("Invalid name"))
+        }
+        val dir = resolveInsideJail(root, normCur) ?: return Result.failure(SecurityException("Path escapes jail"))
+        val src = File(dir, oldName)
+        val dst = File(dir, newName)
+        if (!src.exists()) return Result.failure(IllegalArgumentException("Missing entry"))
+        if (!src.renameTo(dst)) return Result.failure(IllegalStateException("Rename failed"))
+        return Result.success(dst)
+    }
+
+    fun deleteEntry(root: File, curRel: String, name: String): Result<Unit> {
+        val normCur = normalizeRel(curRel) ?: return Result.failure(SecurityException("Path escapes jail"))
+        if (name.isEmpty() || name == "." || name == "..") {
+            return Result.failure(IllegalArgumentException("Invalid entry"))
+        }
+        val target = resolveInsideJail(root, if (normCur.isEmpty()) name else "$normCur/$name")
+            ?: return Result.failure(SecurityException("Path escapes jail"))
+        if (!target.delete()) return Result.failure(IllegalStateException("Delete failed"))
+        return Result.success(Unit)
     }
 }

@@ -51,7 +51,7 @@ CFLAGS_MTCP_LIB = $(CPU) -ml -os -s -zp2 -bt=dos -zq $(CFG_DEF) $(MTCP_INC_FLAGS
 
 NODE_OBJS = gfxdos_main.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_mouse.obj gfxdos_ems.obj &
             dos_xms.obj dos_font8x16.obj dos_gfx.obj &
-            gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj gfxdos_tui.obj gfxdos_term.obj
+            gfxdos_portable.obj gfxdos_yapp.obj gfxdos_rig.obj gfxdos_printer.obj gfxdos_tui.obj gfxdos_term.obj gfxdos_gui.obj gfxdos_gui_theme.obj
 
 TEST_OBJS = gfxdos_test.obj gfxdos_test_portable.obj gfxdos_test_portable_term.obj gfxdos_usb.obj gfxdos_video.obj gfxdos_mouse.obj gfxdos_ems.obj &
             dos_xms.obj dos_font8x16.obj dos_gfx.obj &
@@ -127,6 +127,12 @@ gfxdos_tui.obj: ../compat/oyk_tui.cpp ../compat/oyk_tui.hpp ../compat/oyk_portab
 
 gfxdos_term.obj: ../compat/oyk_term.cpp ../compat/oyk_term.hpp ../compat/oyk_portable.hpp
     $(CC) $(CFLAGS_COMMON) -fo=gfxdos_term.obj ../compat/oyk_term.cpp
+
+gfxdos_gui.obj: ../compat/oyk_gui.cpp ../compat/oyk_gui.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_gui.obj ../compat/oyk_gui.cpp
+
+gfxdos_gui_theme.obj: ../compat/oyk_gui_theme.cpp ../compat/oyk_gui.hpp ../compat/oyk_portable.hpp
+    $(CC) $(CFLAGS_COMMON) -fo=gfxdos_gui_theme.obj ../compat/oyk_gui_theme.cpp
 
 gfxdos_test.obj: test_dos.cpp dos_usb.hpp dos_video.hpp ems.hpp dos_xms.hpp dos_gfx.hpp ../compat/oyk_portable.hpp ../compat/oyk_rig.hpp ../compat/oyk_printer.hpp
     $(CC) $(CFLAGS_COMMON) -fo=gfxdos_test.obj test_dos.cpp

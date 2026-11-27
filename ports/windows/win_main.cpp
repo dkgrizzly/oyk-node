@@ -1313,23 +1313,22 @@ static void lterm_update_status() {
     char st[180];
     const char* eol_lbl = oyk_term_eol_label(&g_lterm_eol);
     if (g_lterm_ctrl_a) {
-        strcpy(st, "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Close");
+        strcpy(st, oyk_term_hotkey_bar_text(0, 1));
     } else if (!g_lterm_is_local && g_lterm_yapp.state != OYK_YAPP_IDLE && g_lterm_yapp.status[0]) {
-        sprintf(st, "%.100s (%lu/%lu B) [EOL:%s]", g_lterm_yapp.status,
+        sprintf(st, "%.100s (%lu/%lu B) [EOL:%s] | Ctrl-A Z:Help", g_lterm_yapp.status,
                 static_cast<unsigned long>(g_lterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_lterm_yapp.total_bytes),
                 eol_lbl);
     } else if (g_lterm_connected) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(st, "Connected to %s (%s) [EOL:%s]", cs,
-                g_lterm_is_local ? "LOCAL - YAPP disabled" : "YAPP ready", eol_lbl);
+        sprintf(st, "Connected: %s [EOL:%s] | %s", cs, eol_lbl, oyk_term_hotkey_bar_text(0, 0));
     } else if (g_lterm_connecting) {
         char cs[16];
         oyk_format_callsign(&g_lterm_remote, cs, sizeof(cs));
-        sprintf(st, "Connecting to %s... [EOL:%s]", cs, eol_lbl);
+        sprintf(st, "Connecting to %s... [EOL:%s] | Ctrl-A Z:Help", cs, eol_lbl);
     } else {
-        sprintf(st, "Disconnected [EOL:%s] | Ctrl+A Z:Help (incoming\\<CALL-SSID>\\)", eol_lbl);
+        sprintf(st, "[EOL:%s] | %s", eol_lbl, oyk_term_hotkey_bar_text(0, 0));
     }
     SetDlgItemText(g_lterm_hwnd, IDC_LTERM_STATUS, st);
     EnableWindow(GetDlgItem(g_lterm_hwnd, IDC_LTERM_CONNECT), (!g_lterm_connected && !g_lterm_connecting) ? TRUE : FALSE);
@@ -1429,20 +1428,52 @@ static void win_local_term_event_cb(oyk_u32 sid, int event_type,
     }
 }
 
-static int lterm_show_help(HWND parent) {
-    static char help_txt[1024];
-    strcpy(help_txt, "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)\r\n\r\n");
-    const int cnt = oyk_term_help_count();
-    for (int i = 0; i < cnt; ++i) {
-        const OykTermHelpEntry* e = oyk_term_help_entry(i);
-        if (!e) continue;
-        char row[96];
-        sprintf(row, "%-9s  %-34s  %s\r\n", e->key_label, e->action, e->alt_key);
-        if (strlen(help_txt) + strlen(row) + 1 < sizeof(help_txt)) {
-            strcat(help_txt, row);
+OYK_DLG_RET TermHelpDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG: {
+            SendDlgItemMessage(hdlg, IDC_THELP_TEXT, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            static char help_txt[1280];
+            strcpy(help_txt, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)\r\n");
+            strcat(help_txt, "--------------------------------------------------------------\r\n");
+            const int cnt = oyk_term_help_count();
+            for (int i = 0; i < cnt; ++i) {
+                const OykTermHelpEntry* e = oyk_term_help_entry(i);
+                if (!e) continue;
+                char row[96];
+                sprintf(row, "%-9s  %-34s  %s\r\n", e->key_label, e->action, e->alt_key);
+                if (strlen(help_txt) + strlen(row) + 1 < sizeof(help_txt)) strcat(help_txt, row);
+            }
+            strcat(help_txt, "--------------------------------------------------------------\r\n");
+            strcat(help_txt, "Press Esc / Close to return to Local Terminal.");
+            SetDlgItemText(hdlg, IDC_THELP_TEXT, help_txt);
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 180, NULL);
+#endif
+            return TRUE;
         }
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99 && g_win_ui_test) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "terminal_help");
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+#endif
+        case WM_COMMAND:
+            if (OYK_CMD_ID(wp, lp) == IDCANCEL || OYK_CMD_ID(wp, lp) == IDOK) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
     }
-    MessageBox(parent, help_txt, "Terminal Hotkey Help", MB_OK | MB_ICONINFORMATION);
+    return FALSE;
+}
+
+static int lterm_show_help(HWND parent) {
+    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERM_HELP), parent, (DLGPROC)TermHelpDlgProc);
     return OYK_TCMD_NONE;
 }
 
@@ -1631,6 +1662,7 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == 99 && g_win_ui_test) {
                 KillTimer(hdlg, 99);
                 win_capture_hwnd_bmp(hdlg, "terminal");
+                lterm_show_help(hdlg);
                 DestroyWindow(hdlg);
                 return TRUE;
             }
@@ -1814,83 +1846,82 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static void populate_approve_list(HWND hdlg, OykPendingIncoming* items, int* count_out) {
-    HWND lb = GetDlgItem(hdlg, IDC_APP_LIST);
+static const char* s_fmp_title = "Input";
+static const char* s_fmp_label = "Value:";
+static char s_fmp_buf[96];
+
+OYK_DLG_RET FmPromptDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG:
+            SetWindowText(hdlg, s_fmp_title);
+            SetDlgItemText(hdlg, IDC_FMP_LABEL, s_fmp_label);
+            SetDlgItemText(hdlg, IDC_FMP_EDIT, s_fmp_buf);
+            return TRUE;
+        case WM_COMMAND:
+            if (OYK_CMD_ID(wp, lp) == IDOK) {
+                GetDlgItemText(hdlg, IDC_FMP_EDIT, s_fmp_buf, sizeof(s_fmp_buf));
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            }
+            if (OYK_CMD_ID(wp, lp) == IDCANCEL) {
+                EndDialog(hdlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+    }
+    return FALSE;
+}
+
+static int fm_prompt_value(HWND parent, const char* title, const char* label, const char* pre) {
+    s_fmp_title = title ? title : "Input";
+    s_fmp_label = label ? label : "Value:";
+    strncpy(s_fmp_buf, pre ? pre : "", sizeof(s_fmp_buf) - 1);
+    s_fmp_buf[sizeof(s_fmp_buf) - 1] = '\0';
+    return (DialogBox(g_hinst, MAKEINTRESOURCE(IDD_FM_PROMPT), parent, (DLGPROC)FmPromptDlgProc) == IDOK) ? 1 : 0;
+}
+
+static void fm_populate_pane(HWND hdlg, const OykGuiFilePane* p, int lb_id, int lbl_id, const char* name) {
+    char tit[96];
+    oyk_gui_filemgr_pane_title(p, name, tit, sizeof(tit));
+    SetDlgItemText(hdlg, lbl_id, tit);
+    HWND lb = GetDlgItem(hdlg, lb_id);
     SendMessage(lb, WM_SETREDRAW, FALSE, 0);
     SendMessage(lb, LB_RESETCONTENT, 0, 0);
-    int n = oyk_bbs_list_incoming("incoming", items, 32);
-    *count_out = n;
-    for (int i = 0; i < n; ++i) {
-        char row[96];
-        sprintf(row, "%-12.12s %-34.34s %lu B",
-                items[i].uploader, items[i].filename,
-                static_cast<unsigned long>(items[i].size));
+    for (int i = 0; i < p->count; ++i) {
+        char sz[16], row[80];
+        if (p->entries[i].is_parent) strcpy(sz, "<UP>");
+        else if (p->entries[i].is_dir) strcpy(sz, "<DIR>");
+        else sprintf(sz, "%luB", static_cast<unsigned long>(p->entries[i].size));
+        sprintf(row, "%-24.24s %6.6s", p->entries[i].name, sz);
         SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
     }
-    if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
+    if (p->count > 0) SendMessage(lb, LB_SETCURSEL, p->sel, 0);
     SendMessage(lb, WM_SETREDRAW, TRUE, 0);
     RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
 }
 
-static void populate_approved_files_list(HWND hdlg, OykApprovedFile* items, int* count_out) {
-    HWND lb = GetDlgItem(hdlg, IDC_APP_APPROVED_LIST);
-    SendMessage(lb, WM_SETREDRAW, FALSE, 0);
-    SendMessage(lb, LB_RESETCONTENT, 0, 0);
-    int n = oyk_bbs_list_approved(g_node.config().bbs_files_path, items, 48);
-    *count_out = n;
-    for (int i = 0; i < n; ++i) {
-        char row[112];
-        sprintf(row, "%-46.46s %lu B",
-                items[i].rel_path,
-                static_cast<unsigned long>(items[i].size));
-        SendMessage(lb, LB_ADDSTRING, 0, OYK_LPARAM_STR(row));
-    }
-    if (n > 0) SendMessage(lb, LB_SETCURSEL, 0, 0);
-    SendMessage(lb, WM_SETREDRAW, TRUE, 0);
-    RedrawWindow(lb, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
-}
-
-static void switch_files_tab(HWND hdlg, int tab) {
-    static const int INC_IDS[] = {
-        IDC_APP_L_INC, IDC_APP_LIST, IDC_APP_L_SUB, IDC_APP_SUBDIR,
-        IDC_APP_APPROVE, IDC_APP_DELETE
-    };
-    static const int APP_IDS[] = {
-        IDC_APP_L_APP, IDC_APP_APPROVED_LIST, IDC_APP_REMOVE
-    };
-    int i;
-    for (i = 0; i < static_cast<int>(sizeof(INC_IDS) / sizeof(INC_IDS[0])); ++i) {
-        ShowWindow(GetDlgItem(hdlg, INC_IDS[i]), (tab == 0) ? SW_SHOW : SW_HIDE);
-    }
-    for (i = 0; i < static_cast<int>(sizeof(APP_IDS) / sizeof(APP_IDS[0])); ++i) {
-        ShowWindow(GetDlgItem(hdlg, APP_IDS[i]), (tab == 1) ? SW_SHOW : SW_HIDE);
-    }
-    SetDlgItemText(hdlg, IDC_APP_TAB_INC, (tab == 0) ? "[ Pending Incoming ]" : "Pending Incoming");
-    SetDlgItemText(hdlg, IDC_APP_TAB_APPROVED, (tab == 1) ? "[ Approved Files ]" : "Approved Files");
-    SetDlgItemText(hdlg, IDC_APP_TAB_BOX,
-                   (tab == 0) ? "Pending Incoming Uploads" : "Approved BBS Files Area");
+static void fm_sync_ui(HWND hdlg, OykGuiFileMgr* fm) {
+    oyk_gui_filemgr_refresh(fm);
+    fm_populate_pane(hdlg, &fm->inc, IDC_APP_LIST, IDC_APP_LBL_INC,
+                     (fm->active_pane == 0) ? "* Incoming" : "Incoming");
+    fm_populate_pane(hdlg, &fm->files, IDC_APP_APPROVED_LIST, IDC_APP_LBL_FILES,
+                     (fm->active_pane == 1) ? "* Files" : "Files");
+    SetDlgItemText(hdlg, IDC_APP_STATUS,
+                   fm->feedback[0] ? fm->feedback : "Double-click folders to navigate inside jailed panes.");
 }
 
 OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
-    static OykPendingIncoming* s_items = NULL;
-    static int s_count = 0;
-    static OykApprovedFile* s_approved = NULL;
-    static int s_app_count = 0;
+    static OykGuiFileMgr* s_fm = NULL;
 
     switch (msg) {
         case WM_INITDIALOG: {
-            if (!s_items) s_items = new OykPendingIncoming[32];
-            if (!s_approved) s_approved = new OykApprovedFile[48];
+            if (!s_fm) s_fm = new OykGuiFileMgr;
+            oyk_gui_filemgr_init(s_fm, "incoming", g_node.config().bbs_files_path);
             SendDlgItemMessage(hdlg, IDC_APP_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
             SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
-            populate_approve_list(hdlg, s_items, &s_count);
-            populate_approved_files_list(hdlg, s_approved, &s_app_count);
-            switch_files_tab(hdlg, 0);
-            char st[128];
-            sprintf(st, "Files Area: %.60s (%d pending, %d approved)",
-                    g_node.config().bbs_files_path, s_count, s_app_count);
-            SetDlgItemText(hdlg, IDC_APP_STATUS, st);
+            fm_sync_ui(hdlg, s_fm);
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
 #endif
@@ -1907,103 +1938,116 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             break;
 #endif
         case WM_DESTROY:
-            if (s_items) { delete[] s_items; s_items = NULL; }
-            if (s_approved) { delete[] s_approved; s_approved = NULL; }
-            s_count = 0;
-            s_app_count = 0;
+            if (s_fm) { delete s_fm; s_fm = NULL; }
             return TRUE;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
-            if (id == IDC_APP_TAB_INC) { switch_files_tab(hdlg, 0); return TRUE; }
-            if (id == IDC_APP_TAB_APPROVED) { switch_files_tab(hdlg, 1); return TRUE; }
-            if (id == IDC_APP_REFRESH) {
-                populate_approve_list(hdlg, s_items, &s_count);
-                populate_approved_files_list(hdlg, s_approved, &s_app_count);
-                char st[96];
-                sprintf(st, "Refreshed (%d pending, %d approved).", s_count, s_app_count);
-                SetDlgItemText(hdlg, IDC_APP_STATUS, st);
-                return TRUE;
-            }
-            if (id == IDC_APP_REMOVE) {
-                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, LB_GETCURSEL, 0, 0));
-                if (sel < 0 || sel >= s_app_count) {
-                    SetDlgItemText(hdlg, IDC_APP_STATUS, "Select an approved file first.");
-                    return TRUE;
-                }
-                char prompt[160], err[96];
-                sprintf(prompt, "Remove approved file /%s from the BBS files area?", s_approved[sel].rel_path);
-                if (MessageBox(hdlg, prompt, "Confirm Remove", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                    if (oyk_bbs_delete_approved_file(g_node.config().bbs_files_path,
-                                                     s_approved[sel].rel_path, err, sizeof(err))) {
-                        char msg_s[128];
-                        sprintf(msg_s, "Removed approved file /%s", s_approved[sel].rel_path);
-                        g_node.log_message(OYK_LOG_INFO, msg_s);
-                        set_status(msg_s);
-                        SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
-                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
-                    } else {
-                        SetDlgItemText(hdlg, IDC_APP_STATUS, err);
-                    }
-                }
-                return TRUE;
-            }
-            if (id == IDC_APP_APPROVE || id == IDC_APP_DELETE) {
+            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
+            if (!s_fm) break;
+            if (id == IDC_APP_LIST && (ntf == LBN_SELCHANGE || ntf == LBN_SETFOCUS || ntf == LBN_DBLCLK)) {
                 int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_LIST, LB_GETCURSEL, 0, 0));
-                if (sel < 0 || sel >= s_count) {
-                    SetDlgItemText(hdlg, IDC_APP_STATUS, "Select a pending file first.");
-                    return TRUE;
-                }
-                if (id == IDC_APP_APPROVE) {
-                    char subdir[64], dest[160], err[96];
-                    GetDlgItemText(hdlg, IDC_APP_SUBDIR, subdir, sizeof(subdir));
-                    int exists = 0;
-                    int ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                           s_items[sel].uploader, s_items[sel].filename,
-                                                           subdir, 0, dest, sizeof(dest),
-                                                           &exists, err, sizeof(err));
-                    if (!ok && exists) {
-                        char prompt[240];
-                        sprintf(prompt, "File already exists in BBS files area:\n%s\n\nOverwrite existing file?", dest);
-                        if (MessageBox(hdlg, prompt, "Confirm Overwrite", MB_YESNO | MB_ICONEXCLAMATION) == IDYES) {
-                            ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                               s_items[sel].uploader, s_items[sel].filename,
-                                                               subdir, 1, dest, sizeof(dest),
-                                                               &exists, err, sizeof(err));
-                        } else {
-                            SetDlgItemText(hdlg, IDC_APP_STATUS, "Overwrite declined; file remains in incoming.");
-                            return TRUE;
+                if (sel >= 0 && sel < s_fm->inc.count) s_fm->inc.sel = sel;
+                s_fm->active_pane = 0;
+                if (ntf == LBN_DBLCLK) {
+                    if (!oyk_gui_filemgr_activate(s_fm, 0)) {
+                        char pv[512]; int tr = 0;
+                        if (oyk_gui_filemgr_view(s_fm, pv, sizeof(pv), &tr)) {
+                            MessageBox(hdlg, pv, "File Preview", MB_OK | MB_ICONINFORMATION);
                         }
                     }
-                    if (ok) {
-                        char msg_s[160];
-                        sprintf(msg_s, "Approved %s/%s -> %s", s_items[sel].uploader, s_items[sel].filename, dest);
-                        g_node.log_message(OYK_LOG_INFO, msg_s);
-                        set_status(msg_s);
-                        SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
-                        populate_approve_list(hdlg, s_items, &s_count);
-                        populate_approved_files_list(hdlg, s_approved, &s_app_count);
-                    } else {
-                        SetDlgItemText(hdlg, IDC_APP_STATUS, err);
-                    }
-                } else {
-                    char prompt[128], err[96];
-                    sprintf(prompt, "Delete incoming file %s\\%s?",
-                            s_items[sel].uploader, s_items[sel].filename);
-                    if (MessageBox(hdlg, prompt, "Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                        if (oyk_bbs_delete_incoming_file("incoming", s_items[sel].uploader,
-                                                         s_items[sel].filename, err, sizeof(err))) {
-                            char msg_s[96];
-                            sprintf(msg_s, "Deleted incoming file %s/%s",
-                                    s_items[sel].uploader, s_items[sel].filename);
-                            g_node.log_message(OYK_LOG_INFO, msg_s);
-                            set_status(msg_s);
-                            SetDlgItemText(hdlg, IDC_APP_STATUS, msg_s);
-                            populate_approve_list(hdlg, s_items, &s_count);
-                        } else {
-                            SetDlgItemText(hdlg, IDC_APP_STATUS, err);
+                    fm_sync_ui(hdlg, s_fm);
+                }
+                return TRUE;
+            }
+            if (id == IDC_APP_APPROVED_LIST && (ntf == LBN_SELCHANGE || ntf == LBN_SETFOCUS || ntf == LBN_DBLCLK)) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_APP_APPROVED_LIST, LB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < s_fm->files.count) s_fm->files.sel = sel;
+                s_fm->active_pane = 1;
+                if (ntf == LBN_DBLCLK) {
+                    if (!oyk_gui_filemgr_activate(s_fm, 1)) {
+                        char pv[512]; int tr = 0;
+                        if (oyk_gui_filemgr_view(s_fm, pv, sizeof(pv), &tr)) {
+                            MessageBox(hdlg, pv, "File Preview", MB_OK | MB_ICONINFORMATION);
                         }
                     }
+                    fm_sync_ui(hdlg, s_fm);
                 }
+                return TRUE;
+            }
+            if (id == IDC_APP_REFRESH) {
+                fm_sync_ui(hdlg, s_fm);
+                SetDlgItemText(hdlg, IDC_APP_STATUS, "Refreshed Incoming and Files panes.");
+                return TRUE;
+            }
+            if (id == IDC_APP_UPLOAD) {
+                char path_buf[160];
+                path_buf[0] = '\0';
+#if defined(_WIN32) && !defined(OYK_WIN16)
+                OPENFILENAMEA ofn;
+                memset(&ofn, 0, sizeof(ofn));
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hdlg;
+                ofn.lpstrFilter = "All Files\0*.*\0";
+                ofn.lpstrFile = path_buf;
+                ofn.nMaxFile = sizeof(path_buf);
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                if (GetOpenFileNameA(&ofn)) {
+                    int ex = 0;
+                    oyk_gui_filemgr_upload(s_fm, path_buf, 1, &ex);
+                    fm_sync_ui(hdlg, s_fm);
+                }
+#else
+                if (fm_prompt_value(hdlg, "Upload File", "Local file path:", "") && s_fmp_buf[0]) {
+                    int ex = 0;
+                    oyk_gui_filemgr_upload(s_fm, s_fmp_buf, 1, &ex);
+                    fm_sync_ui(hdlg, s_fm);
+                }
+#endif
+                return TRUE;
+            }
+            if (id == IDC_APP_APPROVE) {
+                int ex = 0;
+                int ok = oyk_gui_filemgr_approve(s_fm, 0, &ex);
+                if (!ok && ex &&
+                    MessageBox(hdlg, "File already exists in target folder.\nOverwrite?",
+                               "Confirm Overwrite", MB_YESNO | MB_ICONEXCLAMATION) == IDYES) {
+                    ok = oyk_gui_filemgr_approve(s_fm, 1, &ex);
+                }
+                fm_sync_ui(hdlg, s_fm);
+                if (ok) refresh_gui();
+                return TRUE;
+            }
+            if (id == IDC_APP_RENAME) {
+                OykGuiFilePane* p = (s_fm->active_pane == 0) ? &s_fm->inc : &s_fm->files;
+                if (p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_parent) {
+                    if (fm_prompt_value(hdlg, "Rename Entry", "New name:", p->entries[p->sel].name) && s_fmp_buf[0]) {
+                        oyk_gui_filemgr_rename(s_fm, s_fmp_buf);
+                        fm_sync_ui(hdlg, s_fm);
+                    }
+                }
+                return TRUE;
+            }
+            if (id == IDC_APP_MKDIR) {
+                if (fm_prompt_value(hdlg, "New Directory", "Folder name:", "") && s_fmp_buf[0]) {
+                    oyk_gui_filemgr_mkdir(s_fm, s_fmp_buf);
+                    fm_sync_ui(hdlg, s_fm);
+                }
+                return TRUE;
+            }
+            if (id == IDC_APP_DELETE) {
+                if (MessageBox(hdlg, "Delete selected entry?", "Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    oyk_gui_filemgr_delete(s_fm);
+                    fm_sync_ui(hdlg, s_fm);
+                    refresh_gui();
+                }
+                return TRUE;
+            }
+            if (id == IDC_APP_VIEW) {
+                char pv[512]; int tr = 0;
+                if (oyk_gui_filemgr_view(s_fm, pv, sizeof(pv), &tr)) {
+                    MessageBox(hdlg, pv, "File Preview", MB_OK | MB_ICONINFORMATION);
+                }
+                SetDlgItemText(hdlg, IDC_APP_STATUS, s_fm->feedback);
                 return TRUE;
             }
             if (id == IDCANCEL) {
@@ -4281,7 +4325,7 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                                 NULL, (DLGPROC)TerminalDlgProc);
                     if (g_lterm_hwnd) ShowWindow(g_lterm_hwnd, SW_SHOW);
                 }
-                SetTimer(hwnd, 98, 600, NULL);
+                SetTimer(hwnd, 98, 1200, NULL);
             } else if (wp == 98 && g_win_ui_test) {
                 KillTimer(hwnd, 98);
                 PostMessage(hwnd, WM_CLOSE, 0, 0);

@@ -64,8 +64,8 @@ run_in_minivmac() {
     fi
     humount >/dev/null
 
-    # Create writable 20 MB HFS scratch disk labeled OYKOUT for logs & BMP captures.
-    dd if=/dev/zero of="${out_dsk}" bs=1048576 count=20 status=none
+    # Create writable 32 MB HFS scratch disk labeled OYKOUT for logs & BMP captures.
+    dd if=/dev/zero of="${out_dsk}" bs=1048576 count=32 status=none
     hformat -l OYKOUT "${out_dsk}" >/dev/null
     if [[ "${with_uitest}" == "1" ]]; then
         hmount "${out_dsk}" 0 >/dev/null
@@ -142,7 +142,7 @@ case "${MODE}" in
         fi
         run_in_minivmac "${APP_BIN}" "${EMU}" "${ROM}" "${ROM_NAME}" "1" "${TMP_WORK}"
         hmount "${TMP_WORK}/disk2.dsk" 0 >/dev/null
-        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal files about)
+        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
         copied=0
         for flow in "${FLOWS[@]}"; do
             if hcopy -r ":${IN_PFX}_${flow}.bmp" "${OUT_DIR}/${OUT_PFX}_${flow}.bmp" >/dev/null 2>&1; then
@@ -151,7 +151,7 @@ case "${MODE}" in
         done
         humount >/dev/null
         echo "Extracted ${copied}/${#FLOWS[@]} ${OUT_PFX} BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 22 ]]
+        [[ "${copied}" -eq 23 ]]
         ;;
     *)
         usage

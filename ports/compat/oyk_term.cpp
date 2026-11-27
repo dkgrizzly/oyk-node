@@ -314,8 +314,18 @@ static const OykTermHelpEntry kOykTermHelpEntries[12] = {
     { "E",     "Cycle wire EOL (AUTO/CR/LF/CRLF)",  "" },
     { "P",     "List configured ports / interfaces", "" },
     { "W / R", "Clear screen / Redraw & size",      "Ctrl+L" },
-    { "X / Q", "Return to Operator Console",        "F9/Tab" }
+    { "X / Q", "Return to Operator Console",        "Tab/F9" }
 };
+
+const char* oyk_term_hotkey_bar_text(int is_tui, int ctrl_a_pending) {
+    if (is_tui) {
+        if (ctrl_a_pending) {
+            return "CTRL-A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Exit";
+        }
+        return "Ctrl-A Z:Help  F2:Connect  F3:YAPP  F4:Disc  Ctrl-A E:EOL  Tab/F9:Console";
+    }
+    return "Ctrl-A Z:Help  |  Ctrl-A E:EOL  |  Ctrl-A S:YAPP  |  Ctrl-A D:Disc";
+}
 
 int oyk_term_help_count() {
     return 12;

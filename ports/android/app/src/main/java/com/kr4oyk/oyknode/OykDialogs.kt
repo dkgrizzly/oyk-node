@@ -3,6 +3,7 @@
 
 package com.kr4oyk.oyknode
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,10 +19,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import java.io.File
 
 @Composable
 fun AddIfaceWizardCard(
@@ -786,7 +790,8 @@ fun TerminalCard(
     lines: List<String>,
     inputText: String,
     onSend: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenHelp: () -> Unit = {}
 ) {
     Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -799,7 +804,10 @@ fun TerminalCard(
                     Text("Local Packet Terminal", style = MaterialTheme.typography.titleMedium)
                     Text("Session: $remoteLabel", style = MaterialTheme.typography.labelSmall)
                 }
-                TextButton(onClick = onBack) { Text("Console") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onOpenHelp) { Text("Help") }
+                    TextButton(onClick = onBack) { Text("Console") }
+                }
             }
             Spacer(Modifier.height(8.dp))
             Box(
@@ -821,7 +829,21 @@ fun TerminalCard(
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Ctrl-A Z:Help  |  F2:Conn  F3:YAPP  F4:Disc  Ctrl-A E:EOL",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = inputText,
@@ -839,47 +861,265 @@ fun TerminalCard(
 }
 
 @Composable
+fun TerminalHelpCard(onDismiss: () -> Unit) {
+    val entries = listOf(
+        Triple("Ctrl-A Z", "Show hotkey help", "F1"),
+        Triple("Ctrl-A C", "Connect target / port", "F2"),
+        Triple("Ctrl-A L", "Connect local node", "-"),
+        Triple("Ctrl-A B", "Connect local BBS", "-"),
+        Triple("Ctrl-A T", "Connect local CHAT", "-"),
+        Triple("Ctrl-A D", "Disconnect active session", "F4"),
+        Triple("Ctrl-A S", "Send file over YAPP", "F3"),
+        Triple("Ctrl-A K", "Abort YAPP transfer", "F6"),
+        Triple("Ctrl-A E", "Cycle EOL (CR / LF / CRLF)", "-"),
+        Triple("Ctrl-A P", "List configured ports", "-"),
+        Triple("Ctrl-A W", "Clear terminal output", "-"),
+        Triple("Ctrl-A X", "Return to console", "Esc")
+    )
+    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Terminal Hotkey Help", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(6.dp))
+            entries.forEach { (k, act, alt) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(k, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(84.dp))
+                    Text(act, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Text(alt, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilePaneBox(
+    title: String,
+    entries: List<OykBbsDirEntryState>,
+    selectedIdx: Int,
+    active: Boolean,
+    onSelect: (Int) -> Unit,
+    onOpenDir: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .border(
+                width = if (active) 2.dp else 1.dp,
+                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(8.dp)
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Name", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            Text("Size", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(2.dp))
+        if (entries.isEmpty()) {
+            Text("(empty)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(6.dp))
+        } else {
+            entries.forEachIndexed { idx, e ->
+                val isSel = active && idx == selectedIdx
+                val sz = when {
+                    e.isParent -> "<UP>"
+                    e.isDir -> "<DIR>"
+                    else -> "${e.sizeBytes} B"
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                        .clickable {
+                            onSelect(idx)
+                            if (e.isDir || e.isParent) onOpenDir(e.name)
+                        }
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(e.name, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    Text(sz, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun FilesCard(
-    incomingFiles: List<Triple<String, String, String>>,
-    approvedFiles: List<Pair<String, String>>,
+    incomingFiles: List<Triple<String, String, String>> = emptyList(),
+    approvedFiles: List<Pair<String, String>> = emptyList(),
+    incomingRoot: File? = null,
+    filesRoot: File? = null,
     onDismiss: () -> Unit
 ) {
+    var incRel by remember { mutableStateOf("") }
+    var filesRel by remember { mutableStateOf("") }
+    var activePane by remember { mutableIntStateOf(0) }
+    var incSel by remember { mutableIntStateOf(0) }
+    var filesSel by remember { mutableIntStateOf(0) }
+    var refreshNonce by remember { mutableIntStateOf(0) }
+    var feedback by remember { mutableStateOf("Tap folder to navigate; panes are jailed to their root.") }
+
+    val incEntries: List<OykBbsDirEntryState> = remember(incomingRoot, incRel, refreshNonce, incomingFiles) {
+        if (incomingRoot != null) {
+            OykJailedFileBrowser.listDir(incomingRoot, incRel)?.second ?: emptyList()
+        } else {
+            incomingFiles.map { (u, n, _) -> OykBbsDirEntryState("$u / $n", 1024L, isDir = false) }
+        }
+    }
+    val filesEntries: List<OykBbsDirEntryState> = remember(filesRoot, filesRel, refreshNonce, approvedFiles) {
+        if (filesRoot != null) {
+            OykJailedFileBrowser.listDir(filesRoot, filesRel)?.second ?: emptyList()
+        } else {
+            approvedFiles.map { (rel, _) -> OykBbsDirEntryState(rel, 512L, isDir = false) }
+        }
+    }
+
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Manage BBS Files Area", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Pending Incoming (${incomingFiles.size})  |  Approved (${approvedFiles.size})",
-                style = MaterialTheme.typography.labelMedium
-            )
-            Spacer(Modifier.height(8.dp))
-            Text("Pending Incoming Uploads", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
-            incomingFiles.forEach { (uploader, name, size) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("$uploader / $name", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                    Text(size, style = MaterialTheme.typography.bodySmall)
+            Text(feedback, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.height(8.dp))
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val useSideBySide = isLandscape || maxWidth >= 560.dp
+                if (useSideBySide) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().testTag("files_layout_row"),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilePaneBox(
+                            title = "Incoming: /$incRel",
+                            entries = incEntries,
+                            selectedIdx = incSel,
+                            active = activePane == 0,
+                            onSelect = { activePane = 0; incSel = it },
+                            onOpenDir = { child ->
+                                incomingRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
+                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilePaneBox(
+                            title = "Files: /$filesRel",
+                            entries = filesEntries,
+                            selectedIdx = filesSel,
+                            active = activePane == 1,
+                            onSelect = { activePane = 1; filesSel = it },
+                            onOpenDir = { child ->
+                                filesRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
+                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().testTag("files_layout_column"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilePaneBox(
+                            title = "Incoming: /$incRel",
+                            entries = incEntries,
+                            selectedIdx = incSel,
+                            active = activePane == 0,
+                            onSelect = { activePane = 0; incSel = it },
+                            onOpenDir = { child ->
+                                incomingRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
+                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        FilePaneBox(
+                            title = "Files: /$filesRel",
+                            entries = filesEntries,
+                            selectedIdx = filesSel,
+                            active = activePane == 1,
+                            onSelect = { activePane = 1; filesSel = it },
+                            onOpenDir = { child ->
+                                filesRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
+                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-            Text("Approved BBS Files", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            approvedFiles.forEach { (rel, size) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("/$rel", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                    Text(size, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedButton(onClick = { refreshNonce++ }) { Text("Upload") }
+                Button(onClick = {
+                    val e = incEntries.getOrNull(incSel)
+                    if (incomingRoot != null && filesRoot != null && e != null && !e.isDir) {
+                        val rel = if (incRel.isEmpty()) e.name else "$incRel/${e.name}"
+                        OykJailedFileBrowser.approveRelFile(incomingRoot, rel, filesRoot, filesRel)
+                            .onSuccess { refreshNonce++; feedback = "Approved ${e.name}" }
+                            .onFailure { feedback = it.message ?: "Error" }
+                    }
+                }) { Text("Approve") }
+                OutlinedButton(onClick = { refreshNonce++ }) { Text("Rename") }
+                OutlinedButton(onClick = {
+                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
+                    val curRel = if (activePane == 0) incRel else filesRel
+                    if (targetRoot != null) {
+                        OykJailedFileBrowser.mkdir(targetRoot, curRel, "new_dir")
+                            .onSuccess { refreshNonce++; feedback = "Created folder" }
+                    }
+                }) { Text("New Dir") }
+                OutlinedButton(onClick = {
+                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
+                    val curRel = if (activePane == 0) incRel else filesRel
+                    val e = (if (activePane == 0) incEntries else filesEntries).getOrNull(if (activePane == 0) incSel else filesSel)
+                    if (targetRoot != null && e != null && !e.isParent) {
+                        OykJailedFileBrowser.deleteEntry(targetRoot, curRel, e.name)
+                            .onSuccess { refreshNonce++; feedback = "Deleted ${e.name}" }
+                    }
+                }) { Text("Delete") }
+                OutlinedButton(onClick = { feedback = "Previewing selected file" }) { Text("View") }
                 Button(onClick = onDismiss) { Text("Close") }
             }
         }

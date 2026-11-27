@@ -47,10 +47,10 @@ Esp32C6Console::Esp32C6Console()
       term_type_(C6L_TERM_VT100), view_(C6L_VIEW_CONSOLE), prompt_kind_(C6L_PROMPT_NONE),
       term_rows_(25), term_cols_(80), mouse_enabled_(0), now_ms_(0), last_esc_ms_(0),
       esc_state_(0), esc_len_(0), x10_len_(0), menu_sel_(0), settings_tab_(0), settings_sel_(0),
-      wiz_same_iface_(0), wiz_lpol_(0), wiz_field_(0),
+      wiz_same_iface_(0), wiz_lpol_(0), wiz_field_(0), wiz_btn_(1),
       edit_iface_idx_(0), edit_iface_field_(0), edit_peer_idx_(0), edit_peer_field_(0),
-      term_sel_(0), ban_sel_(0), ban_hard_(1), theme_sel_(0), theme_role_sel_(0),
-      prompt_cursor_(0), files_tab_(0), files_sel_(0), incoming_count_(0), approved_count_(0),
+      edit_btn_(0), term_sel_(0), ban_sel_(0), ban_hard_(1), theme_sel_(0), theme_role_sel_(0),
+      prompt_cursor_(0), files_focus_btn_(0), fm_preview_active_(0),
       bootloader_pending_(0), bootloader_start_ms_(0), lterm_sid_(0), lterm_ctrl_a_(0),
       lterm_help_open_(0), lterm_line_count_(0), lterm_input_len_(0) {
     memset(&draft_, 0, sizeof(draft_));
@@ -65,9 +65,10 @@ Esp32C6Console::Esp32C6Console()
     memset(&edit_iface_buf_, 0, sizeof(edit_iface_buf_));
     memset(&edit_peer_buf_, 0, sizeof(edit_peer_buf_));
     ban_call_[0] = '\0'; ban_reason_[0] = '\0';
+    prompt_label_[0] = '\0';
     prompt_buf_[0] = '\0';
-    memset(incoming_list_, 0, sizeof(incoming_list_));
-    memset(approved_list_, 0, sizeof(approved_list_));
+    memset(&file_mgr_, 0, sizeof(file_mgr_));
+    fm_preview_buf_[0] = '\0';
     memset(lterm_lines_, 0, sizeof(lterm_lines_));
     lterm_input_[0] = '\0';
     oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
@@ -243,6 +244,68 @@ void Esp32C6Console::draw_shadow(int row, int col, int h, int w) {
     }
 }
 
+void Esp32C6Console::tui_get_size_cb(void* ctx, int* out_rows, int* out_cols) {
+    const Esp32C6Console* c = static_cast<const Esp32C6Console*>(ctx);
+    if (out_rows) *out_rows = c ? c->term_rows_ : 25;
+    if (out_cols) *out_cols = c ? c->term_cols_ : 80;
+}
+
+void Esp32C6Console::tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    Esp32C6Console* c = static_cast<Esp32C6Console*>(ctx);
+    if (!c || max_w <= 0) return;
+    if (max_w > 132) max_w = 132;
+    const char* sgr = "\033[0m";
+    switch (style) {
+        case OYK_TUI_STYLE_BORDER:
+        case OYK_TUI_STYLE_DLG_BORDER: sgr = c->sgr_border(); break;
+        case OYK_TUI_STYLE_TITLE:      sgr = c->sgr_title(); break;
+        case OYK_TUI_STYLE_HEADER:     sgr = c->sgr_header(); break;
+        case OYK_TUI_STYLE_MENU_BAR:
+        case OYK_TUI_STYLE_DLG_BAR:    sgr = c->sgr_menubar(); break;
+        case OYK_TUI_STYLE_MENU_SEL:
+        case OYK_TUI_STYLE_DLG_SEL:    sgr = c->sgr_sel(); break;
+        case OYK_TUI_STYLE_LIST_HDR:   sgr = c->sgr_list_hdr(); break;
+        case OYK_TUI_STYLE_WARN:
+        case OYK_TUI_STYLE_ERROR:      sgr = c->sgr_warn(); break;
+        case OYK_TUI_STYLE_CLOSE_BTN:
+            sgr = (c->term_type_ >= C6L_TERM_VT220) ? "\033[1;37;41m" : "\033[7m";
+            break;
+        default: sgr = "\033[0m"; break;
+    }
+    char out[256];
+    const char* txt = text ? text : "";
+    sprintf(out, "\033[%d;%dH%s%-*.*s\033[0m", row + 1, col + 1, sgr, max_w, max_w, txt);
+    c->write_str(out);
+}
+
+void Esp32C6Console::tui_put_box_cb(void* ctx, int top, int left, int h, int w,
+                                     int /*bdr*/, int /*fill*/, int fill_interior) {
+    Esp32C6Console* c = static_cast<Esp32C6Console*>(ctx);
+    if (c) c->draw_box(top + 1, left + 1, h, w, NULL, fill_interior, 0);
+}
+
+void Esp32C6Console::tui_put_hdiv_cb(void* ctx, int row, int left, int w, int /*style*/) {
+    Esp32C6Console* c = static_cast<Esp32C6Console*>(ctx);
+    if (c) c->draw_hdiv(row + 1, left + 1, w);
+}
+
+void Esp32C6Console::tui_put_shadow_cb(void* ctx, int top, int left, int h, int w) {
+    Esp32C6Console* c = static_cast<Esp32C6Console*>(ctx);
+    if (c) c->draw_shadow(top + 1, left + 1, h, w);
+}
+
+OykTuiBackend Esp32C6Console::make_tui_backend() {
+    OykTuiBackend b;
+    memset(&b, 0, sizeof(b));
+    b.ctx = this;
+    b.get_size = Esp32C6Console::tui_get_size_cb;
+    b.put_text = Esp32C6Console::tui_put_text_cb;
+    b.put_box = Esp32C6Console::tui_put_box_cb;
+    b.put_hdiv = Esp32C6Console::tui_put_hdiv_cb;
+    b.put_shadow = Esp32C6Console::tui_put_shadow_cb;
+    return b;
+}
+
 void Esp32C6Console::render() {
     if (!node_ || !tx_fn_) return;
     if (term_type_ >= C6L_TERM_VT220) write_str("\033[?25l");
@@ -270,7 +333,10 @@ void Esp32C6Console::render() {
     else if (prompt_kind_ == C6L_PROMPT_CONFIRM_FORMAT) render_confirm_format_modal();
     else if (prompt_kind_ == C6L_PROMPT_SET_TEXT ||
              prompt_kind_ == C6L_PROMPT_SET_BOOL ||
-             prompt_kind_ == C6L_PROMPT_LTERM_CONNECT) render_text_prompt();
+             prompt_kind_ == C6L_PROMPT_LTERM_CONNECT ||
+             prompt_kind_ == C6L_PROMPT_FM_UPLOAD ||
+             prompt_kind_ == C6L_PROMPT_FM_MKDIR ||
+             prompt_kind_ == C6L_PROMPT_FM_RENAME) render_text_prompt();
     else if (view_ == C6L_VIEW_LOCAL_TERM && lterm_help_open_) render_local_term_help();
 }
 
@@ -618,9 +684,17 @@ void Esp32C6Console::render_wizard_modal() {
         write_str(pbuf);
     }
     draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(pbuf, "\033[%d;%dH%s %-64.64s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            (wiz_.step == 3) ? "Enter:Finish  B:Back  Esc:Cancel" : "Enter:Next >  B:Back  Esc:Cancel");
-    write_str(pbuf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[3];
+    btns[0].label = "< Back";
+    btns[0].enabled = (wiz_.step > 0) ? 1 : 0;
+    btns[1].label = (wiz_.step == 3) ? "Finish" : "Next >";
+    btns[1].enabled = 1;
+    btns[2].label = "Cancel";
+    btns[2].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                            btns, 3, wiz_btn_,
+                            (wiz_.step > 0) ? "B:Back  Esc:Cancel" : "1-5:Pick  Esc:Cancel");
 }
 
 void Esp32C6Console::render_edit_iface_modal() {
@@ -652,9 +726,14 @@ void Esp32C6Console::render_edit_iface_modal() {
             oyk_gui_format_learned_policy(edit_iface_buf_.learned_peer_policy));
     write_str(buf);
     draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "Space:Toggle  Enter/S:Save  Esc:Cancel");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                            btns, 2, edit_btn_, "Space:Toggle  Enter:Save");
 }
 
 void Esp32C6Console::render_edit_peer_modal() {
@@ -680,9 +759,14 @@ void Esp32C6Console::render_edit_peer_modal() {
     sprintf(buf, "\033[%d;%dHAllow Outbound : %s", top + 8, left + 3, edit_peer_buf_.allow_outbound ? "[ON]" : "[OFF]");
     write_str(buf);
     draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-56.56s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "Enter/S:Save  Esc:Cancel");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                            btns, 2, edit_btn_, "Enter/S:Save  Esc:Cancel");
 }
 
 void Esp32C6Console::render_terminate_modal() {
@@ -774,42 +858,10 @@ void Esp32C6Console::render_theme_modal() {
 }
 
 void Esp32C6Console::render_files() {
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 17, 70, &mr);
-    const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Manage BBS Files Area", 1, 1);
-    draw_shadow(top, left, mr.h, mr.w);
-
-    char buf[160];
-    sprintf(buf, "\033[%d;%dH%s 1:Pending Incoming (%d) \033[0m  %s 2:Approved (%d) \033[0m",
-            top + 1, left + 2,
-            (files_tab_ == 0) ? sgr_sel() : sgr_menubar(), incoming_count_,
-            (files_tab_ == 1) ? sgr_sel() : sgr_menubar(), approved_count_);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dH%s %-12s %-34s %-12s\033[0m", top + 2, left + 1, sgr_list_hdr(),
-            "Uploader", "Filename", "Size");
-    write_str(buf);
-    if (files_tab_ == 0) {
-        for (int i = 0; i < incoming_count_ && i < 8; ++i) {
-            sprintf(buf, "\033[%d;%dH%s %-12.12s %-34.34s %lu B\033[0m",
-                    top + 3 + i, left + 1, (i == files_sel_) ? sgr_sel() : "",
-                    incoming_list_[i].uploader, incoming_list_[i].filename,
-                    static_cast<unsigned long>(incoming_list_[i].size));
-            write_str(buf);
-        }
-    } else {
-        for (int i = 0; i < approved_count_ && i < 8; ++i) {
-            sprintf(buf, "\033[%d;%dH%s %-12s %-34.34s %lu B\033[0m",
-                    top + 3 + i, left + 1, (i == files_sel_) ? sgr_sel() : "",
-                    "APPROVED", approved_list_[i].rel_path,
-                    static_cast<unsigned long>(approved_list_[i].size));
-            write_str(buf);
-        }
-    }
-    draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-66.66s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "Tab:Switch  A:Approve  D:Delete  Esc:Close");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_dual_pane_modal(&b, term_rows_, term_cols_, &file_mgr_,
+                                 files_focus_btn_, "Manage BBS Files Area",
+                                 fm_preview_buf_, fm_preview_active_);
 }
 
 void Esp32C6Console::render_rig() {
@@ -922,7 +974,7 @@ void Esp32C6Console::render_hw() {
 
 void Esp32C6Console::render_bootloader() {
     OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+    oyk_tui_center_modal(term_rows_, term_cols_, 13, 72, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
     const int auto_cnt = node_->auto_learned_peer_count();
     draw_box(top, left, mr.h, mr.w,
@@ -930,21 +982,32 @@ void Esp32C6Console::render_bootloader() {
              1, 1);
     draw_shadow(top, left, mr.h, mr.w);
     char buf[160];
+    OykTuiBackend b = make_tui_backend();
     if (!bootloader_pending_ && auto_cnt > 0) {
         sprintf(buf, "\033[%d;%dH%d auto-learned peer(s) were added this session.", top + 2, left + 2, auto_cnt);
         write_str(buf);
         sprintf(buf, "\033[%d;%dHSave them to config, discard them, or review in Peers?", top + 4, left + 2);
         write_str(buf);
-        sprintf(buf, "\033[%d;%dH[S] Save & Reboot   [D] Discard & Reboot   [R] Review   [Esc] Cancel", top + 6, left + 2);
+        sprintf(buf, "\033[%d;%dHS:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel", top + 6, left + 2);
         write_str(buf);
+        draw_hdiv(top + mr.h - 3, left, mr.w);
+        OykTuiButton btns[4];
+        btns[0].label = "Save & Exit";  btns[0].enabled = 1;
+        btns[1].label = "Discard";      btns[1].enabled = 1;
+        btns[2].label = "Review Peers"; btns[2].enabled = 1;
+        btns[3].label = "Cancel";       btns[3].enabled = 1;
+        oyk_tui_draw_button_row(&b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                                btns, 4, 0, NULL);
     } else {
         sprintf(buf, "\033[%d;%dHPress Y to restart ESP32-C6 Unit C6L, or Esc to cancel.", top + 3, left + 2);
         write_str(buf);
+        draw_hdiv(top + mr.h - 3, left, mr.w);
+        OykTuiButton btns[2];
+        btns[0].label = "Reboot"; btns[0].enabled = 1;
+        btns[1].label = "Cancel"; btns[1].enabled = 1;
+        oyk_tui_draw_button_row(&b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                                btns, 2, 0, "Y:Reboot  N/Esc:Cancel");
     }
-    draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "S:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel");
-    write_str(buf);
 }
 
 void Esp32C6Console::render_about() {
@@ -973,42 +1036,32 @@ void Esp32C6Console::render_about() {
 void Esp32C6Console::render_local_term() {
     OykTuiTermLayout tlay;
     oyk_tui_compute_term_layout(term_rows_, term_cols_, &tlay);
+    const int body_w = (tlay.cols > 2) ? (tlay.cols - 2) : 1;
+    const int body_h = (tlay.body_rows > 0) ? tlay.body_rows : 1;
     write_str("\033[H\033[2J");
     char hdr[160], buf[256];
-    sprintf(hdr, " LOCAL TERMINAL | %s [EOL:%s]",
+    sprintf(hdr, " LOCAL TERMINAL | %s [EOL:%s] | Tab/F9:Console",
             lterm_sid_ ? "CONNECTED (LOCAL)" : "DISCONNECTED",
             oyk_term_eol_label(&lterm_eol_));
     sprintf(buf, "\033[1;1H%s%-*.*s\033[0m", sgr_header(), tlay.cols, tlay.cols, hdr);
     write_str(buf);
-    draw_box(tlay.body_top + 1, 1, tlay.body_rows, tlay.cols, "Terminal Output", 0, 0);
-    int vis = tlay.body_rows - 2;
-    int start = (lterm_line_count_ > vis) ? (lterm_line_count_ - vis) : 0;
-    for (int i = 0; i < vis && (start + i) < lterm_line_count_; ++i) {
-        sprintf(buf, "\033[%d;2H%-*.*s", tlay.body_top + 2 + i, tlay.cols - 2, tlay.cols - 2,
+    int start = (lterm_line_count_ > body_h) ? (lterm_line_count_ - body_h) : 0;
+    for (int i = 0; i < body_h && (start + i) < lterm_line_count_; ++i) {
+        sprintf(buf, "\033[%d;2H%-*.*s", tlay.body_top + 1 + i, body_w, body_w,
                 lterm_lines_[start + i]);
         write_str(buf);
     }
-    sprintf(buf, "\033[%d;1H%s%-*.*s\033[0m", tlay.hotkey_row + 1, sgr_menubar(), tlay.cols, tlay.cols,
-            " Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT  Ctrl+A E:EOL  Tab/F9:Console");
+    const char* hk_bar = oyk_term_hotkey_bar_text(1, lterm_ctrl_a_);
+    sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
+            tlay.hotkey_row + 1, sgr_menubar(), tlay.cols - 2, tlay.cols - 2, hk_bar);
     write_str(buf);
     sprintf(buf, "\033[%d;1H> %s", tlay.input_row + 1, lterm_input_);
     write_str(buf);
 }
 
 void Esp32C6Console::render_local_term_help() {
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 14, 60, &mr);
-    const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Terminal Hotkey Help (Ctrl+A)", 1, 1);
-    draw_shadow(top, left, mr.h, mr.w);
-    for (int i = 0; i < oyk_term_help_count() && i < 8; ++i) {
-        const OykTermHelpEntry* e = oyk_term_help_entry(i);
-        char buf[128];
-        if (e) {
-            sprintf(buf, "\033[%d;%dH%-8s %s", top + 2 + i, left + 3, e->key_label, e->action);
-            write_str(buf);
-        }
-    }
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_term_help_modal(&b, term_rows_, term_cols_);
 }
 
 void Esp32C6Console::render_confirm_format_modal() {
@@ -1028,7 +1081,7 @@ void Esp32C6Console::render_text_prompt() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 8, 56, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Edit Setting", 1, 1);
+    draw_box(top, left, mr.h, mr.w, prompt_label_[0] ? prompt_label_ : "Edit Setting", 1, 1);
     draw_shadow(top, left, mr.h, mr.w);
     char buf[128];
     sprintf(buf, "\033[%d;%dH> %s%s\033[0m", top + 3, left + 3, sgr_sel(), prompt_buf_);
@@ -1162,7 +1215,7 @@ void Esp32C6Console::handle_console_key(int key) {
     else if (key == 'a' || key == 'A') { if (node_) node_->set_accept_incoming(1); strcpy(status_fb_, "Incoming ALLOWED."); render(); }
     else if (key == 'd' || key == 'D') { if (node_) node_->set_accept_incoming(0); strcpy(status_fb_, "Incoming DENIED."); render(); }
     else if (key == 'l' || key == 'L' || key == C6L_TAB || key == C6L_F9) { view_ = C6L_VIEW_LOCAL_TERM; render(); }
-    else if (key == 'f' || key == 'F') { refresh_files_lists(); view_ = C6L_VIEW_FILES; render(); }
+    else if (key == 'f' || key == 'F') { fm_preview_active_ = 0; files_focus_btn_ = 0; refresh_files_lists(); view_ = C6L_VIEW_FILES; render(); }
     else if (key == 'r' || key == 'R') { view_ = C6L_VIEW_RIG; render(); }
     else if (key == 's' || key == 'S') open_settings(0);
     else if (key == 'e' || key == 'E') open_settings(4);
@@ -1202,7 +1255,7 @@ void Esp32C6Console::open_wizard() {
     strcpy(wiz_port_, "10094");
     strcpy(wiz_mask_, "255.255.255.0");
     wiz_peer_[0] = '\0';
-    wiz_same_iface_ = 0; wiz_lpol_ = 0; wiz_field_ = 0;
+    wiz_same_iface_ = 0; wiz_lpol_ = 0; wiz_field_ = 0; wiz_btn_ = 1;
     prompt_kind_ = C6L_PROMPT_ADD_WIZARD; render();
 }
 
@@ -1211,6 +1264,7 @@ void Esp32C6Console::open_edit_iface(int idx) {
     edit_iface_idx_ = idx;
     edit_iface_buf_ = draft_.ifaces[idx];
     edit_iface_field_ = 0;
+    edit_btn_ = 0;
     prompt_kind_ = C6L_PROMPT_EDIT_IFACE; render();
 }
 
@@ -1219,6 +1273,7 @@ void Esp32C6Console::open_edit_peer(int idx) {
     edit_peer_idx_ = idx;
     edit_peer_buf_ = draft_.peers[idx];
     edit_peer_field_ = 0;
+    edit_btn_ = 0;
     prompt_kind_ = C6L_PROMPT_EDIT_PEER; render();
 }
 
@@ -1258,8 +1313,68 @@ void Esp32C6Console::handle_settings_key(int key) {
 }
 
 void Esp32C6Console::handle_files_key(int key) {
+    OykGuiFilePane* p = (file_mgr_.active_pane == 0) ? &file_mgr_.inc : &file_mgr_.files;
+    if (fm_preview_active_) {
+        if (key == C6L_ESC || key == C6L_ENTER || key == 'q' || key == 'Q' || key == 'v' || key == 'V') {
+            fm_preview_active_ = 0;
+            render();
+        }
+        return;
+    }
     if (key == C6L_ESC) { view_ = C6L_VIEW_CONSOLE; render(); return; }
-    if (key == C6L_TAB) { files_tab_ = 1 - files_tab_; files_sel_ = 0; render(); }
+    if (key == C6L_TAB || key == C6L_LEFT || key == C6L_RIGHT) {
+        file_mgr_.active_pane = 1 - file_mgr_.active_pane; render(); return;
+    }
+    if (key == '1') { file_mgr_.active_pane = 0; render(); return; }
+    if (key == '2') { file_mgr_.active_pane = 1; render(); return; }
+    if (key == C6L_UP && p->count > 0 && p->sel > 0) { --p->sel; render(); return; }
+    if (key == C6L_DOWN && p->count > 0 && p->sel + 1 < p->count) { ++p->sel; render(); return; }
+    if (key == C6L_BS || key == '<' || key == '-') {
+        oyk_gui_filemgr_up(&file_mgr_, file_mgr_.active_pane);
+        render(); return;
+    }
+    if (key == C6L_ENTER) {
+        int act = oyk_gui_filemgr_activate(&file_mgr_, file_mgr_.active_pane);
+        if (act == 0 && p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_dir) {
+            int trunc = 0;
+            if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) {
+                fm_preview_active_ = 1;
+            }
+        }
+        render(); return;
+    }
+    if (key == 'a' || key == 'A') { int ex = 0; oyk_gui_filemgr_approve(&file_mgr_, 1, &ex); render(); return; }
+    if (key == 'u' || key == 'U') {
+        strncpy(prompt_label_, "Upload local file path", sizeof(prompt_label_) - 1);
+        prompt_buf_[0] = '\0'; prompt_cursor_ = 0; prompt_kind_ = C6L_PROMPT_FM_UPLOAD; render(); return;
+    }
+    if (key == 'n' || key == 'N') {
+        strncpy(prompt_label_, "New subdirectory name", sizeof(prompt_label_) - 1);
+        prompt_buf_[0] = '\0'; prompt_cursor_ = 0; prompt_kind_ = C6L_PROMPT_FM_MKDIR; render(); return;
+    }
+    if (key == 'm' || key == 'M') {
+        const char* cur = (p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_parent)
+                              ? p->entries[p->sel].name : "";
+        if (cur[0]) {
+            strncpy(prompt_label_, "Rename entry to", sizeof(prompt_label_) - 1);
+            strncpy(prompt_buf_, cur, sizeof(prompt_buf_) - 1);
+            prompt_buf_[sizeof(prompt_buf_) - 1] = '\0';
+            prompt_cursor_ = static_cast<int>(strlen(prompt_buf_));
+            prompt_kind_ = C6L_PROMPT_FM_RENAME; render();
+        }
+        return;
+    }
+    if (key == 'd' || key == 'D') { oyk_gui_filemgr_delete(&file_mgr_); render(); return; }
+    if (key == 'v' || key == 'V') {
+        int trunc = 0;
+        if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) fm_preview_active_ = 1;
+        render(); return;
+    }
+    if (key == 'r' || key == 'R') {
+        oyk_gui_filemgr_refresh(&file_mgr_);
+        strcpy(file_mgr_.feedback, "Refreshed files lists.");
+        render();
+    }
 }
 void Esp32C6Console::handle_rig_key(int key) { if (key == C6L_ESC) { view_ = C6L_VIEW_CONSOLE; render(); } }
 void Esp32C6Console::handle_lora_key(int key) { if (key == C6L_ESC) { view_ = C6L_VIEW_CONSOLE; render(); } }
@@ -1347,23 +1462,56 @@ void Esp32C6Console::handle_local_term_key(int key) {
 void Esp32C6Console::handle_prompt_key(int key) {
     if (key == C6L_ESC) { prompt_kind_ = C6L_PROMPT_NONE; render(); return; }
     if (prompt_kind_ == C6L_PROMPT_ADD_WIZARD) {
-        if (key == 'b' || key == 'B') { if (wiz_.step > 0) --wiz_.step; render(); return; }
+        if (key == 'b' || key == 'B') { if (wiz_.step > 0) --wiz_.step; wiz_btn_ = 1; render(); return; }
         if (wiz_.step == 0 && key >= '1' && key <= '5') { wiz_.selected_driver_idx = key - '1'; render(); return; }
         if (wiz_.step == 2 && key == ' ') { wiz_same_iface_ = 1 - wiz_same_iface_; render(); return; }
+        if (key == C6L_LEFT) {
+            if (wiz_btn_ > (wiz_.step == 0 ? 1 : 0)) --wiz_btn_;
+            render(); return;
+        }
+        if (key == C6L_RIGHT) {
+            if (wiz_btn_ < 2) ++wiz_btn_;
+            render(); return;
+        }
         if (key == C6L_ENTER) {
-            if (wiz_.step < 3) { ++wiz_.step; render(); return; }
+            if (wiz_btn_ == 0 && wiz_.step > 0) { --wiz_.step; render(); return; }
+            if (wiz_btn_ == 2) { prompt_kind_ = C6L_PROMPT_NONE; render(); return; }
+            if (wiz_.step < 3) { ++wiz_.step; wiz_btn_ = 1; render(); return; }
             prompt_kind_ = C6L_PROMPT_NONE; render();
         }
     } else if (prompt_kind_ == C6L_PROMPT_EDIT_IFACE) {
         if (key == ' ') { edit_iface_buf_.allow_same_interface = 1 - edit_iface_buf_.allow_same_interface; render(); return; }
-        if (key == 's' || key == 'S' || key == C6L_ENTER) {
+        if (key == C6L_LEFT || key == C6L_RIGHT) { edit_btn_ = 1 - edit_btn_; render(); return; }
+        if (key == 's' || key == 'S' || (key == C6L_ENTER && edit_btn_ == 0)) {
             if (edit_iface_idx_ >= 0 && edit_iface_idx_ < draft_.iface_count) draft_.ifaces[edit_iface_idx_] = edit_iface_buf_;
+            prompt_kind_ = C6L_PROMPT_NONE; render();
+        } else if (key == C6L_ENTER && edit_btn_ == 1) {
             prompt_kind_ = C6L_PROMPT_NONE; render();
         }
     } else if (prompt_kind_ == C6L_PROMPT_EDIT_PEER) {
-        if (key == 's' || key == 'S' || key == C6L_ENTER) {
+        if (key == C6L_LEFT || key == C6L_RIGHT) { edit_btn_ = 1 - edit_btn_; render(); return; }
+        if (key == 's' || key == 'S' || (key == C6L_ENTER && edit_btn_ == 0)) {
             if (edit_peer_idx_ >= 0 && edit_peer_idx_ < draft_.peer_count) draft_.peers[edit_peer_idx_] = edit_peer_buf_;
             prompt_kind_ = C6L_PROMPT_NONE; render();
+        } else if (key == C6L_ENTER && edit_btn_ == 1) {
+            prompt_kind_ = C6L_PROMPT_NONE; render();
+        }
+    } else if (prompt_kind_ == C6L_PROMPT_FM_UPLOAD ||
+               prompt_kind_ == C6L_PROMPT_FM_MKDIR ||
+               prompt_kind_ == C6L_PROMPT_FM_RENAME) {
+        if (key == C6L_ENTER) {
+            Esp32C6PromptKind pk = prompt_kind_;
+            prompt_kind_ = C6L_PROMPT_NONE;
+            int ex = 0;
+            if (pk == C6L_PROMPT_FM_UPLOAD && prompt_buf_[0]) oyk_gui_filemgr_upload(&file_mgr_, prompt_buf_, 1, &ex);
+            else if (pk == C6L_PROMPT_FM_MKDIR && prompt_buf_[0]) oyk_gui_filemgr_mkdir(&file_mgr_, prompt_buf_);
+            else if (pk == C6L_PROMPT_FM_RENAME && prompt_buf_[0]) oyk_gui_filemgr_rename(&file_mgr_, prompt_buf_);
+            prompt_buf_[0] = '\0'; prompt_cursor_ = 0; render();
+        } else if (key == C6L_BS && prompt_cursor_ > 0) {
+            prompt_buf_[--prompt_cursor_] = '\0'; render();
+        } else if (key >= 0x20 && key < 0x7F && prompt_cursor_ < 90) {
+            prompt_buf_[prompt_cursor_++] = static_cast<char>(key);
+            prompt_buf_[prompt_cursor_] = '\0'; render();
         }
     } else if (prompt_kind_ == C6L_PROMPT_TERM_SID) {
         if (key == C6L_ENTER) {
@@ -1413,8 +1561,13 @@ void Esp32C6Console::handle_prompt_key(int key) {
 }
 
 void Esp32C6Console::refresh_files_lists() {
-    incoming_count_ = node_ ? oyk_bbs_list_incoming("incoming", incoming_list_, 12) : 0;
-    approved_count_ = node_ ? oyk_bbs_list_approved(node_->config().bbs_files_path, approved_list_, 12) : 0;
+    const char* froot = (node_ && node_->config().bbs_files_path[0])
+                            ? node_->config().bbs_files_path : "files";
+    if (strcmp(file_mgr_.files.root, froot) != 0 || !file_mgr_.inc.root[0]) {
+        oyk_gui_filemgr_init(&file_mgr_, "incoming", froot);
+    } else {
+        oyk_gui_filemgr_refresh(&file_mgr_);
+    }
 }
 
 void Esp32C6Console::append_lterm_line(const char* line) {

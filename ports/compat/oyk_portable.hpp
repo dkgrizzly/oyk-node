@@ -557,6 +557,44 @@ int oyk_bbs_delete_approved_file(const char* files_root,
                                  const char* rel_path,
                                  char* err_out, size_t err_sz);
 
+/* Jailed dual-pane File Manager directory & file helpers */
+struct OykBbsDirEntry {
+    char    name[48];
+    oyk_u32 size;
+    oyk_u8  is_dir;
+    oyk_u8  is_parent; /* 1 ONLY for synthetic ".." inside subdirectories */
+};
+
+int oyk_bbs_list_dir(const char* root, const char* rel_dir,
+                     OykBbsDirEntry* out, int max_out,
+                     char* err_out, size_t err_sz);
+int oyk_bbs_enter_subdir(const char* root, const char* cur_rel,
+                         const char* child_name,
+                         char* next_rel_out, size_t next_rel_sz,
+                         char* err_out, size_t err_sz);
+int oyk_bbs_approve_file_from_rel(const char* incoming_root, const char* inc_rel_file,
+                                  const char* files_root, const char* dest_rel_dir,
+                                  int allow_overwrite,
+                                  char* dest_out, size_t dest_sz,
+                                  int* already_exists_out,
+                                  char* err_out, size_t err_sz);
+int oyk_bbs_import_local_file(const char* local_src_path,
+                              const char* target_root, const char* target_rel_dir,
+                              int allow_overwrite,
+                              char* dest_out, size_t dest_sz,
+                              int* already_exists_out,
+                              char* err_out, size_t err_sz);
+int oyk_bbs_mkdir_safe(const char* root, const char* cur_rel, const char* new_name,
+                       char* err_out, size_t err_sz);
+int oyk_bbs_rename_safe(const char* root, const char* cur_rel,
+                        const char* old_name, const char* new_name,
+                        char* err_out, size_t err_sz);
+int oyk_bbs_delete_safe(const char* root, const char* cur_rel, const char* name,
+                        char* err_out, size_t err_sz);
+int oyk_bbs_read_text_preview(const char* root, const char* cur_rel, const char* filename,
+                              char* out_buf, size_t out_cap, int* truncated_out,
+                              char* err_out, size_t err_sz);
+
 struct OykYappSession;
 
 /* Cooperative portable packet node engine */

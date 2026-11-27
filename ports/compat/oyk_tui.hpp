@@ -85,15 +85,46 @@ struct OykTuiBackend {
     void (*present)(void* ctx);
 };
 
+struct OykTuiButton {
+    const char* label;
+    int         enabled;
+};
+
+struct OykTuiDualPaneLayout {
+    OykTuiRect modal;
+    OykTuiRect left_pane;   /* Incoming */
+    OykTuiRect right_pane;  /* Files */
+    int        path_row;
+    int        hdr_row;
+    int        list_top;
+    int        list_rows;
+    int        feedback_row;
+    int        div_row;
+    int        btn_row;
+};
+
 /* Layout calculators filling all available display dimensions */
 void oyk_tui_compute_console_layout(int rows, int cols, OykTuiConsoleLayout* out);
 void oyk_tui_compute_term_layout(int rows, int cols, OykTuiTermLayout* out);
 void oyk_tui_center_modal(int screen_rows, int screen_cols, int pref_h, int pref_w, OykTuiRect* out);
+void oyk_tui_compute_dual_pane_layout(int screen_rows, int screen_cols,
+                                      OykTuiDualPaneLayout* out);
 
 /* Top-right [X] close button geometry & hit-testing */
 int  oyk_tui_close_btn_col(const OykTuiRect* rect);
 int  oyk_tui_hit_close_btn(const OykTuiRect* rect, int row, int col);
 int  oyk_tui_point_in_rect(const OykTuiRect* rect, int row, int col);
+
+/* Canonical button strip helpers (" [ Label ] ", 2-cell modal-fill gaps) */
+int  oyk_tui_button_width(const char* label);
+void oyk_tui_draw_button(const OykTuiBackend* b, int row, int col,
+                         const char* label, int focused, int enabled);
+int  oyk_tui_draw_button_row(const OykTuiBackend* b, int row, int start_col, int max_w,
+                             const OykTuiButton* buttons, int count, int focused_idx,
+                             const char* trailing_hint);
+int  oyk_tui_hit_button_row(int row, int start_col, int max_w,
+                            const OykTuiButton* buttons, int count,
+                            int click_row, int click_col);
 
 /* Shared UI Chrome & Widgets */
 void oyk_tui_draw_menu_bar(const OykTuiBackend* b, int cols, int term_active, const char* right_hint);
@@ -109,5 +140,12 @@ void oyk_tui_draw_modal_footer(const OykTuiBackend* b, const OykTuiRect* rect,
 void oyk_tui_draw_dropdown_menu(const OykTuiBackend* b, const OykTuiRect* rect,
                                 const char* const* items, const int* item_rows, int item_count,
                                 const int* sep_rows, int sep_count, int sel_idx);
+void oyk_tui_draw_term_help_modal(const OykTuiBackend* b, int screen_rows, int screen_cols);
+
+struct OykGuiFileMgr;
+void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                  const struct OykGuiFileMgr* fm, int focused_btn,
+                                  const char* title, const char* preview_text,
+                                  int preview_active);
 
 #endif /* OYK_TUI_HPP */

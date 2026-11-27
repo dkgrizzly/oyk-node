@@ -27,6 +27,7 @@ ports/amiga/build_amiga/
 ports/atarist/build_atarist/
 ports/esp32c6/build/
 ports/esp32c6/sdkconfig*
+!ports/esp32c6/sdkconfig.defaults
 build_macos/
 ports/android/.gradle/
 ports/android/local.properties

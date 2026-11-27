@@ -62,7 +62,7 @@ static const TinyTmuxDriverOpt TINYTMUX_DRIVERS[7] = {
 TinyTmuxConsole::TinyTmuxConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL), now_ms_(0),
       term_type_(TMUX_TERM_VT100), term_rows_(25), term_cols_(80), view_(TMUX_VIEW_CONSOLE), menu_sel_(0),
-      files_tab_(0), pending_count_(0), approved_count_(0),
+      files_focus_btn_(0), fm_preview_active_(0),
       settings_tab_(0), settings_iface_field_(0),
       prompt_kind_(PROMPT_NONE), prompt_len_(0),
       wiz_edit_idx_(-1), wiz_step_(0), wiz_drv_(0), wiz_last_drv_(-1), wiz_focus_(0), wiz_btn_(1),
@@ -75,10 +75,8 @@ TinyTmuxConsole::TinyTmuxConsole()
     esc_buf_[0] = '\0';
     strcpy(status_line_, "TinyTMUX Ready. M:Menu  Tab:Term  S:Settings  F:Files  R:Radio");
     dialog_fb_[0] = '\0';
-    files_sel_[0] = 0;
-    files_sel_[1] = 0;
-    memset(pending_files_, 0, sizeof(pending_files_));
-    memset(approved_files_, 0, sizeof(approved_files_));
+    memset(&file_mgr_, 0, sizeof(file_mgr_));
+    fm_preview_buf_[0] = '\0';
     oyk_config_init_default(&draft_);
     memset(settings_sel_, 0, sizeof(settings_sel_));
     prompt_label_[0] = '\0';
@@ -106,9 +104,10 @@ void TinyTmuxConsole::init(OykPortableNode* node, TinyTmuxConsoleTxFn tx_fn, voi
     term_cols_ = 80;
     view_ = TMUX_VIEW_CONSOLE;
     menu_sel_ = 0;
-    files_tab_ = 0;
-    files_sel_[0] = 0;
-    files_sel_[1] = 0;
+    files_focus_btn_ = 0;
+    fm_preview_active_ = 0;
+    memset(&file_mgr_, 0, sizeof(file_mgr_));
+    fm_preview_buf_[0] = '\0';
     prompt_kind_ = PROMPT_NONE;
     prompt_len_ = 0;
     wiz_edit_idx_ = -1;
@@ -374,6 +373,68 @@ void TinyTmuxConsole::write_str(const char* s) {
     }
 }
 
+void TinyTmuxConsole::tui_get_size_cb(void* ctx, int* out_rows, int* out_cols) {
+    const TinyTmuxConsole* c = static_cast<const TinyTmuxConsole*>(ctx);
+    if (out_rows) *out_rows = c ? c->term_rows_ : 25;
+    if (out_cols) *out_cols = c ? c->term_cols_ : 80;
+}
+
+void TinyTmuxConsole::tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    TinyTmuxConsole* c = static_cast<TinyTmuxConsole*>(ctx);
+    if (!c || max_w <= 0) return;
+    if (max_w > 132) max_w = 132;
+    const char* sgr = "\033[0m";
+    switch (style) {
+        case OYK_TUI_STYLE_BORDER:
+        case OYK_TUI_STYLE_DLG_BORDER: sgr = c->sgr_border(); break;
+        case OYK_TUI_STYLE_TITLE:      sgr = c->sgr_title(); break;
+        case OYK_TUI_STYLE_HEADER:     sgr = c->sgr_header(); break;
+        case OYK_TUI_STYLE_MENU_BAR:
+        case OYK_TUI_STYLE_DLG_BAR:    sgr = c->sgr_menubar(); break;
+        case OYK_TUI_STYLE_MENU_SEL:
+        case OYK_TUI_STYLE_DLG_SEL:    sgr = c->sgr_sel(); break;
+        case OYK_TUI_STYLE_LIST_HDR:   sgr = c->sgr_list_hdr(); break;
+        case OYK_TUI_STYLE_WARN:
+        case OYK_TUI_STYLE_ERROR:      sgr = c->sgr_warn(); break;
+        case OYK_TUI_STYLE_CLOSE_BTN:
+            sgr = (c->term_type_ >= TMUX_TERM_VT220) ? "\033[1;37;41m" : "\033[7m";
+            break;
+        default: sgr = "\033[0m"; break;
+    }
+    char out[256];
+    const char* txt = text ? text : "";
+    sprintf(out, "\033[%d;%dH%s%-*.*s\033[0m", row + 1, col + 1, sgr, max_w, max_w, txt);
+    c->write_str(out);
+}
+
+void TinyTmuxConsole::tui_put_box_cb(void* ctx, int top, int left, int h, int w,
+                                     int /*bdr*/, int /*fill*/, int fill_interior) {
+    TinyTmuxConsole* c = static_cast<TinyTmuxConsole*>(ctx);
+    if (c) c->draw_dec_box(top + 1, left + 1, h, w, NULL, fill_interior, 0);
+}
+
+void TinyTmuxConsole::tui_put_hdiv_cb(void* ctx, int row, int left, int w, int /*style*/) {
+    TinyTmuxConsole* c = static_cast<TinyTmuxConsole*>(ctx);
+    if (c) c->draw_dec_hdiv(row + 1, left + 1, w);
+}
+
+void TinyTmuxConsole::tui_put_shadow_cb(void* ctx, int top, int left, int h, int w) {
+    TinyTmuxConsole* c = static_cast<TinyTmuxConsole*>(ctx);
+    if (c) c->draw_dec_shadow(top + 1, left + 1, h, w);
+}
+
+OykTuiBackend TinyTmuxConsole::make_tui_backend() {
+    OykTuiBackend b;
+    memset(&b, 0, sizeof(b));
+    b.ctx = this;
+    b.get_size = TinyTmuxConsole::tui_get_size_cb;
+    b.put_text = TinyTmuxConsole::tui_put_text_cb;
+    b.put_box = TinyTmuxConsole::tui_put_box_cb;
+    b.put_hdiv = TinyTmuxConsole::tui_put_hdiv_cb;
+    b.put_shadow = TinyTmuxConsole::tui_put_shadow_cb;
+    return b;
+}
+
 OYK_FLASHMEM void TinyTmuxConsole::push_lterm_line(const char* line) {
     if (!line) return;
     if (lterm_line_count_ < 32) {
@@ -453,6 +514,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render() {
             render_local_terminal();
             break;
         case TMUX_VIEW_FILES:
+            render_console();
             render_files();
             break;
         case TMUX_VIEW_RIG:
@@ -771,9 +833,7 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
             ++vis_idx;
         }
     }
-    const char* hk_bar = lterm_ctrl_a_
-        ? "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc E:EOL P:Prt W:Clr R:Size X:Exit"
-        : "Ctrl+A Z:Help  F2:Conn  Ctrl+A B/T:BBS/Chat  Ctrl+A E:EOL  Tab/Esc:Console";
+    const char* hk_bar = oyk_term_hotkey_bar_text(1, lterm_ctrl_a_);
     sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
             tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2, hk_bar);
     write_str(buf);
@@ -788,99 +848,26 @@ OYK_FLASHMEM void TinyTmuxConsole::render_local_terminal() {
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_lterm_help_modal() {
-    char buf[192];
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
-    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_dec_box(top, left, h, w, "Terminal Hotkey Help", 1, 1);
-    draw_dec_shadow(top, left, h, w);
-    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
-            top + 1, left + 2, sgr_title(), w - 6, w - 6,
-            "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)");
-    write_str(buf);
-    draw_dec_hdiv(top + 2, left, w);
-    const int cnt = oyk_term_help_count();
-    for (int i = 0; i < cnt && (3 + i) < (h - 3); ++i) {
-        const OykTermHelpEntry* e = oyk_term_help_entry(i);
-        if (!e) continue;
-        char row_buf[80];
-        sprintf(row_buf, "%-9s %-38s %-14s", e->key_label, e->action, e->alt_key);
-        sprintf(buf, "\033[%d;%dH%-*.*s", top + 3 + i, left + 2, w - 4, w - 4, row_buf);
-        write_str(buf);
-    }
-    draw_dec_hdiv(top + h - 3, left, w);
-    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
-            top + h - 2, left + 1, sgr_menubar(), w - 4, w - 4,
-            "Press a key above to run it, or Esc / Enter / [X] to close");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_term_help_modal(&b, term_rows_, term_cols_);
 }
 
 void TinyTmuxConsole::refresh_files_lists() {
-    pending_count_ = oyk_bbs_list_incoming("incoming", pending_files_, 16);
-    approved_count_ = oyk_bbs_list_approved(node_->config().bbs_files_path, approved_files_, 16);
-    if (files_sel_[0] >= pending_count_) files_sel_[0] = (pending_count_ > 0) ? (pending_count_ - 1) : 0;
-    if (files_sel_[1] >= approved_count_) files_sel_[1] = (approved_count_ > 0) ? (approved_count_ - 1) : 0;
+    const char* froot = (node_ && node_->config().bbs_files_path[0])
+                            ? node_->config().bbs_files_path
+                            : "files";
+    if (strcmp(file_mgr_.files.root, froot) != 0 || !file_mgr_.inc.root[0]) {
+        oyk_gui_filemgr_init(&file_mgr_, "incoming", froot);
+    } else {
+        oyk_gui_filemgr_refresh(&file_mgr_);
+    }
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_files() {
-    char buf[192];
-    write_str("\033[H\033[2J");
-    sprintf(buf, "%s FILES AREA MANAGER (TinyTMUX)                       Esc:Back  R:Refresh \033[0m", sgr_header());
-    write_str(buf);
-    sprintf(buf, "\033[2;2H%s 1:Pending Incoming (%d) \033[0m  %s 2:Approved Files (%d) \033[0m",
-            (files_tab_ == 0) ? sgr_menusel() : sgr_menubar(), pending_count_,
-            (files_tab_ == 1) ? sgr_menusel() : sgr_menubar(), approved_count_);
-    write_str(buf);
-
-    draw_dec_box(3, 1, 19, 80, (files_tab_ == 0) ? "Pending Incoming" : "Approved Files", 0);
-
-    if (files_tab_ == 0) {
-        sprintf(buf, "\033[4;2H%s %-15s %-46s %-14s\033[0m",
-                sgr_list_hdr(), "Uploader", "Filename", "Size");
-        write_str(buf);
-        int max_show = 15;
-        for (int i = 0; i < max_show; ++i) {
-            if (pending_count_ == 0 && i == 0) {
-                sprintf(buf, "\033[%d;2H %-77s", 5 + i, "(no pending uploads in incoming/)");
-            } else if (i < pending_count_) {
-                sprintf(buf, "\033[%d;2H%s %-15.15s %-46.46s %-14lu\033[0m",
-                        5 + i, (i == files_sel_[0]) ? sgr_sel() : "",
-                        pending_files_[i].uploader,
-                        pending_files_[i].filename,
-                        static_cast<unsigned long>(pending_files_[i].size));
-            } else {
-                sprintf(buf, "\033[%d;2H%-78s", 5 + i, "");
-            }
-            write_str(buf);
-        }
-        sprintf(buf, "\033[22;1H%s Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close              \033[0m",
-                sgr_menubar());
-        write_str(buf);
-    } else {
-        sprintf(buf, "\033[4;2H%s %-62s %-14s\033[0m",
-                sgr_list_hdr(), "Approved File Path", "Size");
-        write_str(buf);
-        int max_show = 15;
-        for (int i = 0; i < max_show; ++i) {
-            if (approved_count_ == 0 && i == 0) {
-                sprintf(buf, "\033[%d;2H %-77s", 5 + i, "(no approved files in BBS files area)");
-            } else if (i < approved_count_) {
-                sprintf(buf, "\033[%d;2H%s %-62.62s %-14lu\033[0m",
-                        5 + i, (i == files_sel_[1]) ? sgr_sel() : "",
-                        approved_files_[i].rel_path,
-                        static_cast<unsigned long>(approved_files_[i].size));
-            } else {
-                sprintf(buf, "\033[%d;2H%-78s", 5 + i, "");
-            }
-            write_str(buf);
-        }
-        sprintf(buf, "\033[22;1H%s Tab/1-2:Tabs  D:Remove Approved  R:Refresh  Esc:Close                      \033[0m",
-                sgr_menubar());
-        write_str(buf);
-    }
-    sprintf(buf, "\033[24;1H%s Status: %-70.70s \033[0m",
-            sgr_warn(), dialog_fb_[0] ? dialog_fb_ : "Ready.");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_dual_pane_modal(&b, term_rows_, term_cols_, &file_mgr_,
+                                 files_focus_btn_, "Files Area Manager",
+                                 fm_preview_buf_, fm_preview_active_);
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_rig() {
@@ -1293,12 +1280,13 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
                             ? "Auto-Learned Peers - BOOTSEL"
                             : "Confirm Bootloader Entry";
     OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+    oyk_tui_center_modal(term_rows_, term_cols_, 13, 72, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
     draw_dec_box(top, left, mr.h, mr.w, title, 1, 1);
     draw_dec_shadow(top, left, mr.h, mr.w);
 
     if (!bootloader_pending_) {
+        OykTuiBackend b = make_tui_backend();
         if (auto_cnt > 0) {
             sprintf(buf, "\033[%d;%dH%d auto-learned peer(s) were added this session.", top + 2, left + 2, auto_cnt);
             write_str(buf);
@@ -1306,14 +1294,16 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
             write_str(buf);
             sprintf(buf, "\033[%d;%dHbefore entering HalfKay bootloader?", top + 5, left + 2);
             write_str(buf);
-            sprintf(buf, "\033[%d;%dH[S] Save & Bootloader        [D] Discard & Bootloader", top + 7, left + 2);
-            write_str(buf);
-            sprintf(buf, "\033[%d;%dH[R] Review Peers             [N / Esc] Cancel", top + 8, left + 2);
+            sprintf(buf, "\033[%d;%dHS:Save & Exit  D:Discard  R:Review Peers  N/Esc:Cancel", top + 7, left + 2);
             write_str(buf);
             draw_dec_hdiv(top + 10, left, mr.w);
-            sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
-                    top + 11, left + 1, sgr_menubar(), "S:Save & Reboot  D:Discard  R:Review Peers  N/Esc:Cancel");
-            write_str(buf);
+            OykTuiButton btns[4];
+            btns[0].label = "Save & Exit";  btns[0].enabled = 1;
+            btns[1].label = "Discard";      btns[1].enabled = 1;
+            btns[2].label = "Review Peers"; btns[2].enabled = 1;
+            btns[3].label = "Cancel";       btns[3].enabled = 1;
+            oyk_tui_draw_button_row(&b, mr.top + 11, mr.left + 2, mr.w - 4,
+                                    btns, 4, 0, NULL);
         } else {
             if (active > 0) {
                 sprintf(buf, "\033[%d;%dHEnter HalfKay bootloader? (%d active connection(s))", top + 2, left + 2, active);
@@ -1332,9 +1322,11 @@ OYK_FLASHMEM void TinyTmuxConsole::render_bootloader() {
             sprintf(buf, "\033[%d;%dHuntil you flash new firmware or power-cycle the Teensy 4.1 board.", top + 8, left + 2);
             write_str(buf);
             draw_dec_hdiv(top + 10, left, mr.w);
-            sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
-                    top + 11, left + 1, sgr_menubar(), "Y:Enter HalfKay Bootloader   N/Esc:Cancel");
-            write_str(buf);
+            OykTuiButton btns[2];
+            btns[0].label = "Bootloader"; btns[0].enabled = 1;
+            btns[1].label = "Cancel";     btns[1].enabled = 1;
+            oyk_tui_draw_button_row(&b, mr.top + 11, mr.left + 2, mr.w - 4,
+                                    btns, 2, 0, "Y:Bootloader  N/Esc:Cancel");
         }
     } else {
         oyk_u32 elapsed = (now_ms_ >= bootloader_start_ms_) ? (now_ms_ - bootloader_start_ms_) : 0UL;
@@ -1729,16 +1721,17 @@ OYK_FLASHMEM void TinyTmuxConsole::render_add_iface_wizard() {
 
     int fcnt = wizard_step_field_count();
     int on_bar = (wiz_step_ == 0 || wiz_step_ == 3 || wiz_focus_ == fcnt);
-    const char* next_lbl = (wiz_step_ == 3) ? "[ Finish ]" : "[ Next > ]";
-    sprintf(buf, "\033[%d;%dH%s %s \033[0m  %s %s \033[0m  %s [ Cancel ] \033[0m  %s",
-            top + 17, left + 2,
-            (wiz_step_ == 0) ? "" : ((on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar()),
-            (wiz_step_ == 0) ? "          " : "[ < Back ]",
-            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar(),
-            next_lbl,
-            (on_bar && wiz_btn_ == 2) ? sgr_sel() : sgr_menubar(),
-            (wiz_step_ > 0) ? "Ctrl+B:Back" : "1-7:Pick");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[3];
+    btns[0].label = "< Back";
+    btns[0].enabled = (wiz_step_ > 0) ? 1 : 0;
+    btns[1].label = (wiz_step_ == 3) ? "Finish" : "Next >";
+    btns[1].enabled = 1;
+    btns[2].label = "Cancel";
+    btns[2].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 17, mr.left + 2, mr.w - 4,
+                            btns, 3, on_bar ? wiz_btn_ : -1,
+                            (wiz_step_ > 0) ? "Ctrl+B:Back" : "1-7:Pick");
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
@@ -1832,11 +1825,15 @@ OYK_FLASHMEM void TinyTmuxConsole::render_edit_iface_dialog() {
 
     int fcnt = edit_iface_field_count();
     int on_bar = (wiz_focus_ == fcnt);
-    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
-            top + 17, left + 2,
-            (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
-            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 17, mr.left + 2, mr.w - 4,
+                            btns, 2, on_bar ? wiz_btn_ : -1,
+                            "Up/Dn:Field  Enter:Save");
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::render_confirm_format_modal() {
@@ -1941,11 +1938,15 @@ OYK_FLASHMEM void TinyTmuxConsole::render_edit_peer_dialog() {
 
     draw_dec_hdiv(top + 13, left, w);
     int on_bar = (wiz_focus_ == 8);
-    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Lt/Rt/Spc:Toggle",
-            top + 14, left + 2,
-            (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
-            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 14, mr.left + 2, mr.w - 4,
+                            btns, 2, on_bar ? wiz_btn_ : -1,
+                            "Up/Dn:Field  Lt/Rt/Spc:Toggle");
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::commit_peer_fields(int slot) {
@@ -2779,6 +2780,23 @@ void TinyTmuxConsole::commit_prompt() {
         return;
     }
 
+    if (pk == PROMPT_FM_UPLOAD) {
+        int ex = 0;
+        if (val[0]) oyk_gui_filemgr_upload(&file_mgr_, val, 1, &ex);
+        render();
+        return;
+    }
+    if (pk == PROMPT_FM_MKDIR) {
+        if (val[0]) oyk_gui_filemgr_mkdir(&file_mgr_, val);
+        render();
+        return;
+    }
+    if (pk == PROMPT_FM_RENAME) {
+        if (val[0]) oyk_gui_filemgr_rename(&file_mgr_, val);
+        render();
+        return;
+    }
+
     if (pk == PROMPT_CONFIRM_FORMAT) {
         if (strcmp(val, "FORMAT") == 0) {
             char msg[96];
@@ -3327,8 +3345,9 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_console_key(int key) {
         strcpy(status_line_, "New incoming connections are now DENIED.");
         render();
     } else if (key == 'f' || key == 'F') {
-        files_tab_ = 0;
         dialog_fb_[0] = '\0';
+        fm_preview_active_ = 0;
+        files_focus_btn_ = 0;
         refresh_files_lists();
         view_ = TMUX_VIEW_FILES;
         render();
@@ -3403,74 +3422,74 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_menu_key(int key) {
 }
 
 OYK_FLASHMEM void TinyTmuxConsole::handle_files_key(int key) {
+    OykGuiFilePane* p = (file_mgr_.active_pane == 0) ? &file_mgr_.inc : &file_mgr_.files;
+    if (fm_preview_active_) {
+        if (key == 27 || key == '\r' || key == '\n' || key == 'q' || key == 'Q' || key == 'v' || key == 'V') {
+            fm_preview_active_ = 0;
+            render();
+        }
+        return;
+    }
     if (key == 27) {
         view_ = TMUX_VIEW_CONSOLE;
         render();
-    } else if (key == '\t') {
-        files_tab_ = (files_tab_ + 1) % 2;
+    } else if (key == '\t' || key == TMUX_KEY_LEFT || key == TMUX_KEY_RIGHT) {
+        file_mgr_.active_pane = 1 - file_mgr_.active_pane;
         render();
     } else if (key == '1') {
-        files_tab_ = 0;
+        file_mgr_.active_pane = 0;
         render();
     } else if (key == '2') {
-        files_tab_ = 1;
+        file_mgr_.active_pane = 1;
         render();
     } else if (key == 'r' || key == 'R') {
-        refresh_files_lists();
-        strcpy(dialog_fb_, "Refreshed files lists.");
+        oyk_gui_filemgr_refresh(&file_mgr_);
+        strcpy(file_mgr_.feedback, "Refreshed files lists.");
         render();
     } else if (key == TMUX_KEY_UP) {
-        int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
-        if (cnt > 0) files_sel_[files_tab_] = (files_sel_[files_tab_] + cnt - 1) % cnt;
+        if (p->count > 0 && p->sel > 0) --p->sel;
         render();
     } else if (key == TMUX_KEY_DOWN) {
-        int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
-        if (cnt > 0) files_sel_[files_tab_] = (files_sel_[files_tab_] + 1) % cnt;
+        if (p->count > 0 && p->sel + 1 < p->count) ++p->sel;
         render();
     } else if (key == TMUX_KEY_HOME) {
-        files_sel_[files_tab_] = 0;
+        p->sel = 0;
         render();
     } else if (key == TMUX_KEY_END) {
-        int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
-        if (cnt > 0) files_sel_[files_tab_] = cnt - 1;
+        if (p->count > 0) p->sel = p->count - 1;
         render();
-    } else if (files_tab_ == 0 && (key == 'a' || key == 'A' || key == '\r' || key == '\n')) {
-        if (pending_count_ > 0) {
-            int idx = files_sel_[0];
-            char dest[128], err[64];
-            int exists = 0;
-            if (oyk_bbs_approve_incoming_file("incoming", node_->config().bbs_files_path,
-                                              pending_files_[idx].uploader, pending_files_[idx].filename,
-                                              "", 0, dest, sizeof(dest), &exists, err, sizeof(err))) {
-                sprintf(dialog_fb_, "Approved %s/%s", pending_files_[idx].uploader, pending_files_[idx].filename);
-                node_->log_message(OYK_LOG_INFO, dialog_fb_);
-            } else {
-                sprintf(dialog_fb_, "Approve error: %.60s", err);
+    } else if (key == 8 || key == 127 || key == '<' || key == '-') {
+        oyk_gui_filemgr_up(&file_mgr_, file_mgr_.active_pane);
+        render();
+    } else if (key == '\r' || key == '\n') {
+        int act = oyk_gui_filemgr_activate(&file_mgr_, file_mgr_.active_pane);
+        if (act == 0 && p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_dir) {
+            int trunc = 0;
+            if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) {
+                fm_preview_active_ = 1;
             }
-            refresh_files_lists();
         }
         render();
+    } else if (key == 'a' || key == 'A') {
+        int ex = 0;
+        oyk_gui_filemgr_approve(&file_mgr_, 1, &ex);
+        render();
+    } else if (key == 'u' || key == 'U') {
+        begin_prompt(PROMPT_FM_UPLOAD, "Upload local file path:", "");
+    } else if (key == 'n' || key == 'N') {
+        begin_prompt(PROMPT_FM_MKDIR, "New subdirectory name:", "");
+    } else if (key == 'm' || key == 'M') {
+        const char* cur = (p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_parent)
+                              ? p->entries[p->sel].name
+                              : "";
+        if (cur[0]) begin_prompt(PROMPT_FM_RENAME, "Rename selected entry to:", cur);
     } else if (key == 'd' || key == 'D') {
-        if (files_tab_ == 0 && pending_count_ > 0) {
-            int idx = files_sel_[0];
-            char err[64];
-            if (oyk_bbs_delete_incoming_file("incoming", pending_files_[idx].uploader,
-                                             pending_files_[idx].filename, err, sizeof(err))) {
-                sprintf(dialog_fb_, "Deleted pending %s/%s", pending_files_[idx].uploader, pending_files_[idx].filename);
-            } else {
-                sprintf(dialog_fb_, "Delete error: %.60s", err);
-            }
-            refresh_files_lists();
-        } else if (files_tab_ == 1 && approved_count_ > 0) {
-            int idx = files_sel_[1];
-            char err[64];
-            if (oyk_bbs_delete_approved_file(node_->config().bbs_files_path,
-                                             approved_files_[idx].rel_path, err, sizeof(err))) {
-                sprintf(dialog_fb_, "Removed approved %.55s", approved_files_[idx].rel_path);
-            } else {
-                sprintf(dialog_fb_, "Remove error: %.60s", err);
-            }
-            refresh_files_lists();
+        oyk_gui_filemgr_delete(&file_mgr_);
+        render();
+    } else if (key == 'v' || key == 'V') {
+        int trunc = 0;
+        if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) {
+            fm_preview_active_ = 1;
         }
         render();
     }
@@ -4108,17 +4127,21 @@ OYK_FLASHMEM void TinyTmuxConsole::handle_mouse_event(int row1, int col1, int ki
         }
     } else if (view_ == TMUX_VIEW_BOOTLOADER && !bootloader_pending_) {
         OykTuiRect mr;
-        oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+        oyk_tui_center_modal(term_rows_, term_cols_, 13, 72, &mr);
         if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
             dispatch_key(27);
             return;
         }
-        const int top1 = mr.top + 1;
-        const int left1 = mr.left + 1;
-        if (row1 == top1 + 7 && col1 >= left1 + 2 && col1 <= left1 + 28) dispatch_key('s');
-        else if (row1 == top1 + 7 && col1 >= left1 + 30) dispatch_key('d');
-        else if (row1 == top1 + 8 && col1 >= left1 + 2 && col1 <= left1 + 28) dispatch_key('r');
-        else if (row1 == top1 + 8 && col1 >= left1 + 30) dispatch_key(27);
+        OykTuiButton btns[4];
+        btns[0].label = "Save & Exit";  btns[0].enabled = 1;
+        btns[1].label = "Discard";      btns[1].enabled = 1;
+        btns[2].label = "Review Peers"; btns[2].enabled = 1;
+        btns[3].label = "Cancel";       btns[3].enabled = 1;
+        int hit = oyk_tui_hit_button_row(mr.top + 11, mr.left + 2, mr.w - 4, btns, 4, r0, c0);
+        if (hit == 0) dispatch_key('s');
+        else if (hit == 1) dispatch_key('d');
+        else if (hit == 2) dispatch_key('r');
+        else if (hit == 3) dispatch_key(27);
     }
 }
 

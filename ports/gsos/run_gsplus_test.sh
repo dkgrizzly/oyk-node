@@ -44,7 +44,7 @@ run_in_gsplus() {
     local out_po="${work_dir}/out.po"
     local cfg_file="${work_dir}/config.kegs"
 
-    python3 "${MKPRODOS}" format "${out_po}" --name OYKOUT --blocks 32768
+    python3 "${MKPRODOS}" format "${out_po}" --name OYKOUT --blocks 49152
     if [[ "${with_uitest}" == "1" ]]; then
         printf "UITEST\n" > "${work_dir}/UITEST.FLG"
         python3 "${MKPRODOS}" put "${out_po}" "${work_dir}/UITEST.FLG" "UITEST.FLG" --type 0x04 --aux 0x0000
@@ -138,6 +138,7 @@ case "${MODE}" in
             [gexit.bmp]=gsos_exit.bmp
             [gthme.bmp]=gsos_theme.bmp
             [gtml.bmp]=gsos_terminal.bmp
+            [gtmlh.bmp]=gsos_terminal_help.bmp
             [gfile.bmp]=gsos_files.bmp
             [gabt.bmp]=gsos_about.bmp
         )
@@ -146,7 +147,7 @@ case "${MODE}" in
                 mv -f "${OUT_DIR}/${src_name}" "${OUT_DIR}/${MAP[${src_name}]}"
             fi
         done
-        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal files about)
+        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
         copied=0
         for flow in "${FLOWS[@]}"; do
             if [[ -f "${OUT_DIR}/gsos_${flow}.bmp" ]]; then
@@ -154,7 +155,7 @@ case "${MODE}" in
             fi
         done
         echo "Extracted ${copied}/${#FLOWS[@]} gsos BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 22 ]]
+        [[ "${copied}" -eq 23 ]]
         ;;
     *)
         usage

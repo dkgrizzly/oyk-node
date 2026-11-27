@@ -532,6 +532,7 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/compat/oyk_rig.cpp
         ports/compat/oyk_printer.cpp
         ports/compat/oyk_term.cpp
+        ports/compat/oyk_tui.cpp
     )
     target_include_directories(oyk_gui_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat

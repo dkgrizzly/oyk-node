@@ -143,6 +143,7 @@ case "${MODE}" in
             [AT_EXIT.BMP]="${OUT_PFX}_exit.bmp"
             [AT_THME.BMP]="${OUT_PFX}_theme.bmp"
             [AT_TML.BMP]="${OUT_PFX}_terminal.bmp"
+            [AT_TMLH.BMP]="${OUT_PFX}_terminal_help.bmp"
             [AT_FILE.BMP]="${OUT_PFX}_files.bmp"
             [AT_ABT.BMP]="${OUT_PFX}_about.bmp"
         )
@@ -153,8 +154,8 @@ case "${MODE}" in
                 copied=$((copied + 1))
             fi
         done
-        echo "Extracted ${copied}/22 ${OUT_PFX} BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 22 ]]
+        echo "Extracted ${copied}/23 ${OUT_PFX} BMP screenshots into ${OUT_DIR}"
+        [[ "${copied}" -eq 23 ]]
         ;;
     *)
         usage

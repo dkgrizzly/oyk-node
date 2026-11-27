@@ -267,4 +267,21 @@
 #define IDD_ABOUT           660
 #define IDC_ABOUT_TEXT      661
 
+/* Terminal Hotkey Help Dialog */
+#define IDD_TERM_HELP       670
+#define IDC_THELP_TEXT      671
+
+/* Dual-Pane Jailed File Manager Controls */
+#define IDC_APP_LBL_INC     672
+#define IDC_APP_LBL_FILES   673
+#define IDC_APP_UPLOAD      674
+#define IDC_APP_MKDIR       675
+#define IDC_APP_RENAME      676
+#define IDC_APP_VIEW        677
+
+/* Generic Input Prompt Dialog */
+#define IDD_FM_PROMPT       680
+#define IDC_FMP_LABEL       681
+#define IDC_FMP_EDIT        682
+
 #endif /* OYK_WIN_RESOURCE_H */

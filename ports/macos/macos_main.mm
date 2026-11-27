@@ -537,15 +537,25 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
                             oyk_theme_role_label(r), oyk_theme_role_key(r), hx];
         }
     } else if (scr == OYK_SCR_TERMINAL) {
-        [s appendString:@"Ctrl+A ? Help | Ctrl+A C Connect | Ctrl+A D Disconnect | Ctrl+A X Console\n\n"];
-        [s appendString:@"*** Connected to N0BBS-7 via axudp0\nWelcome to OYK Packet BBS (YAPP-C).\nBBS> L\n"];
+        [s appendString:@"*** Connected to KR4OYK-1 BBS [EOL:CR]\nWelcome to OYK Packet BBS (YAPP-C).\nBBS> L\n1   248   W3TRM-1  ALL   Welcome to OYK Packet Node\n"];
+        [s appendString:@"------------------------------------------------------------------------\n"];
+        [s appendFormat:@"%s\n", oyk_term_hotkey_bar_text(0, 0)];
+        [s appendString:@"> _                                                              [Send]\n"];
+    } else if (scr == OYK_SCR_TERM_HELP) {
+        [s appendString:@"Command prefix: Ctrl-A (press Ctrl-A, then hotkey)\n\n"];
+        for (int hi = 0; hi < oyk_term_help_count(); ++hi) {
+            const OykTermHelpEntry* he = oyk_term_help_entry(hi);
+            if (he) {
+                [s appendFormat:@"%-9s %-36s %s\n", he->key_label, he->action, he->alt_key];
+            }
+        }
     } else if (scr == OYK_SCR_FILES) {
-        [s appendFormat:@"PENDING INCOMING (%s | %s | %s)\n  W4ABC-7  PACKETS.TXT  2048\n\nAPPROVED (%s | %s)\n  README.TXT  1420\n",
-                        oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 0),
-                        oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 1),
-                        oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 2),
-                        oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 0),
-                        oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 1)];
+        [s appendString:@"Incoming: /                         | Files: /\n"];
+        [s appendString:@"Name                      Size      | Name                      Size\n"];
+        [s appendString:@"------------------------------------+-------------------------------------\n"];
+        [s appendString:@"W3TRM-1                   <DIR>     | bulletins                 <DIR>\n"];
+        [s appendString:@"                                    | readme.txt                1420 B\n"];
+        [s appendString:@"\n[ Upload... ]  [ Approve -> ]  [ Rename ]  [ New Dir ]  [ Delete ]  [ View ]\n"];
     } else if (scr == OYK_SCR_MENU) {
         [s appendString:@"Node Menu Actions:\n\n"];
         for (int i = 0; i < oyk_gui_node_menu_count(); ++i) {
@@ -834,12 +844,13 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
         { OYK_SCR_EXIT_PEERS, 0, "exit"             },
         { OYK_SCR_THEME,      0, "theme"            },
         { OYK_SCR_TERMINAL,   0, "terminal"         },
+        { OYK_SCR_TERM_HELP,  0, "terminal_help"    },
         { OYK_SCR_FILES,      0, "files"            },
         { OYK_SCR_ABOUT,      0, "about"            }
     };
     [self refreshConsole];
     [self captureWindow:mainWindow_ asFlow:@"main"];
-    for (int i = 1; i < 22; ++i) {
+    for (int i = 1; i < 23; ++i) {
         if (kFlows[i].scr == OYK_SCR_THEME) {
             NSWindow* tw = [self presentThemeSettingsWindow];
             int startCount = themePreviewCount_;

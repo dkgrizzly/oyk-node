@@ -96,10 +96,22 @@ int main() {
 
     CHECK(oyk_gsos_term_decode_ctrl_a('?') == OYK_GSOS_TCMD_HELP);
     CHECK(oyk_gsos_term_decode_ctrl_a('s') == OYK_GSOS_TCMD_UPLOAD);
+    CHECK(strstr(oyk_gsos_term_hotkey_bar_text(0), "Ctrl-A Z:Help") != NULL);
+    CHECK(oyk_gsos_term_help_count() >= 6);
+    CHECK(strcmp(oyk_gsos_screen_title(OYK_GSOS_SCR_TERM_HELP), "Terminal Hotkey Help") == 0);
     CHECK(oyk_gsos_term_wrap_line("HELLO APPLE IIGS GSOS", 21, 12, spans, 4) >= 2);
     memset(&eolp, 0, sizeof(eolp));
     CHECK(oyk_gsos_term_eol_feed(&eolp, "A\r\n", 3, out_eol, sizeof(out_eol)) == 2);
     CHECK(eolp.detected == OYK_GSOS_EOL_CRLF);
+
+    OykGsosFileMgr fm;
+    oyk_gsos_filemgr_init(&fm, "/OYK/INCOMING", "/OYK/FILES");
+    CHECK(fm.inc.count >= 2 && strcmp(fm.inc.entries[0].name, "..") != 0);
+    CHECK(oyk_gsos_filemgr_up(&fm, 0) == 0);
+    CHECK(oyk_gsos_filemgr_enter_dir(&fm, 0, "../ESCAPE") == 0);
+    CHECK(oyk_gsos_filemgr_enter_dir(&fm, 0, "W3TRM-1") == 1);
+    CHECK(strcmp(fm.inc.entries[0].name, "..") == 0);
+    CHECK(oyk_gsos_filemgr_up(&fm, 0) == 1 && strcmp(fm.inc.entries[0].name, "..") != 0);
 
     printf("oyk_gsos_tests: failures=%d\n", g_fail);
     return g_fail == 0 ? 0 : 1;

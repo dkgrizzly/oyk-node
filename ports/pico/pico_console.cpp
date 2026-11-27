@@ -98,7 +98,7 @@ PicoConsole::PicoConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL),
       term_type_(PICO_TERM_VT100), term_rows_(25), term_cols_(80), view_(PICO_VIEW_CONSOLE),
       prompt_kind_(PICO_PROMPT_NONE), menu_sel_(0), settings_tab_(0),
-      files_tab_(0), pending_count_(0), approved_count_(0),
+      files_focus_btn_(0), fm_preview_active_(0),
       storage_sel_(0), bootloader_pending_(0), bootloader_ms_(0),
       prompt_len_(0), wiz_edit_idx_(0), wiz_step_(0), wiz_drv_(0),
       wiz_last_drv_(0), wiz_focus_(0), wiz_btn_(0), wiz_flags_(0),
@@ -107,9 +107,8 @@ PicoConsole::PicoConsole()
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
       esc_state_(0), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_ms_(0), last_ms_(0) {
     memset(settings_sel_, 0, sizeof(settings_sel_));
-    memset(files_sel_, 0, sizeof(files_sel_));
-    memset(pending_files_, 0, sizeof(pending_files_));
-    memset(approved_files_, 0, sizeof(approved_files_));
+    memset(&file_mgr_, 0, sizeof(file_mgr_));
+    fm_preview_buf_[0] = '\0';
     oyk_config_init_default(&draft_);
     prompt_label_[0] = '\0';
     prompt_buf_[0] = '\0';
@@ -323,6 +322,68 @@ void PicoConsole::draw_hdiv(int row, int col, int w) {
     write_str("\033(B\033[0m");
 }
 
+void PicoConsole::tui_get_size_cb(void* ctx, int* out_rows, int* out_cols) {
+    const PicoConsole* c = static_cast<const PicoConsole*>(ctx);
+    if (out_rows) *out_rows = c ? c->term_rows_ : 25;
+    if (out_cols) *out_cols = c ? c->term_cols_ : 80;
+}
+
+void PicoConsole::tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    PicoConsole* c = static_cast<PicoConsole*>(ctx);
+    if (!c || max_w <= 0) return;
+    if (max_w > 132) max_w = 132;
+    const char* sgr = "\033[0m";
+    switch (style) {
+        case OYK_TUI_STYLE_BORDER:
+        case OYK_TUI_STYLE_DLG_BORDER: sgr = c->sgr_border(); break;
+        case OYK_TUI_STYLE_TITLE:      sgr = c->sgr_title(); break;
+        case OYK_TUI_STYLE_HEADER:     sgr = c->sgr_header(); break;
+        case OYK_TUI_STYLE_MENU_BAR:
+        case OYK_TUI_STYLE_DLG_BAR:    sgr = c->sgr_menubar(); break;
+        case OYK_TUI_STYLE_MENU_SEL:
+        case OYK_TUI_STYLE_DLG_SEL:    sgr = c->sgr_sel(); break;
+        case OYK_TUI_STYLE_LIST_HDR:   sgr = c->sgr_list_hdr(); break;
+        case OYK_TUI_STYLE_WARN:
+        case OYK_TUI_STYLE_ERROR:      sgr = c->sgr_warn(); break;
+        case OYK_TUI_STYLE_CLOSE_BTN:
+            sgr = (c->term_type_ >= PICO_TERM_VT220) ? "\033[1;37;41m" : "\033[7m";
+            break;
+        default: sgr = "\033[0m"; break;
+    }
+    char out[256];
+    const char* txt = text ? text : "";
+    sprintf(out, "\033[%d;%dH%s%-*.*s\033[0m", row + 1, col + 1, sgr, max_w, max_w, txt);
+    c->write_str(out);
+}
+
+void PicoConsole::tui_put_box_cb(void* ctx, int top, int left, int h, int w,
+                                 int /*bdr*/, int /*fill*/, int fill_interior) {
+    PicoConsole* c = static_cast<PicoConsole*>(ctx);
+    if (c) c->draw_box(top + 1, left + 1, h, w, NULL, fill_interior, 0);
+}
+
+void PicoConsole::tui_put_hdiv_cb(void* ctx, int row, int left, int w, int /*style*/) {
+    PicoConsole* c = static_cast<PicoConsole*>(ctx);
+    if (c) c->draw_hdiv(row + 1, left + 1, w);
+}
+
+void PicoConsole::tui_put_shadow_cb(void* ctx, int top, int left, int h, int w) {
+    PicoConsole* c = static_cast<PicoConsole*>(ctx);
+    if (c) c->draw_shadow(top + 1, left + 1, h, w);
+}
+
+OykTuiBackend PicoConsole::make_tui_backend() {
+    OykTuiBackend b;
+    memset(&b, 0, sizeof(b));
+    b.ctx = this;
+    b.get_size = PicoConsole::tui_get_size_cb;
+    b.put_text = PicoConsole::tui_put_text_cb;
+    b.put_box = PicoConsole::tui_put_box_cb;
+    b.put_hdiv = PicoConsole::tui_put_hdiv_cb;
+    b.put_shadow = PicoConsole::tui_put_shadow_cb;
+    return b;
+}
+
 void PicoConsole::send_size_probe() {
     write_str("\033[s\033[999;999H\033[6n\033[u");
 }
@@ -373,7 +434,10 @@ void PicoConsole::render() {
     else if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) render_confirm_format_modal();
     else if (prompt_kind_ == PICO_PROMPT_SET_TEXT ||
              prompt_kind_ == PICO_PROMPT_SET_BOOL ||
-             prompt_kind_ == PICO_PROMPT_LTERM_CONNECT) render_text_prompt();
+             prompt_kind_ == PICO_PROMPT_LTERM_CONNECT ||
+             prompt_kind_ == PICO_PROMPT_FM_UPLOAD ||
+             prompt_kind_ == PICO_PROMPT_FM_MKDIR ||
+             prompt_kind_ == PICO_PROMPT_FM_RENAME) render_text_prompt();
     else if (view_ == PICO_VIEW_LOCAL_TERM && lterm_help_open_) render_local_term_help_modal();
 }
 
@@ -708,73 +772,19 @@ void PicoConsole::render_settings() {
 
 void PicoConsole::refresh_files_lists() {
     if (!node_) return;
-    pending_count_ = oyk_bbs_list_incoming("incoming", pending_files_, 8);
-    approved_count_ = oyk_bbs_list_approved(node_->config().bbs_files_path, approved_files_, 8);
-    if (files_sel_[0] >= pending_count_) files_sel_[0] = (pending_count_ > 0) ? (pending_count_ - 1) : 0;
-    if (files_sel_[1] >= approved_count_) files_sel_[1] = (approved_count_ > 0) ? (approved_count_ - 1) : 0;
+    const char* froot = node_->config().bbs_files_path[0] ? node_->config().bbs_files_path : "files";
+    if (strcmp(file_mgr_.files.root, froot) != 0 || !file_mgr_.inc.root[0]) {
+        oyk_gui_filemgr_init(&file_mgr_, "incoming", froot);
+    } else {
+        oyk_gui_filemgr_refresh(&file_mgr_);
+    }
 }
 
 void PicoConsole::render_files() {
-    char buf[192];
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 19, 72, &mr);
-    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Files Area Manager", 1, 1);
-    draw_shadow(top, left, h, w);
-    sprintf(buf, "\033[%d;%dH%s 1:Pending Incoming (%d) \033[0m  %s 2:Approved Files (%d) \033[0m",
-            top + 1, left + 2,
-            (files_tab_ == 0) ? sgr_menusel() : sgr_menubar(), pending_count_,
-            (files_tab_ == 1) ? sgr_menusel() : sgr_menubar(), approved_count_);
-    write_str(buf);
-    draw_hdiv(top + 2, left, w);
-
-    if (files_tab_ == 0) {
-        sprintf(buf, "\033[%d;%dH%s %-15s %-37s %-12s \033[0m",
-                top + 3, left + 2, sgr_list_hdr(), "Uploader", "Filename", "Size");
-        write_str(buf);
-        for (int i = 0; i < 10; ++i) {
-            if (pending_count_ == 0 && i == 0) {
-                sprintf(buf, "\033[%d;%dH %-66s", top + 4 + i, left + 2, "(no pending uploads in incoming/)");
-                write_str(buf);
-            } else if (i < pending_count_) {
-                sprintf(buf, "\033[%d;%dH%s %-15.15s %-37.37s %-12lu \033[0m",
-                        top + 4 + i, left + 2, (i == files_sel_[0]) ? sgr_sel() : "",
-                        pending_files_[i].uploader, pending_files_[i].filename,
-                        static_cast<unsigned long>(pending_files_[i].size));
-                write_str(buf);
-            }
-        }
-        draw_hdiv(top + 16, left, w);
-        sprintf(buf, "\033[%d;%dH%s %-68.68s \033[0m",
-                top + 17, left + 1, sgr_menubar(),
-                "Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close");
-        write_str(buf);
-    } else {
-        sprintf(buf, "\033[%d;%dH%s %-53s %-12s \033[0m",
-                top + 3, left + 2, sgr_list_hdr(), "Approved File Path", "Size");
-        write_str(buf);
-        for (int i = 0; i < 10; ++i) {
-            if (approved_count_ == 0 && i == 0) {
-                sprintf(buf, "\033[%d;%dH %-66s", top + 4 + i, left + 2, "(no approved files in BBS files area)");
-                write_str(buf);
-            } else if (i < approved_count_) {
-                sprintf(buf, "\033[%d;%dH%s %-53.53s %-12lu \033[0m",
-                        top + 4 + i, left + 2, (i == files_sel_[1]) ? sgr_sel() : "",
-                        approved_files_[i].rel_path,
-                        static_cast<unsigned long>(approved_files_[i].size));
-                write_str(buf);
-            }
-        }
-        draw_hdiv(top + 16, left, w);
-        sprintf(buf, "\033[%d;%dH%s %-68.68s \033[0m",
-                top + 17, left + 1, sgr_menubar(),
-                "Tab/1-2:Tabs  D:Remove Approved  R:Refresh  Esc:Close");
-        write_str(buf);
-    }
-    sprintf(buf, "\033[%d;%dH%s%-68.68s\033[0m",
-            top + 15, left + 2, sgr_warn(),
-            dialog_fb_[0] ? dialog_fb_ : "Select a file or press Esc to close.");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_dual_pane_modal(&b, term_rows_, term_cols_, &file_mgr_,
+                                 files_focus_btn_, "Files Area Manager",
+                                 fm_preview_buf_, fm_preview_active_);
 }
 
 void PicoConsole::render_rig() {
@@ -894,7 +904,7 @@ void PicoConsole::render_bootloader() {
         return;
     }
     if (auto_cnt > 0) {
-        oyk_tui_center_modal(term_rows_, term_cols_, 13, 68, &mr);
+        oyk_tui_center_modal(term_rows_, term_cols_, 13, 72, &mr);
         const int top = mr.top + 1, left = mr.left + 1;
         draw_box(top, left, mr.h, mr.w, "Auto-Learned Peers - BOOTSEL", 1, 1);
         draw_shadow(top, left, mr.h, mr.w);
@@ -902,14 +912,17 @@ void PicoConsole::render_bootloader() {
         write_str(buf);
         sprintf(buf, "\033[%d;%dHSave to peers config, discard, or review before BOOTSEL?", top + 4, left + 2);
         write_str(buf);
-        sprintf(buf, "\033[%d;%dH[S] Save & BOOTSEL        [D] Discard & BOOTSEL", top + 6, left + 2);
-        write_str(buf);
-        sprintf(buf, "\033[%d;%dH[R] Review Peers          [N / Esc] Cancel", top + 7, left + 2);
+        sprintf(buf, "\033[%d;%dHS:Save & Exit  D:Discard  R:Review Peers  N/Esc:Cancel", top + 6, left + 2);
         write_str(buf);
         draw_hdiv(top + 10, left, mr.w);
-        sprintf(buf, "\033[%d;%dH%s %-64.64s \033[0m",
-                top + 11, left + 1, sgr_menubar(), "S:Save & Reboot  D:Discard  R/E:Review Peers  N/Esc:Cancel");
-        write_str(buf);
+        OykTuiBackend b = make_tui_backend();
+        OykTuiButton btns[4];
+        btns[0].label = "Save & Exit";  btns[0].enabled = 1;
+        btns[1].label = "Discard";      btns[1].enabled = 1;
+        btns[2].label = "Review Peers"; btns[2].enabled = 1;
+        btns[3].label = "Cancel";       btns[3].enabled = 1;
+        oyk_tui_draw_button_row(&b, mr.top + 11, mr.left + 2, mr.w - 4,
+                                btns, 4, 0, NULL);
     } else {
         oyk_tui_center_modal(term_rows_, term_cols_, 10, 60, &mr);
         const int top = mr.top + 1, left = mr.left + 1;
@@ -920,9 +933,12 @@ void PicoConsole::render_bootloader() {
         sprintf(buf, "\033[%d;%dHThe device will mount as RPI-RP2 / RP2350 USB drive.", top + 3, left + 2);
         write_str(buf);
         draw_hdiv(top + 7, left, mr.w);
-        sprintf(buf, "\033[%d;%dH%s %-56.56s \033[0m",
-                top + 8, left + 1, sgr_menubar(), "Y/Enter:Enter BOOTSEL   N/Esc:Cancel");
-        write_str(buf);
+        OykTuiBackend b = make_tui_backend();
+        OykTuiButton btns[2];
+        btns[0].label = "BOOTSEL"; btns[0].enabled = 1;
+        btns[1].label = "Cancel";  btns[1].enabled = 1;
+        oyk_tui_draw_button_row(&b, mr.top + 8, mr.left + 2, mr.w - 4,
+                                btns, 2, 0, "Y/Enter:BOOTSEL  N/Esc:Cancel");
     }
 }
 
@@ -1006,9 +1022,7 @@ void PicoConsole::render_local_term() {
             ++vis_idx;
         }
     }
-    const char* hk_bar = lterm_ctrl_a_
-        ? "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc E:EOL P:Prt W:Clr R:Size X:Exit"
-        : "Ctrl+A Z:Help  F2:Conn  Ctrl+A B/T:BBS/Chat  Ctrl+A E:EOL  Tab/Esc:Console";
+    const char* hk_bar = oyk_term_hotkey_bar_text(1, lterm_ctrl_a_);
     sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
             tlay.hotkey_row + 1, sgr_menubar(), ncols - 2, ncols - 2, hk_bar);
     write_str(buf);
@@ -1023,31 +1037,8 @@ void PicoConsole::render_local_term() {
 }
 
 void PicoConsole::render_local_term_help_modal() {
-    char buf[192];
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
-    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Terminal Hotkey Help", 1, 1);
-    draw_shadow(top, left, h, w);
-    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
-            top + 1, left + 2, sgr_title(), w - 6, w - 6,
-            "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)");
-    write_str(buf);
-    draw_hdiv(top + 2, left, w);
-    const int cnt = oyk_term_help_count();
-    for (int i = 0; i < cnt && (3 + i) < (h - 3); ++i) {
-        const OykTermHelpEntry* e = oyk_term_help_entry(i);
-        if (!e) continue;
-        char row_buf[80];
-        sprintf(row_buf, "%-9s %-38s %-14s", e->key_label, e->action, e->alt_key);
-        sprintf(buf, "\033[%d;%dH%-*.*s", top + 3 + i, left + 2, w - 4, w - 4, row_buf);
-        write_str(buf);
-    }
-    draw_hdiv(top + h - 3, left, w);
-    sprintf(buf, "\033[%d;%dH%s %-*.*s \033[0m",
-            top + h - 2, left + 1, sgr_menubar(), w - 4, w - 4,
-            "Press a key above to run it, or Esc / Enter / [X] to close");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_term_help_modal(&b, term_rows_, term_cols_);
 }
 
 void PicoConsole::wizard_apply_driver_defaults() {
@@ -1287,14 +1278,17 @@ void PicoConsole::render_wizard_modal() {
     draw_hdiv(top + 16, left, w);
     int fcnt = wizard_step_field_count();
     int on_bar = (wiz_step_ == 0 || wiz_step_ == 3 || wiz_focus_ == fcnt);
-    sprintf(buf, "\033[%d;%dH%s %s \033[0m  %s %s \033[0m  %s [ Cancel ] \033[0m",
-            top + 17, left + 2,
-            (wiz_step_ == 0) ? "" : ((on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar()),
-            (wiz_step_ == 0) ? "          " : "[ < Back ]",
-            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar(),
-            (wiz_step_ == 3) ? "[ Finish ]" : "[ Next > ]",
-            (on_bar && wiz_btn_ == 2) ? sgr_sel() : sgr_menubar());
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[3];
+    btns[0].label = "< Back";
+    btns[0].enabled = (wiz_step_ > 0) ? 1 : 0;
+    btns[1].label = (wiz_step_ == 3) ? "Finish" : "Next >";
+    btns[1].enabled = 1;
+    btns[2].label = "Cancel";
+    btns[2].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 17, mr.left + 2, mr.w - 4,
+                            btns, 3, on_bar ? wiz_btn_ : -1,
+                            (wiz_step_ > 0) ? "B:Back  Esc:Cancel" : "1-5:Pick  Esc:Cancel");
 }
 
 void PicoConsole::render_edit_iface_modal() {
@@ -1365,11 +1359,15 @@ void PicoConsole::render_edit_iface_modal() {
     draw_hdiv(top + 16, left, w);
     int fcnt = edit_iface_field_count();
     int on_bar = (wiz_focus_ == fcnt);
-    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
-            top + 17, left + 2,
-            (on_bar && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
-            (on_bar && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 17, mr.left + 2, mr.w - 4,
+                            btns, 2, on_bar ? wiz_btn_ : -1,
+                            "Up/Dn:Field  Enter:Save");
 }
 
 void PicoConsole::open_edit_peer_dialog(int idx) {
@@ -1469,11 +1467,15 @@ void PicoConsole::render_edit_peer_modal() {
         write_str(buf);
     }
     draw_hdiv(top + 15, left, w);
-    sprintf(buf, "\033[%d;%dH%s [  Save  ] \033[0m  %s [ Cancel ] \033[0m  Up/Dn:Field Enter:Save",
-            top + 16, left + 2,
-            (wiz_focus_ == 8 && wiz_btn_ == 0) ? sgr_sel() : sgr_menubar(),
-            (wiz_focus_ == 8 && wiz_btn_ == 1) ? sgr_sel() : sgr_menubar());
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    OykTuiButton btns[2];
+    btns[0].label = " Save ";
+    btns[0].enabled = 1;
+    btns[1].label = "Cancel";
+    btns[1].enabled = 1;
+    oyk_tui_draw_button_row(&b, mr.top + 16, mr.left + 2, mr.w - 4,
+                            btns, 2, (wiz_focus_ == 8) ? wiz_btn_ : -1,
+                            "Up/Dn:Field  Enter:Save");
 }
 
 void PicoConsole::open_terminate_dialog() {
@@ -1810,6 +1812,19 @@ void PicoConsole::commit_prompt() {
         else render();
         return;
     }
+    if (pk == PICO_PROMPT_FM_UPLOAD) {
+        int ex = 0;
+        if (val[0]) oyk_gui_filemgr_upload(&file_mgr_, val, 1, &ex);
+        render(); return;
+    }
+    if (pk == PICO_PROMPT_FM_MKDIR) {
+        if (val[0]) oyk_gui_filemgr_mkdir(&file_mgr_, val);
+        render(); return;
+    }
+    if (pk == PICO_PROMPT_FM_RENAME) {
+        if (val[0]) oyk_gui_filemgr_rename(&file_mgr_, val);
+        render(); return;
+    }
     int idx = settings_sel_[settings_tab_];
     if (settings_tab_ == 0) {
         if (idx == 0) oyk_parse_callsign(val, &draft_.callsign);
@@ -2091,18 +2106,29 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
     } else if (view_ == PICO_VIEW_BOOTLOADER && !bootloader_pending_) {
         OykTuiRect mr;
         int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
-        oyk_tui_center_modal(term_rows_, term_cols_, auto_cnt > 0 ? 13 : 10, auto_cnt > 0 ? 68 : 60, &mr);
+        oyk_tui_center_modal(term_rows_, term_cols_, auto_cnt > 0 ? 13 : 10, auto_cnt > 0 ? 72 : 60, &mr);
         if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
             handle_key_code(PK_ESC);
             return;
         }
-        const int top1 = mr.top + 1;
-        const int left1 = mr.left + 1;
         if (auto_cnt > 0) {
-            if (row1 == top1 + 6 && col1 >= left1 + 2 && col1 <= left1 + 28) handle_key_code('s');
-            else if (row1 == top1 + 6 && col1 >= left1 + 30) handle_key_code('d');
-            else if (row1 == top1 + 7 && col1 >= left1 + 2 && col1 <= left1 + 28) handle_key_code('r');
-            else if (row1 == top1 + 7 && col1 >= left1 + 30) handle_key_code(PK_ESC);
+            OykTuiButton btns[4];
+            btns[0].label = "Save & Exit";  btns[0].enabled = 1;
+            btns[1].label = "Discard";      btns[1].enabled = 1;
+            btns[2].label = "Review Peers"; btns[2].enabled = 1;
+            btns[3].label = "Cancel";       btns[3].enabled = 1;
+            int hit = oyk_tui_hit_button_row(mr.top + 11, mr.left + 2, mr.w - 4, btns, 4, r0, c0);
+            if (hit == 0) handle_key_code('s');
+            else if (hit == 1) handle_key_code('d');
+            else if (hit == 2) handle_key_code('r');
+            else if (hit == 3) handle_key_code(PK_ESC);
+        } else {
+            OykTuiButton btns[2];
+            btns[0].label = "BOOTSEL"; btns[0].enabled = 1;
+            btns[1].label = "Cancel";  btns[1].enabled = 1;
+            int hit = oyk_tui_hit_button_row(mr.top + 8, mr.left + 2, mr.w - 4, btns, 2, r0, c0);
+            if (hit == 0) handle_key_code('y');
+            else if (hit == 1) handle_key_code(PK_ESC);
         }
     }
 }
@@ -2267,7 +2293,7 @@ void PicoConsole::handle_console_key(int key) {
         lterm_help_open_ = 0;
         view_ = PICO_VIEW_LOCAL_TERM; render();
     } else if (key == 'f' || key == 'F') {
-        files_tab_ = 0; dialog_fb_[0] = '\0'; refresh_files_lists();
+        dialog_fb_[0] = '\0'; fm_preview_active_ = 0; files_focus_btn_ = 0; refresh_files_lists();
         view_ = PICO_VIEW_FILES; render();
     } else if (key == 'r' || key == 'R') {
         dialog_fb_[0] = '\0'; view_ = PICO_VIEW_RIG; render();
@@ -2388,38 +2414,79 @@ void PicoConsole::handle_settings_key(int key) {
 }
 
 void PicoConsole::handle_files_key(int key) {
+    OykGuiFilePane* p = (file_mgr_.active_pane == 0) ? &file_mgr_.inc : &file_mgr_.files;
+    if (fm_preview_active_) {
+        if (key == PK_ESC || key == PK_ENTER || key == 'q' || key == 'Q' || key == 'v' || key == 'V') {
+            fm_preview_active_ = 0;
+            render();
+        }
+        return;
+    }
     if (key == PK_ESC) { view_ = PICO_VIEW_CONSOLE; render(); return; }
-    if (key == PK_TAB) { files_tab_ = (files_tab_ + 1) % 2; render(); return; }
-    if (key == '1') { files_tab_ = 0; render(); return; }
-    if (key == '2') { files_tab_ = 1; render(); return; }
-    if (key == 'r' || key == 'R') { refresh_files_lists(); strcpy(dialog_fb_, "Refreshed files lists."); render(); return; }
-    int cnt = (files_tab_ == 0) ? pending_count_ : approved_count_;
-    if (key == PK_UP && cnt > 0) { files_sel_[files_tab_] = (files_sel_[files_tab_] + cnt - 1) % cnt; render(); return; }
-    if (key == PK_DOWN && cnt > 0) { files_sel_[files_tab_] = (files_sel_[files_tab_] + 1) % cnt; render(); return; }
-    if (files_tab_ == 0 && (key == 'a' || key == 'A' || key == PK_ENTER) && pending_count_ > 0) {
-        const OykPendingIncoming& pi = pending_files_[files_sel_[0]];
-        char dest[128], err[96];
-        int exists = 0;
-        if (oyk_bbs_approve_incoming_file("incoming", node_->config().bbs_files_path,
-                                          pi.uploader, pi.filename, NULL, 1, dest, sizeof(dest),
-                                          &exists, err, sizeof(err))) {
-            sprintf(dialog_fb_, "Approved %.40s", pi.filename);
-            refresh_files_lists();
-        } else {
-            pico_str_copy(dialog_fb_, sizeof(dialog_fb_), err);
+    if (key == PK_TAB || key == PK_LEFT || key == PK_RIGHT) {
+        file_mgr_.active_pane = 1 - file_mgr_.active_pane; render(); return;
+    }
+    if (key == '1') { file_mgr_.active_pane = 0; render(); return; }
+    if (key == '2') { file_mgr_.active_pane = 1; render(); return; }
+    if (key == 'r' || key == 'R') {
+        oyk_gui_filemgr_refresh(&file_mgr_);
+        strcpy(file_mgr_.feedback, "Refreshed files lists.");
+        render(); return;
+    }
+    if (key == PK_UP && p->count > 0 && p->sel > 0) { --p->sel; render(); return; }
+    if (key == PK_DOWN && p->count > 0 && p->sel + 1 < p->count) { ++p->sel; render(); return; }
+    if (key == PK_BS || key == '<' || key == '-') {
+        oyk_gui_filemgr_up(&file_mgr_, file_mgr_.active_pane);
+        render(); return;
+    }
+    if (key == PK_ENTER) {
+        int act = oyk_gui_filemgr_activate(&file_mgr_, file_mgr_.active_pane);
+        if (act == 0 && p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_dir) {
+            int trunc = 0;
+            if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) {
+                fm_preview_active_ = 1;
+            }
         }
         render(); return;
     }
-    if ((key == 'd' || key == 'D') && cnt > 0) {
-        char err[96];
-        if (files_tab_ == 0) {
-            const OykPendingIncoming& pi = pending_files_[files_sel_[0]];
-            oyk_bbs_delete_incoming_file("incoming", pi.uploader, pi.filename, err, sizeof(err));
-        } else {
-            oyk_bbs_delete_approved_file(node_->config().bbs_files_path, approved_files_[files_sel_[1]].rel_path, err, sizeof(err));
+    if (key == 'a' || key == 'A') {
+        int ex = 0;
+        oyk_gui_filemgr_approve(&file_mgr_, 1, &ex);
+        render(); return;
+    }
+    if (key == 'u' || key == 'U') {
+        pico_str_copy(prompt_label_, sizeof(prompt_label_), "Upload local file path");
+        prompt_buf_[0] = '\0'; prompt_len_ = 0;
+        prompt_kind_ = PICO_PROMPT_FM_UPLOAD;
+        render(); return;
+    }
+    if (key == 'n' || key == 'N') {
+        pico_str_copy(prompt_label_, sizeof(prompt_label_), "New subdirectory name");
+        prompt_buf_[0] = '\0'; prompt_len_ = 0;
+        prompt_kind_ = PICO_PROMPT_FM_MKDIR;
+        render(); return;
+    }
+    if (key == 'm' || key == 'M') {
+        const char* cur = (p->count > 0 && p->sel >= 0 && p->sel < p->count && !p->entries[p->sel].is_parent)
+                              ? p->entries[p->sel].name : "";
+        if (cur[0]) {
+            pico_str_copy(prompt_label_, sizeof(prompt_label_), "Rename entry to");
+            pico_str_copy(prompt_buf_, sizeof(prompt_buf_), cur);
+            prompt_len_ = strlen(prompt_buf_);
+            prompt_kind_ = PICO_PROMPT_FM_RENAME;
+            render();
         }
-        refresh_files_lists();
-        strcpy(dialog_fb_, "Deleted selected file.");
+        return;
+    }
+    if (key == 'd' || key == 'D') {
+        oyk_gui_filemgr_delete(&file_mgr_);
+        render(); return;
+    }
+    if (key == 'v' || key == 'V') {
+        int trunc = 0;
+        if (oyk_gui_filemgr_view(&file_mgr_, fm_preview_buf_, sizeof(fm_preview_buf_), &trunc)) {
+            fm_preview_active_ = 1;
+        }
         render();
     }
 }

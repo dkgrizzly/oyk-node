@@ -60,7 +60,8 @@ enum OykGuiScreenId {
     OYK_SCR_FILES,
     OYK_SCR_RIG,
     OYK_SCR_ABOUT,
-    OYK_SCR_MENU
+    OYK_SCR_MENU,
+    OYK_SCR_TERM_HELP
 };
 
 enum OykGuiTableId {
@@ -194,5 +195,36 @@ int         oyk_gui_theme_set_role_hex(OykGuiThemeCtrl* c, int role_idx, const c
                                        char* err, size_t err_cap);
 int         oyk_gui_theme_delete_custom(OykGuiThemeCtrl* c);
 void        oyk_gui_theme_resolve(const OykGuiThemeCtrl* c, OykThemeConfig* out_pal);
+
+/* Shared Jailed Dual-Pane File Manager Controller */
+struct OykGuiFilePane {
+    char           root[96];
+    char           rel[96];
+    OykBbsDirEntry entries[24];
+    int            count;
+    int            sel;
+    int            scroll;
+};
+
+struct OykGuiFileMgr {
+    OykGuiFilePane inc;
+    OykGuiFilePane files;
+    int            active_pane; /* 0 = Incoming, 1 = Files */
+    char           feedback[96];
+};
+
+void oyk_gui_filemgr_init(OykGuiFileMgr* fm, const char* inc_root, const char* files_root);
+void oyk_gui_filemgr_refresh(OykGuiFileMgr* fm);
+void oyk_gui_filemgr_pane_title(const OykGuiFilePane* p, const char* label,
+                                char* out, size_t cap);
+int  oyk_gui_filemgr_activate(OykGuiFileMgr* fm, int pane_idx);
+int  oyk_gui_filemgr_up(OykGuiFileMgr* fm, int pane_idx);
+int  oyk_gui_filemgr_approve(OykGuiFileMgr* fm, int allow_overwrite, int* exists_out);
+int  oyk_gui_filemgr_upload(OykGuiFileMgr* fm, const char* local_path,
+                            int allow_overwrite, int* exists_out);
+int  oyk_gui_filemgr_mkdir(OykGuiFileMgr* fm, const char* name);
+int  oyk_gui_filemgr_rename(OykGuiFileMgr* fm, const char* new_name);
+int  oyk_gui_filemgr_delete(OykGuiFileMgr* fm);
+int  oyk_gui_filemgr_view(OykGuiFileMgr* fm, char* out, size_t cap, int* trunc_out);
 
 #endif /* OYK_GUI_HPP */

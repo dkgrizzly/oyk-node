@@ -12,6 +12,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 struct PicoCapture {
     char buf[65536];
@@ -256,6 +260,7 @@ static void test_pico_ui_flows_and_captures() {
     oyk_config_init_default(cfg);
     oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
     strcpy(cfg->source_path, "/nonexistent_ro_dir/node.cfg");
+    strcpy(cfg->bbs_files_path, "/tmp/oyk_pico_fm/files");
     cfg->peer_count = 1;
     strcpy(cfg->peers[0].id, "remote0");
     strcpy(cfg->peers[0].callsign, "R3MOT-7");
@@ -456,6 +461,7 @@ static void test_pico_ui_flows_and_captures() {
     assert(con->view_mode() == PICO_VIEW_LOCAL_TERM);
     assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
     assert(strstr(cap->buf, "[EOL:CR]") != NULL);
+    assert(strstr(cap->buf, "Ctrl-A Z:Help") != NULL);
     assert(strstr(cap->buf, "Packet BBS") != NULL);
     assert(strstr(cap->buf, "de KR4OYK-11") != NULL);
     cap->len = 0; cap->buf[0] = '\0';
@@ -464,6 +470,7 @@ static void test_pico_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
     assert(strstr(cap->buf, "Terminal Hotkey Help") != NULL);
+    pico_save_capture("terminal_help", con, cap);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
     assert(strstr(cap->buf, "[EOL:CR*]") != NULL);
@@ -484,14 +491,52 @@ static void test_pico_ui_flows_and_captures() {
     con->tick(1900UL);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);
 
-    /* 8b3. Files Area Manager */
-    cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
-    assert(con->view_mode() == PICO_VIEW_FILES);
-    pico_save_capture("files", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(2100UL);
-    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+    /* 8b3. Files Area Manager (Dual-pane jailed navigation) */
+    {
+        char orig_cwd[256];
+        orig_cwd[0] = '\0';
+        const char* cap_dir = getenv("OYK_UI_CAPTURE_DIR");
+        char abs_cap[512];
+        abs_cap[0] = '\0';
+#ifndef _WIN32
+        if (getcwd(orig_cwd, sizeof(orig_cwd)) == NULL) orig_cwd[0] = '\0';
+        if (cap_dir && cap_dir[0] && cap_dir[0] != '/' && orig_cwd[0]) {
+            snprintf(abs_cap, sizeof(abs_cap), "%s/%s", orig_cwd, cap_dir);
+            setenv("OYK_UI_CAPTURE_DIR", abs_cap, 1);
+        }
+        mkdir("/tmp/oyk_pico_fm", 0755);
+        mkdir("/tmp/oyk_pico_fm/incoming", 0755);
+        mkdir("/tmp/oyk_pico_fm/incoming/W3TRM-1", 0755);
+        mkdir("/tmp/oyk_pico_fm/files", 0755);
+        mkdir("/tmp/oyk_pico_fm/files/bulletins", 0755);
+        if (FILE* sf = fopen("/tmp/oyk_pico_fm/incoming/W3TRM-1/fieldday.txt", "wb")) {
+            fputs("Field Day Log 2026\n", sf); fclose(sf);
+        }
+        if (FILE* sf = fopen("/tmp/oyk_pico_fm/files/bulletins/welcome.txt", "wb")) {
+            fputs("Welcome to OYK BBS\n", sf); fclose(sf);
+        }
+        assert(chdir("/tmp/oyk_pico_fm") == 0);
+#endif
+        cap->len = 0; cap->buf[0] = '\0';
+        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        assert(con->view_mode() == PICO_VIEW_FILES);
+        assert(strstr(cap->buf, "W3TRM-1") != NULL);
+        assert(strstr(cap->buf, "bulletins") != NULL);
+        assert(strstr(cap->buf, "<UP>") == NULL);
+        pico_save_capture("files", con, cap);
+        cap->len = 0; cap->buf[0] = '\0';
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+        assert(strstr(cap->buf, "<UP>") != NULL);
+        assert(strstr(cap->buf, "fieldday.txt") != NULL);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x7f"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+        con->tick(2100UL);
+        assert(con->view_mode() == PICO_VIEW_CONSOLE);
+#ifndef _WIN32
+        if (orig_cwd[0]) assert(chdir(orig_cwd) == 0);
+        if (abs_cap[0]) setenv("OYK_UI_CAPTURE_DIR", cap_dir, 1);
+#endif
+    }
 
     /* 8b2. About OYK-Node modal */
     cap->len = 0; cap->buf[0] = '\0';

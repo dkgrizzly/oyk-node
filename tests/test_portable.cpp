@@ -1885,6 +1885,65 @@ struct DosMockPalette {
     oyk_u8 bdr, fill, sel, inp, bar;
 };
 
+struct DosMockTuiCtx {
+    OykDosVideo* v;
+    OykDosGfx* g;
+    DosMockPalette p;
+};
+
+static oyk_u8 mock_tui_attr(const DosMockPalette& p, int style) {
+    switch (style) {
+        case OYK_TUI_STYLE_BG:
+        case OYK_TUI_STYLE_NORMAL:     return p.bg;
+        case OYK_TUI_STYLE_TITLE:      return p.hdr;
+        case OYK_TUI_STYLE_HEADER:     return p.hdr;
+        case OYK_TUI_STYLE_MENU_BAR:   return p.mbar;
+        case OYK_TUI_STYLE_MENU_SEL:   return p.msel;
+        case OYK_TUI_STYLE_LIST_HDR:   return p.lhdr;
+        case OYK_TUI_STYLE_STATUS:     return p.stat;
+        case OYK_TUI_STYLE_OK:
+        case OYK_TUI_STYLE_ALLOW:      return p.ok;
+        case OYK_TUI_STYLE_DLG_BORDER: return p.bdr;
+        case OYK_TUI_STYLE_DLG_FILL:   return p.fill;
+        case OYK_TUI_STYLE_DLG_SEL:    return p.sel;
+        case OYK_TUI_STYLE_DLG_INPUT:  return p.inp;
+        case OYK_TUI_STYLE_DLG_BAR:    return p.bar;
+        case OYK_TUI_STYLE_CLOSE_BTN:  return 0x4FU;
+        default:                       return p.fill;
+    }
+}
+
+static void mock_tb_put_text(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    DosMockTuiCtx* mc = static_cast<DosMockTuiCtx*>(ctx);
+    if (!mc || !mc->v || max_w <= 0) return;
+    oyk_u8 at = mock_tui_attr(mc->p, style);
+    dos_vid_puts(mc->v, row, col, at, text ? text : "", max_w);
+    if (mc->g && style == OYK_TUI_STYLE_CLOSE_BTN) {
+        dos_gfx_set_cell_rgb(mc->g, row, col, 3, 0xFFFFFFUL, 0xCC2222UL);
+    }
+}
+
+static void mock_tb_put_box(void* ctx, int top, int left, int h, int w,
+                            int bdr_s, int fill_s, int fill_int) {
+    DosMockTuiCtx* mc = static_cast<DosMockTuiCtx*>(ctx);
+    if (!mc || !mc->v) return;
+    dos_vid_box(mc->v, top, left, h, w,
+                mock_tui_attr(mc->p, bdr_s), mock_tui_attr(mc->p, fill_s), fill_int);
+}
+
+static void mock_tb_put_hdiv(void* ctx, int row, int left, int w, int style) {
+    DosMockTuiCtx* mc = static_cast<DosMockTuiCtx*>(ctx);
+    if (!mc || !mc->v) return;
+    dos_vid_hdiv(mc->v, row, left, w, mock_tui_attr(mc->p, style));
+}
+
+static void mock_tb_put_shadow(void* ctx, int top, int left, int h, int w) {
+    DosMockTuiCtx* mc = static_cast<DosMockTuiCtx*>(ctx);
+    if (!mc || !mc->v) return;
+    dos_vid_shadow(mc->v, top, left, h, w);
+    if (mc->g) dos_gfx_add_shadow(mc->g, top, left, h, w);
+}
+
 static void dos_render_mock_main_pal(OykDosVideo* v, OykDosGfx* g, const DosMockPalette& p) {
     if (g) {
         dos_gfx_clear_shadows(g);
@@ -1960,6 +2019,17 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_init_sim_sized(v, g ? 0 : 1, cols, rows, sim_vram);
 
     const oyk_u8 bdr = p.bdr, fill = p.fill, sel = p.sel, inp = p.inp, bar = p.bar, lhdr = p.lhdr;
+    DosMockTuiCtx mtc;
+    mtc.v = v;
+    mtc.g = g;
+    mtc.p = p;
+    OykTuiBackend mtb;
+    memset(&mtb, 0, sizeof(mtb));
+    mtb.ctx        = &mtc;
+    mtb.put_text   = mock_tb_put_text;
+    mtb.put_box    = mock_tb_put_box;
+    mtb.put_hdiv   = mock_tb_put_hdiv;
+    mtb.put_shadow = mock_tb_put_shadow;
     OykTuiRect mr;
 
     /* 1. Main screen */
@@ -2061,7 +2131,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "( ) kiss-tcp    Network KISS over TCP", 58);
     dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "( ) telnet      Telnet server/BBS listener", 58);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ Next > ]  [ Cancel ]", 40);
+    {
+        const OykTuiButton b1[3] = { { "< Back", 0 }, { "Next >", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, b1, 3, 1, "Up/Dn/1-5:Pick");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "add_iface_1", v, g);
@@ -2074,7 +2147,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Interface ID   : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, sel, "axudp1", 30);
     dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Description    : ", 17); dos_vid_puts(v, mr.top + 5, mr.left + 20, inp, "Secondary AXUDP Link", 30);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
+    {
+        const OykTuiButton b2[3] = { { "< Back", 1 }, { "Next >", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, b2, 3, 1, "Ctrl+B:Back");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "add_iface_2", v, g);
@@ -2094,7 +2170,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 10, mr.left + 3, fill, "Same-Iface Fwd : [OFF]", 30);
     dos_vid_puts(v, mr.top + 11, mr.left + 3, fill, "Learned Policy : < inherit >", 40);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
+    {
+        const OykTuiButton b3[3] = { { "< Back", 1 }, { "Next >", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, b3, 3, 1, "Ctrl+B:Back");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "add_iface_3", v, g);
@@ -2110,7 +2189,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "Allow In/Out   : true / true  (Same: false)", 55);
     dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "Learned Policy : inherit", 50);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Finish ]  [ Cancel ]", 40);
+    {
+        const OykTuiButton b4[3] = { { "< Back", 1 }, { "Finish", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, b4, 3, 1, "Ctrl+B:Back");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "add_iface_4", v, g);
@@ -2132,7 +2214,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 12, mr.left + 3, fill, "Same-Iface Fwd : [OFF]", 30);
     dos_vid_puts(v, mr.top + 13, mr.left + 3, fill, "Learned Policy : < inherit >", 40);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[  Save  ]  [ Cancel ]", 30);
+    {
+        const OykTuiButton eb[2] = { { "Save", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, eb, 2, 0, "Up/Dn:Field  Enter:Save  Esc:Cancel");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "edit_iface", v, g);
@@ -2162,7 +2247,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 8, mr.left + 2, fill, "Allow Inbound  : [ON]", 30);
     dos_vid_puts(v, mr.top + 9, mr.left + 2, fill, "Allow Outbound : [ON]", 30);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[  Save  ]  [ Cancel ]", 30);
+    {
+        const OykTuiButton pb[2] = { { "Save", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, pb, 2, 0, "");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "edit_peer", v, g);
@@ -2204,8 +2292,15 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "1 auto-learned peer(s) added during this session.", mr.w - 4);
     dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Save to config, discard, or review in Peers?", mr.w - 4);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, sel, "[ Save & Exit ]", 15);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 19, bar, "[ Discard ]  [ Review Peers ]  [ Cancel ]", 42);
+    {
+        const OykTuiButton xb[4] = {
+            { "Save & Exit", 1 },
+            { "Discard", 1 },
+            { "Review Peers", 1 },
+            { "Cancel", 1 }
+        };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, xb, 4, 0, "");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "exit", v, g);
@@ -2249,11 +2344,9 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_hline(v, tlay.header_row, 0, tlay.cols, p.hdr, ' ');
     dos_vid_puts(v, tlay.header_row, 0, p.hdr,
                  " LOCAL TERMINAL | CONNECTED: KR4OYK-1 (LOCAL) [EOL:CR]", tlay.cols);
-    dos_vid_box(v, tlay.body_top, 0, tlay.body_rows, tlay.cols, bdr, p.bg, 1);
-    dos_vid_title(v, tlay.body_top, 2, tlay.cols - 4, p.hdr, "Terminal Output");
-    int row_cur = tlay.body_top + 1;
+    int row_cur = tlay.body_top;
     const char* sample_lines[8] = {
-        "*** OYK Local Terminal (Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT)",
+        "*** OYK Local Terminal (Ctrl-A Z:Help  Ctrl-A B:BBS  Ctrl-A T:CHAT)",
         "*** Connected locally to KR4OYK-1 (BBS)",
         "Welcome to KR4OYK-1 Packet BBS - automatic word wrapping handles long bulletin lines cleanly across narrow and wide screens.",
         "Type L to list messages, R # to read, B to bye.",
@@ -2269,7 +2362,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
         else if (li == 5) attr = p.lhdr;
         OykTermWrapSpan spans[8];
         int sc = oyk_term_wrap_line(ln, strlen(ln), tlay.cols - 2, spans, 8);
-        for (int si = 0; si < sc && row_cur < tlay.body_top + tlay.body_rows - 1; ++si) {
+        for (int si = 0; si < sc && row_cur < tlay.body_top + tlay.body_rows; ++si) {
             char seg[160];
             size_t slen = spans[si].len;
             if (slen >= sizeof(seg)) slen = sizeof(seg) - 1;
@@ -2279,25 +2372,56 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
         }
     }
     dos_vid_hline(v, tlay.hotkey_row, 0, tlay.cols, bar, ' ');
-    dos_vid_puts(v, tlay.hotkey_row, 0, bar, " Ctrl+A Z:Help  F2:Conn  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Tab:Console", tlay.cols);
-    dos_vid_hline(v, tlay.input_row, 0, tlay.cols, fill, ' ');
-    dos_vid_puts(v, tlay.input_row, 0, fill, "> ", tlay.cols);
+    dos_vid_puts(v, tlay.hotkey_row, 1, bar, oyk_term_hotkey_bar_text(1, 0), tlay.cols - 2);
+    dos_vid_hline(v, tlay.input_row, 0, tlay.cols, p.bg, ' ');
+    dos_vid_puts(v, tlay.input_row, 0, p.bg, "> ", tlay.cols);
     dos_vid_putc(v, tlay.input_row, 2, p.sel, ' ');
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "terminal", v, g);
 
-    /* 12. Manage BBS Files Area Modal */
+    /* 11b. Terminal Hotkey Help overlay */
+    oyk_tui_draw_term_help_modal(&mtb, v->rows, v->cols);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "terminal_help", v, g);
+
+    /* 12. Manage BBS Files Area (Jailed Dual-Pane Modal) */
     dos_render_mock_main_pal(v, g, p);
-    oyk_tui_center_modal(rows, cols, 17, 68, &mr);
-    dos_modal_frame(v, g, mr, "Manage BBS Files Area", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, sel, "[1:Pending Incoming (2)]", 24);
-    dos_vid_puts(v, mr.top + 1, mr.left + 27, bar, " 2:Approved Files (2) ", 22);
-    dos_vid_puts(v, mr.top + 2, mr.left + 1, lhdr, "Uploader     Filename                      Size", mr.w - 2);
-    dos_vid_puts(v, mr.top + 3, mr.left + 1, sel,  "W3TRM-1      fieldday.txt                  1420 B", mr.w - 2);
-    dos_vid_puts(v, mr.top + 4, mr.left + 1, fill, "N0CALL-7     aprs.cfg                       612 B", mr.w - 2);
-    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "A:Approve  D:Del  Tab:Switch  R:Refresh  Esc:Close", mr.w - 4);
+    OykTuiDualPaneLayout dlay;
+    oyk_tui_compute_dual_pane_layout(rows, cols, &dlay);
+    mr = dlay.modal;
+    oyk_tui_draw_modal(&mtb, &mr, "Manage BBS Files Area", 1);
+    {
+        const int left_w = dlay.left_pane.w - 1;
+        const int div_col = dlay.right_pane.left - 1;
+        const int right_col = dlay.right_pane.left;
+        const int right_w = dlay.right_pane.w;
+        dos_vid_puts(v, dlay.path_row, dlay.left_pane.left + 1, sel, "Incoming: /W3TRM-1", left_w - 2);
+        dos_vid_puts(v, dlay.path_row, right_col + 1, bdr, "Files: /", right_w - 2);
+        dos_vid_puts(v, dlay.hdr_row, dlay.left_pane.left + 1, lhdr, "Name                        Size", left_w - 2);
+        dos_vid_puts(v, dlay.hdr_row, right_col + 1, lhdr, "Name                        Size", right_w - 2);
+        dos_vid_putc(v, dlay.path_row, div_col, bdr, OYK_BOX_V);
+        dos_vid_putc(v, dlay.hdr_row, div_col, bdr, OYK_BOX_V);
+        for (int r = 0; r < dlay.list_rows; ++r) {
+            dos_vid_putc(v, dlay.list_top + r, div_col, bdr, OYK_BOX_V);
+        }
+        dos_vid_puts(v, dlay.list_top,     dlay.left_pane.left + 1, fill, "..                          <UP>", left_w - 2);
+        dos_vid_puts(v, dlay.list_top + 1, dlay.left_pane.left + 1, sel,  "fieldday.txt                1420", left_w - 2);
+        dos_vid_puts(v, dlay.list_top + 2, dlay.left_pane.left + 1, fill, "aprs.cfg                     612", left_w - 2);
+        dos_vid_puts(v, dlay.list_top,     right_col + 1, lhdr, "bulletins/                 <DIR>", right_w - 2);
+        dos_vid_puts(v, dlay.list_top + 1, right_col + 1, fill, "README.TXT                    24", right_w - 2);
+        dos_vid_puts(v, dlay.feedback_row, mr.left + 2, fill, "Tab:Pane  Enter:Dir  U:Upload  A:Approve  M:Ren  N:Mkdir  D:Del  V:View", mr.w - 4);
+        dos_vid_hdiv(v, dlay.div_row, mr.left, mr.w, bdr);
+        const OykTuiButton fbtns[4] = {
+            { "Upload",  1 },
+            { "Approve", 1 },
+            { "View",    1 },
+            { "Close",   1 }
+        };
+        oyk_tui_draw_button_row(&mtb, dlay.btn_row, mr.left + 2, mr.w - 4,
+                                fbtns, 4, 1, "M:Ren N:Dir D:Del R:Ref");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "files", v, g);
@@ -2338,7 +2462,10 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "License: GPL-3.0-or-later", mr.w - 6);
     dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", mr.w - 6);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Enter / Esc / Q: Close", mr.w - 4);
+    {
+        const OykTuiButton ab[1] = { { "Close", 1 } };
+        oyk_tui_draw_button_row(&mtb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4, ab, 1, 0, "Enter / Esc / Q: Close");
+    }
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "about", v, g);

@@ -1026,49 +1026,70 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Apply", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_TERMINAL) {
-        am_draw_text(ui, lx, ty + 2, "KR4OYK-11 BBS | Ctrl+A H Help | S YAPP | W Wrap",
+        am_draw_text(ui, lx, ty + 2, "Session: KR4OYK-1 BBS | EOL: LF | Wrap: ON",
                      ui->pen_fg, ui->pen_panel, bw / 8);
-        am_fill_rect(ui, lx, ty + 15, bw, mh - 82, ui->pen_bg);
-        am_bevel_box(ui, lx, ty + 15, bw, mh - 82, 1);
-        am_draw_text(ui, lx + 6, ty + 20, "Welcome to KR4OYK-7 BBS on Amiga Workbench",
+        am_fill_rect(ui, lx, ty + 14, bw, mh - 96, ui->pen_bg);
+        am_bevel_box(ui, lx, ty + 14, bw, mh - 96, 1);
+        am_draw_text(ui, lx + 6, ty + 19, "Welcome to KR4OYK-7 BBS on Amiga Workbench",
                      ui->pen_fg, ui->pen_bg, (bw - 12) / 8);
-        am_draw_text(ui, lx + 6, ty + 32, "EOL: Auto-Detected LF | Word-Wrap: ON (72 cols)",
+        am_draw_text(ui, lx + 6, ty + 31, "Type 'LIST' or 'B' to disconnect from BBS.",
                      ui->pen_fg, ui->pen_bg, (bw - 12) / 8);
-        am_draw_text(ui, lx + 6, ty + 44, "Type 'LIST' or 'B' to disconnect from BBS.",
+        am_draw_text(ui, lx + 6, ty + 43, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
                      ui->pen_fg, ui->pen_bg, (bw - 12) / 8);
-        am_draw_text(ui, lx + 6, ty + 56, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
-                     ui->pen_fg, ui->pen_bg, (bw - 12) / 8);
+        am_fill_rect(ui, lx, by - 36, bw, 13, ui->pen_status_bg);
+        am_draw_text(ui, lx + 4, by - 33, oyk_term_hotkey_bar_text(0, 0),
+                     ui->pen_status_fg, ui->pen_status_bg, (bw - 8) / 8);
         am_draw_field_row(ui, lx, by - 20, "Input:", "LIST_", 56, bw - 134);
         am_draw_button(ui, lx + bw - 70, by - 21, 70, 14, "Send", 1);
-        am_draw_button(ui, lx, by, 102, 15, "Ctrl+A Help", 0);
+        am_draw_button(ui, lx, by, 72, 15, "Help", 0);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Close", 0);
+        am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
+    } else if (scr == OYK_SCR_TERM_HELP) {
+        am_draw_text(ui, lx, ty + 2, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)",
+                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_fill_rect(ui, lx, ty + 14, bw, mh - 62, ui->pen_bg);
+        am_bevel_box(ui, lx, ty + 14, bw, mh - 62, 1);
+        for (int hi = 0; hi < oyk_term_help_count() && hi < 8; ++hi) {
+            const OykTermHelpEntry* he = oyk_term_help_entry(hi);
+            if (!he) continue;
+            char row[96];
+            sprintf(row, "%-9.9s %-36.36s %s", he->key_label, he->action, he->alt_key);
+            am_draw_text(ui, lx + 6, ty + 19 + hi * 11, row,
+                         ui->pen_fg, ui->pen_bg, (bw - 12) / 8);
+        }
+        am_draw_button(ui, mx + mw - 84, by, 72, 15, "Close", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_FILES) {
         int pw = (bw - 10) / 2;
-        int fx1[3] = { lx + 4, lx + 72, lx + 188 };
-        const char* fh1[3] = { "From", "File", "Size" };
-        int fw1[3] = { 9, 14, 7 };
-        const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
-        int fx2[2] = { lx + pw + 14, lx + pw + 190 };
-        const char* fh2[2] = { "Filename", "Size" };
+        int fx1[2] = { lx + 4, lx + pw - 58 };
+        const char* fh[2] = { "Name", "Size" };
+        int fw1[2] = { 21, 7 };
+        const char* fr1a[2] = { "W3TRM-1", "<DIR>" };
+        const char* fr1b[2] = { "PACKETS.TXT", "2048 B" };
+        int fx2[2] = { lx + pw + 14, lx + bw - 58 };
         int fw2[2] = { 21, 7 };
-        const char* fr2a[2] = { "README.TXT", "1420" };
-        const char* fr2b[2] = { "NETLIST.CFG", "618" };
-        am_draw_text(ui, lx, ty + 2, "Pending Uploads", ui->pen_fg, ui->pen_panel, pw / 8);
-        am_draw_text(ui, lx + pw + 10, ty + 2, "Approved BBS Files", ui->pen_fg, ui->pen_panel, pw / 8);
+        const char* fr2a[2] = { "bulletins", "<DIR>" };
+        const char* fr2b[2] = { "README.TXT", "1420 B" };
+        am_draw_text(ui, lx, ty + 2, "Incoming: /", ui->pen_fg, ui->pen_panel, pw / 8);
+        am_draw_text(ui, lx + pw + 10, ty + 2, "Files: /", ui->pen_fg, ui->pen_panel, pw / 8);
         am_fill_rect(ui, lx, ty + 15, pw, mh - 64, ui->pen_bg);
         am_bevel_box(ui, lx, ty + 15, pw, mh - 64, 1);
         am_fill_rect(ui, lx + pw + 10, ty + 15, pw, mh - 64, ui->pen_bg);
         am_bevel_box(ui, lx + pw + 10, ty + 15, pw, mh - 64, 1);
-        am_draw_listview_header(ui, lx + 2, ty + 17, pw - 4, 3, fx1, fh1, ui->pen_panel, ui->pen_fg);
-        am_draw_listview_row(ui, lx + 2, ty + 28, pw - 4, 10, 1, 3, fx1, fr1, fw1, ui->pen_bg, ui->pen_fg);
-        am_draw_listview_header(ui, lx + pw + 12, ty + 17, pw - 4, 2, fx2, fh2, ui->pen_panel, ui->pen_fg);
+        am_draw_listview_header(ui, lx + 2, ty + 17, pw - 4, 2, fx1, fh, ui->pen_panel, ui->pen_fg);
+        am_draw_listview_row(ui, lx + 2, ty + 28, pw - 4, 10, 1, 2, fx1, fr1a, fw1, ui->pen_bg, ui->pen_fg);
+        am_draw_listview_row(ui, lx + 2, ty + 39, pw - 4, 10, 0, 2, fx1, fr1b, fw1, ui->pen_bg, ui->pen_fg);
+        am_draw_listview_header(ui, lx + pw + 12, ty + 17, pw - 4, 2, fx2, fh, ui->pen_panel, ui->pen_fg);
         am_draw_listview_row(ui, lx + pw + 12, ty + 28, pw - 4, 10, 1, 2, fx2, fr2a, fw2, ui->pen_bg, ui->pen_fg);
         am_draw_listview_row(ui, lx + pw + 12, ty + 39, pw - 4, 10, 0, 2, fx2, fr2b, fw2, ui->pen_bg, ui->pen_fg);
-        am_draw_button(ui, lx, by, 86, 15, "Upload...", 0);
-        am_draw_button(ui, lx + 92, by, 86, 15, "Approve", 1);
-        am_draw_button(ui, mx + mw - 84, by, 72, 15, "Close", 0);
-        am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
+        am_draw_button(ui, lx,       by, 64, 15, "Upload",  0);
+        am_draw_button(ui, lx + 68,  by, 68, 15, "Approve", 1);
+        am_draw_button(ui, lx + 140, by, 62, 15, "Rename",  0);
+        am_draw_button(ui, lx + 206, by, 64, 15, "New Dir", 0);
+        am_draw_button(ui, lx + 274, by, 60, 15, "Delete",  0);
+        am_draw_button(ui, lx + 338, by, 50, 15, "View",    0);
+        am_draw_button(ui, mx + mw - 76, by, 64, 15, "Close", 0);
+        am_add_hit(ui, mx + mw - 76, by, 64, 15, 999);
     } else if (scr == OYK_SCR_ABOUT) {
         am_draw_text(ui, lx, ty + 10, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
                      ui->pen_fg, ui->pen_panel, bw / 8);
@@ -1300,7 +1321,7 @@ struct AmGalleryStep {
     const char* bmp_path;
 };
 
-static const AmGalleryStep kAmGallery[22] = {
+static const AmGalleryStep kAmGallery[23] = {
     { OYK_SCR_MAIN,       0, 0, "DH0:AM_MAIN.BMP" },
     { OYK_SCR_MENU,       0, 0, "DH0:AM_MENU.BMP" },
     { OYK_SCR_SETTINGS,   0, 0, "DH0:AM_SET1.BMP" },
@@ -1321,6 +1342,7 @@ static const AmGalleryStep kAmGallery[22] = {
     { OYK_SCR_EXIT_PEERS, 0, 0, "DH0:AM_EXIT.BMP" },
     { OYK_SCR_THEME,      0, 0, "DH0:AM_THME.BMP" },
     { OYK_SCR_TERMINAL,   0, 0, "DH0:AM_TML.BMP"  },
+    { OYK_SCR_TERM_HELP,  0, 0, "DH0:AM_TMLH.BMP" },
     { OYK_SCR_FILES,      0, 0, "DH0:AM_FILE.BMP" },
     { OYK_SCR_ABOUT,      0, 0, "DH0:AM_ABT.BMP"  }
 };
@@ -1375,7 +1397,7 @@ int oyk_amiga_ui_run(OykPortableNode* node,
     if (ui_test_mode) {
         am_seed_demo_node(ui);
         ui->draft_cfg = node->config();
-        for (int i = 0; i < 22; ++i) {
+        for (int i = 0; i < 23; ++i) {
             ui->active_screen = kAmGallery[i].scr;
             ui->settings_tab = kAmGallery[i].tab;
             ui->wiz.step = kAmGallery[i].wiz_step;

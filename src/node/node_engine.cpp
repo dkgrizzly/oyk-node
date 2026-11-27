@@ -1963,6 +1963,140 @@ bool NodeEngine::delete_approved_file(const std::string& rel_path,
     return ok;
 }
 
+bool NodeEngine::list_bbs_dir(bool is_incoming,
+                              const std::string& rel_dir,
+                              std::vector<BbsDirEntry>& out,
+                              std::string& norm_rel_out,
+                              std::string& error_out) const {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    return BbsServer::list_dir_entries(root, rel_dir, out, norm_rel_out, error_out);
+}
+
+bool NodeEngine::enter_bbs_subdir(bool is_incoming,
+                                  const std::string& cur_rel,
+                                  const std::string& child_name,
+                                  std::string& next_rel_out,
+                                  std::string& error_out) const {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    return BbsServer::enter_subdir(root, cur_rel, child_name, next_rel_out, error_out);
+}
+
+bool NodeEngine::approve_incoming_rel_file(const std::string& inc_rel_file,
+                                           const std::string& dest_rel_dir,
+                                           bool allow_overwrite,
+                                           std::string& dest_path_out,
+                                           bool& already_exists_out,
+                                           std::string& error_out) {
+    std::string inc, files_dir;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        inc = bbs_server_.incoming_root();
+        files_dir = bbs_server_.files_path();
+    }
+    bool ok = BbsServer::approve_incoming_rel_file(inc, inc_rel_file, files_dir, dest_rel_dir,
+                                                   allow_overwrite, dest_path_out,
+                                                   already_exists_out, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, "Sysop approved incoming file " + inc_rel_file + " -> " + dest_path_out);
+    }
+    return ok;
+}
+
+bool NodeEngine::import_local_file_to_bbs(const std::string& local_src_path,
+                                          bool is_incoming,
+                                          const std::string& target_rel_dir,
+                                          bool allow_overwrite,
+                                          std::string& dest_path_out,
+                                          bool& already_exists_out,
+                                          std::string& error_out) {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    bool ok = BbsServer::import_local_file(local_src_path, root, target_rel_dir,
+                                           allow_overwrite, dest_path_out,
+                                           already_exists_out, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, std::string("Sysop uploaded local file to ") +
+                          (is_incoming ? "incoming" : "files") + ": " + dest_path_out);
+    }
+    return ok;
+}
+
+bool NodeEngine::mkdir_bbs_dir(bool is_incoming,
+                               const std::string& cur_rel,
+                               const std::string& new_name,
+                               std::string& error_out) {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    bool ok = BbsServer::mkdir_safe(root, cur_rel, new_name, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, std::string("Sysop created directory in ") +
+                          (is_incoming ? "incoming" : "files") + ": " + new_name);
+    }
+    return ok;
+}
+
+bool NodeEngine::rename_bbs_entry(bool is_incoming,
+                                  const std::string& cur_rel,
+                                  const std::string& old_name,
+                                  const std::string& new_name,
+                                  std::string& error_out) {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    bool ok = BbsServer::rename_safe(root, cur_rel, old_name, new_name, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, std::string("Sysop renamed ") + old_name + " -> " + new_name);
+    }
+    return ok;
+}
+
+bool NodeEngine::delete_bbs_entry(bool is_incoming,
+                                  const std::string& cur_rel,
+                                  const std::string& name,
+                                  std::string& error_out) {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    bool ok = BbsServer::delete_safe(root, cur_rel, name, error_out);
+    if (ok) {
+        log_msg(LOG_INFO, std::string("Sysop deleted ") + name + " from " +
+                          (is_incoming ? "incoming" : "files"));
+    }
+    return ok;
+}
+
+bool NodeEngine::read_bbs_text_preview(bool is_incoming,
+                                       const std::string& cur_rel,
+                                       const std::string& filename,
+                                       std::string& content_out,
+                                       bool& truncated_out,
+                                       std::string& error_out) const {
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        root = is_incoming ? bbs_server_.incoming_root() : bbs_server_.files_path();
+    }
+    return BbsServer::read_text_preview(root, cur_rel, filename, content_out, truncated_out, error_out);
+}
+
 radio::RadioInterface* NodeEngine::find_interface(const std::string& id) const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     auto it = iface_by_id_.find(id);

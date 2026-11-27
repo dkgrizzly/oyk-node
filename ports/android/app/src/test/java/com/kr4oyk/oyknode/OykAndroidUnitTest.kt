@@ -126,4 +126,30 @@ class OykAndroidUnitTest {
             )
         }
     }
+
+    @Test
+    fun jailedFileBrowserBlocksEscapesAndConditionalParent() {
+        val ctx = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val base = File(ctx.cacheDir, "fm_jail_test").apply { deleteRecursively(); mkdirs() }
+        val inc = File(base, "incoming").apply { mkdirs() }
+        val files = File(base, "files").apply { mkdirs() }
+        val sub = File(inc, "W3TRM-1").apply { mkdirs() }
+        File(sub, "fieldday.txt").writeText("CQ Field Day\n")
+
+        val rootList = OykJailedFileBrowser.listDir(inc, "")!!
+        assertEquals("", rootList.first)
+        assertFalse(rootList.second.any { it.name == ".." || it.isParent })
+        assertTrue(OykJailedFileBrowser.enterSubdir(inc, "", "..").isFailure)
+        assertNull(OykJailedFileBrowser.listDir(inc, "../../etc"))
+
+        val nextRel = OykJailedFileBrowser.enterSubdir(inc, "", "W3TRM-1").getOrThrow()
+        assertEquals("W3TRM-1", nextRel)
+        val subList = OykJailedFileBrowser.listDir(inc, nextRel)!!
+        assertTrue(subList.second.first().let { it.name == ".." && it.isParent })
+        assertEquals("", OykJailedFileBrowser.enterSubdir(inc, nextRel, "..").getOrThrow())
+
+        val dest = OykJailedFileBrowser.approveRelFile(inc, "W3TRM-1/fieldday.txt", files, "").getOrThrow()
+        assertTrue(dest.exists())
+        assertEquals("files", dest.parentFile.name)
+    }
 }

@@ -168,6 +168,50 @@ public:
     bool delete_approved_file(const std::string& rel_path,
                               std::string& error_out);
 
+    // Dual-pane jailed File Manager operations (incoming/files roots)
+    bool list_bbs_dir(bool is_incoming,
+                      const std::string& rel_dir,
+                      std::vector<BbsDirEntry>& out,
+                      std::string& norm_rel_out,
+                      std::string& error_out) const;
+    bool enter_bbs_subdir(bool is_incoming,
+                          const std::string& cur_rel,
+                          const std::string& child_name,
+                          std::string& next_rel_out,
+                          std::string& error_out) const;
+    bool approve_incoming_rel_file(const std::string& inc_rel_file,
+                                   const std::string& dest_rel_dir,
+                                   bool allow_overwrite,
+                                   std::string& dest_path_out,
+                                   bool& already_exists_out,
+                                   std::string& error_out);
+    bool import_local_file_to_bbs(const std::string& local_src_path,
+                                  bool is_incoming,
+                                  const std::string& target_rel_dir,
+                                  bool allow_overwrite,
+                                  std::string& dest_path_out,
+                                  bool& already_exists_out,
+                                  std::string& error_out);
+    bool mkdir_bbs_dir(bool is_incoming,
+                       const std::string& cur_rel,
+                       const std::string& new_name,
+                       std::string& error_out);
+    bool rename_bbs_entry(bool is_incoming,
+                          const std::string& cur_rel,
+                          const std::string& old_name,
+                          const std::string& new_name,
+                          std::string& error_out);
+    bool delete_bbs_entry(bool is_incoming,
+                          const std::string& cur_rel,
+                          const std::string& name,
+                          std::string& error_out);
+    bool read_bbs_text_preview(bool is_incoming,
+                               const std::string& cur_rel,
+                               const std::string& filename,
+                               std::string& content_out,
+                               bool& truncated_out,
+                               std::string& error_out) const;
+
     // Extension point for future BBS / Chat executables
     CommandHandler& command_handler() noexcept { return command_handler_; }
 

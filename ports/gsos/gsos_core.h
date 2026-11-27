@@ -57,6 +57,7 @@ typedef enum {
     OYK_GSOS_SCR_EXIT_PEERS,
     OYK_GSOS_SCR_THEME,
     OYK_GSOS_SCR_TERMINAL,
+    OYK_GSOS_SCR_TERM_HELP,
     OYK_GSOS_SCR_FILES,
     OYK_GSOS_SCR_RIG,
     OYK_GSOS_SCR_ABOUT,
@@ -331,10 +332,44 @@ void oyk_gsos_theme_revert(OykGsosThemeCtrl *tc);
 
 /* Terminal helpers */
 int  oyk_gsos_term_decode_ctrl_a(int ch);
+const char *oyk_gsos_term_hotkey_bar_text(int ctrl_a_pending);
+int  oyk_gsos_term_help_count(void);
+const char *oyk_gsos_term_help_key(int idx);
+const char *oyk_gsos_term_help_action(int idx);
+const char *oyk_gsos_term_help_alt(int idx);
 int  oyk_gsos_term_wrap_line(const char *text, int len, int width,
                              OykGsosTermSpan *spans, int max_spans);
 int  oyk_gsos_term_eol_feed(OykGsosTermEolParser *p, const char *in_buf, int in_len,
                             char *out_buf, int out_cap);
+
+/* Jailed Dual-Pane File Manager helpers (ProDOS/GSOS) */
+typedef struct {
+    char          name[32];
+    unsigned long size;
+    int           is_dir;
+    int           is_parent;
+} OykGsosFileEntry;
+
+typedef struct {
+    char             root[32];
+    char             rel[48];
+    OykGsosFileEntry entries[8];
+    int              count;
+    int              sel;
+} OykGsosFilePane;
+
+typedef struct {
+    OykGsosFilePane inc;
+    OykGsosFilePane files;
+    int             active_pane;
+    char            feedback[64];
+} OykGsosFileMgr;
+
+void oyk_gsos_filemgr_init(OykGsosFileMgr *fm, const char *inc_root, const char *files_root);
+void oyk_gsos_filemgr_pane_title(const OykGsosFilePane *p, const char *label,
+                                 char *out, size_t cap);
+int  oyk_gsos_filemgr_enter_dir(OykGsosFileMgr *fm, int pane_idx, const char *child);
+int  oyk_gsos_filemgr_up(OykGsosFileMgr *fm, int pane_idx);
 
 /* Rig & Printer helpers */
 int oyk_gsos_rigctl_build_set_freq(gsos_u32 hz, char *dst, size_t cap);

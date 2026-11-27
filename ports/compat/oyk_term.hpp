@@ -95,6 +95,7 @@ struct OykTermHelpEntry {
 
 int oyk_term_decode_ctrl_a_cmd(int key);
 int oyk_term_eol_cycle_mode(OykTermEolParser* p);
+const char* oyk_term_hotkey_bar_text(int is_tui, int ctrl_a_pending);
 int oyk_term_help_count();
 const OykTermHelpEntry* oyk_term_help_entry(int idx);
 

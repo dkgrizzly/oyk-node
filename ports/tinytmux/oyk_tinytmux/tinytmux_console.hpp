@@ -26,6 +26,8 @@
 #include "oyk_tinytmux_config.h"
 #include "oyk_portable.hpp"
 #include "oyk_term.hpp"
+#include "oyk_tui.hpp"
+#include "oyk_gui.hpp"
 #include "tinytmux_psram.hpp"
 #include "lwip_net_bridge.hpp"
 
@@ -81,7 +83,7 @@ public:
     TinyTmuxViewMode view_mode() const { return view_; }
     int settings_tab() const { return settings_tab_; }
     int current_settings_sel() const { return settings_sel_[settings_tab_]; }
-    int files_tab() const { return files_tab_; }
+    int files_tab() const { return file_mgr_.active_pane; }
     int has_active_terminal() const { return (lterm_sid_ != 0) ? 1 : 0; }
     const char* status_line() const { return status_line_; }
 
@@ -100,7 +102,10 @@ private:
         PROMPT_RIG_VFO,
         PROMPT_RIG_RF_SELECT,
         PROMPT_CONFIRM_FORMAT,
-        PROMPT_LTERM_CONNECT
+        PROMPT_LTERM_CONNECT,
+        PROMPT_FM_UPLOAD,
+        PROMPT_FM_MKDIR,
+        PROMPT_FM_RENAME
     };
 
     enum EscState {
@@ -133,6 +138,12 @@ private:
     void draw_dec_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close = 0);
     void draw_dec_shadow(int row, int col, int h, int w);
     void draw_dec_hdiv(int row, int col, int w);
+    static void tui_get_size_cb(void* ctx, int* out_rows, int* out_cols);
+    static void tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text);
+    static void tui_put_box_cb(void* ctx, int top, int left, int h, int w, int bdr, int fill, int clr);
+    static void tui_put_hdiv_cb(void* ctx, int row, int left, int w, int style);
+    static void tui_put_shadow_cb(void* ctx, int top, int left, int h, int w);
+    OykTuiBackend make_tui_backend();
     void send_size_probe();
 
     void render_console();
@@ -212,13 +223,11 @@ private:
     char status_line_[96];
     char dialog_fb_[96];
 
-    /* Files area state (2 tabs matching all ports) */
-    int files_tab_;
-    int files_sel_[2];
-    OykPendingIncoming pending_files_[16];
-    int pending_count_;
-    OykApprovedFile approved_files_[16];
-    int approved_count_;
+    /* Files area state (dual-pane jailed manager) */
+    OykGuiFileMgr file_mgr_;
+    int files_focus_btn_;
+    int fm_preview_active_;
+    char fm_preview_buf_[512];
 
     /* Settings draft & navigation (7 tabs: Node, BBS, CHAT, Ifaces, Peers, Rig, Printer) */
     OykConfig draft_;

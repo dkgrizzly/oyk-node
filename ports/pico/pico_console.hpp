@@ -7,6 +7,8 @@
 #include "oyk_pico_config.h"
 #include "oyk_portable.hpp"
 #include "oyk_term.hpp"
+#include "oyk_tui.hpp"
+#include "oyk_gui.hpp"
 #include "board_pico.hpp"
 #include "pico_net_bridge.hpp"
 
@@ -43,7 +45,10 @@ enum PicoPromptKind {
     PICO_PROMPT_EDIT_PEER,
     PICO_PROMPT_THEME,
     PICO_PROMPT_CONFIRM_FORMAT,
-    PICO_PROMPT_LTERM_CONNECT
+    PICO_PROMPT_LTERM_CONNECT,
+    PICO_PROMPT_FM_UPLOAD,
+    PICO_PROMPT_FM_MKDIR,
+    PICO_PROMPT_FM_RENAME
 };
 
 class PicoConsole {
@@ -68,7 +73,7 @@ public:
     PicoPromptKind prompt_kind() const { return prompt_kind_; }
     int settings_tab() const { return settings_tab_; }
     int settings_sel() const { return settings_sel_[settings_tab_]; }
-    int files_tab() const { return files_tab_; }
+    int files_tab() const { return file_mgr_.active_pane; }
     int has_active_terminal() const { return (lterm_sid_ != 0) ? 1 : 0; }
     int bootloader_pending() const { return bootloader_pending_; }
     const char* status_line() const { return status_fb_; }
@@ -79,6 +84,12 @@ private:
     void draw_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close = 0);
     void draw_shadow(int row, int col, int h, int w);
     void draw_hdiv(int row, int col, int w);
+    static void tui_get_size_cb(void* ctx, int* out_rows, int* out_cols);
+    static void tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text);
+    static void tui_put_box_cb(void* ctx, int top, int left, int h, int w, int bdr, int fill, int clr);
+    static void tui_put_hdiv_cb(void* ctx, int row, int left, int w, int style);
+    static void tui_put_shadow_cb(void* ctx, int top, int left, int h, int w);
+    OykTuiBackend make_tui_backend();
     const OykConfig* active_theme_cfg() const;
     const char* sgr_border() const;
     const char* sgr_title() const;
@@ -166,12 +177,10 @@ private:
     int menu_sel_;
     int settings_tab_;
     int settings_sel_[7];
-    int files_tab_;
-    int files_sel_[2];
-    OykPendingIncoming pending_files_[8];
-    int pending_count_;
-    OykApprovedFile approved_files_[8];
-    int approved_count_;
+    OykGuiFileMgr file_mgr_;
+    int files_focus_btn_;
+    int fm_preview_active_;
+    char fm_preview_buf_[512];
     int storage_sel_;
     int bootloader_pending_;
     oyk_u32 bootloader_ms_;

@@ -53,6 +53,7 @@ int main(void) {
     OykGsosAddIfaceWiz wiz;
     OykGsosTermSpan spans[4];
     OykGsosTermEolParser eolp;
+    OykGsosFileMgr fm;
     char out_eol[64], rig_buf[32], info_buf[128], hdr_buf[128], cfg_ser[512];
     unsigned char prn_buf[64];
     int bg_ch = 0, fg_ch = 0, sc, en, di;
@@ -143,8 +144,18 @@ int main(void) {
     en = oyk_gsos_term_eol_feed(&eolp, "HI\r\n", 4, out_eol, sizeof(out_eol));
     GS_CHECK(en == 3 && eolp.detected == OYK_GSOS_EOL_CRLF, "term_eol_crlf");
     GS_CHECK(oyk_gsos_term_decode_ctrl_a('?') == OYK_GSOS_TCMD_HELP, "term_ctrl_a_help");
+    GS_CHECK(strstr(oyk_gsos_term_hotkey_bar_text(0), "Ctrl-A Z:Help") != NULL, "term_hotkey_bar");
+    GS_CHECK(oyk_gsos_term_help_count() >= 6 && strcmp(oyk_gsos_screen_title(OYK_GSOS_SCR_TERM_HELP), "Terminal Hotkey Help") == 0, "term_help_meta");
     sc = oyk_gsos_term_wrap_line("HELLO APPLE IIGS GSOS WORLD", 27, 15, spans, 4);
     GS_CHECK(sc >= 2, "term_word_wrap");
+
+    /* 5b. Jailed File Manager & conditional .. */
+    oyk_gsos_filemgr_init(&fm, "/OYK/INCOMING", "/OYK/FILES");
+    GS_CHECK(fm.inc.count >= 2 && strcmp(fm.inc.entries[0].name, "..") != 0, "fm_no_parent_at_root");
+    GS_CHECK(oyk_gsos_filemgr_up(&fm, 0) == 0, "fm_jail_blocks_up_at_root");
+    GS_CHECK(oyk_gsos_filemgr_enter_dir(&fm, 0, "../ESC") == 0, "fm_jail_blocks_traversal");
+    GS_CHECK(oyk_gsos_filemgr_enter_dir(&fm, 0, "W3TRM-1") == 1 && strcmp(fm.inc.entries[0].name, "..") == 0, "fm_parent_in_subdir");
+    GS_CHECK(oyk_gsos_filemgr_up(&fm, 0) == 1 && strcmp(fm.inc.entries[0].name, "..") != 0, "fm_return_to_root");
 
     /* 6. Rig & Printer */
     GS_CHECK(oyk_gsos_rigctl_build_set_freq(145050000UL, rig_buf, sizeof(rig_buf)) > 0,

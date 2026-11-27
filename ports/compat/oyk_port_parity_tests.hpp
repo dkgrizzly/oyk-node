@@ -157,11 +157,28 @@ static inline int oyk_run_shared_port_parity_tests(OykPortableNode* node,
         int sc = oyk_term_wrap_line("HELLO PACKET NODE CROSS PORT TEST", 33, 15, spans, 4);
         oyk_parity_record(logf, &fails,
                           oyk_term_decode_ctrl_a_cmd('?') == OYK_TCMD_HELP &&
-                          oyk_term_help_count() >= 10 && sc >= 2,
+                          oyk_term_help_count() >= 10 && sc >= 2 &&
+                          strstr(oyk_term_hotkey_bar_text(1, 0), "Ctrl-A Z:Help") != NULL &&
+                          strstr(oyk_term_hotkey_bar_text(1, 0), "Tab/F9") != NULL &&
+                          strcmp(oyk_gui_screen_title(OYK_SCR_TERM_HELP), "Terminal Hotkey Help") == 0,
                           "parity_term_hotkeys_and_wrap");
     }
 
-    /* 9. Rig CAT command builder & printer line formatter */
+    /* 9. Jailed file manager subdir guard (blocks '..' at root) */
+    {
+        char absd[64], nrel[32], nerr[64];
+        nrel[0] = 'x';
+        oyk_parity_record(logf, &fails,
+                          oyk_bbs_enter_subdir("files", "", "..", nrel, sizeof(nrel), nerr, sizeof(nerr)) == 0 &&
+                          oyk_bbs_resolve_safe_path("files", "sub", "..", 1,
+                                                    absd, sizeof(absd),
+                                                    nrel, sizeof(nrel),
+                                                    nerr, sizeof(nerr)) == 1 &&
+                          nrel[0] == '\0',
+                          "parity_buttons_and_file_jail");
+    }
+
+    /* 10. Rig CAT command builder & printer line formatter */
     {
         char rbuf[32];
         unsigned char pbuf[64];

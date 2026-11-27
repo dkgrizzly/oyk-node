@@ -119,6 +119,7 @@ case "${MODE}" in
             [AM_EXIT.BMP]=amiga_exit.bmp
             [AM_THME.BMP]=amiga_theme.bmp
             [AM_TML.BMP]=amiga_terminal.bmp
+            [AM_TMLH.BMP]=amiga_terminal_help.bmp
             [AM_FILE.BMP]=amiga_files.bmp
             [AM_ABT.BMP]=amiga_about.bmp
         )
@@ -129,8 +130,8 @@ case "${MODE}" in
                 copied=$((copied + 1))
             fi
         done
-        echo "Extracted ${copied}/22 amiga BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 22 ]]
+        echo "Extracted ${copied}/23 amiga BMP screenshots into ${OUT_DIR}"
+        [[ "${copied}" -eq 23 ]]
         ;;
     *)
         usage

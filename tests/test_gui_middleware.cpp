@@ -2,10 +2,16 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "oyk_gui.hpp"
+#include "oyk_tui.hpp"
+#include "oyk_term.hpp"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 static void test_menus_titles_tabs_and_tables() {
     int mc = oyk_gui_node_menu_count();
@@ -23,6 +29,7 @@ static void test_menus_titles_tabs_and_tables() {
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_THEME), "Theme Settings") == 0);
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_EXIT_PEERS), "Auto-Learned Peers") == 0);
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_MENU), "Node Menu") == 0);
+    assert(strcmp(oyk_gui_screen_title(OYK_SCR_TERM_HELP), "Terminal Hotkey Help") == 0);
     assert(oyk_gui_vertical_text_offset(16, 8) == 4);
     assert(oyk_gui_vertical_text_offset(22, 16) == 3);
     assert(oyk_gui_control_height(8, 3) == 14);
@@ -200,11 +207,116 @@ static void test_native_os_theme_and_full_screen_preview() {
     printf("[PASS] test_native_os_theme_and_full_screen_preview\n");
 }
 
+struct StubTuiBuf {
+    char ch[25][81];
+    int  st[25][81];
+};
+
+static void stub_put_text(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    StubTuiBuf* b = static_cast<StubTuiBuf*>(ctx);
+    if (!b || row < 0 || row >= 25 || col < 0 || col >= 80 || max_w <= 0) return;
+    int len = text ? static_cast<int>(strlen(text)) : 0;
+    for (int i = 0; i < max_w && col + i < 80; ++i) {
+        b->ch[row][col + i] = (i < len) ? text[i] : ' ';
+        b->st[row][col + i] = style;
+    }
+}
+
+static void test_tui_buttons_and_jailed_file_mgr() {
+    assert(strstr(oyk_term_hotkey_bar_text(1, 0), "Ctrl-A Z:Help") != NULL);
+    assert(strstr(oyk_term_hotkey_bar_text(1, 0), "Tab/F9") != NULL);
+    assert(strstr(oyk_term_hotkey_bar_text(0, 0), "Ctrl-A Z:Help") != NULL);
+
+    StubTuiBuf tb;
+    memset(&tb, 0, sizeof(tb));
+    OykTuiBackend bk;
+    memset(&bk, 0, sizeof(bk));
+    bk.ctx = &tb;
+    bk.put_text = stub_put_text;
+
+    const OykTuiButton btns[3] = {
+        { "< Back", 1 },
+        { "Next >", 1 },
+        { "Cancel", 1 }
+    };
+    assert(oyk_tui_button_width("< Back") == 12); /* " [ < Back ] " */
+    oyk_tui_draw_button_row(&bk, 20, 4, 60, btns, 3, 1, "Hint");
+    /* Verify exact 1-cell padding & 2-cell modal-fill gap between Back and Next */
+    assert(strncmp(&tb.ch[20][4], " [ < Back ]    [ Next > ]    [ Cancel ] ", 40) == 0);
+    assert(tb.st[20][4] == OYK_TUI_STYLE_DLG_BAR && tb.st[20][15] == OYK_TUI_STYLE_DLG_BAR);
+    assert(tb.st[20][16] == OYK_TUI_STYLE_DLG_FILL && tb.st[20][17] == OYK_TUI_STYLE_DLG_FILL);
+    assert(tb.st[20][18] == OYK_TUI_STYLE_DLG_SEL && tb.st[20][29] == OYK_TUI_STYLE_DLG_SEL);
+    assert(tb.st[20][30] == OYK_TUI_STYLE_DLG_FILL && tb.st[20][31] == OYK_TUI_STYLE_DLG_FILL);
+    assert(tb.st[20][32] == OYK_TUI_STYLE_DLG_BAR && tb.st[20][43] == OYK_TUI_STYLE_DLG_BAR);
+    assert(oyk_tui_hit_button_row(20, 4, 60, btns, 3, 20, 18) == 1);
+    assert(oyk_tui_hit_button_row(20, 4, 60, btns, 3, 20, 16) == -1);
+
+    /* Dual-pane jailed File Manager checks */
+    system("rm -rf /tmp/oyk_gui_fm_test");
+    OykGuiFileMgr fm;
+    oyk_gui_filemgr_init(&fm, "/tmp/oyk_gui_fm_test/inc", "/tmp/oyk_gui_fm_test/files");
+    fm.active_pane = 1;
+    assert(oyk_gui_filemgr_mkdir(&fm, "sub") == 1);
+    fm.active_pane = 0;
+    assert(oyk_gui_filemgr_mkdir(&fm, "W3TRM-1") == 1);
+
+    /* Create local source file and Upload into incoming/W3TRM-1, then Approve -> files/sub */
+    FILE* lp = fopen("/tmp/oyk_gui_fm_src.txt", "wb");
+    assert(lp != NULL);
+    fputs("Hello Packet BBS\n", lp);
+    fclose(lp);
+
+    oyk_gui_filemgr_refresh(&fm);
+    /* Root must NEVER have ".." */
+    for (int i = 0; i < fm.files.count; ++i) assert(strcmp(fm.files.entries[i].name, "..") != 0);
+    for (int i = 0; i < fm.inc.count; ++i) assert(strcmp(fm.inc.entries[i].name, "..") != 0);
+
+    fm.inc.sel = 0; /* W3TRM-1 */
+    assert(oyk_gui_filemgr_activate(&fm, 0) == 1);
+    assert(strcmp(fm.inc.rel, "W3TRM-1") == 0);
+    /* Subdirectory MUST have ".." at index 0 */
+    assert(fm.inc.count >= 1 && fm.inc.entries[0].is_parent == 1 && strcmp(fm.inc.entries[0].name, "..") == 0);
+
+    int exists = 0;
+    assert(oyk_gui_filemgr_upload(&fm, "/tmp/oyk_gui_fm_src.txt", 0, &exists) == 1);
+    fm.active_pane = 1;
+    fm.files.sel = 0; /* sub */
+    assert(oyk_gui_filemgr_activate(&fm, 1) == 1);
+    assert(strcmp(fm.files.rel, "sub") == 0);
+
+    /* Move selected uploaded file from incoming/W3TRM-1 -> files/sub */
+    fm.inc.sel = 1;
+    assert(oyk_gui_filemgr_approve(&fm, 0, &exists) == 1);
+    /* Preview & rename inside files/sub */
+    fm.active_pane = 1;
+    fm.files.sel = 1;
+    char pbuf[128];
+    int trunc = 0;
+    assert(oyk_gui_filemgr_view(&fm, pbuf, sizeof(pbuf), &trunc) == 1);
+    assert(strstr(pbuf, "Hello Packet BBS") != NULL);
+    assert(oyk_gui_filemgr_rename(&fm, "notes.txt") == 1);
+    fm.files.sel = 1;
+    assert(oyk_gui_filemgr_delete(&fm) == 1);
+
+    /* Jail guard: cannot go above root */
+    assert(oyk_gui_filemgr_up(&fm, 1) == 1);
+    assert(fm.files.rel[0] == '\0');
+    assert(oyk_gui_filemgr_up(&fm, 1) == 0);
+    char nrel[64], nerr[64];
+    assert(oyk_bbs_enter_subdir("/tmp/oyk_gui_fm_test/files", "", "..", nrel, sizeof(nrel), nerr, sizeof(nerr)) == 0);
+    assert(oyk_bbs_enter_subdir("/tmp/oyk_gui_fm_test/files", "sub", "../../etc", nrel, sizeof(nrel), nerr, sizeof(nerr)) == 0);
+
+    remove("/tmp/oyk_gui_fm_src.txt");
+    system("rm -rf /tmp/oyk_gui_fm_test");
+    printf("[PASS] test_tui_buttons_and_jailed_file_mgr\n");
+}
+
 int main() {
     test_menus_titles_tabs_and_tables();
     test_banners_exit_prompt_and_validation();
     test_add_iface_wizard_and_theme_ctrl();
     test_native_os_theme_and_full_screen_preview();
+    test_tui_buttons_and_jailed_file_mgr();
     printf("All oyk_gui middleware tests passed!\n");
     return 0;
 }

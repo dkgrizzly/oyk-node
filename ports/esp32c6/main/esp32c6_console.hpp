@@ -49,7 +49,10 @@ enum Esp32C6PromptKind {
     C6L_PROMPT_CONFIRM_FORMAT,
     C6L_PROMPT_SET_TEXT,
     C6L_PROMPT_SET_BOOL,
-    C6L_PROMPT_LTERM_CONNECT
+    C6L_PROMPT_LTERM_CONNECT,
+    C6L_PROMPT_FM_UPLOAD,
+    C6L_PROMPT_FM_MKDIR,
+    C6L_PROMPT_FM_RENAME
 };
 
 #define C6L_LTERM_HIST_ROWS 24
@@ -96,6 +99,12 @@ private:
     void draw_box(int row, int col, int h, int w, const char* title, int clear_interior, int with_close);
     void draw_hdiv(int row, int col, int w);
     void draw_shadow(int row, int col, int h, int w);
+    static void tui_get_size_cb(void* ctx, int* out_rows, int* out_cols);
+    static void tui_put_text_cb(void* ctx, int row, int col, int max_w, int style, const char* text);
+    static void tui_put_box_cb(void* ctx, int top, int left, int h, int w, int bdr, int fill, int clr);
+    static void tui_put_hdiv_cb(void* ctx, int row, int left, int w, int style);
+    static void tui_put_shadow_cb(void* ctx, int top, int left, int h, int w);
+    OykTuiBackend make_tui_backend();
 
     void render_console();
     void render_menu();
@@ -180,6 +189,7 @@ private:
     int wiz_same_iface_;
     int wiz_lpol_;
     int wiz_field_;
+    int wiz_btn_;
 
     int edit_iface_idx_;
     OykIfaceConfig edit_iface_buf_;
@@ -188,6 +198,7 @@ private:
     int edit_peer_idx_;
     OykPeerConfig edit_peer_buf_;
     int edit_peer_field_;
+    int edit_btn_;
 
     int term_sel_;
     int ban_sel_;
@@ -197,14 +208,13 @@ private:
 
     int theme_sel_;
     int theme_role_sel_;
+    char prompt_label_[48];
     char prompt_buf_[96];
     int prompt_cursor_;
-    int files_tab_;
-    int files_sel_;
-    OykPendingIncoming incoming_list_[12];
-    int incoming_count_;
-    OykApprovedFile approved_list_[12];
-    int approved_count_;
+    OykGuiFileMgr file_mgr_;
+    int files_focus_btn_;
+    int fm_preview_active_;
+    char fm_preview_buf_[512];
 
     int bootloader_pending_;
     oyk_u32 bootloader_start_ms_;

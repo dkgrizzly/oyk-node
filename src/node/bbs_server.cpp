@@ -774,6 +774,395 @@ bool BbsServer::delete_approved_file(const std::string& files_root,
     return true;
 }
 
+bool BbsServer::list_dir_entries(const std::string& root,
+                                 const std::string& rel_dir,
+                                 std::vector<BbsDirEntry>& out,
+                                 std::string& norm_rel_out,
+                                 std::string& error_out) {
+    namespace fs = std::filesystem;
+    out.clear();
+    norm_rel_out.clear();
+    const std::string base_root = root.empty() ? "files" : root;
+    std::string abs_dir;
+    if (!resolve_safe_files_path(base_root, "", rel_dir, false,
+                                 abs_dir, norm_rel_out, error_out)) {
+        return false;
+    }
+
+    std::error_code ec;
+    fs::path dir_path(abs_dir);
+    if (!fs::exists(dir_path, ec)) {
+        if (!norm_rel_out.empty()) {
+            error_out = "Subdirectory does not exist.";
+            return false;
+        }
+        return true;
+    }
+    if (!fs::is_directory(dir_path, ec) || ec) {
+        error_out = "Target is not a directory.";
+        return false;
+    }
+
+    fs::path root_abs = fs::absolute(fs::path(base_root), ec);
+    fs::path root_canon = fs::weakly_canonical(root_abs, ec);
+    if (ec) root_canon = root_abs.lexically_normal();
+
+    std::vector<BbsDirEntry> items;
+    for (const auto& ent : fs::directory_iterator(dir_path, ec)) {
+        if (ec) break;
+        std::string name = ent.path().filename().string();
+        if (name.empty() || name == "." || name == "..") continue;
+        std::error_code lec;
+        if (ent.is_symlink(lec) && !lec) continue;
+        fs::path cand_canon = fs::weakly_canonical(ent.path(), lec);
+        if (lec || !path_is_within_root(root_canon, cand_canon)) continue;
+        BbsDirEntry d;
+        d.name = name;
+        d.is_parent = false;
+        if (ent.is_directory(lec) && !lec) {
+            d.is_dir = true;
+            d.size_bytes = 0;
+        } else if (ent.is_regular_file(lec) && !lec) {
+            d.is_dir = false;
+            d.size_bytes = ent.file_size(lec);
+            if (lec) d.size_bytes = 0;
+        } else {
+            continue;
+        }
+        items.push_back(std::move(d));
+    }
+
+    std::sort(items.begin(), items.end(), [](const BbsDirEntry& a, const BbsDirEntry& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return to_upper(a.name) < to_upper(b.name);
+    });
+
+    if (!norm_rel_out.empty()) {
+        BbsDirEntry parent;
+        parent.name = "..";
+        parent.size_bytes = 0;
+        parent.is_dir = true;
+        parent.is_parent = true;
+        out.push_back(std::move(parent));
+    }
+    for (auto& it : items) {
+        out.push_back(std::move(it));
+    }
+    return true;
+}
+
+bool BbsServer::enter_subdir(const std::string& root,
+                             const std::string& cur_rel,
+                             const std::string& child_name,
+                             std::string& next_rel_out,
+                             std::string& error_out) {
+    namespace fs = std::filesystem;
+    const std::string base_root = root.empty() ? "files" : root;
+    if (child_name.empty()) {
+        error_out = "No directory specified.";
+        return false;
+    }
+    std::string cur_abs, cur_norm;
+    if (!resolve_safe_files_path(base_root, "", cur_rel, false, cur_abs, cur_norm, error_out)) {
+        return false;
+    }
+    if (child_name == ".." && cur_norm.empty()) {
+        error_out = "Access denied: cannot navigate above assigned folder root.";
+        return false;
+    }
+    std::string next_abs;
+    if (!resolve_safe_files_path(base_root, cur_norm, child_name, true,
+                                 next_abs, next_rel_out, error_out)) {
+        return false;
+    }
+    std::error_code ec;
+    if (!fs::exists(fs::path(next_abs), ec) || !fs::is_directory(fs::path(next_abs), ec) || ec) {
+        error_out = "Target is not a directory.";
+        return false;
+    }
+    return true;
+}
+
+bool BbsServer::approve_incoming_rel_file(const std::string& incoming_root,
+                                          const std::string& inc_rel_file,
+                                          const std::string& files_root,
+                                          const std::string& dest_rel_dir,
+                                          bool allow_overwrite,
+                                          std::string& dest_path_out,
+                                          bool& already_exists_out,
+                                          std::string& error_out) {
+    namespace fs = std::filesystem;
+    dest_path_out.clear();
+    already_exists_out = false;
+    if (inc_rel_file.empty()) {
+        error_out = "No incoming file selected.";
+        return false;
+    }
+    const std::string inc_base = incoming_root.empty() ? "incoming" : incoming_root;
+    const std::string files_base = files_root.empty() ? "files" : files_root;
+
+    std::string src_abs, src_rel;
+    if (!resolve_safe_files_path(inc_base, "", inc_rel_file, false, src_abs, src_rel, error_out)) {
+        return false;
+    }
+    std::error_code ec;
+    if (src_rel.empty() || !fs::is_regular_file(fs::path(src_abs), ec) || ec) {
+        error_out = "Incoming file not found.";
+        return false;
+    }
+
+    const std::string fname = fs::path(src_rel).filename().string();
+    if (!protocol::is_safe_yapp_filename(fname)) {
+        error_out = "Invalid incoming filename.";
+        return false;
+    }
+
+    std::string dst_dir_abs, dst_dir_rel;
+    if (!resolve_safe_files_path(files_base, "", dest_rel_dir, false,
+                                 dst_dir_abs, dst_dir_rel, error_out)) {
+        return false;
+    }
+    fs::create_directories(fs::path(dst_dir_abs), ec);
+    if (ec) {
+        error_out = "Unable to create files directory: " + ec.message();
+        return false;
+    }
+
+    fs::path root_canon = fs::weakly_canonical(fs::absolute(fs::path(files_base), ec), ec);
+    fs::path dest_file = fs::weakly_canonical(fs::path(dst_dir_abs) / fname, ec);
+    if (ec || !path_is_within_root(root_canon, dest_file)) {
+        error_out = "Access denied: destination escapes BBS files area.";
+        return false;
+    }
+    if (fs::exists(dest_file, ec)) {
+        if (!allow_overwrite) {
+            already_exists_out = true;
+            dest_path_out = dest_file.string();
+            error_out = "File already exists in BBS files area.";
+            return false;
+        }
+        fs::remove(dest_file, ec);
+        if (ec) {
+            error_out = "Unable to overwrite existing file: " + ec.message();
+            return false;
+        }
+    }
+    fs::rename(fs::path(src_abs), dest_file, ec);
+    if (ec) {
+        ec.clear();
+        fs::copy_file(fs::path(src_abs), dest_file, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error_out = "Failed to move file: " + ec.message();
+            return false;
+        }
+        fs::remove(fs::path(src_abs), ec);
+    }
+    dest_path_out = dest_file.string();
+    return true;
+}
+
+bool BbsServer::import_local_file(const std::string& local_src_path,
+                                  const std::string& target_root,
+                                  const std::string& target_rel_dir,
+                                  bool allow_overwrite,
+                                  std::string& dest_path_out,
+                                  bool& already_exists_out,
+                                  std::string& error_out) {
+    namespace fs = std::filesystem;
+    dest_path_out.clear();
+    already_exists_out = false;
+    std::error_code ec;
+    fs::path src(local_src_path);
+    if (local_src_path.empty() || !fs::is_regular_file(src, ec) || ec) {
+        error_out = "Local source file not found.";
+        return false;
+    }
+    const std::string fname = src.filename().string();
+    if (!protocol::is_safe_yapp_filename(fname)) {
+        error_out = "Unsafe local filename.";
+        return false;
+    }
+    const std::string base_root = target_root.empty() ? "files" : target_root;
+    std::string dst_dir_abs, dst_dir_rel;
+    if (!resolve_safe_files_path(base_root, "", target_rel_dir, false,
+                                 dst_dir_abs, dst_dir_rel, error_out)) {
+        return false;
+    }
+    fs::create_directories(fs::path(dst_dir_abs), ec);
+    if (ec) {
+        error_out = "Unable to create destination directory: " + ec.message();
+        return false;
+    }
+    fs::path root_canon = fs::weakly_canonical(fs::absolute(fs::path(base_root), ec), ec);
+    fs::path dest_file = fs::weakly_canonical(fs::path(dst_dir_abs) / fname, ec);
+    if (ec || !path_is_within_root(root_canon, dest_file)) {
+        error_out = "Access denied: destination escapes assigned root.";
+        return false;
+    }
+    if (fs::exists(dest_file, ec)) {
+        if (!allow_overwrite) {
+            already_exists_out = true;
+            dest_path_out = dest_file.string();
+            error_out = "Destination file already exists.";
+            return false;
+        }
+        fs::remove(dest_file, ec);
+        if (ec) {
+            error_out = "Unable to overwrite existing file: " + ec.message();
+            return false;
+        }
+    }
+    fs::copy_file(src, dest_file, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        error_out = "Failed to upload local file: " + ec.message();
+        return false;
+    }
+    dest_path_out = dest_file.string();
+    return true;
+}
+
+bool BbsServer::mkdir_safe(const std::string& root,
+                           const std::string& cur_rel,
+                           const std::string& new_name,
+                           std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (!protocol::is_safe_yapp_filename(new_name)) {
+        error_out = "Invalid directory name.";
+        return false;
+    }
+    const std::string base_root = root.empty() ? "files" : root;
+    std::string target_abs, target_rel;
+    if (!resolve_safe_files_path(base_root, cur_rel, new_name, false,
+                                 target_abs, target_rel, error_out)) {
+        return false;
+    }
+    std::error_code ec;
+    if (fs::exists(fs::path(target_abs), ec)) {
+        error_out = "Entry already exists.";
+        return false;
+    }
+    if (!fs::create_directories(fs::path(target_abs), ec) || ec) {
+        error_out = "Failed to create directory: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+bool BbsServer::rename_safe(const std::string& root,
+                            const std::string& cur_rel,
+                            const std::string& old_name,
+                            const std::string& new_name,
+                            std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (!protocol::is_safe_yapp_filename(old_name) ||
+        !protocol::is_safe_yapp_filename(new_name)) {
+        error_out = "Invalid entry name for rename.";
+        return false;
+    }
+    const std::string base_root = root.empty() ? "files" : root;
+    std::string src_abs, src_rel, dst_abs, dst_rel;
+    if (!resolve_safe_files_path(base_root, cur_rel, old_name, false, src_abs, src_rel, error_out) ||
+        !resolve_safe_files_path(base_root, cur_rel, new_name, false, dst_abs, dst_rel, error_out)) {
+        return false;
+    }
+    std::error_code ec;
+    if (!fs::exists(fs::path(src_abs), ec)) {
+        error_out = "Source entry not found.";
+        return false;
+    }
+    if (fs::exists(fs::path(dst_abs), ec)) {
+        error_out = "Target name already exists.";
+        return false;
+    }
+    fs::rename(fs::path(src_abs), fs::path(dst_abs), ec);
+    if (ec) {
+        error_out = "Rename failed: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+bool BbsServer::delete_safe(const std::string& root,
+                            const std::string& cur_rel,
+                            const std::string& name,
+                            std::string& error_out) {
+    namespace fs = std::filesystem;
+    if (!protocol::is_safe_yapp_filename(name)) {
+        error_out = "Invalid entry name.";
+        return false;
+    }
+    const std::string base_root = root.empty() ? "files" : root;
+    std::string tgt_abs, tgt_rel;
+    if (!resolve_safe_files_path(base_root, cur_rel, name, false, tgt_abs, tgt_rel, error_out)) {
+        return false;
+    }
+    if (tgt_rel.empty()) {
+        error_out = "Access denied: cannot delete assigned root.";
+        return false;
+    }
+    std::error_code ec;
+    fs::path p(tgt_abs);
+    if (!fs::exists(p, ec)) {
+        error_out = "Entry not found.";
+        return false;
+    }
+    if (fs::is_directory(p, ec) && !fs::is_empty(p, ec)) {
+        error_out = "Directory must be empty before deleting.";
+        return false;
+    }
+    if (!fs::remove(p, ec) || ec) {
+        error_out = "Delete failed: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+bool BbsServer::read_text_preview(const std::string& root,
+                                  const std::string& cur_rel,
+                                  const std::string& filename,
+                                  std::string& content_out,
+                                  bool& truncated_out,
+                                  std::string& error_out) {
+    namespace fs = std::filesystem;
+    content_out.clear();
+    truncated_out = false;
+    if (!protocol::is_safe_yapp_filename(filename)) {
+        error_out = "Invalid file for preview.";
+        return false;
+    }
+    const std::string base_root = root.empty() ? "files" : root;
+    std::string tgt_abs, tgt_rel;
+    if (!resolve_safe_files_path(base_root, cur_rel, filename, false, tgt_abs, tgt_rel, error_out)) {
+        return false;
+    }
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::path(tgt_abs), ec) || ec) {
+        error_out = "Preview only supports regular files.";
+        return false;
+    }
+    std::ifstream ifs(tgt_abs, std::ios::binary);
+    if (!ifs.is_open()) {
+        error_out = "Unable to open file for preview.";
+        return false;
+    }
+    constexpr std::size_t kMaxPreview = 4096U;
+    std::string raw(kMaxPreview + 1U, '\0');
+    ifs.read(raw.data(), static_cast<std::streamsize>(kMaxPreview + 1U));
+    std::size_t n = static_cast<std::size_t>(ifs.gcount());
+    if (n > kMaxPreview) {
+        truncated_out = true;
+        n = kMaxPreview;
+    }
+    content_out.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        unsigned char c = static_cast<unsigned char>(raw[i]);
+        if (c == '\r') content_out.push_back('\n');
+        else if (c == '\n' || c == '\t' || (c >= 0x20U && c < 0x7FU)) content_out.push_back(static_cast<char>(c));
+        else content_out.push_back('.');
+    }
+    return true;
+}
+
 std::size_t BbsServer::active_message_count() const {
     std::size_t n = 0;
     for (const auto& [_, m] : messages_) {

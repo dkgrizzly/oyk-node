@@ -11,7 +11,11 @@ RENDERER="${ROOT_DIR}/scripts/render_ui_png.py"
 
 TMP_WORK="$(mktemp -d /tmp/oyk_ui_gallery.XXXXXX)"
 TMP_CAP="${TMP_WORK}/captures"
-mkdir -p "${TMP_CAP}" "${OUT_IMG_DIR}" "${TMP_WORK}/logs"
+mkdir -p "${TMP_CAP}" "${OUT_IMG_DIR}" "${TMP_WORK}/logs" \
+    "${TMP_WORK}/incoming/W3TRM-1" "${TMP_WORK}/files/bulletins"
+printf 'Field Day schedule\n' > "${TMP_WORK}/incoming/W3TRM-1/fieldday.txt"
+printf 'Welcome bulletin\n' > "${TMP_WORK}/files/bulletins/welcome.txt"
+printf 'General node info\n' > "${TMP_WORK}/files/readme.txt"
 trap 'rm -rf "${TMP_WORK}"' EXIT
 
 if [[ ! -x "${BUILD_DIR}/oyk-node" || ! -x "${BUILD_DIR}/oyk_portable_tests" || ! -x "${BUILD_DIR}/oyk_tinytmux_tests" || ! -x "${BUILD_DIR}/oyk_pico_tests" || ! -x "${BUILD_DIR}/oyk_esp32c6_tests" ]]; then
@@ -29,6 +33,7 @@ callsign = KR4OYK-7
 alias = OYKNOD
 logpath = ${TMP_WORK}/logs
 banlist = ${TMP_WORK}/banlist.cfg
+bbs_files_path = ${TMP_WORK}/files
 welcome = Welcome to KR4OYK-7 Packet Node
 
 [interface axudp0]
@@ -75,6 +80,7 @@ if [[ -x "${BUILD_DIR}/oyk-node-gtk" ]] && command -v xvfb-run >/dev/null 2>&1; 
                 WM_PID=$!
                 sleep 0.8
             fi
+            cd "$4"
             OYK_UI_TEST_MODE=1 OYK_UI_CAPTURE_DIR="$1" "$2" --config "$3"
             rc=$?
             if [[ -n "${WM_PID}" ]] && kill -0 "${WM_PID}" 2>/dev/null; then
@@ -82,12 +88,21 @@ if [[ -x "${BUILD_DIR}/oyk-node-gtk" ]] && command -v xvfb-run >/dev/null 2>&1; 
                 wait "${WM_PID}" >/dev/null 2>&1 || true
             fi
             exit $rc
-        ' _ "${TMP_CAP}" "${BUILD_DIR}/oyk-node-gtk" "${TMP_WORK}/node.cfg"
+        ' _ "${TMP_CAP}" "${BUILD_DIR}/oyk-node-gtk" "${TMP_WORK}/node.cfg" "${TMP_WORK}"
 else
     echo "Warning: oyk-node-gtk or xvfb-run unavailable; skipping GTK+ 2.0 capture." >&2
 fi
 
 echo "[5/5] Capturing Windows GUI screens under Xvfb + Wine..."
+if command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 && command -v cmake >/dev/null 2>&1; then
+    WIN_BUILD_DIR="${TMPDIR:-/tmp}/oyk-win64-build"
+    if [[ ! -f "${WIN_BUILD_DIR}/CMakeCache.txt" ]] || ! grep -q "BUILD_WINDOWS_PORT:BOOL=ON" "${WIN_BUILD_DIR}/CMakeCache.txt"; then
+        rm -rf "${WIN_BUILD_DIR}"
+        cmake -S "${ROOT_DIR}" -B "${WIN_BUILD_DIR}" -DBUILD_WINDOWS_PORT=ON >/dev/null
+    fi
+    cmake --build "${WIN_BUILD_DIR}" --target oyk-node-win64 -j >/dev/null
+    cp -f "${WIN_BUILD_DIR}/oykw64.exe" "${BUILD_DIR}/oykw64.exe"
+fi
 WIN_EXE=""
 WIN_PREFIX=""
 if [[ -f "${BUILD_DIR}/oykw64.exe" && -d "${HOME}/.wine64" ]]; then
@@ -105,6 +120,7 @@ callsign = KR4OYK-7
 alias = OYKNOD
 logpath = logs
 banlist = banlist.cfg
+bbs_files_path = files
 welcome = Welcome to KR4OYK-7 Packet Node
 
 [interface axudp0]
@@ -140,7 +156,7 @@ EOF
                 waited=0
                 while kill -0 "${EXP_PID}" 2>/dev/null && [[ "${waited}" -lt 80 ]]; do
                     cnt=$(ls -1 "$3"/win_*.bmp 2>/dev/null | wc -l)
-                    if [[ "${cnt}" -ge 22 ]]; then
+                    if [[ "${cnt}" -ge 23 ]]; then
                         sleep 0.6
                         break
                     fi
@@ -175,9 +191,7 @@ echo "[7/7] Capturing Classic Macintosh (68k/PPC) screens under Mini vMac..."
 RETRO68_DIR="${RETRO68_PREFIX:-${HOME}/opt/Retro68}"
 MC_RUNNER="${ROOT_DIR}/ports/macclassic/run_minivmac_test.sh"
 if [[ -x "${RETRO68_DIR}/bin/m68k-apple-macos-g++" && -x "${MC_RUNNER}" && -x "${HOME}/minivmac/minivmac-plus-bg" ]]; then
-    if [[ ! -f "${ROOT_DIR}/ports/macclassic/build_macclassic/OYKNode-Fat.bin" ]]; then
-        make -C "${ROOT_DIR}/ports/macclassic" RETRO68_PREFIX="${RETRO68_DIR}" all >/dev/null
-    fi
+    make -C "${ROOT_DIR}/ports/macclassic" RETRO68_PREFIX="${RETRO68_DIR}" all >/dev/null
     "${MC_RUNNER}" --capture-bw "${TMP_CAP}" || echo "Warning: Classic Mac B&W capture failed." >&2
     if [[ -x "${HOME}/minivmac/minivmac-ii" && -f "${HOME}/minivmac/MacII.ROM" ]]; then
         "${MC_RUNNER}" --capture-color "${TMP_CAP}" || echo "Warning: Classic Mac Color capture failed." >&2
@@ -219,9 +233,7 @@ VBCC_DIR="${VBCC:-${HOME}/opt/vbcc}"
 GSOS_DIR="${OYK_GSPLUS_DIR:-${HOME}/gsplus}"
 GSOS_RUNNER="${ROOT_DIR}/ports/gsos/run_gsplus_test.sh"
 if [[ -x "${VBCC_DIR}/bin/vc" && -x "${GSOS_RUNNER}" && -x "${GSOS_DIR}/gsplus/gsplus" && -f "${GSOS_DIR}/ROM.01" && -f "${GSOS_DIR}/System.Disk.po" ]]; then
-    if [[ ! -f "${ROOT_DIR}/ports/gsos/build_gsos/OYKNODE.SYS16" ]]; then
-        make -C "${ROOT_DIR}/ports/gsos" VBCC_PREFIX="${VBCC_DIR}" all >/dev/null
-    fi
+    make -C "${ROOT_DIR}/ports/gsos" VBCC_PREFIX="${VBCC_DIR}" all >/dev/null
     "${GSOS_RUNNER}" --capture "${TMP_CAP}" || echo "Warning: GS/OS capture failed." >&2
 else
     echo "Warning: vbcc or GSplus unavailable; skipping Apple IIGS GS/OS capture." >&2
@@ -231,9 +243,7 @@ echo "[10/10] Capturing Amiga Workbench screens under FS-UAE + AROS m68k..."
 AMIGA_GCC_DIR="${AMIGA_GCC_PREFIX:-${HOME}/opt/amiga-gcc}"
 AMIGA_RUNNER="${ROOT_DIR}/ports/amiga/run_fsuae_test.sh"
 if [[ -x "${AMIGA_GCC_DIR}/bin/m68k-amigaos-g++" && -x "${AMIGA_RUNNER}" ]] && command -v fs-uae >/dev/null 2>&1; then
-    if [[ ! -f "${ROOT_DIR}/ports/amiga/build_amiga/OYKNode" ]]; then
-        make -C "${ROOT_DIR}/ports/amiga" AMIGA_GCC_PREFIX="${AMIGA_GCC_DIR}" all >/dev/null
-    fi
+    make -C "${ROOT_DIR}/ports/amiga" AMIGA_GCC_PREFIX="${AMIGA_GCC_DIR}" all >/dev/null
     "${AMIGA_RUNNER}" --capture "${TMP_CAP}" || echo "Warning: Amiga capture failed." >&2
 else
     echo "Warning: amiga-gcc or fs-uae unavailable; skipping Amiga Workbench capture." >&2
@@ -243,9 +253,7 @@ echo "[11/11] Capturing Atari ST GEM screens (ST High Mono & 16-color VDI) under
 MINTELF_DIR="${MINTELF_PREFIX:-${HOME}/opt/mintelf}"
 ATARI_RUNNER="${ROOT_DIR}/ports/atarist/run_hatari_test.sh"
 if [[ -x "${MINTELF_DIR}/usr/bin/m68k-atari-mintelf-g++" && -x "${ATARI_RUNNER}" ]] && command -v hatari >/dev/null 2>&1; then
-    if [[ ! -f "${ROOT_DIR}/ports/atarist/build_atarist/OYKNODE.PRG" ]]; then
-        make -C "${ROOT_DIR}/ports/atarist" MINTELF_PREFIX="${MINTELF_DIR}" all >/dev/null
-    fi
+    make -C "${ROOT_DIR}/ports/atarist" MINTELF_PREFIX="${MINTELF_DIR}" all >/dev/null
     "${ATARI_RUNNER}" --capture-mono "${TMP_CAP}" || echo "Warning: Atari ST Mono capture failed." >&2
     "${ATARI_RUNNER}" --capture-color "${TMP_CAP}" || echo "Warning: Atari ST Color capture failed." >&2
 else
@@ -260,7 +268,7 @@ rm -f "${OUT_IMG_DIR}"/*.png
 rm -rf "${OUT_IMG_DIR}/thumbs"
 mkdir -p "${OUT_IMG_DIR}/thumbs"
 
-FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal files about)
+FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
 PORTS=(ncurses dos dos_gfx tinytmux pico esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
 
 for f in "${TMP_CAP}"/*.ansi; do
@@ -336,9 +344,10 @@ flow_title() {
         ban)              echo "17. Ban / Unban Callsign Dialog" ;;
         exit)             echo "18. Auto-Learned Peers Exit / Bootloader Prompt" ;;
         theme)            echo "19. Theme Settings Dialog" ;;
-        terminal)         echo "20. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)" ;;
-        files)            echo "21. File Manager / Pending & Approved BBS Files" ;;
-        about)            echo "22. About OYK-Node Dialog" ;;
+        terminal)         echo "20. Local Packet Terminal (Ctrl-A Hotkeys & BBS Session)" ;;
+        terminal_help)    echo "21. Terminal Hotkey Help Modal" ;;
+        files)            echo "22. Dual-Pane File Manager (Incoming | Files)" ;;
+        about)            echo "23. About OYK-Node Dialog" ;;
     esac
 }
 
@@ -364,8 +373,9 @@ flow_short() {
         exit)             echo "18. Exit/Boot" ;;
         theme)            echo "19. Theme" ;;
         terminal)         echo "20. Terminal" ;;
-        files)            echo "21. Files" ;;
-        about)            echo "22. About" ;;
+        terminal_help)    echo "21. Term Help" ;;
+        files)            echo "22. Files" ;;
+        about)            echo "23. About" ;;
     esac
 }
 
@@ -376,7 +386,7 @@ flow_short() {
 
 # OYK-Node UI Gallery
 
-Automated native-resolution screenshots and per-port thumbnail contact sheets generated across all 22 canonical operator screens (`./scripts/generate_ui_gallery.sh`).
+Automated native-resolution screenshots and per-port thumbnail contact sheets generated across all 23 canonical operator screens (`./scripts/generate_ui_gallery.sh`).
 
 Click any thumbnail in the port tables below to open the full-resolution native PNG capture.
 

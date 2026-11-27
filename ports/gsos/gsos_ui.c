@@ -854,55 +854,84 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_draw_button(mx + mw - 96, by, 82, 13, "Apply", 1);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_TERMINAL) {
-        gs_draw_text(lx, ty + 2, "KR4OYK-11 BBS | Ctrl+A H Help | S YAPP | W Wrap",
+        gs_draw_text(lx, ty + 2, "KR4OYK-11 BBS | EOL: CR | Wrap: ON",
                      GS_CLR_FG, GS_CLR_BG, 70);
-        gs_fill_rect(lx, ty + 13, mw - 24, 78, GS_CLR_PANEL);
-        gs_frame_rect(lx, ty + 13, mw - 24, 78, GS_CLR_FG);
+        gs_fill_rect(lx, ty + 13, mw - 24, 65, GS_CLR_PANEL);
+        gs_frame_rect(lx, ty + 13, mw - 24, 65, GS_CLR_FG);
         gs_draw_text(lx + 6, ty + 17, "Welcome to KR4OYK-7 BBS on Apple IIGS GS/OS",
                      GS_CLR_FG, GS_CLR_PANEL, 68);
-        gs_draw_text(lx + 6, ty + 28, "EOL: Auto-Detected CR | Word-Wrap: ON (72 cols)",
+        gs_draw_text(lx + 6, ty + 28, "Type 'LIST' or 'B' to disconnect from BBS.",
                      GS_CLR_FG, GS_CLR_PANEL, 68);
-        gs_draw_text(lx + 6, ty + 39, "Type 'LIST' or 'B' to disconnect from BBS.",
+        gs_draw_text(lx + 6, ty + 39, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
                      GS_CLR_FG, GS_CLR_PANEL, 68);
-        gs_draw_text(lx + 6, ty + 50, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
-                     GS_CLR_FG, GS_CLR_PANEL, 68);
+        gs_fill_rect(lx, by - 30, mw - 24, 12, GS_CLR_FG);
+        gs_draw_text(lx + 4, by - 28, oyk_gsos_term_hotkey_bar_text(0),
+                     GS_CLR_BG, GS_CLR_FG, 72);
         gs_draw_field_row(lx, by - 16, "Input:", "LIST_", 52, mw - 156);
         gs_draw_button(lx + mw - 98, by - 16, 74, 12, "Send", 1);
-        gs_draw_button(lx, by, 96, 13, "Ctrl+A Help", 0);
+        gs_draw_button(lx, by, 72, 13, "Help", 0);
         gs_draw_button(mx + mw - 96, by, 82, 13, "Close", 0);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
+    } else if (scr == OYK_GSOS_SCR_TERM_HELP) {
+        int hi;
+        gs_draw_text(lx, ty + 2, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)",
+                     GS_CLR_FG, GS_CLR_BG, 68);
+        gs_fill_rect(lx, ty + 13, mw - 24, 98, GS_CLR_PANEL);
+        gs_frame_rect(lx, ty + 13, mw - 24, 98, GS_CLR_FG);
+        for (hi = 0; hi < oyk_gsos_term_help_count() && hi < 8; ++hi) {
+            char row[80];
+            sprintf(row, "%-9.9s  %-34.34s  %-10.10s",
+                    oyk_gsos_term_help_key(hi),
+                    oyk_gsos_term_help_action(hi),
+                    oyk_gsos_term_help_alt(hi));
+            gs_draw_text(lx + 6, ty + 17 + hi * 11, row, GS_CLR_FG, GS_CLR_PANEL, 68);
+        }
+        gs_draw_button(mx + mw - 96, by, 82, 13, "Close", 1);
+        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_FILES) {
-        int fx1[3], fx2[2], fw1[3], fw2[2];
-        const char *fh1[3], *fh2[2], *fr1[3], *fr2a[2], *fr2b[2];
-        fx1[0] = lx + 4; fx1[1] = lx + 72; fx1[2] = lx + 196;
-        fh1[0] = "Uploader"; fh1[1] = "Filename"; fh1[2] = "Size";
-        fw1[0] = 9; fw1[1] = 15; fw1[2] = 7;
-        fr1[0] = "W4ABC-7"; fr1[1] = "PACKETS.TXT"; fr1[2] = "2048";
-
+        OykGsosFileMgr fm;
+        int fx1[2], fx2[2], fw1[2], fw2[2], ri;
+        const char *fh[2], *fr[2];
+        char tit1[40], tit2[40], sz1[8][12], sz2[8][12];
+        oyk_gsos_filemgr_init(&fm, "/OYK/INCOMING", "/OYK/FILES");
+        oyk_gsos_filemgr_pane_title(&fm.inc, "Incoming", tit1, sizeof(tit1));
+        oyk_gsos_filemgr_pane_title(&fm.files, "Files", tit2, sizeof(tit2));
+        fx1[0] = lx + 4; fx1[1] = lx + 188;
         fx2[0] = lx + 266; fx2[1] = lx + 464;
-        fh2[0] = "Filename"; fh2[1] = "Size";
+        fh[0] = "Name"; fh[1] = "Size";
+        fw1[0] = 22; fw1[1] = 7;
         fw2[0] = 24; fw2[1] = 7;
-        fr2a[0] = "README.TXT"; fr2a[1] = "1420";
-        fr2b[0] = "NETLIST.CFG"; fr2b[1] = "618";
 
-        gs_draw_text(lx, ty + 2, "Pending Uploads", GS_CLR_FG, GS_CLR_BG, 30);
-        gs_draw_text(lx + 262, ty + 2, "Approved BBS Files", GS_CLR_FG, GS_CLR_BG, 30);
+        gs_draw_text(lx, ty + 2, tit1, GS_CLR_FG, GS_CLR_BG, 30);
+        gs_draw_text(lx + 262, ty + 2, tit2, GS_CLR_FG, GS_CLR_BG, 30);
         gs_fill_rect(lx, ty + 14, 250, 96, GS_CLR_PANEL);
         gs_frame_rect(lx, ty + 14, 250, 96, GS_CLR_FG);
         gs_fill_rect(lx + 262, ty + 14, 266, 96, GS_CLR_PANEL);
         gs_frame_rect(lx + 262, ty + 14, 266, 96, GS_CLR_FG);
-        gs_draw_listview_header(lx + 2, ty + 16, 246, 3, fx1, fh1, GS_CLR_PANEL, GS_CLR_FG);
-        gs_draw_listview_row(lx + 2, ty + 27, 246, 10, 1, 3, fx1, fr1, fw1,
-                             GS_CLR_PANEL, GS_CLR_FG);
-        gs_draw_listview_header(lx + 264, ty + 16, 262, 2, fx2, fh2, GS_CLR_PANEL, GS_CLR_FG);
-        gs_draw_listview_row(lx + 264, ty + 27, 262, 10, 1, 2, fx2, fr2a, fw2,
-                             GS_CLR_PANEL, GS_CLR_FG);
-        gs_draw_listview_row(lx + 264, ty + 38, 262, 10, 0, 2, fx2, fr2b, fw2,
-                             GS_CLR_PANEL, GS_CLR_FG);
-        gs_draw_button(lx, by, 84, 13, "Upload...", 0);
-        gs_draw_button(lx + 90, by, 84, 13, "Approve", 1);
-        gs_draw_button(mx + mw - 96, by, 82, 13, "Close", 0);
-        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
+        gs_draw_listview_header(lx + 2, ty + 16, 246, 2, fx1, fh, GS_CLR_PANEL, GS_CLR_FG);
+        for (ri = 0; ri < fm.inc.count && ri < 6; ++ri) {
+            if (fm.inc.entries[ri].is_dir) strcpy(sz1[ri], "<DIR>");
+            else sprintf(sz1[ri], "%lu", fm.inc.entries[ri].size);
+            fr[0] = fm.inc.entries[ri].name; fr[1] = sz1[ri];
+            gs_draw_listview_row(lx + 2, ty + 27 + ri * 11, 246, 10, ri == 0, 2, fx1, fr, fw1,
+                                 GS_CLR_PANEL, GS_CLR_FG);
+        }
+        gs_draw_listview_header(lx + 264, ty + 16, 262, 2, fx2, fh, GS_CLR_PANEL, GS_CLR_FG);
+        for (ri = 0; ri < fm.files.count && ri < 6; ++ri) {
+            if (fm.files.entries[ri].is_dir) strcpy(sz2[ri], "<DIR>");
+            else sprintf(sz2[ri], "%lu", fm.files.entries[ri].size);
+            fr[0] = fm.files.entries[ri].name; fr[1] = sz2[ri];
+            gs_draw_listview_row(lx + 264, ty + 27 + ri * 11, 262, 10, ri == 0, 2, fx2, fr, fw2,
+                                 GS_CLR_PANEL, GS_CLR_FG);
+        }
+        gs_draw_button(lx, by, 72, 13, "Upload", 0);
+        gs_draw_button(lx + 76, by, 76, 13, "Approve", 1);
+        gs_draw_button(lx + 156, by, 68, 13, "Rename", 0);
+        gs_draw_button(lx + 228, by, 72, 13, "New Dir", 0);
+        gs_draw_button(lx + 304, by, 68, 13, "Delete", 0);
+        gs_draw_button(lx + 376, by, 58, 13, "View", 0);
+        gs_draw_button(mx + mw - 86, by, 74, 13, "Close", 0);
+        gs_add_hit(ui, mx + mw - 86, by, 74, 13, 999);
     } else if (scr == OYK_GSOS_SCR_ABOUT) {
         gs_draw_text(lx, ty + 8, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
                      GS_CLR_FG, GS_CLR_BG, 68);
@@ -951,7 +980,7 @@ typedef struct {
     const char *bmp_path;
 } GsosGalleryStep;
 
-static const GsosGalleryStep kGallerySteps[22] = {
+static const GsosGalleryStep kGallerySteps[23] = {
     { OYK_GSOS_SCR_MAIN,       0, 0, "/OYKOUT/GMAIN.BMP" },
     { OYK_GSOS_SCR_MENU,       0, 0, "/OYKOUT/GMENU.BMP" },
     { OYK_GSOS_SCR_SETTINGS,   0, 0, "/OYKOUT/GSET1.BMP" },
@@ -972,6 +1001,7 @@ static const GsosGalleryStep kGallerySteps[22] = {
     { OYK_GSOS_SCR_EXIT_PEERS, 0, 0, "/OYKOUT/GEXIT.BMP" },
     { OYK_GSOS_SCR_THEME,      0, 0, "/OYKOUT/GTHME.BMP" },
     { OYK_GSOS_SCR_TERMINAL,   0, 0, "/OYKOUT/GTML.BMP"  },
+    { OYK_GSOS_SCR_TERM_HELP,  0, 0, "/OYKOUT/GTMLH.BMP" },
     { OYK_GSOS_SCR_FILES,      0, 0, "/OYKOUT/GFILE.BMP" },
     { OYK_GSOS_SCR_ABOUT,      0, 0, "/OYKOUT/GABT.BMP"  }
 };
@@ -1053,7 +1083,7 @@ int oyk_gsos_ui_run(OykGsosNode *node, OykGsosNetState *net, int ui_test_mode) {
         oyk_gsos_node_seed_demo(node);
         ui->draft_cfg = node->cfg;
         oyk_gsos_wiz_init(&ui->wiz, &node->cfg);
-        for (i = 0; i < 22; ++i) {
+        for (i = 0; i < 23; ++i) {
             ui->active_screen = kGallerySteps[i].scr;
             ui->settings_tab = kGallerySteps[i].tab;
             ui->wiz.step = kGallerySteps[i].wiz_step;

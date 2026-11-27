@@ -3,6 +3,7 @@
 
 #include "oyk_portable.hpp"
 #include "oyk_yapp.hpp"
+#include "oyk_gui.hpp"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -15,10 +16,12 @@
 #include <windows.h>
 #include <direct.h>
 #define OYK_MKDIR(p) _mkdir(p)
+#define OYK_RMDIR(p) _rmdir(p)
 #elif defined(__DOS__) || defined(__MSDOS__) || defined(_MSDOS) || defined(__WATCOMC__)
 #include <direct.h>
 #include <dos.h>
 #define OYK_MKDIR(p) mkdir(p)
+#define OYK_RMDIR(p) rmdir(p)
 #elif defined(OYK_TARGET_IMXRT1060) || defined(TEENSYDUINO) || (defined(__arm__) && !defined(__linux__) && !defined(__unix__))
 #include <sys/stat.h>
 #if (defined(OYK_HAS_FATFS) && OYK_HAS_FATFS) || defined(TEENSYDUINO)
@@ -32,16 +35,22 @@ int oyk_imxrt_readdir(void* dir_handle, char* name_out, size_t name_sz,
 void oyk_imxrt_closedir(void* dir_handle);
 }
 #define OYK_MKDIR(p) oyk_imxrt_mkdir(p)
+#define OYK_RMDIR(p) remove(p)
 #else
 #define OYK_MKDIR(p) ((void)(p), -1)
+#define OYK_RMDIR(p) ((void)(p), -1)
 #endif
 #elif defined(OYK_TARGET_MACCLASSIC)
 #include <sys/stat.h>
 #define OYK_MKDIR(p) ((void)(p), -1)
+#define OYK_RMDIR(p) ((void)(p), -1)
 #else
 #include <dirent.h>
+#include <limits.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #define OYK_MKDIR(p) mkdir((p), 0755)
+#define OYK_RMDIR(p) rmdir(p)
 #endif
 
 namespace {
@@ -3829,6 +3838,400 @@ int oyk_bbs_delete_approved_file(const char* files_root,
     return 1;
 }
 
+static int bbs_posix_within_root(const char* root, const char* cand,
+                                 char* err_out, size_t err_sz) {
+#if !defined(_WIN32) && !defined(_WIN64) && !defined(__DOS__) && !defined(__MSDOS__) && \
+    !defined(_MSDOS) && !defined(__WATCOMC__) && !defined(OYK_TARGET_IMXRT1060) && \
+    !defined(TEENSYDUINO) && !defined(PICO_BOARD) && !defined(ESP_PLATFORM) && \
+    !defined(OYK_TARGET_MACCLASSIC) && !defined(__AMIGA__) && !defined(__atarist__) && !defined(macintosh)
+    char* rbuf = new char[4096];
+    char* cbuf = new char[4096];
+    int ok = 1;
+    if (realpath(root, rbuf) != NULL && realpath(cand, cbuf) != NULL) {
+        size_t rlen = strlen(rbuf);
+        if (strncmp(cbuf, rbuf, rlen) != 0 ||
+            (cbuf[rlen] != '\0' && cbuf[rlen] != '/')) {
+            safe_copy(err_out, err_sz, "Access denied: path escapes assigned root.");
+            ok = 0;
+        }
+    }
+    delete[] cbuf;
+    delete[] rbuf;
+    return ok;
+#else
+    (void)root; (void)cand; (void)err_out; (void)err_sz;
+    return 1;
+#endif
+}
+
+static const char* bbs_basename(const char* path) {
+    if (!path) return "";
+    const char* p = path;
+    const char* last = path;
+    while (*p) {
+        if (*p == '/' || *p == '\\') last = p + 1;
+        ++p;
+    }
+    return last;
+}
+
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__WATCOMC__)
+__attribute__((noinline))
+#endif
+static int bbs_copy_file_keep_src(const char* src_path, const char* dst_path,
+                                  char* err_out, size_t err_sz) {
+    FILE* in_fp = fopen(src_path, "rb");
+    if (!in_fp) {
+        safe_copy(err_out, err_sz, "Failed to open source file.");
+        return 0;
+    }
+    FILE* out_fp = fopen(dst_path, "wb");
+    if (!out_fp) {
+        fclose(in_fp);
+        safe_copy(err_out, err_sz, "Failed to create destination file.");
+        return 0;
+    }
+    char* buf = new char[512];
+    size_t n = 0;
+    int ok = 1;
+    while ((n = fread(buf, 1, 512U, in_fp)) > 0) {
+        if (fwrite(buf, 1, n, out_fp) != n) { ok = 0; break; }
+    }
+    delete[] buf;
+    fclose(out_fp);
+    fclose(in_fp);
+    if (!ok) {
+        remove(dst_path);
+        safe_copy(err_out, err_sz, "Disk write error copying file.");
+        return 0;
+    }
+    return 1;
+}
+
+int oyk_bbs_list_dir(const char* root, const char* rel_dir,
+                     OykBbsDirEntry* out, int max_out,
+                     char* err_out, size_t err_sz) {
+    if (!out || max_out <= 0) return 0;
+    const char* base = (root && root[0]) ? root : "files";
+    char abs_dir[192], norm_rel[96];
+    if (!oyk_bbs_resolve_safe_path(base, "", rel_dir ? rel_dir : "", 0,
+                                   abs_dir, sizeof(abs_dir),
+                                   norm_rel, sizeof(norm_rel),
+                                   err_out, err_sz)) {
+        return -1;
+    }
+    if (oyk_is_directory(abs_dir) && !bbs_posix_within_root(base, abs_dir, err_out, err_sz)) {
+        return -1;
+    }
+    if (norm_rel[0] != '\0' && !oyk_is_directory(abs_dir)) {
+        safe_copy(err_out, err_sz, "Subdirectory not found.");
+        return -1;
+    }
+
+    int count = 0;
+    if (norm_rel[0] != '\0' && count < max_out) {
+        safe_copy(out[count].name, sizeof(out[count].name), "..");
+        out[count].size = 0UL;
+        out[count].is_dir = 1U;
+        out[count].is_parent = 1U;
+        ++count;
+    }
+    if (!oyk_is_directory(abs_dir)) return count;
+
+    OykDirEnt* raw = new OykDirEnt[48];
+    int n = oyk_list_dir_entries(abs_dir, raw, 48);
+    for (int i = 0; i < n && count < max_out; ++i) {
+        if (!raw[i].name[0] || strcmp(raw[i].name, ".") == 0 || strcmp(raw[i].name, "..") == 0) {
+            continue;
+        }
+        safe_copy(out[count].name, sizeof(out[count].name), raw[i].name);
+        out[count].size = raw[i].is_dir ? 0UL : raw[i].size;
+        out[count].is_dir = raw[i].is_dir ? 1U : 0U;
+        out[count].is_parent = 0U;
+        ++count;
+    }
+    delete[] raw;
+    return count;
+}
+
+int oyk_bbs_enter_subdir(const char* root, const char* cur_rel,
+                         const char* child_name,
+                         char* next_rel_out, size_t next_rel_sz,
+                         char* err_out, size_t err_sz) {
+    const char* base = (root && root[0]) ? root : "files";
+    const char* cur = cur_rel ? cur_rel : "";
+    const char* child = child_name ? child_name : "";
+    if (!child[0]) {
+        safe_copy(err_out, err_sz, "No directory specified.");
+        return 0;
+    }
+    if (strcmp(child, "..") == 0 && !cur[0]) {
+        safe_copy(err_out, err_sz, "Access denied: cannot navigate above assigned folder root.");
+        return 0;
+    }
+    char abs_dir[192], rel_buf[96];
+    if (!oyk_bbs_resolve_safe_path(base, cur, child, 1,
+                                   abs_dir, sizeof(abs_dir),
+                                   rel_buf, sizeof(rel_buf),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!oyk_is_directory(abs_dir)) {
+        safe_copy(err_out, err_sz, "Target is not a directory.");
+        return 0;
+    }
+    if (!bbs_posix_within_root(base, abs_dir, err_out, err_sz)) {
+        return 0;
+    }
+    if (next_rel_out) safe_copy(next_rel_out, next_rel_sz, rel_buf);
+    return 1;
+}
+
+int oyk_bbs_approve_file_from_rel(const char* incoming_root, const char* inc_rel_file,
+                                  const char* files_root, const char* dest_rel_dir,
+                                  int allow_overwrite,
+                                  char* dest_out, size_t dest_sz,
+                                  int* already_exists_out,
+                                  char* err_out, size_t err_sz) {
+    if (already_exists_out) *already_exists_out = 0;
+    if (dest_out && dest_sz > 0) dest_out[0] = '\0';
+    const char* inc = (incoming_root && incoming_root[0]) ? incoming_root : "incoming";
+    const char* froot = (files_root && files_root[0]) ? files_root : "files";
+    if (!inc_rel_file || !inc_rel_file[0]) {
+        safe_copy(err_out, err_sz, "No incoming file selected.");
+        return 0;
+    }
+
+    char src_abs[192], norm_src[96];
+    if (!oyk_bbs_resolve_safe_path(inc, "", inc_rel_file, 0,
+                                   src_abs, sizeof(src_abs),
+                                   norm_src, sizeof(norm_src),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!norm_src[0] || !oyk_is_regular_file(src_abs) ||
+        !bbs_posix_within_root(inc, src_abs, err_out, err_sz)) {
+        safe_copy(err_out, err_sz, "Incoming file not found.");
+        return 0;
+    }
+
+    const char* fname = bbs_basename(norm_src);
+    if (!oyk_yapp_is_safe_filename(fname)) {
+        safe_copy(err_out, err_sz, "Invalid incoming filename.");
+        return 0;
+    }
+
+    char dst_dir[192], norm_dst[96];
+    if (!oyk_bbs_resolve_safe_path(froot, "", dest_rel_dir ? dest_rel_dir : "", 0,
+                                   dst_dir, sizeof(dst_dir),
+                                   norm_dst, sizeof(norm_dst),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    make_dirs_recursive(dst_dir);
+    if (!bbs_posix_within_root(froot, dst_dir, err_out, err_sz)) return 0;
+
+    char dst_path[220];
+    join_path(dst_dir, fname, dst_path, sizeof(dst_path));
+    if (oyk_is_regular_file(dst_path)) {
+        if (!allow_overwrite) {
+            if (already_exists_out) *already_exists_out = 1;
+            if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+            safe_copy(err_out, err_sz, "File already exists in BBS files area.");
+            return 0;
+        }
+        remove(dst_path);
+    }
+    if (rename(src_abs, dst_path) != 0) {
+        if (!bbs_copy_file_fallback(src_abs, dst_path, err_out, err_sz)) return 0;
+    }
+    if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+    return 1;
+}
+
+int oyk_bbs_import_local_file(const char* local_src_path,
+                              const char* target_root, const char* target_rel_dir,
+                              int allow_overwrite,
+                              char* dest_out, size_t dest_sz,
+                              int* already_exists_out,
+                              char* err_out, size_t err_sz) {
+    if (already_exists_out) *already_exists_out = 0;
+    if (dest_out && dest_sz > 0) dest_out[0] = '\0';
+    if (!local_src_path || !local_src_path[0] || !oyk_is_regular_file(local_src_path)) {
+        safe_copy(err_out, err_sz, "Local source file not found.");
+        return 0;
+    }
+    const char* fname = bbs_basename(local_src_path);
+    if (!oyk_yapp_is_safe_filename(fname)) {
+        safe_copy(err_out, err_sz, "Unsafe local filename.");
+        return 0;
+    }
+    const char* troot = (target_root && target_root[0]) ? target_root : "files";
+    char dst_dir[192], norm_rel[96];
+    if (!oyk_bbs_resolve_safe_path(troot, "", target_rel_dir ? target_rel_dir : "", 0,
+                                   dst_dir, sizeof(dst_dir),
+                                   norm_rel, sizeof(norm_rel),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    make_dirs_recursive(dst_dir);
+    if (!bbs_posix_within_root(troot, dst_dir, err_out, err_sz)) return 0;
+
+    char dst_path[220];
+    join_path(dst_dir, fname, dst_path, sizeof(dst_path));
+    if (oyk_is_regular_file(dst_path)) {
+        if (!allow_overwrite) {
+            if (already_exists_out) *already_exists_out = 1;
+            if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+            safe_copy(err_out, err_sz, "Destination file already exists.");
+            return 0;
+        }
+        remove(dst_path);
+    }
+    if (!bbs_copy_file_keep_src(local_src_path, dst_path, err_out, err_sz)) return 0;
+    if (dest_out) safe_copy(dest_out, dest_sz, dst_path);
+    return 1;
+}
+
+int oyk_bbs_mkdir_safe(const char* root, const char* cur_rel, const char* new_name,
+                       char* err_out, size_t err_sz) {
+    if (!new_name || !oyk_yapp_is_safe_filename(new_name)) {
+        safe_copy(err_out, err_sz, "Invalid directory name.");
+        return 0;
+    }
+    const char* base = (root && root[0]) ? root : "files";
+    char abs_dir[192], norm_rel[96];
+    if (!oyk_bbs_resolve_safe_path(base, cur_rel ? cur_rel : "", new_name, 0,
+                                   abs_dir, sizeof(abs_dir),
+                                   norm_rel, sizeof(norm_rel),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (oyk_is_directory(abs_dir) || oyk_is_regular_file(abs_dir)) {
+        safe_copy(err_out, err_sz, "Entry already exists.");
+        return 0;
+    }
+    make_dirs_recursive(abs_dir);
+    if (!oyk_is_directory(abs_dir)) {
+        safe_copy(err_out, err_sz, "Failed to create directory.");
+        return 0;
+    }
+    return 1;
+}
+
+int oyk_bbs_rename_safe(const char* root, const char* cur_rel,
+                        const char* old_name, const char* new_name,
+                        char* err_out, size_t err_sz) {
+    if (!old_name || !new_name ||
+        !oyk_yapp_is_safe_filename(old_name) || !oyk_yapp_is_safe_filename(new_name)) {
+        safe_copy(err_out, err_sz, "Invalid filename for rename.");
+        return 0;
+    }
+    const char* base = (root && root[0]) ? root : "files";
+    char src_abs[192], dst_abs[192], rel_tmp[96];
+    if (!oyk_bbs_resolve_safe_path(base, cur_rel ? cur_rel : "", old_name, 0,
+                                   src_abs, sizeof(src_abs),
+                                   rel_tmp, sizeof(rel_tmp),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!oyk_bbs_resolve_safe_path(base, cur_rel ? cur_rel : "", new_name, 0,
+                                   dst_abs, sizeof(dst_abs),
+                                   rel_tmp, sizeof(rel_tmp),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!bbs_posix_within_root(base, src_abs, err_out, err_sz)) return 0;
+    if (!oyk_is_regular_file(src_abs) && !oyk_is_directory(src_abs)) {
+        safe_copy(err_out, err_sz, "Source entry not found.");
+        return 0;
+    }
+    if (oyk_is_regular_file(dst_abs) || oyk_is_directory(dst_abs)) {
+        safe_copy(err_out, err_sz, "Target name already exists.");
+        return 0;
+    }
+    if (rename(src_abs, dst_abs) != 0) {
+        safe_copy(err_out, err_sz, "Failed to rename entry.");
+        return 0;
+    }
+    return 1;
+}
+
+int oyk_bbs_delete_safe(const char* root, const char* cur_rel, const char* name,
+                        char* err_out, size_t err_sz) {
+    if (!name || !oyk_yapp_is_safe_filename(name)) {
+        safe_copy(err_out, err_sz, "Invalid entry name.");
+        return 0;
+    }
+    const char* base = (root && root[0]) ? root : "files";
+    char tgt_abs[192], rel_tmp[96];
+    if (!oyk_bbs_resolve_safe_path(base, cur_rel ? cur_rel : "", name, 0,
+                                   tgt_abs, sizeof(tgt_abs),
+                                   rel_tmp, sizeof(rel_tmp),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!rel_tmp[0] || !bbs_posix_within_root(base, tgt_abs, err_out, err_sz)) {
+        safe_copy(err_out, err_sz, "Access denied: cannot delete assigned root.");
+        return 0;
+    }
+    if (oyk_is_directory(tgt_abs)) {
+        if (OYK_RMDIR(tgt_abs) != 0) {
+            safe_copy(err_out, err_sz, "Directory must be empty before deleting.");
+            return 0;
+        }
+        return 1;
+    }
+    if (!oyk_is_regular_file(tgt_abs)) {
+        safe_copy(err_out, err_sz, "Entry not found.");
+        return 0;
+    }
+    if (remove(tgt_abs) != 0) {
+        safe_copy(err_out, err_sz, "Failed to delete file.");
+        return 0;
+    }
+    return 1;
+}
+
+int oyk_bbs_read_text_preview(const char* root, const char* cur_rel, const char* filename,
+                              char* out_buf, size_t out_cap, int* truncated_out,
+                              char* err_out, size_t err_sz) {
+    if (out_buf && out_cap > 0) out_buf[0] = '\0';
+    if (truncated_out) *truncated_out = 0;
+    if (!filename || !oyk_yapp_is_safe_filename(filename) || !out_buf || out_cap < 2U) {
+        safe_copy(err_out, err_sz, "Invalid file for preview.");
+        return 0;
+    }
+    const char* base = (root && root[0]) ? root : "files";
+    char tgt_abs[192], rel_tmp[96];
+    if (!oyk_bbs_resolve_safe_path(base, cur_rel ? cur_rel : "", filename, 0,
+                                   tgt_abs, sizeof(tgt_abs),
+                                   rel_tmp, sizeof(rel_tmp),
+                                   err_out, err_sz)) {
+        return 0;
+    }
+    if (!oyk_is_regular_file(tgt_abs) || !bbs_posix_within_root(base, tgt_abs, err_out, err_sz)) {
+        safe_copy(err_out, err_sz, "Preview only supports regular files.");
+        return 0;
+    }
+    FILE* fp = fopen(tgt_abs, "rb");
+    if (!fp) {
+        safe_copy(err_out, err_sz, "Unable to open file for preview.");
+        return 0;
+    }
+    size_t n = fread(out_buf, 1, out_cap - 1U, fp);
+    int extra = fgetc(fp);
+    fclose(fp);
+    if (extra != EOF && truncated_out) *truncated_out = 1;
+    out_buf[n] = '\0';
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = static_cast<unsigned char>(out_buf[i]);
+        if (c == '\r') out_buf[i] = '\n';
+        else if (c != '\n' && c != '\t' && (c < 0x20U || c >= 0x7FU)) out_buf[i] = '.';
+    }
+    return 1;
+}
+
 int OykPortableNode::bbs_yapp_send_trampoline(const oyk_u8* data, size_t len, void* ctx) {
     OykPortableNode* self = static_cast<OykPortableNode*>(ctx);
     if (!self || !self->bbs_yapp_tx_sess_ || !data || len == 0) return 0;
@@ -6065,4 +6468,185 @@ int OykPortableNode::total_active_connections() const {
 oyk_u32 OykPortableNode::uptime_seconds() const {
     time_t cur = now_time();
     return (cur >= started_at_) ? static_cast<oyk_u32>(cur - started_at_) : 0;
+}
+
+static void fm_str_copy(char* dst, size_t cap, const char* src) {
+    if (!dst || cap == 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    size_t n = strlen(src);
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+static void gui_fm_clamp_pane(OykGuiFilePane* p) {
+    if (p->count <= 0) {
+        p->sel = 0;
+        p->scroll = 0;
+        return;
+    }
+    if (p->sel < 0) p->sel = 0;
+    if (p->sel >= p->count) p->sel = p->count - 1;
+    if (p->scroll < 0) p->scroll = 0;
+    if (p->scroll > p->sel) p->scroll = p->sel;
+}
+
+static OykGuiFilePane* gui_fm_active(OykGuiFileMgr* fm) {
+    return (fm->active_pane == 0) ? &fm->inc : &fm->files;
+}
+
+void oyk_gui_filemgr_refresh(OykGuiFileMgr* fm) {
+    if (!fm) return;
+    char err[96];
+    err[0] = '\0';
+    int ni = oyk_bbs_list_dir(fm->inc.root, fm->inc.rel, fm->inc.entries, 24, err, sizeof(err));
+    fm->inc.count = (ni >= 0) ? ni : 0;
+    gui_fm_clamp_pane(&fm->inc);
+    int nf = oyk_bbs_list_dir(fm->files.root, fm->files.rel, fm->files.entries, 24, err, sizeof(err));
+    fm->files.count = (nf >= 0) ? nf : 0;
+    gui_fm_clamp_pane(&fm->files);
+}
+
+void oyk_gui_filemgr_init(OykGuiFileMgr* fm, const char* inc_root, const char* files_root) {
+    if (!fm) return;
+    memset(fm, 0, sizeof(*fm));
+    fm_str_copy(fm->inc.root, sizeof(fm->inc.root), (inc_root && inc_root[0]) ? inc_root : "incoming");
+    fm_str_copy(fm->files.root, sizeof(fm->files.root), (files_root && files_root[0]) ? files_root : "files");
+    oyk_gui_filemgr_refresh(fm);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), "Tab:Switch  Enter:OpenDir  U:Upload  A:Approve");
+}
+
+int oyk_gui_filemgr_activate(OykGuiFileMgr* fm, int pane_idx) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = (pane_idx == 0) ? &fm->inc : &fm->files;
+    if (p->count <= 0 || p->sel < 0 || p->sel >= p->count) return 0;
+    const OykBbsDirEntry* e = &p->entries[p->sel];
+    if (!e->is_dir) return 0;
+    char next_rel[96];
+    if (!oyk_bbs_enter_subdir(p->root, p->rel, e->name, next_rel, sizeof(next_rel),
+                              fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    fm_str_copy(p->rel, sizeof(p->rel), next_rel);
+    p->sel = 0;
+    p->scroll = 0;
+    oyk_gui_filemgr_refresh(fm);
+    fm->feedback[0] = '\0';
+    return 1;
+}
+
+int oyk_gui_filemgr_up(OykGuiFileMgr* fm, int pane_idx) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = (pane_idx == 0) ? &fm->inc : &fm->files;
+    if (!p->rel[0]) {
+        fm_str_copy(fm->feedback, sizeof(fm->feedback), "Already at assigned root folder.");
+        return 0;
+    }
+    char next_rel[96];
+    if (!oyk_bbs_enter_subdir(p->root, p->rel, "..", next_rel, sizeof(next_rel),
+                              fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    fm_str_copy(p->rel, sizeof(p->rel), next_rel);
+    p->sel = 0;
+    p->scroll = 0;
+    oyk_gui_filemgr_refresh(fm);
+    fm->feedback[0] = '\0';
+    return 1;
+}
+
+int oyk_gui_filemgr_approve(OykGuiFileMgr* fm, int allow_overwrite, int* exists_out) {
+    if (exists_out) *exists_out = 0;
+    if (!fm || fm->inc.count <= 0 || fm->inc.sel < 0 || fm->inc.sel >= fm->inc.count) {
+        if (fm) fm_str_copy(fm->feedback, sizeof(fm->feedback), "Select an incoming file first.");
+        return 0;
+    }
+    const OykBbsDirEntry* e = &fm->inc.entries[fm->inc.sel];
+    if (e->is_dir) {
+        fm_str_copy(fm->feedback, sizeof(fm->feedback), "Select a file (not directory) to approve.");
+        return 0;
+    }
+    char inc_rel[160];
+    if (fm->inc.rel[0]) sprintf(inc_rel, "%.95s/%.47s", fm->inc.rel, e->name);
+    else fm_str_copy(inc_rel, sizeof(inc_rel), e->name);
+    char dest[192];
+    if (!oyk_bbs_approve_file_from_rel(fm->inc.root, inc_rel, fm->files.root, fm->files.rel,
+                                       allow_overwrite, dest, sizeof(dest), exists_out,
+                                       fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    oyk_gui_filemgr_refresh(fm);
+    char okmsg[96];
+    sprintf(okmsg, "Approved %.32s -> /%.40s", e->name, fm->files.rel);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), okmsg);
+    return 1;
+}
+
+int oyk_gui_filemgr_upload(OykGuiFileMgr* fm, const char* local_path,
+                           int allow_overwrite, int* exists_out) {
+    if (exists_out) *exists_out = 0;
+    if (!fm) return 0;
+    OykGuiFilePane* p = gui_fm_active(fm);
+    char dest[192];
+    if (!oyk_bbs_import_local_file(local_path, p->root, p->rel, allow_overwrite,
+                                   dest, sizeof(dest), exists_out,
+                                   fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    oyk_gui_filemgr_refresh(fm);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), "Uploaded file into active folder.");
+    return 1;
+}
+
+int oyk_gui_filemgr_mkdir(OykGuiFileMgr* fm, const char* name) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = gui_fm_active(fm);
+    if (!oyk_bbs_mkdir_safe(p->root, p->rel, name, fm->feedback, sizeof(fm->feedback))) return 0;
+    oyk_gui_filemgr_refresh(fm);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), "Created folder.");
+    return 1;
+}
+
+int oyk_gui_filemgr_rename(OykGuiFileMgr* fm, const char* new_name) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = gui_fm_active(fm);
+    if (p->count <= 0 || p->sel < 0 || p->sel >= p->count || p->entries[p->sel].is_parent) {
+        fm_str_copy(fm->feedback, sizeof(fm->feedback), "Select a file or folder to rename.");
+        return 0;
+    }
+    if (!oyk_bbs_rename_safe(p->root, p->rel, p->entries[p->sel].name, new_name,
+                             fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    oyk_gui_filemgr_refresh(fm);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), "Renamed entry.");
+    return 1;
+}
+
+int oyk_gui_filemgr_delete(OykGuiFileMgr* fm) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = gui_fm_active(fm);
+    if (p->count <= 0 || p->sel < 0 || p->sel >= p->count || p->entries[p->sel].is_parent) {
+        fm_str_copy(fm->feedback, sizeof(fm->feedback), "Select a file or empty folder to delete.");
+        return 0;
+    }
+    if (!oyk_bbs_delete_safe(p->root, p->rel, p->entries[p->sel].name,
+                             fm->feedback, sizeof(fm->feedback))) {
+        return 0;
+    }
+    oyk_gui_filemgr_refresh(fm);
+    fm_str_copy(fm->feedback, sizeof(fm->feedback), "Deleted entry.");
+    return 1;
+}
+
+int oyk_gui_filemgr_view(OykGuiFileMgr* fm, char* out, size_t cap, int* trunc_out) {
+    if (!fm) return 0;
+    OykGuiFilePane* p = gui_fm_active(fm);
+    if (p->count <= 0 || p->sel < 0 || p->sel >= p->count || p->entries[p->sel].is_dir) {
+        fm_str_copy(fm->feedback, sizeof(fm->feedback), "Select a file (not directory) to view.");
+        return 0;
+    }
+    return oyk_bbs_read_text_preview(p->root, p->rel, p->entries[p->sel].name,
+                                     out, cap, trunc_out,
+                                     fm->feedback, sizeof(fm->feedback));
 }

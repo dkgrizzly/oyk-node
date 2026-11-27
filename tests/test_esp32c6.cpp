@@ -16,6 +16,10 @@
 #include "esp32c6_oled.hpp"
 #include "esp32c6_fs.hpp"
 #include "esp32c6_radio.hpp"
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include "esp32c6_net_bridge.hpp"
 #include "esp32c6_console.hpp"
 
@@ -170,6 +174,7 @@ static void test_esp32c6_ui_flows_and_captures() {
     oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
     oyk_parse_callsign("OYKNOD", &cfg->alias);
     strcpy(cfg->theme_name, "dark");
+    strcpy(cfg->bbs_files_path, "/tmp/oyk_c6l_fm/files");
     cfg->iface_count = 3;
     strcpy(cfg->ifaces[0].id, "lora0"); strcpy(cfg->ifaces[0].type, "kiss-serial");
     strcpy(cfg->ifaces[0].device, "lora0");
@@ -308,15 +313,62 @@ static void test_esp32c6_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "b"), 2);
     assert(strstr(cap->buf, "LOCAL TERMINAL") != NULL);
+    assert(strstr(cap->buf, "Ctrl-A Z:Help") != NULL);
+    assert(strstr(cap->buf, "Tab/F9:Console") != NULL);
+    assert(strstr(cap->buf, "Terminal Output") == NULL);
     c6l_save_capture("terminal", con, cap);
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
+    assert(strstr(cap->buf, "Terminal Hotkey Help") != NULL);
+    c6l_save_capture("terminal_help", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(1950UL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->view_mode() == C6L_VIEW_CONSOLE);
 
-    /* 8. Files */
-    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
-    assert(strstr(cap->buf, "Manage BBS Files Area") != NULL);
-    c6l_save_capture("files", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(2100UL);
+    /* 8. Files (Dual-pane jailed navigation) */
+    {
+        char orig_cwd[256];
+        orig_cwd[0] = '\0';
+        const char* cap_dir = getenv("OYK_UI_CAPTURE_DIR");
+        char abs_cap[512];
+        abs_cap[0] = '\0';
+#ifndef _WIN32
+        if (getcwd(orig_cwd, sizeof(orig_cwd)) == NULL) orig_cwd[0] = '\0';
+        if (cap_dir && cap_dir[0] && cap_dir[0] != '/' && orig_cwd[0]) {
+            snprintf(abs_cap, sizeof(abs_cap), "%s/%s", orig_cwd, cap_dir);
+            setenv("OYK_UI_CAPTURE_DIR", abs_cap, 1);
+        }
+        mkdir("/tmp/oyk_c6l_fm", 0755);
+        mkdir("/tmp/oyk_c6l_fm/incoming", 0755);
+        mkdir("/tmp/oyk_c6l_fm/incoming/W3TRM-1", 0755);
+        mkdir("/tmp/oyk_c6l_fm/files", 0755);
+        mkdir("/tmp/oyk_c6l_fm/files/bulletins", 0755);
+        if (FILE* sf = fopen("/tmp/oyk_c6l_fm/incoming/W3TRM-1/fieldday.txt", "wb")) {
+            fputs("Field Day Log 2026\n", sf); fclose(sf);
+        }
+        if (FILE* sf = fopen("/tmp/oyk_c6l_fm/files/bulletins/welcome.txt", "wb")) {
+            fputs("Welcome to OYK BBS\n", sf); fclose(sf);
+        }
+        assert(chdir("/tmp/oyk_c6l_fm") == 0);
+#endif
+        cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        assert(strstr(cap->buf, "Manage BBS Files Area") != NULL);
+        assert(strstr(cap->buf, "W3TRM-1") != NULL);
+        assert(strstr(cap->buf, "bulletins") != NULL);
+        assert(strstr(cap->buf, "<UP>") == NULL);
+        c6l_save_capture("files", con, cap);
+        cap->len = 0; cap->buf[0] = '\0';
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+        assert(strstr(cap->buf, "<UP>") != NULL);
+        assert(strstr(cap->buf, "fieldday.txt") != NULL);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x08"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(2100UL);
+        assert(con->view_mode() == C6L_VIEW_CONSOLE);
+#ifndef _WIN32
+        if (orig_cwd[0]) assert(chdir(orig_cwd) == 0);
+        if (abs_cap[0]) setenv("OYK_UI_CAPTURE_DIR", cap_dir, 1);
+#endif
+    }
 
     /* 9. About */
     cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);

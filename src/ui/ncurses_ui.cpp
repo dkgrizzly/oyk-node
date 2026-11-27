@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <ctime>
 #include <deque>
 #include <filesystem>
@@ -71,6 +72,61 @@ static bool hit_modal_close_btn(WINDOW* win, const MEVENT& mev) {
     getmaxyx(win, wh, ww);
     OykTuiRect r{wy, wx, wh, ww};
     return oyk_tui_hit_close_btn(&r, mev.y, mev.x) != 0;
+}
+
+struct NcursesTuiCtx {
+    WINDOW* win = nullptr;
+    bool    has_colors = false;
+};
+
+static int ncurses_tui_attr_for_style(int style, bool has_colors) {
+    if (!has_colors) {
+        if (style == OYK_TUI_STYLE_DLG_SEL || style == OYK_TUI_STYLE_DLG_BAR ||
+            style == OYK_TUI_STYLE_CLOSE_BTN || style == OYK_TUI_STYLE_MENU_SEL) {
+            return A_REVERSE | A_BOLD;
+        }
+        return 0;
+    }
+    switch (style) {
+        case OYK_TUI_STYLE_DLG_BAR:
+        case OYK_TUI_STYLE_MENU_BAR:
+            return COLOR_PAIR(CP_MENU);
+        case OYK_TUI_STYLE_DLG_SEL:
+        case OYK_TUI_STYLE_MENU_SEL:
+            return COLOR_PAIR(CP_MENU_SEL) | A_BOLD;
+        case OYK_TUI_STYLE_CLOSE_BTN:
+        case OYK_TUI_STYLE_ERROR:
+            return COLOR_PAIR(CP_DANGER) | A_BOLD;
+        case OYK_TUI_STYLE_WARN:
+            return COLOR_PAIR(CP_WARN);
+        case OYK_TUI_STYLE_TITLE:
+            return A_BOLD;
+        case OYK_TUI_STYLE_DLG_BORDER:
+            return COLOR_PAIR(CP_BORDER);
+        default:
+            return 0;
+    }
+}
+
+static void ncurses_tui_put_text(void* ctx, int row, int col, int max_w, int style, const char* text) {
+    auto* nc = static_cast<NcursesTuiCtx*>(ctx);
+    if (!nc || !nc->win || row < 0 || col < 0 || max_w <= 0) return;
+    int attr = ncurses_tui_attr_for_style(style, nc->has_colors);
+    if (attr != 0) wattron(nc->win, attr);
+    std::string padded(static_cast<std::size_t>(max_w), ' ');
+    if (text) {
+        std::size_t n = std::min<std::size_t>(static_cast<std::size_t>(max_w), std::strlen(text));
+        padded.replace(0, n, text, n);
+    }
+    mvwaddnstr(nc->win, row, col, padded.c_str(), max_w);
+    if (attr != 0) wattroff(nc->win, attr);
+}
+
+static OykTuiBackend make_ncurses_tui_backend(NcursesTuiCtx* ctx) {
+    OykTuiBackend b{};
+    b.ctx = ctx;
+    b.put_text = ncurses_tui_put_text;
+    return b;
 }
 
 // Classic 2-col right, 1-row bottom translucent drop shadow for menus and modals.
@@ -1303,7 +1359,7 @@ void NcursesUI::modal_local_terminal() {
         std::lock_guard<std::mutex> lk(ts_init->mtx);
         ts_init->append_line("*** Local Packet Terminal (YAPP / YAPP-C enabled for remote links)");
         ts_init->append_line("*** Downloads save to incoming/<CALLSIGN-SSID>/<file>");
-        ts_init->append_line("*** Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:CHAT  F2:Connect  F9/Esc:Console");
+        ts_init->append_line("*** Ctrl-A Z:Help  Ctrl-A B:BBS  Ctrl-A T:CHAT  F2:Connect  F9/Esc:Console");
         ts_init->append_line("*** All typed / commands pass through to remote CHAT/BBS.");
     }
     auto ts = term_state_;
@@ -1581,7 +1637,7 @@ void NcursesUI::modal_local_terminal() {
             draw_modal_frame(hw, h, w, "Terminal Hotkey Help", has_colors_, CP_BORDER);
             wattron(hw, A_BOLD);
             mvwaddnstr(hw, 1, 2,
-                       clip("Command prefix: Ctrl+A (press Ctrl+A, then hotkey)", w - 4).c_str(),
+                       clip("Command prefix: Ctrl-A (press Ctrl-A, then hotkey)", w - 4).c_str(),
                        w - 4);
             wattroff(hw, A_BOLD);
             if (has_colors_) wattron(hw, COLOR_PAIR(CP_BORDER));
@@ -1704,7 +1760,7 @@ void NcursesUI::modal_local_terminal() {
                     engine_.send_local_terminal_bytes(sid, bytes);
                 } else {
                     std::lock_guard<std::mutex> lk(ts->mtx);
-                    ts->append_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
+                    ts->append_line("*** Not connected. Press Ctrl-A Z for help or Ctrl-A B / F2.");
                 }
                 return false;
             }
@@ -1783,7 +1839,7 @@ void NcursesUI::modal_local_terminal() {
             } else if (ts->connecting) {
                 header = " LOCAL TERMINAL | CONNECTING: " + ts->remote_call.str() + " via " + ts->port_id + "..." + eol_tag;
             } else {
-                header = " LOCAL TERMINAL | DISCONNECTED" + eol_tag + " (Ctrl+A Z:Help | F2:Conn | F9/Esc:Console)";
+                header = " LOCAL TERMINAL | DISCONNECTED" + eol_tag + " (Ctrl-A Z:Help | F2:Conn | F9/Esc:Console)";
             }
             if (ts->scroll_offset > 0) {
                 header += " [UP " + std::to_string(ts->scroll_offset) + "]";
@@ -1810,10 +1866,8 @@ void NcursesUI::modal_local_terminal() {
         }
 
         // YAPP / hotkey bar
-        std::string bar = "Ctrl+A Z:Help  F2:Connect  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Esc:Console";
-        if (ctrl_a_pending) {
-            bar = "CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Exit";
-        } else if (yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
+        std::string bar = oyk_term_hotkey_bar_text(1, ctrl_a_pending ? 1 : 0);
+        if (!ctrl_a_pending && yp.state != protocol::YappState::Idle && !yp.status_message.empty()) {
             bar = yp.status_message + " (" + std::to_string(yp.bytes_transferred) +
                   (yp.total_bytes > 0 ? ("/" + std::to_string(yp.total_bytes)) : "") + " B)";
         }
@@ -1925,7 +1979,7 @@ void NcursesUI::modal_local_terminal() {
                 engine_.send_local_terminal_bytes(sid, bytes);
             } else {
                 std::lock_guard<std::mutex> lk(ts->mtx);
-                ts->append_line("*** Not connected. Press Ctrl+A Z for help or Ctrl+A B / F2.");
+                ts->append_line("*** Not connected. Press Ctrl-A Z for help or Ctrl-A B / F2.");
             }
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
             if (!input.empty()) input.pop_back();
@@ -2320,11 +2374,13 @@ void NcursesUI::modal_ban_callsign() {
 void NcursesUI::modal_approve_incoming_files() {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
-    int w = std::min(76, std::max(56, cols - 4));
-    int h = std::min(21, std::max(14, rows - 3));
-    if (rows < 12 || cols < 46) return;
-    int y = std::max(1, (rows - h) / 2);
-    int x = std::max(1, (cols - w) / 2);
+    OykTuiDualPaneLayout dlay{};
+    oyk_tui_compute_dual_pane_layout(rows, cols, &dlay);
+    const int y = dlay.modal.top;
+    const int x = dlay.modal.left;
+    const int h = dlay.modal.h;
+    const int w = dlay.modal.w;
+    if (rows < 12 || cols < 52 || h < 12 || w < 52) return;
 
     WINDOW* win = newwin(h, w, y, x);
     if (!win) return;
@@ -2332,23 +2388,37 @@ void NcursesUI::modal_approve_incoming_files() {
     keypad(win, TRUE);
     wtimeout(win, 200);
 
-    auto pending_items = engine_.list_pending_incoming_files();
-    auto approved_items = engine_.list_approved_files();
-    int tab = 0; // 0 = Pending Incoming, 1 = Approved Files
+    std::string inc_rel;
+    std::string files_rel;
+    std::vector<node::BbsDirEntry> inc_entries;
+    std::vector<node::BbsDirEntry> files_entries;
+    int active_pane = 0; // 0 = Incoming (left), 1 = Files (right)
     int sel[2] = { 0, 0 };
     int top[2] = { 0, 0 };
-    std::string feedback = "Files Area: " + engine_.bbs_files_path();
+    std::string feedback = "Tab:Pane  Enter:Dir  U:Upload  A:Approve  M:Ren  N:Mkdir  D:Del  V:View";
+
+    auto reload_panes = [&]() {
+        std::string err, norm_inc, norm_files;
+        engine_.list_bbs_dir(true, inc_rel, inc_entries, norm_inc, err);
+        inc_rel = norm_inc;
+        engine_.list_bbs_dir(false, files_rel, files_entries, norm_files, err);
+        files_rel = norm_files;
+    };
+    reload_panes();
 
     auto prompt_text = [&](const std::string& label, std::string& out) -> bool {
         out.clear();
         curs_set(1);
         while (true) {
-            mvwaddnstr(win, h - 2, 2, std::string(w - 4, ' ').c_str(), w - 4);
+            mvwaddnstr(win, h - 4, 2, std::string(w - 4, ' ').c_str(), w - 4);
             std::string shown = label + out;
+            if (static_cast<int>(shown.size()) > w - 5) {
+                shown = shown.substr(shown.size() - static_cast<std::size_t>(w - 5));
+            }
             if (has_colors_) wattron(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
-            mvwaddnstr(win, h - 2, 2, clip(shown, w - 4).c_str(), w - 4);
+            mvwaddnstr(win, h - 4, 2, shown.c_str(), w - 4);
             if (has_colors_) wattroff(win, COLOR_PAIR(CP_HEADER) | A_BOLD);
-            wmove(win, h - 2, std::min(w - 3, 2 + static_cast<int>(shown.size())));
+            wmove(win, h - 4, std::min(w - 3, 2 + static_cast<int>(shown.size())));
             wrefresh(win);
             int c = wgetch(win);
             if (c == ERR) continue;
@@ -2362,7 +2432,7 @@ void NcursesUI::modal_approve_incoming_files() {
             }
             if ((c == KEY_BACKSPACE || c == 127 || c == '\b') && !out.empty()) {
                 out.pop_back();
-            } else if (c >= 0x20 && c < 0x7F && out.size() < 48) {
+            } else if (c >= 0x20 && c < 0x7F && out.size() < 47) {
                 out.push_back(static_cast<char>(c));
             }
         }
@@ -2370,9 +2440,9 @@ void NcursesUI::modal_approve_incoming_files() {
 
     auto prompt_yes_no = [&](const std::string& question) -> bool {
         while (true) {
-            mvwaddnstr(win, h - 2, 2, std::string(w - 4, ' ').c_str(), w - 4);
+            mvwaddnstr(win, h - 4, 2, std::string(w - 4, ' ').c_str(), w - 4);
             if (has_colors_) wattron(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
-            mvwaddnstr(win, h - 2, 2, clip(question + " [Y/N]: ", w - 4).c_str(), w - 4);
+            mvwaddnstr(win, h - 4, 2, clip(question + " [Y/N]: ", w - 4).c_str(), w - 4);
             if (has_colors_) wattroff(win, COLOR_PAIR(CP_DANGER) | A_BOLD);
             wrefresh(win);
             int c = wgetch(win);
@@ -2382,100 +2452,215 @@ void NcursesUI::modal_approve_incoming_files() {
         }
     };
 
-    static const char* TAB_LABELS[2] = { " 1:Pending Incoming ", " 2:Approved Files " };
+    auto show_preview_popup = [&](const std::string& title, const std::string& body, bool trunc) {
+        const int ph = std::min(16, std::max(8, rows - 4));
+        const int pw = std::min(68, std::max(40, cols - 6));
+        const int py = std::max(1, (rows - ph) / 2);
+        const int px = std::max(1, (cols - pw) / 2);
+        WINDOW* pw_win = newwin(ph, pw, py, px);
+        if (!pw_win) return;
+        NcursesShadow pshadow(py, px, ph, pw, has_colors_);
+        keypad(pw_win, TRUE);
+        wtimeout(pw_win, 200);
+        std::vector<std::string> plines;
+        std::istringstream iss(body);
+        std::string ln;
+        while (std::getline(iss, ln)) {
+            if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+            plines.push_back(ln);
+        }
+        if (plines.empty()) plines.push_back("(empty file)");
+        if (trunc) plines.push_back("--- (preview truncated at 4 KB) ---");
+        int poff = 0;
+        const int vis = std::max(1, ph - 4);
+        while (true) {
+            if (external_stop_flag_ && external_stop_flag_->load()) break;
+            werase(pw_win);
+            draw_modal_frame(pw_win, ph, pw, "View: " + title, has_colors_, CP_BORDER);
+            for (int r = 0; r < vis && (poff + r) < static_cast<int>(plines.size()); ++r) {
+                mvwaddnstr(pw_win, 1 + r, 2, clip(plines[static_cast<std::size_t>(poff + r)], pw - 4).c_str(), pw - 4);
+            }
+            mvwhline(pw_win, ph - 3, 1, ACS_HLINE, pw - 2);
+            NcursesTuiCtx pctx{pw_win, has_colors_};
+            OykTuiBackend pb = make_ncurses_tui_backend(&pctx);
+            const OykTuiButton pbtns[1] = { { "Close", 1 } };
+            oyk_tui_draw_button_row(&pb, ph - 2, 2, pw - 4, pbtns, 1, 0, "Up/Dn:Scroll  Esc/Enter:Close");
+            pshadow.noutrefresh();
+            wnoutrefresh(pw_win);
+            doupdate();
+            int pc = wgetch(pw_win);
+            if (pc == ERR) continue;
+            if (pc == KEY_MOUSE) {
+                MEVENT mev{};
+                if (getmouse(&mev) == OK) {
+                    if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(pw_win, mev)) break;
+                }
+                continue;
+            }
+            if (pc == 27 || pc == '\n' || pc == '\r' || pc == KEY_ENTER || pc == 'q' || pc == 'Q') break;
+            if (pc == KEY_UP && poff > 0) --poff;
+            else if (pc == KEY_DOWN && poff + vis < static_cast<int>(plines.size())) ++poff;
+        }
+        delwin(pw_win);
+    };
+
+    const int left_w = (w - 3) / 2;
+    const int div_x = 1 + left_w;
+    const int right_x = div_x + 1;
+    const int right_w = w - 2 - left_w - 1;
+    NcursesTuiCtx fm_ctx{win, has_colors_};
+    OykTuiBackend fm_b = make_ncurses_tui_backend(&fm_ctx);
+    const OykTuiButton fbtns[4] = {
+        { "Upload",  1 },
+        { "Approve", 1 },
+        { "View",    1 },
+        { "Close",   1 }
+    };
+
+    auto perform_approve = [&]() {
+        if (inc_entries.empty() || sel[0] < 0 || sel[0] >= static_cast<int>(inc_entries.size())) {
+            feedback = "Select an incoming file to approve.";
+            return;
+        }
+        const auto& e = inc_entries[static_cast<std::size_t>(sel[0])];
+        if (e.is_dir) {
+            feedback = "Open the subfolder first or select a file to approve.";
+            return;
+        }
+        std::string inc_rel_file = inc_rel.empty() ? e.name : (inc_rel + "/" + e.name);
+        std::string dest_path, err;
+        bool exists = false;
+        bool ok = engine_.approve_incoming_rel_file(inc_rel_file, files_rel, false,
+                                                   dest_path, exists, err);
+        if (!ok && exists) {
+            if (prompt_yes_no("File exists in Files:/" + files_rel + ". Overwrite " + e.name + "?")) {
+                ok = engine_.approve_incoming_rel_file(inc_rel_file, files_rel, true,
+                                                       dest_path, exists, err);
+            } else {
+                feedback = "Overwrite declined.";
+                return;
+            }
+        }
+        if (ok) {
+            feedback = "Approved -> /" + (files_rel.empty() ? e.name : (files_rel + "/" + e.name));
+            set_status("Approved incoming file: " + inc_rel_file);
+            reload_panes();
+        } else {
+            feedback = "Error: " + err;
+        }
+    };
+
+    auto perform_upload = [&]() {
+        curs_set(0);
+        std::string chosen_file;
+        bool chosen = modal_file_selector(
+            active_pane == 0 ? "Upload Local File -> Incoming" : "Upload Local File -> Files",
+            chosen_file);
+        if (!chosen) {
+            feedback = "Upload cancelled.";
+            return;
+        }
+        const std::string& dst_rel = (active_pane == 0) ? inc_rel : files_rel;
+        std::string dest_path, err;
+        bool exists = false;
+        bool ok = engine_.import_local_file_to_bbs(chosen_file, active_pane == 0, dst_rel,
+                                                 false, dest_path, exists, err);
+        if (!ok && exists) {
+            if (prompt_yes_no("File exists in destination. Overwrite?")) {
+                ok = engine_.import_local_file_to_bbs(chosen_file, active_pane == 0, dst_rel,
+                                                      true, dest_path, exists, err);
+            } else {
+                feedback = "Upload overwrite declined.";
+                return;
+            }
+        }
+        if (ok) {
+            feedback = "Uploaded -> " + std::filesystem::path(dest_path).filename().string();
+            reload_panes();
+        } else {
+            feedback = "Error: " + err;
+        }
+    };
 
     while (true) {
         if (external_stop_flag_ && external_stop_flag_->load()) break;
-        int list_h = std::max(1, h - 8);
-        int count = (tab == 0) ? static_cast<int>(pending_items.size())
-                               : static_cast<int>(approved_items.size());
-        if (sel[tab] >= count) sel[tab] = std::max(0, count - 1);
-        if (sel[tab] < top[tab]) top[tab] = sel[tab];
-        if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
+        const int list_h = std::max(1, h - 7);
+        for (int p = 0; p < 2; ++p) {
+            const int cnt = static_cast<int>(p == 0 ? inc_entries.size() : files_entries.size());
+            if (sel[p] >= cnt) sel[p] = std::max(0, cnt - 1);
+            if (sel[p] < top[p]) top[p] = sel[p];
+            if (sel[p] >= top[p] + list_h) top[p] = sel[p] - list_h + 1;
+        }
 
         werase(win);
         draw_modal_frame(win, h, w, "Manage BBS Files Area", has_colors_, CP_BORDER);
 
-        // Row 1: Tab bar matching GTK & Windows (Pending Incoming | Approved Files)
-        int tx = 2;
-        for (int t = 0; t < 2; ++t) {
-            if (t == tab) {
-                if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
-                else wattron(win, A_REVERSE | A_BOLD);
-            } else if (has_colors_) {
-                wattron(win, COLOR_PAIR(CP_MENU));
-            }
-            mvwaddnstr(win, 1, tx, TAB_LABELS[t], w - tx - 2);
-            if (t == tab) {
-                if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU_SEL) | A_BOLD);
-                else wattroff(win, A_REVERSE | A_BOLD);
-            } else if (has_colors_) {
-                wattroff(win, COLOR_PAIR(CP_MENU));
-            }
-            tx += static_cast<int>(std::string_view(TAB_LABELS[t]).size()) + 1;
-        }
-        mvwhline(win, 2, 1, ACS_HLINE, w - 2);
-
-        if (tab == 0) {
-            std::ostringstream hdr;
-            hdr << std::left << std::setw(14) << "Uploader"
-                << std::setw(std::max(16, w - 30)) << "Filename"
-                << std::right << std::setw(10) << "Size";
-            wattron(win, A_BOLD);
-            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
-            wattroff(win, A_BOLD);
-
-            if (pending_items.empty()) {
-                mvwaddnstr(win, 5, 2, "(No pending files in incoming/<CALLSIGN-SSID>/)", w - 4);
-            } else {
-                for (int r = 0; r < list_h; ++r) {
-                    int idx = top[0] + r;
-                    if (idx >= count) break;
-                    const auto& pf = pending_items[static_cast<std::size_t>(idx)];
-                    std::ostringstream row;
-                    row << std::left << std::setw(14) << clip(pf.uploader, 13)
-                        << std::setw(std::max(16, w - 30)) << clip(pf.filename, std::max(15, w - 31))
-                        << std::right << std::setw(10) << pf.size_bytes;
-                    if (idx == sel[0]) wattron(win, A_REVERSE | A_BOLD);
-                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-                    if (idx == sel[0]) wattroff(win, A_REVERSE | A_BOLD);
-                }
-            }
-        } else {
-            std::ostringstream hdr;
-            hdr << std::left << std::setw(std::max(24, w - 16)) << "Approved File Path"
-                << std::right << std::setw(10) << "Size";
-            wattron(win, A_BOLD);
-            mvwaddnstr(win, 3, 2, clip(hdr.str(), w - 4).c_str(), w - 4);
-            wattroff(win, A_BOLD);
-
-            if (approved_items.empty()) {
-                mvwaddnstr(win, 5, 2, "(No approved files in BBS files area)", w - 4);
-            } else {
-                for (int r = 0; r < list_h; ++r) {
-                    int idx = top[1] + r;
-                    if (idx >= count) break;
-                    const auto& af = approved_items[static_cast<std::size_t>(idx)];
-                    std::ostringstream row;
-                    row << std::left << std::setw(std::max(24, w - 16))
-                        << clip(af.rel_path, std::max(23, w - 17))
-                        << std::right << std::setw(10) << af.size_bytes;
-                    if (idx == sel[1]) wattron(win, A_REVERSE | A_BOLD);
-                    mvwaddnstr(win, 4 + r, 2, clip(row.str(), w - 4).c_str(), w - 4);
-                    if (idx == sel[1]) wattroff(win, A_REVERSE | A_BOLD);
-                }
-            }
+        // Row 1: Jailed pane path headers
+        const std::string inc_hdr = "Incoming: /" + inc_rel;
+        const std::string fil_hdr = "Files: /" + files_rel;
+        for (int p = 0; p < 2; ++p) {
+            const int px = (p == 0) ? 2 : (right_x + 1);
+            const int pw = (p == 0) ? (left_w - 2) : (right_w - 2);
+            const bool act = (active_pane == p);
+            if (act) wattron(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            else wattron(win, A_BOLD);
+            mvwaddnstr(win, 1, px, clip(p == 0 ? inc_hdr : fil_hdr, pw).c_str(), pw);
+            if (act) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
+            else wattroff(win, A_BOLD);
         }
 
+        // Row 2: Column headers
+        auto draw_col_hdr = [&](int px, int pw) {
+            std::ostringstream oss;
+            const int nw = std::max(10, pw - 9);
+            oss << std::left << std::setw(nw) << "Name" << std::right << std::setw(8) << "Size";
+            wattron(win, A_BOLD);
+            mvwaddnstr(win, 2, px, clip(oss.str(), pw).c_str(), pw);
+            wattroff(win, A_BOLD);
+        };
+        draw_col_hdr(2, left_w - 2);
+        draw_col_hdr(right_x + 1, right_w - 2);
+
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+        mvwvline(win, 1, div_x, ACS_VLINE, h - 5);
+        mvwhline(win, h - 5, 1, ACS_HLINE, w - 2);
+        mvwaddch(win, h - 5, div_x, ACS_BTEE);
         mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
-        mvwaddnstr(win, h - 2, 2, clip(feedback, w - 4).c_str(), w - 4);
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
-        mvwhline(win, h - 1, 1, ' ', w - 2);
-        const char* footer = (tab == 0)
-            ? "Tab/1-2:Tabs  Enter/A:Approve & Move  D:Delete  R:Refresh  Esc:Close"
-            : "Tab/1-2:Tabs  D/Del:Remove Approved File  R:Refresh  Esc:Close";
-        mvwaddnstr(win, h - 1, 2, clip(footer, w - 4).c_str(), w - 4);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+
+        for (int p = 0; p < 2; ++p) {
+            const auto& ents = (p == 0) ? inc_entries : files_entries;
+            const int px = (p == 0) ? 2 : (right_x + 1);
+            const int pw = (p == 0) ? (left_w - 2) : (right_w - 2);
+            const int nw = std::max(10, pw - 9);
+            if (ents.empty()) {
+                mvwaddnstr(win, 3, px, "(empty folder)", pw);
+            } else {
+                for (int r = 0; r < list_h; ++r) {
+                    const int idx = top[p] + r;
+                    if (idx >= static_cast<int>(ents.size())) break;
+                    const auto& e = ents[static_cast<std::size_t>(idx)];
+                    std::string sz_str = e.is_parent ? "<UP>"
+                                       : (e.is_dir ? "<DIR>" : std::to_string(e.size_bytes));
+                    std::string disp = e.is_dir ? (e.is_parent ? ".." : (e.name + "/")) : e.name;
+                    std::ostringstream row;
+                    row << std::left << std::setw(nw) << clip(disp, nw - 1)
+                        << std::right << std::setw(8) << sz_str;
+                    const bool is_sel = (idx == sel[p]);
+                    const bool is_act_sel = is_sel && (active_pane == p);
+                    if (is_act_sel) wattron(win, A_REVERSE | A_BOLD);
+                    else if (is_sel) wattron(win, A_BOLD);
+                    mvwaddnstr(win, 3 + r, px, clip(row.str(), pw).c_str(), pw);
+                    if (is_act_sel) wattroff(win, A_REVERSE | A_BOLD);
+                    else if (is_sel) wattroff(win, A_BOLD);
+                }
+            }
+        }
+
+        mvwaddnstr(win, h - 4, 2, clip(feedback, w - 4).c_str(), w - 4);
+        oyk_tui_draw_button_row(&fm_b, h - 2, 2, w - 4, fbtns, 4, -1, "M:Ren N:Dir D:Del R:Ref");
+
         shadow.noutrefresh();
         wnoutrefresh(win);
         doupdate();
@@ -2485,86 +2670,152 @@ void NcursesUI::modal_approve_incoming_files() {
         if (ch == KEY_MOUSE) {
             MEVENT mev{};
             if (getmouse(&mev) == OK) {
+                int wy = 0, wx = 0;
+                getbegyx(win, wy, wx);
+                int ly = mev.y - wy;
+                int lx = mev.x - wx;
                 if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
                 if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) break;
+                if (mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) {
+                    int bhit = oyk_tui_hit_button_row(h - 2, 2, w - 4, fbtns, 4, ly, lx);
+                    if (bhit == 0) { perform_upload(); continue; }
+                    if (bhit == 1) { perform_approve(); continue; }
+                    if (bhit == 2) { ch = 'v'; }
+                    else if (bhit == 3) break;
+                    else if (ly >= 1 && ly < h - 5) {
+                        int clicked_pane = (lx >= right_x) ? 1 : 0;
+                        active_pane = clicked_pane;
+                        if (ly >= 3) {
+                            const auto& ents = (clicked_pane == 0) ? inc_entries : files_entries;
+                            int idx = top[clicked_pane] + (ly - 3);
+                            if (idx >= 0 && idx < static_cast<int>(ents.size())) {
+                                sel[clicked_pane] = idx;
+                            }
+                        }
+                    }
+                }
             }
-            continue;
+            if (ch != 'v') continue;
         }
+        auto& cur_entries = (active_pane == 0) ? inc_entries : files_entries;
+        std::string& cur_rel = (active_pane == 0) ? inc_rel : files_rel;
+        const int cur_cnt = static_cast<int>(cur_entries.size());
+
         if (ch == 27 || ch == 'q' || ch == 'Q') break;
         if (ch == '\t' || ch == KEY_RIGHT || ch == KEY_LEFT || ch == KEY_BTAB) {
-            tab = 1 - tab;
-        } else if (ch == '1') {
-            tab = 0;
-        } else if (ch == '2') {
-            tab = 1;
-        } else if (ch == KEY_UP && sel[tab] > 0) {
-            --sel[tab];
-        } else if (ch == KEY_DOWN && sel[tab] + 1 < count) {
-            ++sel[tab];
+            active_pane = 1 - active_pane;
+        } else if (ch == KEY_UP && sel[active_pane] > 0) {
+            --sel[active_pane];
+        } else if (ch == KEY_DOWN && sel[active_pane] + 1 < cur_cnt) {
+            ++sel[active_pane];
         } else if (ch == KEY_PPAGE) {
-            sel[tab] = std::max(0, sel[tab] - list_h);
-        } else if (ch == KEY_NPAGE && count > 0) {
-            sel[tab] = std::min(count - 1, sel[tab] + list_h);
+            sel[active_pane] = std::max(0, sel[active_pane] - list_h);
+        } else if (ch == KEY_NPAGE && cur_cnt > 0) {
+            sel[active_pane] = std::min(cur_cnt - 1, sel[active_pane] + list_h);
         } else if (ch == 'r' || ch == 'R') {
-            pending_items = engine_.list_pending_incoming_files();
-            approved_items = engine_.list_approved_files();
-            feedback = "Refreshed (" + std::to_string(pending_items.size()) + " pending, " +
-                       std::to_string(approved_items.size()) + " approved).";
-        } else if (tab == 0 && (ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'a' || ch == 'A') && count > 0) {
-            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
-            std::string subdir;
-            if (!prompt_text("Subfolder in files area (blank=root): ", subdir)) {
-                feedback = "Approval cancelled.";
-                continue;
-            }
-            std::string dest_path, err;
-            bool exists = false;
-            bool ok = engine_.approve_incoming_file(pf.uploader, pf.filename, subdir,
-                                                    false, dest_path, exists, err);
-            if (!ok && exists) {
-                if (prompt_yes_no("File exists in files area. Overwrite " + pf.filename + "?")) {
-                    ok = engine_.approve_incoming_file(pf.uploader, pf.filename, subdir,
-                                                       true, dest_path, exists, err);
+            reload_panes();
+            feedback = "Refreshed both directory panes.";
+        } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+            if (sel[active_pane] >= 0 && sel[active_pane] < cur_cnt) {
+                const auto& e = cur_entries[static_cast<std::size_t>(sel[active_pane])];
+                if (e.is_dir) {
+                    std::string next_rel, err;
+                    if (engine_.enter_bbs_subdir(active_pane == 0, cur_rel, e.name, next_rel, err)) {
+                        cur_rel = next_rel;
+                        sel[active_pane] = 0;
+                        top[active_pane] = 0;
+                        reload_panes();
+                        feedback = (active_pane == 0 ? "Incoming: /" : "Files: /") + cur_rel;
+                    } else {
+                        feedback = "Error: " + err;
+                    }
+                } else if (active_pane == 0) {
+                    perform_approve();
                 } else {
-                    feedback = "Overwrite declined; file kept in incoming/.";
-                    continue;
+                    std::string body, err;
+                    bool trunc = false;
+                    if (engine_.read_bbs_text_preview(false, cur_rel, e.name, body, trunc, err)) {
+                        show_preview_popup(e.name, body, trunc);
+                    } else {
+                        feedback = "Error: " + err;
+                    }
                 }
             }
-            if (ok) {
-                feedback = "Approved -> " + dest_path;
-                set_status("Approved incoming file: " + pf.uploader + "/" + pf.filename);
-                pending_items = engine_.list_pending_incoming_files();
-                approved_items = engine_.list_approved_files();
+        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+            if (!cur_rel.empty()) {
+                std::string next_rel, err;
+                if (engine_.enter_bbs_subdir(active_pane == 0, cur_rel, "..", next_rel, err)) {
+                    cur_rel = next_rel;
+                    sel[active_pane] = 0;
+                    top[active_pane] = 0;
+                    reload_panes();
+                    feedback = (active_pane == 0 ? "Incoming: /" : "Files: /") + cur_rel;
+                }
             } else {
-                feedback = "Error: " + err;
+                feedback = "Already at assigned folder root.";
             }
-        } else if (tab == 0 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
-            const auto pf = pending_items[static_cast<std::size_t>(sel[0])];
-            if (prompt_yes_no("Delete incoming/" + pf.uploader + "/" + pf.filename + "?")) {
+        } else if (ch == 'u' || ch == 'U') {
+            perform_upload();
+        } else if (ch == 'a' || ch == 'A') {
+            perform_approve();
+        } else if (ch == 'n' || ch == 'N') {
+            std::string dname;
+            if (prompt_text("New folder name: ", dname) && !dname.empty()) {
                 std::string err;
-                if (engine_.delete_incoming_file(pf.uploader, pf.filename, err)) {
-                    feedback = "Deleted " + pf.uploader + "/" + pf.filename;
-                    set_status(feedback);
-                    pending_items = engine_.list_pending_incoming_files();
+                if (engine_.mkdir_bbs_dir(active_pane == 0, cur_rel, dname, err)) {
+                    feedback = "Created folder '" + dname + "'.";
+                    reload_panes();
+                } else {
+                    feedback = "Error: " + err;
+                }
+            }
+        } else if (ch == 'm' || ch == 'M') {
+            if (sel[active_pane] >= 0 && sel[active_pane] < cur_cnt &&
+                !cur_entries[static_cast<std::size_t>(sel[active_pane])].is_parent) {
+                const auto e = cur_entries[static_cast<std::size_t>(sel[active_pane])];
+                std::string nname;
+                if (prompt_text("Rename '" + e.name + "' to: ", nname) && !nname.empty()) {
+                    std::string err;
+                    if (engine_.rename_bbs_entry(active_pane == 0, cur_rel, e.name, nname, err)) {
+                        feedback = "Renamed '" + e.name + "' -> '" + nname + "'.";
+                        reload_panes();
+                    } else {
+                        feedback = "Error: " + err;
+                    }
+                }
+            } else {
+                feedback = "Select a file or folder (not '..') to rename.";
+            }
+        } else if (ch == 'd' || ch == 'D' || ch == KEY_DC) {
+            if (sel[active_pane] >= 0 && sel[active_pane] < cur_cnt &&
+                !cur_entries[static_cast<std::size_t>(sel[active_pane])].is_parent) {
+                const auto e = cur_entries[static_cast<std::size_t>(sel[active_pane])];
+                if (prompt_yes_no("Delete '" + e.name + "'?")) {
+                    std::string err;
+                    if (engine_.delete_bbs_entry(active_pane == 0, cur_rel, e.name, err)) {
+                        feedback = "Deleted '" + e.name + "'.";
+                        set_status(feedback);
+                        reload_panes();
+                    } else {
+                        feedback = "Error: " + err;
+                    }
+                }
+            } else {
+                feedback = "Select a file or empty folder to delete.";
+            }
+        } else if (ch == 'v' || ch == 'V') {
+            if (sel[active_pane] >= 0 && sel[active_pane] < cur_cnt &&
+                !cur_entries[static_cast<std::size_t>(sel[active_pane])].is_dir) {
+                const auto e = cur_entries[static_cast<std::size_t>(sel[active_pane])];
+                std::string body, err;
+                bool trunc = false;
+                if (engine_.read_bbs_text_preview(active_pane == 0, cur_rel, e.name, body, trunc, err)) {
+                    show_preview_popup(e.name, body, trunc);
                 } else {
                     feedback = "Error: " + err;
                 }
             } else {
-                feedback = "Delete cancelled.";
-            }
-        } else if (tab == 1 && (ch == 'd' || ch == 'D' || ch == KEY_DC) && count > 0) {
-            const auto af = approved_items[static_cast<std::size_t>(sel[1])];
-            if (prompt_yes_no("Remove approved file /" + af.rel_path + "?")) {
-                std::string err;
-                if (engine_.delete_approved_file(af.rel_path, err)) {
-                    feedback = "Removed approved file /" + af.rel_path;
-                    set_status(feedback);
-                    approved_items = engine_.list_approved_files();
-                } else {
-                    feedback = "Error: " + err;
-                }
-            } else {
-                feedback = "Remove cancelled.";
+                feedback = "Select a regular file to view.";
             }
         }
     }
@@ -2799,10 +3050,10 @@ void NcursesUI::modal_about() {
         mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
         mvwaddch(win, h - 3, w - 1, ACS_RTEE);
         if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
-        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
-        mvwhline(win, h - 2, 1, ' ', w - 2);
-        mvwaddnstr(win, h - 2, 2, "Enter / Esc / Q: Close", w - 4);
-        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        NcursesTuiCtx actx{win, has_colors_};
+        OykTuiBackend ab = make_ncurses_tui_backend(&actx);
+        const OykTuiButton abtns[1] = { { "Close", 1 } };
+        oyk_tui_draw_button_row(&ab, h - 2, 2, w - 4, abtns, 1, 0, "Enter / Esc / Q: Close");
         shadow.noutrefresh();
         wrefresh(win);
 
@@ -4063,31 +4314,15 @@ bool NcursesUI::modal_add_interface_wizard(const std::vector<radio::RadioInterfa
 
         int fcnt = field_count_for_step();
         bool on_bar = (step == 0 || step == 3 || focus == fcnt);
-        int bx = 3;
-        if (step > 0) {
-            bool bhi = (on_bar && btn == 0);
-            if (bhi) wattron(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-            mvwaddstr(wiz, h - 2, bx, "[ < Back ]");
-            if (bhi) wattroff(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-        } else {
-            mvwaddstr(wiz, h - 2, bx, "  < Back  ");
-        }
-        bx += 12;
-        {
-            bool nhi = (on_bar && btn == 1);
-            if (nhi) wattron(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-            mvwaddstr(wiz, h - 2, bx, (step == 3) ? "[ Finish ]" : "[ Next > ]");
-            if (nhi) wattroff(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-        }
-        bx += 12;
-        {
-            bool chi = (on_bar && btn == 2);
-            if (chi) wattron(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-            mvwaddstr(wiz, h - 2, bx, "[ Cancel ]");
-            if (chi) wattroff(wiz, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-        }
-        mvwaddnstr(wiz, h - 2, bx + 12, (step > 0) ? "Ctrl+B:Back" : "1-5:Driver",
-                   std::max(0, w - (bx + 14)));
+        NcursesTuiCtx wctx{wiz, has_colors_};
+        OykTuiBackend wb = make_ncurses_tui_backend(&wctx);
+        const OykTuiButton wbtns[3] = {
+            { "< Back", step > 0 ? 1 : 0 },
+            { (step == 3) ? "Finish" : "Next >", 1 },
+            { "Cancel", 1 }
+        };
+        oyk_tui_draw_button_row(&wb, h - 2, 2, w - 4, wbtns, 3,
+                                on_bar ? btn : -1, (step > 0) ? "Ctrl+B:Back" : "1-5:Driver");
 
         curs_set((active_text_field(focus) != nullptr) ? 1 : 0);
         shadow.noutrefresh();
@@ -4454,20 +4689,11 @@ bool NcursesUI::modal_edit_interface(const std::vector<radio::RadioInterfaceConf
 
         int fcnt = field_count();
         bool on_bar = (focus == fcnt);
-        {
-            bool shi = (on_bar && btn == 0);
-            if (shi) wattron(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-            mvwaddstr(dlg, h - 2, 3, "[  Save  ]");
-            if (shi) wattroff(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-        }
-        {
-            bool chi = (on_bar && btn == 1);
-            if (chi) wattron(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-            mvwaddstr(dlg, h - 2, 16, "[ Cancel ]");
-            if (chi) wattroff(dlg, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-        }
-        mvwaddnstr(dlg, h - 2, 28, "Up/Dn:Field  Enter:Save  Esc:Cancel",
-                   std::max(0, w - 30));
+        NcursesTuiCtx ectx{dlg, has_colors_};
+        OykTuiBackend eb = make_ncurses_tui_backend(&ectx);
+        const OykTuiButton ebtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&eb, h - 2, 2, w - 4, ebtns, 2,
+                                on_bar ? btn : -1, "Up/Dn:Field  Enter:Save  Esc:Cancel");
 
         curs_set((focus < fcnt && active_text_field(focus) != nullptr) ? 1 : 0);
         shadow.noutrefresh();
@@ -4706,15 +4932,10 @@ bool NcursesUI::modal_edit_peer(const std::vector<radio::PeerConfig>& existing,
         mvwaddnstr(dlg, 11, 2, clip(err_msg, w - 4).c_str(), w - 4);
         if (has_colors_) wattroff(dlg, COLOR_PAIR(CP_WARN));
 
-        const std::string b0 = "[ Save ]";
-        const std::string b1 = "[ Cancel ]";
-        int bx = std::max(2, (w - static_cast<int>(b0.size() + 4 + b1.size())) / 2);
-        if (focus == 8 && btn == 0) wattron(dlg, A_REVERSE | A_BOLD);
-        mvwaddnstr(dlg, 12, bx, b0.c_str(), w - bx - 2);
-        if (focus == 8 && btn == 0) wattroff(dlg, A_REVERSE | A_BOLD);
-        if (focus == 8 && btn == 1) wattron(dlg, A_REVERSE | A_BOLD);
-        mvwaddnstr(dlg, 12, bx + static_cast<int>(b0.size()) + 4, b1.c_str(), w - bx - 16);
-        if (focus == 8 && btn == 1) wattroff(dlg, A_REVERSE | A_BOLD);
+        NcursesTuiCtx pctx{dlg, has_colors_};
+        OykTuiBackend pb = make_ncurses_tui_backend(&pctx);
+        const OykTuiButton pbtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+        oyk_tui_draw_button_row(&pb, 12, 2, w - 4, pbtns, 2, (focus == 8) ? btn : -1, "");
 
         if (has_colors_) wattron(dlg, COLOR_PAIR(CP_MENU));
         mvwhline(dlg, h - 1, 1, ' ', w - 2);
@@ -4823,7 +5044,14 @@ bool NcursesUI::modal_confirm_exit() {
         enum class AutoExitAct { Cancel, SaveExit, DiscardExit, Review };
         AutoExitAct act = AutoExitAct::Cancel;
         int focus = 2; // Default [ Review Peers ]
-        static const char* BTNS[4] = { "[ Save & Exit ]", "[ Discard & Exit ]", "[ Review Peers ]", "[ Cancel ]" };
+        static const OykTuiButton kExitBtns[4] = {
+            { "Save & Exit",  1 },
+            { "Discard",      1 },
+            { "Review Peers", 1 },
+            { "Cancel",       1 }
+        };
+        NcursesTuiCtx xctx{win, has_colors_};
+        OykTuiBackend xb = make_ncurses_tui_backend(&xctx);
         while (true) {
             if (external_stop_flag_ && external_stop_flag_->load()) { act = AutoExitAct::DiscardExit; break; }
             werase(win);
@@ -4833,13 +5061,7 @@ bool NcursesUI::modal_confirm_exit() {
             mvwaddnstr(win, 2, 3, l1.c_str(), w - 6);
             mvwaddnstr(win, 3, 3, "Save them to config, discard them, or review in Peers?", w - 6);
 
-            int bx = 3;
-            for (int i = 0; i < 4; ++i) {
-                if (focus == i) wattron(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-                mvwaddnstr(win, 6, bx, BTNS[i], w - bx - 2);
-                if (focus == i) wattroff(win, (has_colors_ ? COLOR_PAIR(CP_MENU_SEL) : A_REVERSE) | A_BOLD);
-                bx += static_cast<int>(std::string(BTNS[i]).size()) + 2;
-            }
+            oyk_tui_draw_button_row(&xb, 6, 2, w - 4, kExitBtns, 4, focus, "");
             mvwhline(win, 8, 1, ACS_HLINE, w - 2);
             mvwaddnstr(win, 9, 2, "Left/Right/Tab:Select  Enter:Confirm  S/D/R/Esc", w - 4);
             shadow.noutrefresh();
@@ -4860,13 +5082,9 @@ bool NcursesUI::modal_confirm_exit() {
                         act = AutoExitAct::Cancel;
                         break;
                     }
-                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && ly == 6) {
-                        int bx = 3;
-                        for (int i = 0; i < 4; ++i) {
-                            int bl = static_cast<int>(std::string(BTNS[i]).size());
-                            if (lx >= bx && lx < bx + bl) { focus = i; ch = '\r'; break; }
-                            bx += bl + 2;
-                        }
+                    if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED))) {
+                        int bhit = oyk_tui_hit_button_row(6, 2, w - 4, kExitBtns, 4, ly, lx);
+                        if (bhit >= 0) { focus = bhit; ch = '\r'; }
                     }
                 }
                 if (ch != '\r') continue;

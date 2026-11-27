@@ -3640,6 +3640,62 @@ void test_session_eol_detection_and_reply_adaptation() {
     std::cout << "[PASS] test_session_eol_detection_and_reply_adaptation\n";
 }
 
+void test_dual_pane_jailed_file_manager() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / "oyk_node_fm_jail_test";
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    const fs::path inc_dir = base / "incoming";
+    const fs::path files_dir = base / "files";
+    const fs::path outside_dir = base / "outside_secret";
+    fs::create_directories(inc_dir / "W3TRM-1", ec);
+    fs::create_directories(files_dir / "bulletins", ec);
+    fs::create_directories(outside_dir, ec);
+    {
+        std::ofstream(outside_dir / "secret.txt") << "SECRET";
+        std::ofstream(files_dir / "readme.txt") << "BBS Root Readme";
+        std::ofstream(base / "local_upload.txt") << "Uploaded from operator";
+    }
+    fs::create_directory_symlink(outside_dir, files_dir / "sym_escape", ec);
+
+    std::vector<node::BbsDirEntry> entries;
+    std::string norm_rel, err;
+    assert(node::BbsServer::list_dir_entries(files_dir.string(), "", entries, norm_rel, err));
+    assert(norm_rel.empty());
+    /* Root must NOT include ".." and must NOT follow sym_escape symlink */
+    for (const auto& e : entries) {
+        assert(!e.is_parent && e.name != ".." && e.name != "sym_escape");
+    }
+    assert(node::BbsServer::enter_subdir(files_dir.string(), "", "..", norm_rel, err) == false);
+    assert(node::BbsServer::enter_subdir(files_dir.string(), "bulletins", "../..", norm_rel, err) == false);
+    assert(node::BbsServer::enter_subdir(files_dir.string(), "", "bulletins", norm_rel, err));
+    assert(norm_rel == "bulletins");
+    assert(node::BbsServer::list_dir_entries(files_dir.string(), "bulletins", entries, norm_rel, err));
+    assert(!entries.empty() && entries[0].is_parent && entries[0].name == "..");
+
+    /* Upload local file directly into incoming/W3TRM-1, then Approve -> files/bulletins */
+    std::string dest;
+    bool exists = false;
+    assert(node::BbsServer::import_local_file((base / "local_upload.txt").string(),
+                                              inc_dir.string(), "W3TRM-1", false,
+                                              dest, exists, err));
+    assert(node::BbsServer::approve_incoming_rel_file(inc_dir.string(), "W3TRM-1/local_upload.txt",
+                                                      files_dir.string(), "bulletins", false,
+                                                      dest, exists, err));
+    std::string preview;
+    bool trunc = false;
+    assert(node::BbsServer::read_text_preview(files_dir.string(), "bulletins", "local_upload.txt",
+                                              preview, trunc, err));
+    assert(preview.find("Uploaded from operator") != std::string::npos);
+    assert(node::BbsServer::mkdir_safe(files_dir.string(), "bulletins", "sub2", err));
+    assert(node::BbsServer::rename_safe(files_dir.string(), "bulletins", "local_upload.txt", "renamed.txt", err));
+    assert(node::BbsServer::delete_safe(files_dir.string(), "bulletins", "renamed.txt", err));
+    assert(node::BbsServer::delete_safe(files_dir.string(), "bulletins", "sub2", err));
+
+    fs::remove_all(base, ec);
+    std::cout << "[PASS] test_dual_pane_jailed_file_manager\n";
+}
+
 } // namespace
 
 int main() {
@@ -3672,6 +3728,7 @@ int main() {
     test_same_interface_forwarding_policy();
     test_theme_config_cloning_and_storage();
     test_session_eol_detection_and_reply_adaptation();
+    test_dual_pane_jailed_file_manager();
     std::cout << "All oyk-node tests passed!\n";
     return 0;
 }

@@ -21,6 +21,7 @@
 #include "../compat/oyk_printer.hpp"
 #include "../compat/oyk_tui.hpp"
 #include "../compat/oyk_term.hpp"
+#include "../compat/oyk_gui.hpp"
 #include "dos_usb.hpp"
 #include "dos_video.hpp"
 #include "dos_mouse.hpp"
@@ -972,8 +973,11 @@ static int confirm_dos_exit() {
         oyk_u8 btn_at  = ta.menu_bg;
         oyk_u8 sel_at  = ta.dlg_sel;
 
-        static const char* BTNS[4] = {
-            "[ Save & Exit ]", "[ Discard & Exit ]", "[ Review Peers ]", "[ Cancel ]"
+        static const OykTuiButton BTNS[4] = {
+            { "Save & Exit", 1 },
+            { "Discard", 1 },
+            { "Review Peers", 1 },
+            { "Cancel", 1 }
         };
         int focus = 2; /* Review Peers */
         int act = 3;   /* Cancel */
@@ -990,12 +994,7 @@ static int confirm_dos_exit() {
                 vid_puts(top + 2, left + 3, warn_at, l1, w - 6);
                 vid_puts(top + 3, left + 3, ta.dlg_fill,
                          "Save them to configuration, discard them, or review in Peers?", w - 6);
-                int bx = left + 3;
-                for (int i = 0; i < 4; ++i) {
-                    int bl = static_cast<int>(strlen(BTNS[i]));
-                    vid_puts(top + 6, bx, (focus == i) ? sel_at : btn_at, BTNS[i], bl);
-                    bx += bl + 2;
-                }
+                oyk_tui_draw_button_row(&tb, top + 6, left + 2, w - 4, BTNS, 4, focus, "");
                 oyk_tui_draw_modal_footer(&tb, &mr, NULL,
                                           "Left/Right/Tab:Select  Enter:OK  S:Save  D:Discard  R:Review  Esc");
                 vid_flush();
@@ -1011,15 +1010,8 @@ static int confirm_dos_exit() {
                 }
                 if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
                     if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) { act = 3; break; }
-                    if (mev.row == top + 6) {
-                        int bx = left + 3;
-                        for (int i = 0; i < 4; ++i) {
-                            int bl = static_cast<int>(strlen(BTNS[i]));
-                            if (mev.col >= bx && mev.col < bx + bl) { act = i; break; }
-                            bx += bl + 2;
-                        }
-                        if (act < 4) break;
-                    }
+                    int bhit = oyk_tui_hit_button_row(top + 6, left + 2, w - 4, BTNS, 4, mev.row, mev.col);
+                    if (bhit >= 0) { act = bhit; break; }
                 }
                 continue;
             }
@@ -1559,7 +1551,7 @@ static void render_dos_terminal_body(const char* input_buf) {
     oyk_tui_compute_term_layout(g_vid->rows, g_vid->cols, &tlay);
 
     const int body_w = (tlay.cols > 2) ? (tlay.cols - 2) : 1;
-    const int inner_h = (tlay.body_rows > 2) ? (tlay.body_rows - 2) : 1;
+    const int inner_h = (tlay.body_rows > 0) ? tlay.body_rows : 1;
     const int show_live = (g_dterm_curline_len > 0) ? 1 : 0;
 
     int total_rows = 0;
@@ -1594,13 +1586,14 @@ static void render_dos_terminal_body(const char* input_buf) {
         oyk_format_callsign(&g_dterm_remote, cs, sizeof(cs));
         sprintf(hdr, " LOCAL TERMINAL | CONNECTING: %-10s... [EOL:%s]", cs, eol_lbl);
     } else {
-        sprintf(hdr, " LOCAL TERMINAL | DISCONNECTED [EOL:%s] (Ctrl+A Z:Help | F2:Conn | F9:Cons)",
+        sprintf(hdr, " LOCAL TERMINAL | DISCONNECTED [EOL:%s] (Ctrl-A Z:Help | F2:Conn | Tab/F9:Cons)",
                 eol_lbl);
     }
     vid_puts(tlay.header_row, 0, ta.top_hdr, hdr, tlay.cols);
 
-    vid_box(tlay.body_top, 0, tlay.body_rows, tlay.cols, ta.bdr, ta.norm, 1);
-    dos_vid_title(g_vid, tlay.body_top, 2, tlay.cols - 4, ta.ttl, "Terminal Output");
+    for (int r = 0; r < inner_h; ++r) {
+        dos_vid_hline(g_vid, tlay.body_top + r, 0, tlay.cols, ta.norm, ' ');
+    }
 
     int vis_idx = 0;
     int out_row = 0;
@@ -1617,7 +1610,7 @@ static void render_dos_terminal_body(const char* input_buf) {
                 if (slen >= sizeof(seg)) slen = sizeof(seg) - 1;
                 memcpy(seg, ln + spans[si].start, slen);
                 seg[slen] = '\0';
-                vid_puts(tlay.body_top + 1 + out_row, 1, ta.norm, seg, body_w);
+                vid_puts(tlay.body_top + out_row, 1, ta.norm, seg, body_w);
                 ++out_row;
             }
             ++vis_idx;
@@ -1625,14 +1618,12 @@ static void render_dos_terminal_body(const char* input_buf) {
     }
 
     char bar[140];
-    if (g_dterm_ctrl_a) {
-        strcpy(bar, " CTRL+A: Z:Help C:Conn L:Loc B:BBS T:Chat D:Disc S:YAPP K:Abrt E:EOL P:Prt W:Clr X:Exit");
-    } else if (g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
+    if (!g_dterm_ctrl_a && g_dterm_yapp.state != OYK_YAPP_IDLE && g_dterm_yapp.status[0]) {
         sprintf(bar, " %.56s (%lu/%lu B)", g_dterm_yapp.status,
                 static_cast<unsigned long>(g_dterm_yapp.bytes_transferred),
                 static_cast<unsigned long>(g_dterm_yapp.total_bytes));
     } else {
-        strcpy(bar, " Ctrl+A Z:Help  F2:Conn  F3:YAPP  F4:Disc  Ctrl+A E:EOL  F9/Tab:Console");
+        sprintf(bar, " %s", oyk_term_hotkey_bar_text(1, g_dterm_ctrl_a));
     }
     vid_puts(tlay.hotkey_row, 0, ta.menu_bg, bar, tlay.cols);
 
@@ -1660,7 +1651,6 @@ static int dos_show_term_help_modal() {
     DosTuiCtx dc;
     OykTuiBackend tb;
     dos_init_tui_backend(NULL, &dc, &tb);
-    const DosThemeAttrs& ta = dc.ta;
     OykTuiRect mr;
     oyk_tui_center_modal(g_vid->rows, g_vid->cols, 19, 68, &mr);
 
@@ -1672,20 +1662,7 @@ static int dos_show_term_help_modal() {
         if (dirty) {
             dirty = 0;
             render_dos_terminal_body(g_dterm_in_buf);
-            oyk_tui_draw_modal(&tb, &mr, "Terminal Hotkey Help", 1);
-            vid_puts(mr.top + 1, mr.left + 2, ta.ttl,
-                     "Command prefix: Ctrl+A (press Ctrl+A, then hotkey)", mr.w - 4);
-            dos_vid_hdiv(g_vid, mr.top + 2, mr.left, mr.w, ta.bdr);
-            const int cnt = oyk_term_help_count();
-            for (int i = 0; i < cnt && (3 + i) < (mr.h - 3); ++i) {
-                const OykTermHelpEntry* e = oyk_term_help_entry(i);
-                if (!e) continue;
-                char row_buf[76];
-                sprintf(row_buf, "%-9s %-38s %-14s", e->key_label, e->action, e->alt_key);
-                vid_puts(mr.top + 3 + i, mr.left + 2, ta.dlg_fill, row_buf, mr.w - 4);
-            }
-            oyk_tui_draw_modal_footer(&tb, &mr, NULL,
-                                      "Press a key above to run it, or Esc / Enter / [X] to close");
+            oyk_tui_draw_term_help_modal(&tb, g_vid->rows, g_vid->cols);
             vid_flush();
         }
         int ch = 0;
@@ -1995,16 +1972,74 @@ static void run_dos_local_terminal() {
     }
 }
 
+static void dos_fm_preview_popup(const OykTuiBackend* tb, const DosThemeAttrs& ta,
+                                 const char* title, const char* text) {
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 15, 64, &mr);
+    const OykTuiButton pbtns[1] = { { "Close", 1 } };
+    int dirty = 1;
+    int offset = 0;
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        if (dirty) {
+            dirty = 0;
+            char ttl[60];
+            sprintf(ttl, "View: %.44s", title ? title : "");
+            oyk_tui_draw_modal(tb, &mr, ttl, 1);
+            const int vis = mr.h - 4;
+            const char* p = text ? text : "";
+            int lno = 0;
+            int shown = 0;
+            while (*p && shown < vis) {
+                char line[62];
+                int k = 0;
+                while (*p && *p != '\n' && k < mr.w - 4 && k < 60) {
+                    line[k++] = *p++;
+                }
+                while (*p && *p != '\n') ++p;
+                if (*p == '\n') ++p;
+                line[k] = '\0';
+                if (lno >= offset) {
+                    vid_puts(mr.top + 1 + shown, mr.left + 2, ta.dlg_fill, line, mr.w - 4);
+                    ++shown;
+                }
+                ++lno;
+            }
+            dos_vid_hdiv(g_vid, mr.top + mr.h - 3, mr.left, mr.w, ta.dlg_bdr);
+            oyk_tui_draw_button_row(tb, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                                    pbtns, 1, 0, "Up/Dn:Scroll  Esc/Enter:Close");
+            vid_flush();
+        }
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 0) continue;
+        dirty = 1;
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
+                if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+                if (oyk_tui_hit_button_row(mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                                           pbtns, 1, mev.row, mev.col) == 0) break;
+            }
+            continue;
+        }
+        if (ch == 0 || ch == 0xE0) {
+            int ext = getch();
+            if (ext == 72 && offset > 0) --offset;
+            else if (ext == 80) ++offset;
+        } else if (ch == 27 || ch == '\r' || ch == '\n' || ch == 'q' || ch == 'Q') {
+            break;
+        }
+    }
+}
+
 static void run_dos_approve_incoming_files() {
-    static OykPendingIncoming items[32];
-    static OykApprovedFile approved[32];
-    int inc_count = oyk_bbs_list_incoming("incoming", items, 32);
-    int app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
-    int tab = 0; /* 0 = Pending Incoming, 1 = Approved Files */
-    int sel[2] = { 0, 0 };
-    int top[2] = { 0, 0 };
-    char feedback[78];
-    sprintf(feedback, "BBS Files Area: %.54s", g_node.config().bbs_files_path);
+    OykGuiFileMgr* fm = new OykGuiFileMgr;
+    oyk_gui_filemgr_init(fm, "incoming", g_node.config().bbs_files_path);
 
     DosTuiCtx dc;
     OykTuiBackend tb;
@@ -2012,72 +2047,77 @@ static void run_dos_approve_incoming_files() {
     const DosThemeAttrs& ta = dc.ta;
     const int srows = g_vid ? g_vid->rows : 25;
     const int scols = g_vid ? g_vid->cols : 80;
-    OykTuiRect mr;
-    oyk_tui_center_modal(srows, scols, 21, 74, &mr);
 
-    static const char* FILE_TABS[2] = { "1:Pending Incoming", "2:Approved Files" };
-    const int panel_x = mr.left;
-    const int panel_w = mr.w;
-    const int list_y = mr.top + 5;
-    const int list_h = mr.h - 9;
+    OykTuiDualPaneLayout dlay;
+    oyk_tui_compute_dual_pane_layout(srows, scols, &dlay);
+    const OykTuiRect& mr = dlay.modal;
+    const int left_w = dlay.left_pane.w - 1;
+    const int div_col = dlay.right_pane.left - 1;
+    const int right_col = dlay.right_pane.left;
+    const int right_w = dlay.right_pane.w;
+    const OykTuiButton fbtns[4] = {
+        { "Upload",  1 },
+        { "Approve", 1 },
+        { "View",    1 },
+        { "Close",   1 }
+    };
+
     int dirty = 1;
-    oyk_u8 bdr_at = ta.dlg_bdr;
-    oyk_u8 hdr_at = ta.list_hdr;
-    oyk_u8 row_at = ta.dlg_fill;
-    oyk_u8 sel_at = ta.dlg_sel;
-
     while (!g_break_flag) {
         dos_pump_network();
         g_node.tick();
-
-        int count = (tab == 0) ? inc_count : app_count;
-        if (sel[tab] >= count) sel[tab] = (count > 0) ? (count - 1) : 0;
-        if (sel[tab] < top[tab]) top[tab] = sel[tab];
-        if (sel[tab] >= top[tab] + list_h) top[tab] = sel[tab] - list_h + 1;
-
         if (dirty) {
             dirty = 0;
             draw_dos_console_to_back();
             oyk_tui_draw_modal(&tb, &mr, "Manage BBS Files Area", 1);
-            oyk_tui_draw_tabs(&tb, mr.top + 1, panel_x + 1, panel_w - 2, FILE_TABS, 2, tab);
-            dos_vid_hdiv(g_vid, mr.top + 2, panel_x, panel_w, bdr_at);
 
-            if (tab == 0) {
-                vid_puts(mr.top + 3, panel_x + 1, hdr_at,
-                         " Uploader      Filename                                     Size      ", panel_w - 2);
-            } else {
-                vid_puts(mr.top + 3, panel_x + 1, hdr_at,
-                         " Approved File Path                                         Size      ", panel_w - 2);
-            }
-            dos_vid_hdiv(g_vid, mr.top + 4, panel_x, panel_w, bdr_at);
+            char pttl[44];
+            oyk_gui_filemgr_pane_title(&fm->inc, "Incoming", pttl, sizeof(pttl));
+            vid_puts(dlay.path_row, dlay.left_pane.left + 1,
+                     (fm->active_pane == 0) ? ta.dlg_sel : ta.ttl, pttl, left_w - 2);
+            oyk_gui_filemgr_pane_title(&fm->files, "Files", pttl, sizeof(pttl));
+            vid_puts(dlay.path_row, right_col + 1,
+                     (fm->active_pane == 1) ? ta.dlg_sel : ta.ttl, pttl, right_w - 2);
 
-            for (int i = 0; i < list_h; ++i) {
-                int idx = top[tab] + i;
-                if (count == 0 && i == 1) {
-                    vid_puts(list_y + i, panel_x + 1, row_at,
-                             (tab == 0) ? " (No pending files in incoming\\<CALLSIGN-SSID>\\)"
-                                        : " (No approved files in BBS files area)",
-                             panel_w - 2);
-                } else if (idx < count) {
-                    char row[74];
-                    if (tab == 0) {
-                        sprintf(row, " %-13.13s %-42.42s %9lu ",
-                                items[idx].uploader, items[idx].filename,
-                                static_cast<unsigned long>(items[idx].size));
-                    } else {
-                        sprintf(row, " %-56.56s %9lu ",
-                                approved[idx].rel_path,
-                                static_cast<unsigned long>(approved[idx].size));
+            vid_puts(dlay.hdr_row, dlay.left_pane.left + 1, ta.list_hdr,
+                     "Name                        Size", left_w - 2);
+            vid_puts(dlay.hdr_row, right_col + 1, ta.list_hdr,
+                     "Name                        Size", right_w - 2);
+
+            for (int r = 0; r < dlay.list_rows; ++r) {
+                dos_vid_putc(g_vid, dlay.path_row + r + 2, div_col, ta.dlg_bdr, OYK_BOX_V);
+                for (int pi = 0; pi < 2; ++pi) {
+                    OykGuiFilePane* fp = (pi == 0) ? &fm->inc : &fm->files;
+                    int px = (pi == 0) ? (dlay.left_pane.left + 1) : (right_col + 1);
+                    int pw = (pi == 0) ? (left_w - 2) : (right_w - 2);
+                    if (fp->sel < fp->scroll) fp->scroll = fp->sel;
+                    if (fp->sel >= fp->scroll + dlay.list_rows) fp->scroll = fp->sel - dlay.list_rows + 1;
+                    int idx = fp->scroll + r;
+                    if (fp->count == 0 && r == 0) {
+                        vid_puts(dlay.list_top + r, px, ta.dlg_fill, "(empty folder)", pw);
+                    } else if (idx < fp->count) {
+                        const OykBbsDirEntry& e = fp->entries[idx];
+                        char sz[10], disp[40], row[48];
+                        if (e.is_parent) strcpy(sz, "<UP>");
+                        else if (e.is_dir) strcpy(sz, "<DIR>");
+                        else sprintf(sz, "%lu", static_cast<unsigned long>(e.size));
+                        if (e.is_dir && !e.is_parent) sprintf(disp, "%.30s/", e.name);
+                        else sprintf(disp, "%.31s", e.name);
+                        sprintf(row, "%-25.25s %7.7s", disp, sz);
+                        oyk_u8 at = (idx == fp->sel)
+                            ? ((fm->active_pane == pi) ? ta.dlg_sel : ta.list_hdr)
+                            : ta.dlg_fill;
+                        vid_puts(dlay.list_top + r, px, at, row, pw);
                     }
-                    vid_puts(list_y + i, panel_x + 1, (idx == sel[tab]) ? sel_at : row_at, row, panel_w - 2);
-                } else {
-                    vid_puts(list_y + i, panel_x + 1, row_at, "", panel_w - 2);
                 }
             }
-            oyk_tui_draw_modal_footer(&tb, &mr, feedback,
-                                      (tab == 0)
-                                          ? "Tab/1-2:Tabs  Enter/A:Approve  D:Delete  R:Refresh  Esc:Close"
-                                          : "Tab/1-2:Tabs  D:Remove Approved File  R:Refresh  Esc:Close");
+            dos_vid_putc(g_vid, dlay.path_row, div_col, ta.dlg_bdr, OYK_BOX_V);
+            dos_vid_putc(g_vid, dlay.hdr_row, div_col, ta.dlg_bdr, OYK_BOX_V);
+
+            vid_puts(dlay.feedback_row, mr.left + 2, ta.dlg_fill, fm->feedback, mr.w - 4);
+            dos_vid_hdiv(g_vid, dlay.div_row, mr.left, mr.w, ta.dlg_bdr);
+            oyk_tui_draw_button_row(&tb, dlay.btn_row, mr.left + 2, mr.w - 4,
+                                    fbtns, 4, -1, "M:Ren N:Dir D:Del R:Ref");
             vid_flush();
         }
 
@@ -2087,124 +2127,104 @@ static void run_dos_approve_incoming_files() {
         if (inp == 0) continue;
         dirty = 1;
         if (inp == 2) {
-            if (mev.kind == OYK_MOUSE_WHEEL) {
-                if (mev.wheel_delta < 0 && sel[tab] > 0) --sel[tab];
-                else if (mev.wheel_delta > 0 && sel[tab] + 1 < count) ++sel[tab];
-                continue;
-            }
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
             if ((mev.kind == OYK_MOUSE_DOWN || mev.kind == OYK_MOUSE_DBLCLICK) &&
                 (mev.button & OYK_MOUSE_BTN_LEFT)) {
                 if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
-                if (mev.row == mr.top + 1) {
-                    tab = (mev.col < panel_x + 24) ? 0 : 1;
+                int bhit = oyk_tui_hit_button_row(dlay.btn_row, mr.left + 2, mr.w - 4,
+                                                  fbtns, 4, mev.row, mev.col);
+                if (bhit == 0) ch = 'u';
+                else if (bhit == 1) ch = 'a';
+                else if (bhit == 2) ch = 'v';
+                else if (bhit == 3) break;
+                else if (mev.row >= dlay.path_row && mev.row < dlay.feedback_row) {
+                    int cp = (mev.col >= right_col) ? 1 : 0;
+                    fm->active_pane = cp;
+                    OykGuiFilePane* fp = (cp == 0) ? &fm->inc : &fm->files;
+                    if (mev.row >= dlay.list_top) {
+                        int idx = fp->scroll + (mev.row - dlay.list_top);
+                        if (idx >= 0 && idx < fp->count) {
+                            fp->sel = idx;
+                            if (mev.kind == OYK_MOUSE_DBLCLICK && fp->entries[idx].is_dir) {
+                                oyk_gui_filemgr_activate(fm, cp);
+                            }
+                        }
+                    }
                     continue;
-                }
-                if (mev.row >= list_y && mev.row < list_y + list_h &&
-                    mev.col > panel_x && mev.col < panel_x + panel_w - 1) {
-                    int idx = top[tab] + (mev.row - list_y);
-                    if (idx < count) sel[tab] = idx;
-                }
-            }
-            continue;
+                } else continue;
+            } else continue;
         }
+        OykGuiFilePane* ap = (fm->active_pane == 0) ? &fm->inc : &fm->files;
         if (ch == 0 || ch == 0xE0) {
             int ext = getch();
-            if (ext == 72 && sel[tab] > 0) --sel[tab];
-            else if (ext == 80 && sel[tab] + 1 < count) ++sel[tab];
-            else if (ext == 75 || ext == 77) tab = 1 - tab;
-            else if (ext == 73) sel[tab] = (sel[tab] > list_h) ? (sel[tab] - list_h) : 0;
-            else if (ext == 81 && count > 0) sel[tab] = (sel[tab] + list_h < count) ? (sel[tab] + list_h) : (count - 1);
+            if (ext == 72 && ap->sel > 0) --ap->sel;
+            else if (ext == 80 && ap->sel + 1 < ap->count) ++ap->sel;
+            else if (ext == 75 || ext == 77) fm->active_pane = 1 - fm->active_pane;
+            else if (ext == 73) ap->sel = (ap->sel > dlay.list_rows) ? (ap->sel - dlay.list_rows) : 0;
+            else if (ext == 81 && ap->count > 0) {
+                ap->sel = (ap->sel + dlay.list_rows < ap->count) ? (ap->sel + dlay.list_rows) : (ap->count - 1);
+            }
         } else if (ch == 27 || ch == 'q' || ch == 'Q') {
             break;
         } else if (ch == '\t') {
-            tab = 1 - tab;
-        } else if (ch == '1') {
-            tab = 0;
-        } else if (ch == '2') {
-            tab = 1;
+            fm->active_pane = 1 - fm->active_pane;
         } else if (ch == 'r' || ch == 'R') {
-            inc_count = oyk_bbs_list_incoming("incoming", items, 32);
-            app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
-            sprintf(feedback, "Refreshed (%d pending, %d approved).", inc_count, app_count);
-        } else if (tab == 0 && (ch == '\r' || ch == '\n' || ch == 'a' || ch == 'A') && count > 0) {
-            char subdir[48], dest[160], err[80];
-            prompt_line("Subfolder in files area (blank=root): ", subdir, sizeof(subdir));
+            oyk_gui_filemgr_refresh(fm);
+            strcpy(fm->feedback, "Refreshed both directory panes.");
+        } else if (ch == '\r' || ch == '\n') {
+            if (ap->sel < ap->count && ap->entries[ap->sel].is_dir) {
+                oyk_gui_filemgr_activate(fm, fm->active_pane);
+            } else if (fm->active_pane == 0) {
+                ch = 'a';
+            } else {
+                ch = 'v';
+            }
+        } else if (ch == 8 || ch == 127) {
+            oyk_gui_filemgr_up(fm, fm->active_pane);
+        }
+
+        if (ch == 'u' || ch == 'U') {
+            char chosen[192];
+            if (dos_file_selector((fm->active_pane == 0) ? "Upload Local -> Incoming" : "Upload Local -> Files",
+                                  chosen, sizeof(chosen))) {
+                int exists = 0;
+                if (!oyk_gui_filemgr_upload(fm, chosen, 0, &exists) && exists) {
+                    char yn[4];
+                    prompt_line("File exists. Overwrite? [Y/N]: ", yn, sizeof(yn));
+                    if (yn[0] == 'y' || yn[0] == 'Y') oyk_gui_filemgr_upload(fm, chosen, 1, &exists);
+                }
+            } else {
+                strcpy(fm->feedback, "Upload cancelled.");
+            }
+        } else if (ch == 'a' || ch == 'A') {
             int exists = 0;
-            int ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                   items[sel[0]].uploader, items[sel[0]].filename,
-                                                   subdir, 0, dest, sizeof(dest),
-                                                   &exists, err, sizeof(err));
-            if (!ok && exists) {
+            if (!oyk_gui_filemgr_approve(fm, 0, &exists) && exists) {
                 char yn[4];
-                prompt_line("File exists in files area. Overwrite? [Y/N]: ", yn, sizeof(yn));
-                if (yn[0] == 'y' || yn[0] == 'Y') {
-                    ok = oyk_bbs_approve_incoming_file("incoming", g_node.config().bbs_files_path,
-                                                       items[sel[0]].uploader, items[sel[0]].filename,
-                                                       subdir, 1, dest, sizeof(dest),
-                                                       &exists, err, sizeof(err));
-                } else {
-                    strcpy(feedback, "Overwrite declined; file remains in incoming/.");
-                    continue;
-                }
+                prompt_line("File exists in Files. Overwrite? [Y/N]: ", yn, sizeof(yn));
+                if (yn[0] == 'y' || yn[0] == 'Y') oyk_gui_filemgr_approve(fm, 1, &exists);
             }
-            if (ok) {
-                char lmsg[96];
-                sprintf(lmsg, "Approved %s/%s -> %.52s", items[sel[0]].uploader, items[sel[0]].filename, dest);
-                g_node.log_message(OYK_LOG_INFO, lmsg);
-                strncpy(feedback, lmsg, sizeof(feedback) - 1);
-                feedback[sizeof(feedback) - 1] = '\0';
-                strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
-                g_status_line[sizeof(g_status_line) - 1] = '\0';
-                inc_count = oyk_bbs_list_incoming("incoming", items, 32);
-                app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
-            } else {
-                sprintf(feedback, "Error: %.68s", err);
+        } else if (ch == 'n' || ch == 'N') {
+            char nname[48];
+            prompt_line("New folder name: ", nname, sizeof(nname));
+            if (nname[0]) oyk_gui_filemgr_mkdir(fm, nname);
+        } else if (ch == 'm' || ch == 'M') {
+            char nname[48];
+            prompt_line("Rename entry to: ", nname, sizeof(nname));
+            if (nname[0]) oyk_gui_filemgr_rename(fm, nname);
+        } else if (ch == 'd' || ch == 'D') {
+            char yn[4];
+            prompt_line("Delete selected entry? [Y/N]: ", yn, sizeof(yn));
+            if (yn[0] == 'y' || yn[0] == 'Y') oyk_gui_filemgr_delete(fm);
+        } else if (ch == 'v' || ch == 'V') {
+            char* pbuf = new char[1024];
+            int trunc = 0;
+            if (oyk_gui_filemgr_view(fm, pbuf, 1024U, &trunc)) {
+                dos_fm_preview_popup(&tb, ta, ap->entries[ap->sel].name, pbuf);
             }
-        } else if (tab == 0 && (ch == 'd' || ch == 'D') && count > 0) {
-            char cp[72], yn[4], err[80];
-            sprintf(cp, "Delete incoming\\%s\\%s? [Y/N]: ", items[sel[0]].uploader, items[sel[0]].filename);
-            prompt_line(cp, yn, sizeof(yn));
-            if (yn[0] == 'y' || yn[0] == 'Y') {
-                if (oyk_bbs_delete_incoming_file("incoming", items[sel[0]].uploader, items[sel[0]].filename,
-                                                 err, sizeof(err))) {
-                    char lmsg[80];
-                    sprintf(lmsg, "Deleted incoming file %s/%s", items[sel[0]].uploader, items[sel[0]].filename);
-                    g_node.log_message(OYK_LOG_INFO, lmsg);
-                    strncpy(feedback, lmsg, sizeof(feedback) - 1);
-                    feedback[sizeof(feedback) - 1] = '\0';
-                    strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
-                    g_status_line[sizeof(g_status_line) - 1] = '\0';
-                    inc_count = oyk_bbs_list_incoming("incoming", items, 32);
-                } else {
-                    sprintf(feedback, "Error: %.68s", err);
-                }
-            } else {
-                strcpy(feedback, "Delete cancelled.");
-            }
-        } else if (tab == 1 && (ch == 'd' || ch == 'D') && count > 0) {
-            char cp[72], yn[4], err[80];
-            sprintf(cp, "Remove approved /%.40s? [Y/N]: ", approved[sel[1]].rel_path);
-            prompt_line(cp, yn, sizeof(yn));
-            if (yn[0] == 'y' || yn[0] == 'Y') {
-                if (oyk_bbs_delete_approved_file(g_node.config().bbs_files_path,
-                                                 approved[sel[1]].rel_path, err, sizeof(err))) {
-                    char lmsg[96];
-                    sprintf(lmsg, "Removed approved file /%.56s", approved[sel[1]].rel_path);
-                    g_node.log_message(OYK_LOG_INFO, lmsg);
-                    strncpy(feedback, lmsg, sizeof(feedback) - 1);
-                    feedback[sizeof(feedback) - 1] = '\0';
-                    strncpy(g_status_line, lmsg, sizeof(g_status_line) - 1);
-                    g_status_line[sizeof(g_status_line) - 1] = '\0';
-                    app_count = oyk_bbs_list_approved(g_node.config().bbs_files_path, approved, 32);
-                } else {
-                    sprintf(feedback, "Error: %.68s", err);
-                }
-            } else {
-                strcpy(feedback, "Remove cancelled.");
-            }
+            delete[] pbuf;
         }
     }
+    delete fm;
 }
 
 static void prompt_line_prefill(const char* prompt, char* buf, int max_len, int* accepted_out) {
@@ -2908,16 +2928,14 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
 
             int fcnt = dos_wiz_field_count(&st);
             int on_bar = (st.step == 0 || st.step == 3 || st.focus == fcnt);
-            if (st.step > 0) {
-                vid_puts(top + 17, left + 2, (on_bar && st.btn == 0) ? sel_at : bar_at, "[ < Back ]", 10);
-            } else {
-                vid_puts(top + 17, left + 2, fill_at, "  < Back  ", 10);
-            }
-            vid_puts(top + 17, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at,
-                     (st.step == 3) ? "[ Finish ]" : "[ Next > ]", 10);
-            vid_puts(top + 17, left + 26, (on_bar && st.btn == 2) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 17, left + 38, fill_at,
-                     (st.step > 0) ? "PgUp/F3/Ctrl+B:Back" : "Up/Dn/1-5:Pick", w - 40);
+            const OykTuiButton wbtns[3] = {
+                { "< Back", st.step > 0 ? 1 : 0 },
+                { (st.step == 3) ? "Finish" : "Next >", 1 },
+                { "Cancel", 1 }
+            };
+            oyk_tui_draw_button_row(&tb, top + 17, left + 2, w - 4, wbtns, 3,
+                                    on_bar ? st.btn : -1,
+                                    (st.step > 0) ? "Ctrl+B:Back" : "Up/Dn/1-5:Pick");
             vid_flush();
         }
 
@@ -2930,12 +2948,14 @@ static int run_dos_add_iface_wizard(const OykConfig* draft, OykIfaceConfig* out_
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return 0;
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
                 if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return 0;
-                if (mev.row == top + 17) {
-                    if (st.step > 0 && mev.col >= left + 2 && mev.col < left + 12) { st.btn = 0; ch = '\r'; }
-                    else if (mev.col >= left + 14 && mev.col < left + 24) { st.btn = 1; ch = '\r'; }
-                    else if (mev.col >= left + 26 && mev.col < left + 36) return 0;
-                    else continue;
-                } else continue;
+                const OykTuiButton wbtns[3] = {
+                    { "< Back", st.step > 0 ? 1 : 0 },
+                    { (st.step == 3) ? "Finish" : "Next >", 1 },
+                    { "Cancel", 1 }
+                };
+                int bhit = oyk_tui_hit_button_row(top + 17, left + 2, w - 4, wbtns, 3, mev.row, mev.col);
+                if (bhit >= 0) { st.btn = bhit; ch = '\r'; }
+                else continue;
             } else continue;
         }
         if (inp == 1 && (ch == 0 || ch == 0xE0)) {
@@ -3243,9 +3263,9 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             dos_vid_hdiv(g_vid, top + 16, left, w, bdr_at);
 
             int on_bar = (st.focus == fcnt);
-            vid_puts(top + 17, left + 2,  (on_bar && st.btn == 0) ? sel_at : bar_at, "[  Save  ]", 10);
-            vid_puts(top + 17, left + 14, (on_bar && st.btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
-            vid_puts(top + 17, left + 26, fill_at, "Up/Dn:Field  Enter:Save  Esc:Cancel", w - 28);
+            const OykTuiButton ebtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+            oyk_tui_draw_button_row(&tb, top + 17, left + 2, w - 4, ebtns, 2,
+                                    on_bar ? st.btn : -1, "Up/Dn:Field  Enter:Save  Esc:Cancel");
             vid_flush();
         }
 
@@ -3259,11 +3279,11 @@ static int run_dos_edit_iface_dialog(const OykConfig* draft, int edit_idx, OykIf
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) return 0;
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
                 if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) return 0;
-                if (mev.row == top + 17) {
-                    if (mev.col >= left + 2 && mev.col < left + 12) { st.focus = fcnt; st.btn = 0; ch = '\r'; }
-                    else if (mev.col >= left + 14 && mev.col < left + 24) return 0;
-                    else continue;
-                } else continue;
+                const OykTuiButton ebtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+                int bhit = oyk_tui_hit_button_row(top + 17, left + 2, w - 4, ebtns, 2, mev.row, mev.col);
+                if (bhit == 0) { st.focus = fcnt; st.btn = 0; ch = '\r'; }
+                else if (bhit == 1) return 0;
+                else continue;
             } else continue;
         }
         if (inp == 1 && (ch == 0 || ch == 0xE0)) {
@@ -3496,8 +3516,8 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
                 vid_puts(top + 2 + r, left + 2, (focus == r) ? sel_at : fill_at, row, w - 4);
             }
             if (st.err[0]) vid_puts(top + 11, left + 2, err_at, st.err, w - 4);
-            vid_puts(top + 13, left + 20, (focus == 8 && btn == 0) ? sel_at : bar_at, "[ Save ]", 8);
-            vid_puts(top + 13, left + 36, (focus == 8 && btn == 1) ? sel_at : bar_at, "[ Cancel ]", 10);
+            const OykTuiButton pbtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+            oyk_tui_draw_button_row(&tb, top + 13, left + 2, w - 4, pbtns, 2, (focus == 8) ? btn : -1, "");
             dos_vid_hdiv(g_vid, top + 14, left, w, bdr_at);
             vid_puts(top + 15, left + 2, fill_at,
                      "Up/Dn/Tab:Field  Lt/Rt/Spc:Toggle  Enter:Save  Esc:Cancel", w - 4);
@@ -3512,11 +3532,11 @@ static int run_dos_edit_peer_dialog(const OykConfig* draft, int edit_idx, OykPee
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
             if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT)) {
                 if (oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
-                if (mev.row == top + 13) {
-                    if (mev.col >= left + 20 && mev.col < left + 28) { focus = 8; btn = 0; ch = '\r'; }
-                    else if (mev.col >= left + 36 && mev.col < left + 46) break;
-                    else continue;
-                } else continue;
+                const OykTuiButton pbtns[2] = { { "Save", 1 }, { "Cancel", 1 } };
+                int bhit = oyk_tui_hit_button_row(top + 13, left + 2, w - 4, pbtns, 2, mev.row, mev.col);
+                if (bhit == 0) { focus = 8; btn = 0; ch = '\r'; }
+                else if (bhit == 1) break;
+                else continue;
             } else continue;
         }
         if (inp == 1 && (ch == 0 || ch == 0xE0)) {

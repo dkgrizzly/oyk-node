@@ -1044,49 +1044,69 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Apply", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_TERMINAL) {
-        at_draw_text(ui, lx, ty + 4, "KR4OYK-11 BBS | Ctrl+A H Help | S YAPP | W Wrap",
+        int out_h = mh - 134;
+        at_draw_text(ui, lx, ty + 4, "Session: KR4OYK-1 BBS | EOL: CRLF | Wrap: ON",
                      ui->pen_fg, bw / 8);
-        at_fill_rect(ui, lx, ty + 24, bw, mh - 116, ui->pen_bg);
-        at_frame_rect(ui, lx, ty + 24, bw, mh - 116, ui->pen_fg);
-        at_draw_text(ui, lx + 8, ty + 32, "Welcome to KR4OYK-7 BBS on Atari ST GEM",
+        at_fill_rect(ui, lx, ty + 22, bw, out_h, ui->pen_bg);
+        at_frame_rect(ui, lx, ty + 22, bw, out_h, ui->pen_fg);
+        at_draw_text(ui, lx + 8, ty + 30, "Welcome to KR4OYK-7 BBS on Atari ST GEM",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 52, "EOL: Auto-Detected CRLF | Word-Wrap: ON (72 cols)",
+        at_draw_text(ui, lx + 8, ty + 30 + row_h, "Type 'LIST' or 'B' to disconnect from BBS.",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 72, "Type 'LIST' or 'B' to disconnect from BBS.",
+        at_draw_text(ui, lx + 8, ty + 30 + row_h * 2, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 92, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
-                     ui->pen_fg, (bw - 16) / 8);
+        at_fill_rect(ui, lx, by - 50, bw, 18, ui->pen_status_bg);
+        at_draw_text(ui, lx + 6, by - 50 + oyk_gui_vertical_text_offset(18, ui->char_h),
+                     oyk_term_hotkey_bar_text(0, 0), ui->pen_status_fg, (bw - 12) / 8);
         at_draw_field_row(ui, lx, by - 26, "Input:", "LIST_", 56, bw - 140);
         at_draw_button(ui, lx + bw - 76, by - 28, 76, 22, "Send", 1);
-        at_draw_button(ui, lx, by, 112, 22, "Ctrl+A Help", 0);
+        at_draw_button(ui, lx, by, 78, 22, "Help", 0);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
+    } else if (scr == OYK_SCR_TERM_HELP) {
+        at_draw_text(ui, lx, ty + 4, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)",
+                     ui->pen_fg, bw / 8);
+        at_fill_rect(ui, lx, ty + 24, bw, mh - 90, ui->pen_bg);
+        at_frame_rect(ui, lx, ty + 24, bw, mh - 90, ui->pen_fg);
+        for (int hi = 0; hi < oyk_term_help_count() && hi < 9; ++hi) {
+            const OykTermHelpEntry* he = oyk_term_help_entry(hi);
+            if (!he) continue;
+            char row[96];
+            sprintf(row, "%-9.9s %-36.36s %s", he->key_label, he->action, he->alt_key);
+            at_draw_text(ui, lx + 8, ty + 32 + hi * row_h, row, ui->pen_fg, (bw - 16) / 8);
+        }
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_FILES) {
         int pw = (bw - 12) / 2;
-        int fx1[3] = { lx + 6, lx + 78, lx + 196 };
-        const char* fh1[3] = { "From", "File", "Size" };
-        int fw1[3] = { 9, 14, 7 };
-        const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
-        int fx2[2] = { lx + pw + 18, lx + pw + 196 };
-        const char* fh2[2] = { "Filename", "Size" };
-        int fw2[2] = { 22, 7 };
-        const char* fr2a[2] = { "README.TXT", "1420" };
-        const char* fr2b[2] = { "NETLIST.CFG", "618" };
-        at_draw_text(ui, lx, ty + 4, "Pending Uploads", ui->pen_fg, pw / 8);
-        at_draw_text(ui, lx + pw + 12, ty + 4, "Approved BBS Files", ui->pen_fg, pw / 8);
+        int fx1[2] = { lx + 6, lx + pw - 62 };
+        const char* fh[2] = { "Name", "Size" };
+        int fw[2] = { 22, 7 };
+        const char* fr1a[2] = { "W3TRM-1", "<DIR>" };
+        const char* fr1b[2] = { "PACKETS.TXT", "2048 B" };
+        int fx2[2] = { lx + pw + 18, lx + bw - 62 };
+        const char* fr2a[2] = { "bulletins", "<DIR>" };
+        const char* fr2b[2] = { "README.TXT", "1420 B" };
+        at_draw_text(ui, lx, ty + 4, "Incoming: /", ui->pen_fg, pw / 8);
+        at_draw_text(ui, lx + pw + 12, ty + 4, "Files: /", ui->pen_fg, pw / 8);
         at_fill_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_bg);
         at_frame_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_fg);
         at_fill_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_bg);
         at_frame_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_fg);
-        at_draw_listview_header(ui, lx + 2, ty + 26, pw - 4, 3, fx1, fh1, ui->pen_panel, ui->pen_fg);
-        at_draw_listview_row(ui, lx + 2, ty + 44, pw - 4, row_h, 1, 3, fx1, fr1, fw1, ui->pen_bg, ui->pen_fg);
-        at_draw_listview_header(ui, lx + pw + 14, ty + 26, pw - 4, 2, fx2, fh2, ui->pen_panel, ui->pen_fg);
-        at_draw_listview_row(ui, lx + pw + 14, ty + 44, pw - 4, row_h, 1, 2, fx2, fr2a, fw2, ui->pen_bg, ui->pen_fg);
-        at_draw_listview_row(ui, lx + pw + 14, ty + 44 + row_h, pw - 4, row_h, 0, 2, fx2, fr2b, fw2, ui->pen_bg, ui->pen_fg);
-        at_draw_button(ui, lx, by, 92, 22, "Upload...", 0);
-        at_draw_button(ui, lx + 98, by, 92, 22, "Approve", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
-        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
+        at_draw_listview_header(ui, lx + 2, ty + 26, pw - 4, 2, fx1, fh, ui->pen_panel, ui->pen_fg);
+        at_draw_listview_row(ui, lx + 2, ty + 44, pw - 4, row_h, 1, 2, fx1, fr1a, fw, ui->pen_bg, ui->pen_fg);
+        at_draw_listview_row(ui, lx + 2, ty + 44 + row_h, pw - 4, row_h, 0, 2, fx1, fr1b, fw, ui->pen_bg, ui->pen_fg);
+        at_draw_listview_header(ui, lx + pw + 14, ty + 26, pw - 4, 2, fx2, fh, ui->pen_panel, ui->pen_fg);
+        at_draw_listview_row(ui, lx + pw + 14, ty + 44, pw - 4, row_h, 1, 2, fx2, fr2a, fw, ui->pen_bg, ui->pen_fg);
+        at_draw_listview_row(ui, lx + pw + 14, ty + 44 + row_h, pw - 4, row_h, 0, 2, fx2, fr2b, fw, ui->pen_bg, ui->pen_fg);
+        at_draw_button(ui, lx,       by, 68, 22, "Upload",  0);
+        at_draw_button(ui, lx + 72,  by, 74, 22, "Approve", 1);
+        at_draw_button(ui, lx + 150, by, 68, 22, "Rename",  0);
+        at_draw_button(ui, lx + 222, by, 70, 22, "New Dir", 0);
+        at_draw_button(ui, lx + 296, by, 66, 22, "Delete",  0);
+        at_draw_button(ui, lx + 366, by, 54, 22, "View",    0);
+        at_draw_button(ui, mx + mw - 80, by, 68, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 80, by, 68, 22, 999);
     } else if (scr == OYK_SCR_ABOUT) {
         at_draw_text(ui, lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
                      ui->pen_fg, bw / 8);
@@ -1255,7 +1275,7 @@ struct AtGalleryStep {
     const char* bmp_path;
 };
 
-static const AtGalleryStep kAtGallery[22] = {
+static const AtGalleryStep kAtGallery[23] = {
     { OYK_SCR_MAIN,       0, 0, "C:\\AT_MAIN.BMP" },
     { OYK_SCR_MENU,       0, 0, "C:\\AT_MENU.BMP" },
     { OYK_SCR_SETTINGS,   0, 0, "C:\\AT_SET1.BMP" },
@@ -1276,6 +1296,7 @@ static const AtGalleryStep kAtGallery[22] = {
     { OYK_SCR_EXIT_PEERS, 0, 0, "C:\\AT_EXIT.BMP" },
     { OYK_SCR_THEME,      0, 0, "C:\\AT_THME.BMP" },
     { OYK_SCR_TERMINAL,   0, 0, "C:\\AT_TML.BMP"  },
+    { OYK_SCR_TERM_HELP,  0, 0, "C:\\AT_TMLH.BMP" },
     { OYK_SCR_FILES,      0, 0, "C:\\AT_FILE.BMP" },
     { OYK_SCR_ABOUT,      0, 0, "C:\\AT_ABT.BMP"  }
 };
@@ -1369,7 +1390,7 @@ int oyk_atari_ui_run(OykPortableNode* node,
 #endif
         at_seed_demo_node(ui);
         ui->draft_cfg = node->config();
-        for (int i = 0; i < 22; ++i) {
+        for (int i = 0; i < 23; ++i) {
             ui->active_screen = kAtGallery[i].scr;
             ui->settings_tab = kAtGallery[i].tab;
             ui->wiz.step = kAtGallery[i].wiz_step;

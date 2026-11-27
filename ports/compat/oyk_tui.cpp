@@ -2,7 +2,10 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "oyk_tui.hpp"
+#include "oyk_gui.hpp"
+#include "oyk_term.hpp"
 
+#include <stdio.h>
 #include <string.h>
 
 #ifdef TEENSYDUINO
@@ -266,5 +269,229 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_dropdown_menu(const OykTuiBackend* b, const O
     }
     if (b->put_shadow) {
         b->put_shadow(b->ctx, rect->top, rect->left, rect->h, rect->w);
+    }
+}
+
+OYK_TUI_FLASHMEM int oyk_tui_button_width(const char* label) {
+    if (!label) return 6;
+    return static_cast<int>(strlen(label)) + 6; /* " [ " + label + " ] " */
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_button(const OykTuiBackend* b, int row, int col,
+                                          const char* label, int focused, int enabled) {
+    if (!b || !b->put_text || !label) return;
+    int w = oyk_tui_button_width(label);
+    char buf[48];
+    if (w > 46) w = 46;
+    if (enabled) {
+        sprintf(buf, " [ %.38s ] ", label);
+        b->put_text(b->ctx, row, col, w,
+                    focused ? OYK_TUI_STYLE_DLG_SEL : OYK_TUI_STYLE_DLG_BAR, buf);
+    } else {
+        memset(buf, ' ', static_cast<size_t>(w));
+        buf[w] = '\0';
+        b->put_text(b->ctx, row, col, w, OYK_TUI_STYLE_DLG_FILL, buf);
+    }
+}
+
+OYK_TUI_FLASHMEM int oyk_tui_draw_button_row(const OykTuiBackend* b, int row, int start_col,
+                                             int max_w, const OykTuiButton* buttons, int count,
+                                             int focused_idx, const char* trailing_hint) {
+    if (!b || !b->put_text || row < 0 || max_w <= 0) return start_col;
+    b->put_text(b->ctx, row, start_col, max_w, OYK_TUI_STYLE_DLG_FILL, "");
+    int c = start_col;
+    int end_c = start_col + max_w;
+    for (int i = 0; i < count && buttons; ++i) {
+        const char* lbl = buttons[i].label ? buttons[i].label : "";
+        int bw = oyk_tui_button_width(lbl);
+        if (c + bw > end_c) break;
+        oyk_tui_draw_button(b, row, c, lbl, (i == focused_idx) ? 1 : 0, buttons[i].enabled);
+        c += bw + 2; /* Keep 2 gap cells unpainted in DLG_FILL between buttons */
+    }
+    if (trailing_hint && trailing_hint[0] && c < end_c) {
+        b->put_text(b->ctx, row, c, end_c - c, OYK_TUI_STYLE_DLG_FILL, trailing_hint);
+    }
+    return c;
+}
+
+OYK_TUI_FLASHMEM int oyk_tui_hit_button_row(int row, int start_col, int max_w,
+                                            const OykTuiButton* buttons, int count,
+                                            int click_row, int click_col) {
+    if (click_row != row || !buttons || count <= 0 || max_w <= 0) return -1;
+    int c = start_col;
+    int end_c = start_col + max_w;
+    for (int i = 0; i < count; ++i) {
+        const char* lbl = buttons[i].label ? buttons[i].label : "";
+        int bw = oyk_tui_button_width(lbl);
+        if (c + bw > end_c) break;
+        if (buttons[i].enabled && click_col >= c && click_col < c + bw) {
+            return i;
+        }
+        c += bw + 2;
+    }
+    return -1;
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_compute_dual_pane_layout(int screen_rows, int screen_cols,
+                                                       OykTuiDualPaneLayout* out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    oyk_tui_center_modal(screen_rows, screen_cols, 21, 76, &out->modal);
+    const OykTuiRect& m = out->modal;
+    int inner_w = m.w - 2;
+    int left_w = inner_w / 2;
+    int right_w = inner_w - left_w;
+
+    out->path_row = m.top + 1;
+    out->hdr_row  = m.top + 2;
+    out->list_top = m.top + 3;
+    out->feedback_row = m.top + m.h - 4;
+    out->div_row  = m.top + m.h - 3;
+    out->btn_row  = m.top + m.h - 2;
+    out->list_rows = out->feedback_row - out->list_top;
+    if (out->list_rows < 1) out->list_rows = 1;
+
+    out->left_pane.top  = out->path_row;
+    out->left_pane.left = m.left + 1;
+    out->left_pane.h    = out->feedback_row - out->path_row;
+    out->left_pane.w    = left_w;
+
+    out->right_pane.top  = out->path_row;
+    out->right_pane.left = m.left + 1 + left_w;
+    out->right_pane.h    = out->feedback_row - out->path_row;
+    out->right_pane.w    = right_w;
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal(const OykTuiBackend* b,
+                                                   int screen_rows, int screen_cols) {
+    if (!b || !b->put_text) return;
+    OykTuiRect mr;
+    oyk_tui_center_modal(screen_rows, screen_cols, 19, 68, &mr);
+    oyk_tui_draw_modal(b, &mr, "Terminal Hotkey Help", 1);
+    int inner_w = mr.w - 4;
+    b->put_text(b->ctx, mr.top + 1, mr.left + 2, inner_w, OYK_TUI_STYLE_TITLE,
+                "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)");
+    if (b->put_hdiv) {
+        b->put_hdiv(b->ctx, mr.top + 2, mr.left, mr.w, OYK_TUI_STYLE_DLG_BORDER);
+    }
+    int n = oyk_term_help_count();
+    for (int i = 0; i < n && (mr.top + 3 + i) < (mr.top + mr.h - 3); ++i) {
+        const OykTermHelpEntry* e = oyk_term_help_entry(i);
+        if (!e) continue;
+        char row[80];
+        sprintf(row, "%-8.8s %-38.38s %-12.12s", e->key_label, e->action, e->alt_key);
+        b->put_text(b->ctx, mr.top + 3 + i, mr.left + 2, inner_w, OYK_TUI_STYLE_DLG_FILL, row);
+    }
+    oyk_tui_draw_modal_footer(b, &mr, "",
+                              "Press hotkey to run, or Esc / Enter / [X] to close");
+}
+
+static void tui_format_fm_entry_row(const OykBbsDirEntry* e, int width,
+                                    char* out, size_t cap) {
+    char sz[16];
+    int name_w;
+    if (!e || !out || cap == 0 || width <= 0) return;
+    if (e->is_parent) {
+        strcpy(sz, "<UP>");
+    } else if (e->is_dir) {
+        strcpy(sz, "<DIR>");
+    } else if (e->size >= 1024UL) {
+        sprintf(sz, "%luK", static_cast<unsigned long>(e->size / 1024UL));
+    } else {
+        sprintf(sz, "%luB", static_cast<unsigned long>(e->size));
+    }
+    name_w = (width > 8) ? (width - 8) : 4;
+    if (name_w > 32) name_w = 32;
+    sprintf(out, "%-*.*s %6.6s", name_w, name_w, e->name, sz);
+}
+
+static void tui_draw_fm_pane(const OykTuiBackend* b, const OykGuiFilePane* p,
+                             const char* label, int active, int pane_left,
+                             int pane_w, int path_row, int hdr_row,
+                             int list_top, int list_rows) {
+    char tit[48];
+    char hdr[48];
+    oyk_gui_filemgr_pane_title(p, label, tit, sizeof(tit));
+    b->put_text(b->ctx, path_row, pane_left, pane_w,
+                active ? OYK_TUI_STYLE_TITLE : OYK_TUI_STYLE_DIM, tit);
+    int nw = (pane_w > 8) ? (pane_w - 8) : 4;
+    sprintf(hdr, "%-*.*s %6.6s", nw, nw, "Name", "Size");
+    b->put_text(b->ctx, hdr_row, pane_left, pane_w, OYK_TUI_STYLE_LIST_HDR, hdr);
+    int scroll = p->scroll;
+    if (p->sel < scroll) scroll = p->sel;
+    if (p->sel >= scroll + list_rows) scroll = p->sel - list_rows + 1;
+    if (scroll < 0) scroll = 0;
+    for (int i = 0; i < list_rows; ++i) {
+        int idx = scroll + i;
+        if (idx < p->count) {
+            char row[48];
+            tui_format_fm_entry_row(&p->entries[idx], pane_w, row, sizeof(row));
+            int st = (active && idx == p->sel) ? OYK_TUI_STYLE_DLG_SEL
+                                               : OYK_TUI_STYLE_DLG_FILL;
+            b->put_text(b->ctx, list_top + i, pane_left, pane_w, st, row);
+        } else if (i == 0 && p->count == 0) {
+            b->put_text(b->ctx, list_top, pane_left, pane_w,
+                        OYK_TUI_STYLE_DIM, "(empty directory)");
+        } else {
+            b->put_text(b->ctx, list_top + i, pane_left, pane_w,
+                        OYK_TUI_STYLE_DLG_FILL, "");
+        }
+    }
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b,
+                                                   int screen_rows, int screen_cols,
+                                                   const OykGuiFileMgr* fm, int focused_btn,
+                                                   const char* title, const char* preview_text,
+                                                   int preview_active) {
+    if (!b || !b->put_text || !fm) return;
+    OykTuiDualPaneLayout lay;
+    oyk_tui_compute_dual_pane_layout(screen_rows, screen_cols, &lay);
+    oyk_tui_draw_modal(b, &lay.modal, title ? title : "Files Area Manager", 1);
+
+    tui_draw_fm_pane(b, &fm->inc, "Incoming", fm->active_pane == 0,
+                     lay.left_pane.left, lay.left_pane.w,
+                     lay.path_row, lay.hdr_row, lay.list_top, lay.list_rows);
+    for (int r = lay.path_row; r < lay.list_top + lay.list_rows; ++r) {
+        b->put_text(b->ctx, r, lay.left_pane.left + lay.left_pane.w, 1,
+                    OYK_TUI_STYLE_DLG_BORDER, "|");
+    }
+    tui_draw_fm_pane(b, &fm->files, "Files", fm->active_pane == 1,
+                     lay.right_pane.left, lay.right_pane.w,
+                     lay.path_row, lay.hdr_row, lay.list_top, lay.list_rows);
+
+    b->put_text(b->ctx, lay.feedback_row, lay.modal.left + 2, lay.modal.w - 4,
+                OYK_TUI_STYLE_WARN, fm->feedback[0] ? fm->feedback : "Tab/Lt/Rt:Pane  Enter:Open  Bksp:Up");
+    if (b->put_hdiv) {
+        b->put_hdiv(b->ctx, lay.div_row, lay.modal.left, lay.modal.w,
+                    OYK_TUI_STYLE_DLG_BORDER);
+    }
+    OykTuiButton btns[4];
+    btns[0].label = "Upload";  btns[0].enabled = 1;
+    btns[1].label = "Approve"; btns[1].enabled = (fm->active_pane == 0) ? 1 : 0;
+    btns[2].label = "View";    btns[2].enabled = 1;
+    btns[3].label = "Close";   btns[3].enabled = 1;
+    oyk_tui_draw_button_row(b, lay.btn_row, lay.modal.left + 2, lay.modal.w - 4,
+                            btns, 4, focused_btn, "M:Ren N:Dir D:Del");
+
+    if (preview_active && preview_text) {
+        OykTuiRect pm;
+        oyk_tui_center_modal(screen_rows, screen_cols, 15, 68, &pm);
+        oyk_tui_draw_modal(b, &pm, "File Preview", 1);
+        const char* p = preview_text;
+        for (int r = 0; r < pm.h - 4 && *p; ++r) {
+            char line[66];
+            int k = 0;
+            while (*p && *p != '\n' && *p != '\r' && k < 62) {
+                line[k++] = (*p >= 32 && *p < 127) ? *p : '.';
+                ++p;
+            }
+            line[k] = '\0';
+            if (*p == '\r') ++p;
+            if (*p == '\n') ++p;
+            b->put_text(b->ctx, pm.top + 1 + r, pm.left + 2, pm.w - 4,
+                        OYK_TUI_STYLE_DLG_FILL, line);
+        }
+        oyk_tui_draw_modal_footer(b, &pm, "", "Esc / Enter / [X]: Close Preview");
     }
 }

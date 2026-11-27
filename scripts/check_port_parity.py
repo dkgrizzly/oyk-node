@@ -48,6 +48,7 @@ GALLERY_SUFFIXES = (
     "exit",
     "theme",
     "terminal",
+    "terminal_help",
     "files",
     "about",
 )
@@ -121,18 +122,31 @@ def check_native_and_android_parity(errors):
     gtk_src = read_text("src/ui/gtk2_ui.cpp")
     if "gtk_check_button_new" not in gtk_src or "gtk_combo_box_new" not in gtk_src:
         errors.append("src/ui/gtk2_ui.cpp: missing native GTK check/combo controls")
+    if "gtk_hpaned_new" not in gtk_src:
+        errors.append("src/ui/gtk2_ui.cpp: missing dual-pane GtkHPaned File Manager")
+    if "Ctrl-A Z:Help" not in gtk_src and "oyk_term_hotkey_bar_text" not in gtk_src:
+        errors.append("src/ui/gtk2_ui.cpp: missing Ctrl-A Z:Help terminal status bar")
 
     win_rc = read_text("ports/windows/oyk_win.rc")
     if "AUTOCHECKBOX" not in win_rc or "COMBOBOX" not in win_rc:
         errors.append("ports/windows/oyk_win.rc: missing native Win32 check/combo controls")
+    if "IDD_TERM_HELP" not in win_rc:
+        errors.append("ports/windows/oyk_win.rc: missing IDD_TERM_HELP modal")
 
     android_screens = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykScreens.kt"
+    )
+    android_dialogs = read_text(
+        "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykDialogs.kt"
     )
     if "Last 5 New Callsigns Heard" not in android_screens:
         errors.append("Android OykScreens.kt: missing 'Last 5 New Callsigns Heard' card")
     if "Checkbox(" not in android_screens:
         errors.append("Android OykScreens.kt: missing Material Checkbox controls")
+    if "ORIENTATION_LANDSCAPE" not in android_dialogs or "BoxWithConstraints" not in android_dialogs:
+        errors.append("Android OykDialogs.kt: missing portrait/landscape adaptive File Manager layout")
+    if "Ctrl-A Z:Help" not in android_dialogs:
+        errors.append("Android OykDialogs.kt: missing 'Ctrl-A Z:Help' terminal hotkey bar")
 
     android_tests = read_text(
         "ports/android/app/src/test/java/com/kr4oyk/oyknode/OykUiGalleryTest.kt"

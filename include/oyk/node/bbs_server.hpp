@@ -54,6 +54,13 @@ struct ApprovedFileEntry {
     uint64_t size_bytes = 0;
 };
 
+struct BbsDirEntry {
+    std::string name;
+    uint64_t size_bytes = 0;
+    bool is_dir = false;
+    bool is_parent = false;  // true ONLY for ".." inside subdirectories
+};
+
 struct BbsActionResult {
     std::string response_text;
     std::vector<uint8_t> tx_bytes; // Raw binary bytes (used for YAPP transfers)
@@ -149,6 +156,52 @@ public:
     static bool delete_approved_file(const std::string& files_root,
                                      const std::string& rel_path,
                                      std::string& error_out);
+
+    // Jailed dual-pane File Manager operations (incoming_root or files_root)
+    static bool list_dir_entries(const std::string& root,
+                                 const std::string& rel_dir,
+                                 std::vector<BbsDirEntry>& out,
+                                 std::string& norm_rel_out,
+                                 std::string& error_out);
+    static bool enter_subdir(const std::string& root,
+                             const std::string& cur_rel,
+                             const std::string& child_name,
+                             std::string& next_rel_out,
+                             std::string& error_out);
+    static bool approve_incoming_rel_file(const std::string& incoming_root,
+                                          const std::string& inc_rel_file,
+                                          const std::string& files_root,
+                                          const std::string& dest_rel_dir,
+                                          bool allow_overwrite,
+                                          std::string& dest_path_out,
+                                          bool& already_exists_out,
+                                          std::string& error_out);
+    static bool import_local_file(const std::string& local_src_path,
+                                  const std::string& target_root,
+                                  const std::string& target_rel_dir,
+                                  bool allow_overwrite,
+                                  std::string& dest_path_out,
+                                  bool& already_exists_out,
+                                  std::string& error_out);
+    static bool mkdir_safe(const std::string& root,
+                           const std::string& cur_rel,
+                           const std::string& new_name,
+                           std::string& error_out);
+    static bool rename_safe(const std::string& root,
+                            const std::string& cur_rel,
+                            const std::string& old_name,
+                            const std::string& new_name,
+                            std::string& error_out);
+    static bool delete_safe(const std::string& root,
+                            const std::string& cur_rel,
+                            const std::string& name,
+                            std::string& error_out);
+    static bool read_text_preview(const std::string& root,
+                                  const std::string& cur_rel,
+                                  const std::string& filename,
+                                  std::string& content_out,
+                                  bool& truncated_out,
+                                  std::string& error_out);
 
 private:
     enum class ComposeStage {

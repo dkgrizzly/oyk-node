@@ -79,6 +79,7 @@ const char *oyk_gsos_screen_title(int screen_id) {
         case OYK_GSOS_SCR_EXIT_PEERS: return "Auto-Learned Peers";
         case OYK_GSOS_SCR_THEME:      return "Theme Settings";
         case OYK_GSOS_SCR_TERMINAL:   return "OYK Local Packet Terminal (YAPP)";
+        case OYK_GSOS_SCR_TERM_HELP:  return "Terminal Hotkey Help";
         case OYK_GSOS_SCR_FILES:      return "Manage BBS Files Area";
         case OYK_GSOS_SCR_RIG:        return "Radio Control";
         case OYK_GSOS_SCR_ABOUT:      return "About OYK Amateur Radio Packet Node";
@@ -1057,4 +1058,132 @@ int oyk_gsos_printer_format_line(const char *proto, const char *msg,
     if (n <= 0 || (size_t)n > cap) return 0;
     memcpy(dst, tmp, (size_t)n);
     return n;
+}
+
+const char *oyk_gsos_term_hotkey_bar_text(int ctrl_a_pending) {
+    if (ctrl_a_pending) {
+        return "CTRL-A: Z:Help C:Conn B:BBS T:Chat D:Disc E:EOL S:YAPP W:Wrap X:Close";
+    }
+    return "Ctrl-A Z:Help  S:YAPP  E:EOL  W:Wrap  C:Clear  Esc:Close";
+}
+
+typedef struct {
+    const char *k;
+    const char *a;
+    const char *alt;
+} GsosHelpRow;
+
+static const GsosHelpRow kGsosHelpRows[8] = {
+    { "Ctrl-A Z", "Show hotkey help",         "F1"      },
+    { "Ctrl-A C", "Connect target / port",    "F2"      },
+    { "Ctrl-A S", "Send file (YAPP)",         "F3"      },
+    { "Ctrl-A D", "Disconnect link",          "F4"      },
+    { "Ctrl-A E", "Cycle EOL (CR/LF/CRLF)",   "Ctrl-A E"},
+    { "Ctrl-A W", "Toggle word wrap",         "Ctrl-A W"},
+    { "Ctrl-A C", "Clear terminal output",    "Ctrl-A L"},
+    { "Ctrl-A X", "Close Local Terminal",     "Esc"     }
+};
+
+int oyk_gsos_term_help_count(void) { return 8; }
+const char *oyk_gsos_term_help_key(int idx) {
+    return (idx >= 0 && idx < 8) ? kGsosHelpRows[idx].k : "";
+}
+const char *oyk_gsos_term_help_action(int idx) {
+    return (idx >= 0 && idx < 8) ? kGsosHelpRows[idx].a : "";
+}
+const char *oyk_gsos_term_help_alt(int idx) {
+    return (idx >= 0 && idx < 8) ? kGsosHelpRows[idx].alt : "";
+}
+
+static void gsos_populate_demo_pane(OykGsosFilePane *p, int is_inc) {
+    int n = 0;
+    memset(p->entries, 0, sizeof(p->entries));
+    if (p->rel[0]) {
+        g_copy(p->entries[n].name, sizeof(p->entries[n].name), "..");
+        p->entries[n].is_dir = 1;
+        p->entries[n].is_parent = 1;
+        ++n;
+    }
+    if (is_inc) {
+        if (!p->rel[0]) {
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "W3TRM-1");
+            p->entries[n].is_dir = 1; ++n;
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "PACKETS.TXT");
+            p->entries[n].size = 2048UL; ++n;
+        } else {
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "FIELDDAY.TXT");
+            p->entries[n].size = 512UL; ++n;
+        }
+    } else {
+        if (!p->rel[0]) {
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "BULLETINS");
+            p->entries[n].is_dir = 1; ++n;
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "README.TXT");
+            p->entries[n].size = 1420UL; ++n;
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "NETLIST.CFG");
+            p->entries[n].size = 618UL; ++n;
+        } else {
+            g_copy(p->entries[n].name, sizeof(p->entries[n].name), "WELCOME.TXT");
+            p->entries[n].size = 256UL; ++n;
+        }
+    }
+    p->count = n;
+    p->sel = 0;
+}
+
+void oyk_gsos_filemgr_init(OykGsosFileMgr *fm, const char *inc_root, const char *files_root) {
+    if (!fm) return;
+    memset(fm, 0, sizeof(*fm));
+    g_copy(fm->inc.root, sizeof(fm->inc.root), (inc_root && inc_root[0]) ? inc_root : "/OYK/INCOMING");
+    g_copy(fm->files.root, sizeof(fm->files.root), (files_root && files_root[0]) ? files_root : "/OYK/FILES");
+    gsos_populate_demo_pane(&fm->inc, 1);
+    gsos_populate_demo_pane(&fm->files, 0);
+    g_copy(fm->feedback, sizeof(fm->feedback), "Ready (jailed ProDOS panes).");
+}
+
+void oyk_gsos_filemgr_pane_title(const OykGsosFilePane *p, const char *label,
+                                 char *out, size_t cap) {
+    char tmp[80];
+    if (!out || cap == 0U) return;
+    sprintf(tmp, "%s: /%s", label ? label : "Folder", (p && p->rel[0]) ? p->rel : "");
+    g_copy(out, cap, tmp);
+}
+
+int oyk_gsos_filemgr_enter_dir(OykGsosFileMgr *fm, int pane_idx, const char *child) {
+    OykGsosFilePane *p;
+    if (!fm || !child || !child[0]) return 0;
+    p = (pane_idx == 0) ? &fm->inc : &fm->files;
+    if (strcmp(child, "..") == 0) return oyk_gsos_filemgr_up(fm, pane_idx);
+    if (strchr(child, '/') || strchr(child, ':') || strchr(child, '\\') ||
+        strcmp(child, ".") == 0) {
+        g_copy(fm->feedback, sizeof(fm->feedback), "Invalid path token (jailed).");
+        return 0;
+    }
+    if (p->rel[0]) {
+        char next_r[48];
+        sprintf(next_r, "%.20s/%.20s", p->rel, child);
+        g_copy(p->rel, sizeof(p->rel), next_r);
+    } else {
+        g_copy(p->rel, sizeof(p->rel), child);
+    }
+    gsos_populate_demo_pane(p, pane_idx == 0);
+    fm->feedback[0] = '\0';
+    return 1;
+}
+
+int oyk_gsos_filemgr_up(OykGsosFileMgr *fm, int pane_idx) {
+    OykGsosFilePane *p;
+    char *slash;
+    if (!fm) return 0;
+    p = (pane_idx == 0) ? &fm->inc : &fm->files;
+    if (!p->rel[0]) {
+        g_copy(fm->feedback, sizeof(fm->feedback), "Cannot leave assigned root directory.");
+        return 0;
+    }
+    slash = strrchr(p->rel, '/');
+    if (slash) *slash = '\0';
+    else p->rel[0] = '\0';
+    gsos_populate_demo_pane(p, pane_idx == 0);
+    fm->feedback[0] = '\0';
+    return 1;
 }

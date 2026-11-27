@@ -196,6 +196,7 @@ const char* oyk_gui_screen_title(int screen_id) {
         case OYK_SCR_RIG:        return "Radio Control";
         case OYK_SCR_ABOUT:      return "About OYK Amateur Radio Packet Node";
         case OYK_SCR_MENU:       return "Node Menu";
+        case OYK_SCR_TERM_HELP:  return "Terminal Hotkey Help";
         default:                 return "OYK Packet Node";
     }
 }
@@ -711,5 +712,15 @@ void oyk_gui_wiz_format_summary(const OykGuiAddIfaceWizard* w,
                 is_telnet ? "false (disabled)" : asame);
     }
     gui_copy(dst, cap, buf);
+}
+
+void oyk_gui_filemgr_pane_title(const OykGuiFilePane* p, const char* label,
+                                char* out, size_t cap) {
+    if (!out || cap == 0) return;
+    const char* lbl = label ? label : "Folder";
+    const char* rel = (p && p->rel[0]) ? p->rel : "";
+    char buf[128];
+    sprintf(buf, "%s: /%s", lbl, rel);
+    gui_copy(out, cap, buf);
 }
 

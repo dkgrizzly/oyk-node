@@ -3,6 +3,7 @@
 
 package com.kr4oyk.oyknode
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Looper
@@ -13,14 +14,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertTrue
@@ -324,17 +328,22 @@ class OykUiGalleryTest {
                 )
             }
         }
+        captureComposableToPng("terminal_help") {
+            ModalOverlayFrame {
+                TerminalHelpCard(onDismiss = {})
+            }
+        }
+        val tmpRoot = File(System.getProperty("java.io.tmpdir") ?: "/tmp", "oyk_android_fm_gallery")
+        val incDir = File(tmpRoot, "incoming").apply { deleteRecursively(); mkdirs() }
+        File(incDir, "W3TRM-1").apply { mkdirs(); File(this, "fieldday.txt").writeText("FD 2026\n") }
+        val filesDir = File(tmpRoot, "files").apply { deleteRecursively(); mkdirs() }
+        File(filesDir, "bulletins").apply { mkdirs(); File(this, "welcome.txt").writeText("Welcome\n") }
+        File(filesDir, "readme.txt").writeText("Readme\n")
         captureComposableToPng("files") {
             ModalOverlayFrame {
                 FilesCard(
-                    incomingFiles = listOf(
-                        Triple("W3TRM-1", "fieldday.txt", "1.4 KB"),
-                        Triple("N0CALL-7", "aprs.cfg", "612 B")
-                    ),
-                    approvedFiles = listOf(
-                        Pair("bulletins/welcome.txt", "420 B"),
-                        Pair("software/yapp_info.txt", "2.1 KB")
-                    ),
+                    incomingRoot = incDir,
+                    filesRoot = filesDir,
                     onDismiss = {}
                 )
             }
@@ -344,5 +353,29 @@ class OykUiGalleryTest {
                 AboutCard(callsign = sampleCfg.callsign, alias = sampleCfg.alias, onDismiss = {})
             }
         }
+    }
+
+    @Test
+    fun filesCardSwitchesBetweenPortraitColumnAndLandscapeRow() {
+        val isLand = mutableStateOf(false)
+        composeRule.setContent {
+            val baseCfg = LocalConfiguration.current
+            val effCfg = Configuration(baseCfg).apply {
+                orientation = if (isLand.value) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
+            }
+            CompositionLocalProvider(LocalConfiguration provides effCfg) {
+                OykAndroidTheme(cfg = sampleCfg) {
+                    FilesCard(
+                        incomingFiles = listOf(Triple("W3TRM-1", "fieldday.txt", "1.4 KB")),
+                        approvedFiles = listOf(Pair("bulletins/welcome.txt", "420 B")),
+                        onDismiss = {}
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("files_layout_column").assertIsDisplayed()
+        isLand.value = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("files_layout_row").assertIsDisplayed()
     }
 }

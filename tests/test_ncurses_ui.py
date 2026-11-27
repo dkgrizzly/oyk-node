@@ -327,7 +327,7 @@ def save_cap(cap_dir: str, name: str, scr: AnsiScreen) -> None:
 
 
 def main() -> int:
-    exe = sys.argv[1] if len(sys.argv) > 1 else "./build/oyk-node"
+    exe = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "./build/oyk-node")
     cap_dir = os.environ.get("OYK_UI_CAPTURE_DIR", "")
     if cap_dir:
         os.makedirs(cap_dir, exist_ok=True)
@@ -339,6 +339,14 @@ def main() -> int:
 
     tmp = tempfile.mkdtemp(prefix="oyk_ncurses_ui_")
     try:
+        os.makedirs(os.path.join(tmp, "incoming", "W3TRM-1"), exist_ok=True)
+        os.makedirs(os.path.join(tmp, "files", "bulletins"), exist_ok=True)
+        with open(os.path.join(tmp, "incoming", "W3TRM-1", "fieldday.txt"), "w", encoding="utf-8") as f:
+            f.write("Field Day 2026 operating plan and frequencies.\n")
+        with open(os.path.join(tmp, "files", "bulletins", "welcome.txt"), "w", encoding="utf-8") as f:
+            f.write("Welcome to KR4OYK-1 Packet BBS Files Area.\n")
+        with open(os.path.join(tmp, "files", "README.TXT"), "w", encoding="utf-8") as f:
+            f.write("OYK-Node BBS File Index\n")
         cfg_path = os.path.join(tmp, "node.cfg")
         with open(cfg_path, "w", encoding="utf-8") as f:
             f.write(
@@ -350,7 +358,8 @@ def main() -> int:
                 f"welcome = Welcome to KR4OYK-7\n\n"
                 f"[bbs]\n"
                 f"enabled = true\n"
-                f"callsign = KR4OYK-1\n\n"
+                f"callsign = KR4OYK-1\n"
+                f"files_path = {os.path.join(tmp, 'files')}\n\n"
                 f"[interface axudp0]\n"
                 f"type = axudp\n"
                 f"bind_host = 127.0.0.1\n"
@@ -376,6 +385,7 @@ def main() -> int:
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
+            cwd=tmp,
             env=env,
             close_fds=True,
         )
@@ -541,6 +551,8 @@ def main() -> int:
             save_cap(cap_dir, "terminal", scr)
             os.write(master_fd, b"\x01z")
             drain_and_wait(master_fd, scr, "Terminal Hotkey Help")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "terminal_help", scr)
             os.write(master_fd, b"e")
             drain_and_wait(master_fd, scr, "[EOL:CR*]")
             os.write(master_fd, b"\x01e")
@@ -558,10 +570,14 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
-            # 8e. Manage BBS Files Area modal
+            # 8e. Manage BBS Files Area dual-pane jailed modal (enter W3TRM-1 so Incoming shows '..' while Files at '/' omits '..')
             os.write(master_fd, b"f")
             drain_and_wait(master_fd, scr, "Manage BBS Files Area")
-            drain_quiet(master_fd, scr, 0.15)
+            assert "<UP>" not in scr.text(), f"Parent '..' must not appear at root:\n{scr.text()}"
+            os.write(master_fd, b"\r")
+            drain_and_wait(master_fd, scr, "fieldday.txt")
+            assert "<UP>" in scr.text(), f"Parent '..' missing inside Incoming subdir:\n{scr.text()}"
+            drain_quiet(master_fd, scr, 0.1)
             save_cap(cap_dir, "files", scr)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")

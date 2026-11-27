@@ -1103,10 +1103,10 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_THEME_CANCEL, 0);
             mc_draw_button(ui, box.right - 92, by, 78, 20, "Apply", 1, MC_HIT_THEME_APPLY, 0);
     } else if (scr == OYK_SCR_TERMINAL) {
-        mc_draw_text_clip(lx, ty, "Ctrl+A ? Help | Ctrl+A C Conn | Ctrl+A D Disc | Ctrl+A X Close", bw / 6);
+        mc_draw_text_clip(lx, ty, "Session: KR4OYK-1 BBS (LOCAL) | EOL: CR", bw / 6);
         Rect term_r;
         SetRect(&term_r, static_cast<short>(lx), static_cast<short>(ty + 6),
-                static_cast<short>(lx + bw), static_cast<short>(by - 28));
+                static_cast<short>(lx + bw), static_cast<short>(by - 40));
         mc_fill_color(ui, &term_r, ui->active_theme.colors[OYK_TR_BG], &qd.white);
         FrameRect(&term_r);
         int cols = (bw - 12) / 6;
@@ -1125,64 +1125,71 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
                 y += 12;
             }
         }
+        Rect hk_r;
+        SetRect(&hk_r, static_cast<short>(lx), static_cast<short>(by - 36),
+                static_cast<short>(lx + bw), static_cast<short>(by - 22));
+        mc_fill_color(ui, &hk_r, ui->active_theme.colors[OYK_TR_SELECTION_BG], &qd.black);
+        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_SELECTION_FG]);
+        mc_draw_text_clip(lx + 4, by - 26, oyk_term_hotkey_bar_text(0, 0), bw / 6 - 1);
+        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
         char in_ln[110];
         sprintf(in_ln, "Prompt [%s]> %s_", oyk_term_eol_label(&ui->term_eol), ui->term_input);
-        mc_draw_text_clip(lx, by - 10, in_ln, bw / 6);
+        mc_draw_text_clip(lx, by - 9, in_ln, bw / 6);
+        mc_draw_button(ui, lx, by, 72, 20, "Help", 0, MC_HIT_NONE, 0);
         mc_draw_button(ui, box.right - 176, by, 78, 20, "Send", 1, MC_HIT_TERM_SEND, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 0, MC_HIT_CLOSE_MODAL, 0);
-    } else if (scr == OYK_SCR_FILES) {
-        int half = bw / 2 - 4;
-        mc_draw_box(ui, lx, ty - 6, half, by - ty - 6, "Pending Incoming");
-        mc_draw_box(ui, lx + half + 8, ty - 6, half, by - ty - 6, "Approved BBS Files");
+    } else if (scr == OYK_SCR_TERM_HELP) {
+        mc_draw_text(lx, ty, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)");
+        Rect hr;
+        SetRect(&hr, static_cast<short>(lx), static_cast<short>(ty + 8),
+                static_cast<short>(lx + bw), static_cast<short>(by - 8));
+        mc_fill_color(ui, &hr, ui->active_theme.colors[OYK_TR_BG], &qd.white);
+        FrameRect(&hr);
         TextFont(4);
         TextSize(9);
-        int fx1[3] = { lx + 6, lx + 68, lx + 148 };
-        const char* fh1[3] = {
-            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 0),
-            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 1),
-            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 2)
-        };
-        int fw1[3] = { 9, 13, 7 };
-        mc_draw_listview_header(ui, lx + 2, ty + 22, half - 4, 3, fx1, fh1);
+        int hy = hr.top + 14;
+        for (int hi = 0; hi < oyk_term_help_count() && hy < hr.bottom - 6; ++hi) {
+            const OykTermHelpEntry* he = oyk_term_help_entry(hi);
+            if (!he) continue;
+            char row[96];
+            sprintf(row, "%-9.9s  %-34.34s  %-10.10s", he->key_label, he->action, he->alt_key);
+            mc_draw_text_clip(lx + 6, hy, row, (bw - 12) / 6);
+            hy += 13;
+        }
+        mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
+    } else if (scr == OYK_SCR_FILES) {
+        int half = bw / 2 - 4;
+        mc_draw_box(ui, lx, ty - 6, half, by - ty - 6, "Incoming: /");
+        mc_draw_box(ui, lx + half + 8, ty - 6, half, by - ty - 6, "Files: /");
+        TextFont(4);
+        TextSize(9);
+        int fx1[2] = { lx + 6, lx + half - 54 };
+        const char* fh1[2] = { "Name", "Size" };
+        int fw1[2] = { 21, 7 };
+        mc_draw_listview_header(ui, lx + 2, ty + 22, half - 4, 2, fx1, fh1);
 
-        int fx2[2] = { lx + half + 14, lx + half + 132 };
-        const char* fh2[2] = {
-            oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 0),
-            oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 1)
-        };
-        int fw2[2] = { 18, 7 };
+        int fx2[2] = { lx + half + 14, lx + bw - 54 };
+        const char* fh2[2] = { "Name", "Size" };
+        int fw2[2] = { 21, 7 };
         mc_draw_listview_header(ui, lx + half + 10, ty + 22, half - 4, 2, fx2, fh2);
 
-        OykPendingIncoming pend[4];
-        OykApprovedFile appr[4];
-        int pcnt = oyk_bbs_list_incoming("INCOMING", pend, 4);
-        int acnt = oyk_bbs_list_approved("FILES", appr, 4);
-        if (pcnt == 0) {
-            const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
-            mc_draw_listview_row(ui, lx + 2, ty + 36, half - 4, 1, 3, fx1, fr1, fw1);
-        } else {
-            for (int i = 0; i < pcnt; ++i) {
-                char sz_s[16];
-                sprintf(sz_s, "%lu", static_cast<unsigned long>(pend[i].size));
-                const char* fr[3] = { pend[i].uploader, pend[i].filename, sz_s };
-                mc_draw_listview_row(ui, lx + 2, ty + 36 + i * 13, half - 4, (i == 0), 3, fx1, fr, fw1);
-            }
-        }
-        if (acnt == 0) {
-            const char* fr2a[2] = { "README.TXT", "1420" };
-            const char* fr2b[2] = { "NETLIST.CFG", "618" };
-            mc_draw_listview_row(ui, lx + half + 10, ty + 36, half - 4, 1, 2, fx2, fr2a, fw2);
-            mc_draw_listview_row(ui, lx + half + 10, ty + 49, half - 4, 0, 2, fx2, fr2b, fw2);
-        } else {
-            for (int j = 0; j < acnt; ++j) {
-                char sz_s[16];
-                sprintf(sz_s, "%lu", static_cast<unsigned long>(appr[j].size));
-                const char* fr[2] = { appr[j].rel_path, sz_s };
-                mc_draw_listview_row(ui, lx + half + 10, ty + 36 + j * 13, half - 4, (j == 0), 2, fx2, fr, fw2);
-            }
-        }
-        mc_draw_button(ui, lx, by, 86, 20, "Upload...", 0, MC_HIT_FILE_UPLOAD, 0);
-        mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
+        const char* fr1a[2] = { "W3TRM-1", "<DIR>" };
+        const char* fr1b[2] = { "PACKETS.TXT", "2048 B" };
+        mc_draw_listview_row(ui, lx + 2, ty + 36, half - 4, 1, 2, fx1, fr1a, fw1);
+        mc_draw_listview_row(ui, lx + 2, ty + 49, half - 4, 0, 2, fx1, fr1b, fw1);
+
+        const char* fr2a[2] = { "bulletins", "<DIR>" };
+        const char* fr2b[2] = { "README.TXT", "1420 B" };
+        mc_draw_listview_row(ui, lx + half + 10, ty + 36, half - 4, 1, 2, fx2, fr2a, fw2);
+        mc_draw_listview_row(ui, lx + half + 10, ty + 49, half - 4, 0, 2, fx2, fr2b, fw2);
+
+        mc_draw_button(ui, lx,       by, 56, 20, "Upload",  0, MC_HIT_FILE_UPLOAD, 0);
+        mc_draw_button(ui, lx + 60,  by, 62, 20, "Approve", 1, MC_HIT_NONE, 0);
+        mc_draw_button(ui, lx + 126, by, 56, 20, "Rename",  0, MC_HIT_NONE, 0);
+        mc_draw_button(ui, lx + 186, by, 58, 20, "New Dir", 0, MC_HIT_NONE, 0);
+        mc_draw_button(ui, lx + 248, by, 54, 20, "Delete",  0, MC_HIT_NONE, 0);
+        mc_draw_button(ui, lx + 306, by, 44, 20, "View",    0, MC_HIT_NONE, 0);
+        mc_draw_button(ui, box.right - 68, by, 54, 20, "Close", 0, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_ABOUT) {
         mc_draw_text(lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)");
         mc_draw_text(lx, ty + 32, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT");
@@ -1449,7 +1456,7 @@ static void mc_run_capture_tour(OykMacUiState* ui) {
         int wiz_step;
         const char* suffix;
     };
-    static const FlowCap kFlows[22] = {
+    static const FlowCap kFlows[23] = {
         { OYK_SCR_MAIN,       0, 0, "main"             },
         { OYK_SCR_MENU,       0, 0, "menu"             },
         { OYK_SCR_SETTINGS,   0, 0, "settings"         },
@@ -1470,12 +1477,13 @@ static void mc_run_capture_tour(OykMacUiState* ui) {
         { OYK_SCR_EXIT_PEERS, 0, 0, "exit"             },
         { OYK_SCR_THEME,      0, 0, "theme"            },
         { OYK_SCR_TERMINAL,   0, 0, "terminal"         },
+        { OYK_SCR_TERM_HELP,  0, 0, "terminal_help"    },
         { OYK_SCR_FILES,      0, 0, "files"            },
         { OYK_SCR_ABOUT,      0, 0, "about"            }
     };
 
     mc_seed_gallery_fixture(ui);
-    for (int i = 0; i < 22; ++i) {
+    for (int i = 0; i < 23; ++i) {
         ui->active_screen = kFlows[i].scr;
         ui->settings_tab = kFlows[i].tab;
         ui->wiz.step = kFlows[i].wiz_step;

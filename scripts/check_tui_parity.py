@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,34 +14,45 @@ if SCRIPT_DIR not in sys.path:
 
 import render_ui_png as rup  # noqa: E402
 
+BUTTON_RE = re.compile(r"\[ ([^\[\]]*?\S[^\[\]]*?) \]")
+BUTTON_FLOWS = ("add_iface_1", "add_iface_2", "add_iface_3", "add_iface_4",
+                "edit_iface", "edit_peer", "exit")
 
-def ansi_to_lines(path: str) -> list:
+
+def ansi_to_lines_and_bg(path: str):
     with open(path, "rb") as f:
         rgb_grid = rup.parse_ansi_screen(f.read())
-    return ["".join(cell[0] for cell in row) for row in rgb_grid]
+    lines = ["".join(cell[0] for cell in row) for row in rgb_grid]
+    bg_grid = [[cell[2] for cell in row] for row in rgb_grid]
+    return lines, bg_grid
 
 
-def dosbuf_to_lines(path: str) -> list:
+def dosbuf_to_lines_and_bg(path: str):
     with open(path, "rb") as f:
         raw = f.read()
     row_bytes = rup.COLS * 2
     rows = len(raw) // row_bytes
     lines = []
+    bg_grid = []
     idx = 0
     for _ in range(rows):
         chars = []
+        bgs = []
         for _ in range(rup.COLS):
             code = raw[idx]
+            attr = raw[idx + 1]
             idx += 2
             chars.append(rup.CP437_UNICODE.get(code, chr(code) if 0x20 <= code <= 0x7E else " "))
+            bgs.append((attr >> 4) & 0x0F)
         lines.append("".join(chars))
-    return lines
+        bg_grid.append(bgs)
+    return lines, bg_grid
 
 
-def meta_to_lines(path: str) -> list:
+def meta_to_lines_and_bg(path: str):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get("lines", [])
+    return data.get("lines", []), None
 
 
 def load_port_captures(cap_dir: str) -> dict:
@@ -49,13 +61,13 @@ def load_port_captures(cap_dir: str) -> dict:
         fpath = os.path.join(cap_dir, fname)
         if fname.endswith(".ansi"):
             stem = fname[:-5]
-            loader = ansi_to_lines
+            loader = ansi_to_lines_and_bg
         elif fname.endswith(".dosbuf"):
             stem = fname[:-7]
-            loader = dosbuf_to_lines
+            loader = dosbuf_to_lines_and_bg
         elif fname.endswith(".meta.json"):
             stem = fname[:-10]
-            loader = meta_to_lines
+            loader = meta_to_lines_and_bg
         else:
             continue
         for prefix in ("ncurses", "dos_gfx", "dos", "tinytmux", "pico", "esp32c6"):
@@ -67,7 +79,58 @@ def load_port_captures(cap_dir: str) -> dict:
     return ports
 
 
-def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
+def check_button_tightness(port: str, flow: str, lines: list, bg_grid, errors: list) -> None:
+    if bg_grid is None or flow not in BUTTON_FLOWS:
+        return
+    border_chars = set("|│║")
+    found_buttons = 0
+    for r_idx, line in enumerate(lines):
+        if r_idx < 3 or r_idx >= len(bg_grid):
+            continue
+        matches = list(BUTTON_RE.finditer(line))
+        if not matches:
+            continue
+        bg_row = bg_grid[r_idx]
+        first_s = matches[0].start()
+        last_e = matches[-1].end()
+        left_b = max((c for c in range(first_s) if line[c] in border_chars), default=-1)
+        right_b = min((c for c in range(last_e, len(line)) if line[c] in border_chars), default=-1)
+        if left_b < 0 or right_b <= left_b:
+            continue
+        occupied = set()
+        for m in matches:
+            for c in range(m.start() - 1, m.end() + 1):
+                occupied.add(c)
+        bg_samples = [
+            bg_row[c]
+            for c in range(left_b + 1, right_b)
+            if c not in occupied and c < len(bg_row) and line[c] == " "
+        ]
+        if not bg_samples:
+            continue
+        modal_bg = max(set(bg_samples), key=bg_samples.count)
+        for m in matches:
+            found_buttons += 1
+            s, e = m.start(), m.end()
+            if s - 1 <= left_b or e >= right_b:
+                errors.append(f"[{port}/{flow}] row {r_idx}: button {m.group(0)!r} missing 1-cell padding")
+                continue
+            if line[s - 1] != " " or line[e] != " ":
+                errors.append(f"[{port}/{flow}] row {r_idx}: button {m.group(0)!r} lacks tight ' [ Label ] ' space padding")
+                continue
+            btn_bg = bg_row[s]
+            if any(bg_row[c] != btn_bg for c in range(s - 1, e + 1)):
+                errors.append(f"[{port}/{flow}] row {r_idx}: button {m.group(0)!r} inconsistent bg inside ' [ Label ] '")
+            if btn_bg != modal_bg:
+                if s - 2 > left_b and bg_row[s - 2] == btn_bg:
+                    errors.append(f"[{port}/{flow}] row {r_idx}: button {m.group(0)!r} background bleeds left")
+                if e + 1 < right_b and bg_row[e + 1] == btn_bg:
+                    errors.append(f"[{port}/{flow}] row {r_idx}: button {m.group(0)!r} background bleeds right")
+    if found_buttons == 0:
+        errors.append(f"[{port}/{flow}] expected canonical ' [ Label ] ' button controls")
+
+
+def check_flow(port: str, flow: str, lines: list, bg_grid, errors: list) -> None:
     text = "\n".join(lines)
     row0 = lines[0] if lines else ""
 
@@ -78,7 +141,8 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
     if flow in ("settings", "settings_bbs", "settings_chat", "settings_ifaces",
                 "settings_rig", "settings_printer", "add_iface", "add_iface_1",
                 "add_iface_2", "add_iface_3", "add_iface_4", "edit_iface",
-                "peers", "edit_peer", "terminate", "ban", "exit", "theme", "about"):
+                "peers", "edit_peer", "terminate", "ban", "exit", "theme",
+                "terminal_help", "files", "about"):
         need("[X]", "modal close button [X]")
     elif flow in ("main", "terminal"):
         if "[X]" in text:
@@ -156,9 +220,19 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
     elif flow == "terminal":
         need("LOCAL TERMINAL")
         need("[EOL:", "EOL indicator")
-        need("Ctrl+A Z", "Ctrl+A Help hint")
+        need("Ctrl-A Z:Help", "Ctrl-A Help hint")
+        need("Tab/F9", "Tab/F9 Console hint")
+        if "Terminal Output" in text:
+            errors.append(f"[{port}/terminal] forbidden inner 'Terminal Output' box label")
+    elif flow == "terminal_help":
+        need("Terminal Hotkey Help")
+        need("Command prefix: Ctrl-A")
+        need("Z / ?")
     elif flow == "files":
-        need("Pending Incoming")
+        need("Incoming:")
+        need("Files:")
+
+    check_button_tightness(port, flow, lines, bg_grid, errors)
 
 
 def main() -> int:
@@ -173,8 +247,8 @@ def main() -> int:
 
     errors = []
     for port, flows in sorted(ports.items()):
-        for flow, lines in sorted(flows.items()):
-            check_flow(port, flow, lines, errors)
+        for flow, (lines, bg_grid) in sorted(flows.items()):
+            check_flow(port, flow, lines, bg_grid, errors)
 
     if errors:
         print("Cross-TUI parity check FAILED:", file=sys.stderr)
