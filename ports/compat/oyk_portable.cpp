@@ -93,6 +93,23 @@ void trim_inplace(char* s) {
     s[end - start] = '\0';
 }
 
+int trimmed_eq_ci(const char* s, const char* lit) {
+    if (!s || !lit) return 0;
+    size_t len = strlen(s);
+    size_t start = 0;
+    while (start < len && isspace(static_cast<unsigned char>(s[start]))) ++start;
+    size_t end = len;
+    while (end > start && isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+    size_t lit_len = strlen(lit);
+    if ((end - start) != lit_len) return 0;
+    for (size_t i = 0; i < lit_len; ++i) {
+        int ca = toupper(static_cast<unsigned char>(s[start + i]));
+        int cb = toupper(static_cast<unsigned char>(lit[i]));
+        if (ca != cb) return 0;
+    }
+    return 1;
+}
+
 void format_flags_bin(oyk_u32 flags, char* out, size_t out_sz) {
     int width = (flags > 0x0FU) ? 8 : 4;
     if (out_sz < static_cast<size_t>(width + 3)) {
@@ -121,7 +138,7 @@ const char* level_name_str(oyk_u32 level) {
     }
 }
 
-void make_dir_simple(const char* path) {
+OYK_NOINLINE void make_dir_simple(const char* path) {
     if (!path || !path[0]) return;
     char tmp[128];
     safe_copy(tmp, sizeof(tmp), path);
@@ -132,25 +149,30 @@ void make_dir_simple(const char* path) {
     OYK_MKDIR(tmp);
 }
 
+void append_path_seg(char* buf, size_t buf_sz, const char* seg) {
+    if (!buf || buf_sz == 0 || !seg || !seg[0]) return;
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] != '/' && buf[len - 1] != '\\' && len + 1 < buf_sz) {
+#if defined(_WIN32) || defined(_WIN64) || defined(__DOS__) || defined(__MSDOS__) || defined(__WATCOMC__)
+        buf[len++] = '\\';
+#else
+        buf[len++] = '/';
+#endif
+        buf[len] = '\0';
+    }
+    size_t rem = (len < buf_sz) ? (buf_sz - len - 1) : 0;
+    if (rem > 0) {
+        strncat(buf, seg, rem);
+    }
+}
+
 void join_path(const char* dir, const char* file, char* out, size_t out_sz) {
     if (!dir || !dir[0]) {
         safe_copy(out, out_sz, file);
         return;
     }
     safe_copy(out, out_sz, dir);
-    size_t len = strlen(out);
-    if (len > 0 && out[len - 1] != '/' && out[len - 1] != '\\' && len + 1 < out_sz) {
-#if defined(_WIN32) || defined(_WIN64) || defined(__DOS__) || defined(__MSDOS__) || defined(__WATCOMC__)
-        out[len++] = '\\';
-#else
-        out[len++] = '/';
-#endif
-        out[len] = '\0';
-    }
-    size_t rem = (len < out_sz) ? (out_sz - len - 1) : 0;
-    if (rem > 0) {
-        strncat(out, file, rem);
-    }
+    append_path_seg(out, out_sz, file);
 }
 
 /* Reads entire file into heap buffer (caller frees). */
@@ -3489,7 +3511,7 @@ static int oyk_is_directory(const char* path) {
 #endif
 }
 
-static void make_dirs_recursive(const char* path) {
+OYK_NOINLINE static void make_dirs_recursive(const char* path) {
     if (!path || !path[0]) return;
     char tmp[192];
     safe_copy(tmp, sizeof(tmp), path);
@@ -3541,12 +3563,12 @@ int oyk_bbs_resolve_safe_path(const char* files_root,
     safe_copy(arg_copy, sizeof(arg_copy), arg);
     trim_inplace(arg_copy);
 
+    char seg[32];
     if (arg_copy[0] != '/') {
         /* Seed stack from cur_rel */
         const char* p = cur_rel ? cur_rel : "";
         while (*p && depth < 8) {
             while (*p == '/') ++p;
-            char seg[32];
             size_t sl = 0;
             while (*p && *p != '/' && sl < sizeof(seg) - 1) seg[sl++] = *p++;
             seg[sl] = '\0';
@@ -3560,7 +3582,6 @@ int oyk_bbs_resolve_safe_path(const char* files_root,
     while (*p) {
         while (*p == '/') ++p;
         if (!*p) break;
-        char seg[32];
         size_t sl = 0;
         while (*p && *p != '/' && sl < sizeof(seg) - 1) seg[sl++] = *p++;
         seg[sl] = '\0';
@@ -3603,9 +3624,7 @@ int oyk_bbs_resolve_safe_path(const char* files_root,
     }
     rel_buf[0] = '\0';
     for (int i = 0; i < depth; ++i) {
-        char next_abs[192];
-        join_path(abs_buf, stack[i], next_abs, sizeof(next_abs));
-        safe_copy(abs_buf, sizeof(abs_buf), next_abs);
+        append_path_seg(abs_buf, sizeof(abs_buf), stack[i]);
         if (rel_buf[0] && strlen(rel_buf) + 1 < sizeof(rel_buf)) strcat(rel_buf, "/");
         if (strlen(rel_buf) + strlen(stack[i]) < sizeof(rel_buf) - 1) strcat(rel_buf, stack[i]);
     }
@@ -3703,16 +3722,15 @@ int oyk_bbs_approve_incoming_file(const char* incoming_root,
         return 0;
     }
 
-    char dst_dir[192];
+    char dst_path[220];
     if (!oyk_bbs_resolve_safe_path(froot, "", dest_subdir ? dest_subdir : "", 0,
-                                   dst_dir, sizeof(dst_dir), scratch_dir, 96U,
+                                   dst_path, 192U, NULL, 0,
                                    err_out, err_sz)) {
         return 0;
     }
-    make_dirs_recursive(dst_dir);
+    make_dirs_recursive(dst_path);
 
-    char dst_path[220];
-    join_path(dst_dir, filename, dst_path, sizeof(dst_path));
+    append_path_seg(dst_path, sizeof(dst_path), filename);
     if (oyk_is_regular_file(dst_path)) {
         if (!allow_overwrite) {
             if (already_exists_out) *already_exists_out = 1;
@@ -3822,9 +3840,7 @@ int oyk_bbs_delete_approved_file(const char* files_root,
             safe_copy(err_out, err_sz, "Access denied: invalid path component.");
             return 0;
         }
-        char next_p[192];
-        join_path(cur, seg, next_p, sizeof(next_p));
-        safe_copy(cur, sizeof(cur), next_p);
+        append_path_seg(cur, sizeof(cur), seg);
         ++segs;
     }
     if (segs == 0 || !oyk_is_regular_file(cur)) {
@@ -3838,8 +3854,8 @@ int oyk_bbs_delete_approved_file(const char* files_root,
     return 1;
 }
 
-static int bbs_posix_within_root(const char* root, const char* cand,
-                                 char* err_out, size_t err_sz) {
+OYK_NOINLINE static int bbs_posix_within_root(const char* root, const char* cand,
+                                              char* err_out, size_t err_sz) {
 #if !defined(_WIN32) && !defined(_WIN64) && !defined(__DOS__) && !defined(__MSDOS__) && \
     !defined(_MSDOS) && !defined(__WATCOMC__) && !defined(OYK_TARGET_IMXRT1060) && \
     !defined(TEENSYDUINO) && !defined(PICO_BOARD) && !defined(ESP_PLATFORM) && \
@@ -4021,19 +4037,19 @@ int oyk_bbs_approve_file_from_rel(const char* incoming_root, const char* inc_rel
         safe_copy(err_out, err_sz, "Invalid incoming filename.");
         return 0;
     }
+    memmove(norm_src, fname, strlen(fname) + 1U);
 
-    char dst_dir[192], norm_dst[96];
+    char dst_path[220];
     if (!oyk_bbs_resolve_safe_path(froot, "", dest_rel_dir ? dest_rel_dir : "", 0,
-                                   dst_dir, sizeof(dst_dir),
-                                   norm_dst, sizeof(norm_dst),
+                                   dst_path, 192U,
+                                   NULL, 0,
                                    err_out, err_sz)) {
         return 0;
     }
-    make_dirs_recursive(dst_dir);
-    if (!bbs_posix_within_root(froot, dst_dir, err_out, err_sz)) return 0;
+    make_dirs_recursive(dst_path);
+    if (!bbs_posix_within_root(froot, dst_path, err_out, err_sz)) return 0;
 
-    char dst_path[220];
-    join_path(dst_dir, fname, dst_path, sizeof(dst_path));
+    append_path_seg(dst_path, sizeof(dst_path), norm_src);
     if (oyk_is_regular_file(dst_path)) {
         if (!allow_overwrite) {
             if (already_exists_out) *already_exists_out = 1;
@@ -4519,9 +4535,7 @@ void OykPortableNode::bbs_enter(OykSession* sess, int direct_connect) {
     bbs_send_prompt(sess);
 }
 
-void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
-    if (!sess || !sess->in_bbs) return;
-
+OYK_NOINLINE void OykPortableNode::handle_bbs_draft_line(OykSession* sess, const char* raw_line) {
     char line[160];
     safe_copy(line, sizeof(line), raw_line);
 
@@ -4543,10 +4557,7 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
     }
 
     if (sess->bbs_stage == 2) {
-        char trimmed[160];
-        safe_copy(trimmed, sizeof(trimmed), line);
-        trim_inplace(trimmed);
-        if (stricmp_ascii(trimmed, "/AB") == 0 || stricmp_ascii(trimmed, "/ABORT") == 0) {
+        if (trimmed_eq_ci(line, "/AB") || trimmed_eq_ci(line, "/ABORT")) {
             sess->bbs_stage = 0;
             sess->bbs_draft_len = 0;
             sess->bbs_draft_body[0] = '\0';
@@ -4554,7 +4565,7 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
             bbs_send_prompt(sess);
             return;
         }
-        if (stricmp_ascii(trimmed, "/EX") == 0 || strcmp(trimmed, ".") == 0) {
+        if (trimmed_eq_ci(line, "/EX") || trimmed_eq_ci(line, ".")) {
             OykBbsMsgMeta meta;
             memset(&meta, 0, sizeof(meta));
             meta.id = bbs_next_id_++;
@@ -4610,7 +4621,292 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
         sess->bbs_draft_body[sess->bbs_draft_len] = '\0';
         return;
     }
+}
 
+OYK_NOINLINE void OykPortableNode::handle_bbs_list_cmd(OykSession* sess, const char* cmd, const char* arg) {
+    if (strcmp(cmd, "LC") == 0) {
+        int any = 0;
+        for (int i = 0; i < bbs_msg_count_; ++i) {
+            if (bbs_msgs_[i].status == 'K' || bbs_msgs_[i].type != 'B') continue;
+            int dup = 0;
+            for (int p = 0; p < i; ++p) {
+                if (bbs_msgs_[p].status != 'K' && bbs_msgs_[p].type == 'B' &&
+                    stricmp_ascii(bbs_msgs_[p].to, bbs_msgs_[i].to) == 0) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (dup) continue;
+            int cnt = 0;
+            for (int q = i; q < bbs_msg_count_; ++q) {
+                if (bbs_msgs_[q].status != 'K' && bbs_msgs_[q].type == 'B' &&
+                    stricmp_ascii(bbs_msgs_[q].to, bbs_msgs_[i].to) == 0) ++cnt;
+            }
+            char row[48];
+            sprintf(row, "  %-10s (%d)\r", bbs_msgs_[i].to, cnt);
+            send_text(sess, row);
+            any = 1;
+        }
+        if (!any) send_text(sess, "No bulletin categories.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+    int limit = 20;
+    if (strcmp(cmd, "LL") == 0 && arg[0]) {
+        int lv = atoi(arg);
+        if (lv > 0) limit = lv;
+    }
+    int shown = 0;
+    for (int i = bbs_msg_count_ - 1; i >= 0 && shown < limit; --i) {
+        const OykBbsMsgMeta& m = bbs_msgs_[i];
+        if (!bbs_can_read(&m, sess)) continue;
+        int keep = 0;
+        if (strcmp(cmd, "L") == 0 || strcmp(cmd, "LL") == 0) keep = 1;
+        else if (strcmp(cmd, "LM") == 0) keep = bbs_call_matches(m.to, sess);
+        else if (strcmp(cmd, "LN") == 0) keep = (m.type == 'P' && m.status == 'N' && bbs_call_matches(m.to, sess));
+        else if (strcmp(cmd, "LB") == 0) keep = (m.type == 'B');
+        else if (strcmp(cmd, "LP") == 0) keep = (m.type == 'P');
+        else if (strcmp(cmd, "L>") == 0) keep = (arg[0] && stricmp_ascii(m.to, arg) == 0);
+        else if (strcmp(cmd, "L<") == 0) keep = (arg[0] && stricmp_ascii(m.from, arg) == 0);
+        else if (strcmp(cmd, "L@") == 0) keep = (arg[0] && stricmp_ascii(m.at_bbs, arg) == 0);
+        else if (strcmp(cmd, "LS") == 0) keep = (arg[0] && (bbs_contains_ci(m.subject, arg) ||
+                                                             bbs_contains_ci(m.to, arg) ||
+                                                             bbs_contains_ci(m.from, arg)));
+        if (keep) {
+            if (shown == 0) {
+                send_text(sess, "Msg#  TS Size  To       From     Subject\r");
+            }
+            char row[96];
+            sprintf(row, "%-5lu %c%c %5u %-8.8s %-8.8s %.32s\r",
+                    static_cast<unsigned long>(m.id), m.type, m.status,
+                    static_cast<unsigned int>(m.size), m.to, m.from, m.subject);
+            send_text(sess, row);
+            ++shown;
+        }
+    }
+    if (shown == 0) send_text(sess, "No matching messages.\r");
+    bbs_send_prompt(sess);
+}
+
+OYK_NOINLINE void OykPortableNode::handle_bbs_file_type(OykSession* sess, const char* abs_path) {
+    FILE* fp = fopen(abs_path, "rb");
+    if (!fp) {
+        send_text(sess, "Unable to open file.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+    char out_buf[160];
+    size_t out_len = 0;
+    oyk_u32 shown = 0;
+    int c = 0;
+    while ((c = fgetc(fp)) != EOF && shown < 4096UL) {
+        if (c == '\n') {
+            out_buf[out_len++] = '\r';
+            ++shown;
+        } else if (c != '\r' && (c == '\t' || (c >= 0x20 && c <= 0x7E))) {
+            out_buf[out_len++] = static_cast<char>(c);
+            ++shown;
+        }
+        if (out_len >= sizeof(out_buf) - 2) {
+            out_buf[out_len] = '\0';
+            send_text(sess, out_buf);
+            out_len = 0;
+        }
+    }
+    if (out_len > 0) {
+        out_buf[out_len] = '\0';
+        send_text(sess, out_buf);
+    }
+    fclose(fp);
+    send_text(sess, "\r--- EOF ---\r");
+    bbs_send_prompt(sess);
+}
+
+OYK_NOINLINE void OykPortableNode::handle_bbs_file_cmd(OykSession* sess, const char* cmd, const char* arg) {
+    if (!cfg_.bbs_files_enabled) {
+        send_text(sess, "*** BBS Files Area is currently disabled.\r");
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    char abs_p[192], rel_p[96], perr[80];
+    if (strcmp(cmd, "F") == 0 || strcmp(cmd, "FILES") == 0 || strcmp(cmd, "DIR") == 0) {
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        char hdr[120];
+        sprintf(hdr, "Files Area: /%s\r", rel_p);
+        send_text(sess, hdr);
+        OykDirEnt* ents = new OykDirEnt[32];
+        int cnt = oyk_list_dir_entries(abs_p, ents, 32);
+        if (cnt == 0) {
+            send_text(sess, "(no files in this directory)\r");
+        } else {
+            send_text(sess, "Name                     Size\r");
+            for (int i = 0; i < cnt; ++i) {
+                char row[64];
+                if (ents[i].is_dir) {
+                    sprintf(row, "%-24.24s <DIR>\r", ents[i].name);
+                } else {
+                    sprintf(row, "%-24.24s %lu\r", ents[i].name, static_cast<unsigned long>(ents[i].size));
+                }
+                send_text(sess, row);
+            }
+        }
+        delete[] ents;
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "PWD") == 0) {
+        char msg[96];
+        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
+        send_text(sess, msg);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "CD") == 0) {
+        if (!arg[0] || strcmp(arg, "/") == 0) {
+            sess->bbs_files_rel[0] = '\0';
+            send_text(sess, "Files Area: /\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 1,
+                                       abs_p, sizeof(abs_p), rel_p, sizeof(sess->bbs_files_rel),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_directory(abs_p)) {
+            send_text(sess, "Directory not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        safe_copy(sess->bbs_files_rel, sizeof(sess->bbs_files_rel), rel_p);
+        char msg[96];
+        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
+        send_text(sess, msg);
+        bbs_send_prompt(sess);
+        return;
+    }
+
+    if (strcmp(cmd, "TYPE") == 0 || strcmp(cmd, "CAT") == 0) {
+        if (!arg[0]) {
+            send_text(sess, "Usage: TYPE <filename>\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_regular_file(abs_p)) {
+            send_text(sess, "File not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        handle_bbs_file_type(sess, abs_p);
+        return;
+    }
+
+    if (strcmp(cmd, "D") == 0 || strcmp(cmd, "GET") == 0 ||
+        strcmp(cmd, "DOWNLOAD") == 0 || strcmp(cmd, "YAPP") == 0) {
+        if (!arg[0]) {
+            send_text(sess, "Usage: GET <filename>\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (sess->is_local_loopback) {
+            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
+            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
+                                       abs_p, sizeof(abs_p), rel_p, sizeof(rel_p),
+                                       perr, sizeof(perr))) {
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!oyk_is_regular_file(abs_p)) {
+            send_text(sess, "File not found.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
+        bbs_yapp_tx_sess_ = sess;
+        oyk_yapp_init(bbs_yapp_, "incoming",
+                      OykPortableNode::bbs_yapp_send_trampoline, this,
+                      portable_bbs_yapp_no_overwrite_cb, this);
+        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
+        if (!oyk_yapp_start_send(bbs_yapp_, abs_p, perr, sizeof(perr))) {
+            bbs_yapp_tx_sess_ = NULL;
+            send_text(sess, "*** YAPP error: ");
+            send_text(sess, perr);
+            send_text(sess, "\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        bbs_yapp_sid_ = sess->id;
+        sess->bbs_yapp_active = 1;
+        sess->bbs_yapp_upload = 0;
+        return;
+    }
+
+    if (strcmp(cmd, "U") == 0 || strcmp(cmd, "UPLOAD") == 0 || strcmp(cmd, "YU") == 0) {
+        if (sess->is_local_loopback) {
+            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
+            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
+            bbs_send_prompt(sess);
+            return;
+        }
+        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
+        bbs_yapp_tx_sess_ = sess;
+        oyk_yapp_init(bbs_yapp_, "incoming",
+                      OykPortableNode::bbs_yapp_send_trampoline, this,
+                      portable_bbs_yapp_no_overwrite_cb, this);
+        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
+        bbs_yapp_sid_ = sess->id;
+        sess->bbs_yapp_active = 1;
+        sess->bbs_yapp_upload = 1;
+        send_text(sess, "*** Ready for YAPP upload into incoming/. Start YAPP send now (Ctrl-X to cancel).\r");
+        return;
+    }
+}
+
+void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
+    if (!sess || !sess->in_bbs) return;
+
+    if (sess->bbs_stage == 1 || sess->bbs_stage == 2) {
+        handle_bbs_draft_line(sess, raw_line);
+        return;
+    }
+
+    char line[160];
+    safe_copy(line, sizeof(line), raw_line);
     trim_inplace(line);
     if (!line[0]) {
         bbs_send_prompt(sess);
@@ -4687,68 +4983,7 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
         strcmp(cmd, "LN") == 0 || strcmp(cmd, "LB") == 0 || strcmp(cmd, "LP") == 0 ||
         strcmp(cmd, "L>") == 0 || strcmp(cmd, "L<") == 0 || strcmp(cmd, "L@") == 0 ||
         strcmp(cmd, "LS") == 0 || strcmp(cmd, "LC") == 0) {
-        if (strcmp(cmd, "LC") == 0) {
-            int any = 0;
-            for (int i = 0; i < bbs_msg_count_; ++i) {
-                if (bbs_msgs_[i].status == 'K' || bbs_msgs_[i].type != 'B') continue;
-                int dup = 0;
-                for (int p = 0; p < i; ++p) {
-                    if (bbs_msgs_[p].status != 'K' && bbs_msgs_[p].type == 'B' &&
-                        stricmp_ascii(bbs_msgs_[p].to, bbs_msgs_[i].to) == 0) {
-                        dup = 1;
-                        break;
-                    }
-                }
-                if (dup) continue;
-                int cnt = 0;
-                for (int q = i; q < bbs_msg_count_; ++q) {
-                    if (bbs_msgs_[q].status != 'K' && bbs_msgs_[q].type == 'B' &&
-                        stricmp_ascii(bbs_msgs_[q].to, bbs_msgs_[i].to) == 0) ++cnt;
-                }
-                char row[48];
-                sprintf(row, "  %-10s (%d)\r", bbs_msgs_[i].to, cnt);
-                send_text(sess, row);
-                any = 1;
-            }
-            if (!any) send_text(sess, "No bulletin categories.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        int limit = 20;
-        if (strcmp(cmd, "LL") == 0 && arg[0]) {
-            int lv = atoi(arg);
-            if (lv > 0) limit = lv;
-        }
-        int shown = 0;
-        for (int i = bbs_msg_count_ - 1; i >= 0 && shown < limit; --i) {
-            const OykBbsMsgMeta& m = bbs_msgs_[i];
-            if (!bbs_can_read(&m, sess)) continue;
-            int keep = 0;
-            if (strcmp(cmd, "L") == 0 || strcmp(cmd, "LL") == 0) keep = 1;
-            else if (strcmp(cmd, "LM") == 0) keep = bbs_call_matches(m.to, sess);
-            else if (strcmp(cmd, "LN") == 0) keep = (m.type == 'P' && m.status == 'N' && bbs_call_matches(m.to, sess));
-            else if (strcmp(cmd, "LB") == 0) keep = (m.type == 'B');
-            else if (strcmp(cmd, "LP") == 0) keep = (m.type == 'P');
-            else if (strcmp(cmd, "L>") == 0) keep = (arg[0] && stricmp_ascii(m.to, arg) == 0);
-            else if (strcmp(cmd, "L<") == 0) keep = (arg[0] && stricmp_ascii(m.from, arg) == 0);
-            else if (strcmp(cmd, "L@") == 0) keep = (arg[0] && stricmp_ascii(m.at_bbs, arg) == 0);
-            else if (strcmp(cmd, "LS") == 0) keep = (arg[0] && (bbs_contains_ci(m.subject, arg) ||
-                                                                 bbs_contains_ci(m.to, arg) ||
-                                                                 bbs_contains_ci(m.from, arg)));
-            if (keep) {
-                if (shown == 0) {
-                    send_text(sess, "Msg#  TS Size  To       From     Subject\r");
-                }
-                char row[96];
-                sprintf(row, "%-5lu %c%c %5u %-8.8s %-8.8s %.32s\r",
-                        static_cast<unsigned long>(m.id), m.type, m.status,
-                        static_cast<unsigned int>(m.size), m.to, m.from, m.subject);
-                send_text(sess, row);
-                ++shown;
-            }
-        }
-        if (shown == 0) send_text(sess, "No matching messages.\r");
-        bbs_send_prompt(sess);
+        handle_bbs_list_cmd(sess, cmd, arg);
         return;
     }
 
@@ -4896,211 +5131,7 @@ void OykPortableNode::handle_bbs_line(OykSession* sess, const char* raw_line) {
         strcmp(cmd, "D") == 0 || strcmp(cmd, "GET") == 0 ||
         strcmp(cmd, "DOWNLOAD") == 0 || strcmp(cmd, "YAPP") == 0 ||
         strcmp(cmd, "U") == 0 || strcmp(cmd, "UPLOAD") == 0 || strcmp(cmd, "YU") == 0) {
-        if (!cfg_.bbs_files_enabled) {
-            send_text(sess, "*** BBS Files Area is currently disabled.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-    }
-
-    if (strcmp(cmd, "F") == 0 || strcmp(cmd, "FILES") == 0 || strcmp(cmd, "DIR") == 0) {
-        char abs_dir[192], rel_dir[96], perr[80];
-        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
-                                       abs_dir, sizeof(abs_dir), rel_dir, sizeof(rel_dir),
-                                       perr, sizeof(perr))) {
-            send_text(sess, perr);
-            send_text(sess, "\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        char hdr[120];
-        sprintf(hdr, "Files Area: /%s\r", rel_dir);
-        send_text(sess, hdr);
-        OykDirEnt* ents = new OykDirEnt[32];
-        int cnt = oyk_list_dir_entries(abs_dir, ents, 32);
-        if (cnt == 0) {
-            send_text(sess, "(no files in this directory)\r");
-        } else {
-            send_text(sess, "Name                     Size\r");
-            for (int i = 0; i < cnt; ++i) {
-                char row[64];
-                if (ents[i].is_dir) {
-                    sprintf(row, "%-24.24s <DIR>\r", ents[i].name);
-                } else {
-                    sprintf(row, "%-24.24s %lu\r", ents[i].name, static_cast<unsigned long>(ents[i].size));
-                }
-                send_text(sess, row);
-            }
-        }
-        delete[] ents;
-        bbs_send_prompt(sess);
-        return;
-    }
-
-    if (strcmp(cmd, "PWD") == 0) {
-        char msg[96];
-        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
-        send_text(sess, msg);
-        bbs_send_prompt(sess);
-        return;
-    }
-
-    if (strcmp(cmd, "CD") == 0) {
-        if (!arg[0] || strcmp(arg, "/") == 0) {
-            sess->bbs_files_rel[0] = '\0';
-            send_text(sess, "Files Area: /\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        char abs_dir[192], rel_dir[64], perr[80];
-        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 1,
-                                       abs_dir, sizeof(abs_dir), rel_dir, sizeof(rel_dir),
-                                       perr, sizeof(perr))) {
-            send_text(sess, perr);
-            send_text(sess, "\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (!oyk_is_directory(abs_dir)) {
-            send_text(sess, "Directory not found.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        safe_copy(sess->bbs_files_rel, sizeof(sess->bbs_files_rel), rel_dir);
-        char msg[96];
-        sprintf(msg, "Files Area: /%s\r", sess->bbs_files_rel);
-        send_text(sess, msg);
-        bbs_send_prompt(sess);
-        return;
-    }
-
-    if (strcmp(cmd, "TYPE") == 0 || strcmp(cmd, "CAT") == 0) {
-        if (!arg[0]) {
-            send_text(sess, "Usage: TYPE <filename>\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        char abs_f[192], rel_f[96], perr[80];
-        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
-                                       abs_f, sizeof(abs_f), rel_f, sizeof(rel_f),
-                                       perr, sizeof(perr))) {
-            send_text(sess, perr);
-            send_text(sess, "\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (!oyk_is_regular_file(abs_f)) {
-            send_text(sess, "File not found.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        FILE* fp = fopen(abs_f, "rb");
-        if (!fp) {
-            send_text(sess, "Unable to open file.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        char out_buf[160];
-        size_t out_len = 0;
-        oyk_u32 shown = 0;
-        int c = 0;
-        while ((c = fgetc(fp)) != EOF && shown < 4096UL) {
-            if (c == '\n') {
-                out_buf[out_len++] = '\r';
-                ++shown;
-            } else if (c != '\r' && (c == '\t' || (c >= 0x20 && c <= 0x7E))) {
-                out_buf[out_len++] = static_cast<char>(c);
-                ++shown;
-            }
-            if (out_len >= sizeof(out_buf) - 2) {
-                out_buf[out_len] = '\0';
-                send_text(sess, out_buf);
-                out_len = 0;
-            }
-        }
-        if (out_len > 0) {
-            out_buf[out_len] = '\0';
-            send_text(sess, out_buf);
-        }
-        fclose(fp);
-        send_text(sess, "\r--- EOF ---\r");
-        bbs_send_prompt(sess);
-        return;
-    }
-
-    if (strcmp(cmd, "D") == 0 || strcmp(cmd, "GET") == 0 ||
-        strcmp(cmd, "DOWNLOAD") == 0 || strcmp(cmd, "YAPP") == 0) {
-        if (!arg[0]) {
-            send_text(sess, "Usage: GET <filename>\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (sess->is_local_loopback) {
-            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
-            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        char abs_f[192], rel_f[96], perr[80];
-        if (!oyk_bbs_resolve_safe_path(cfg_.bbs_files_path, sess->bbs_files_rel, arg, 0,
-                                       abs_f, sizeof(abs_f), rel_f, sizeof(rel_f),
-                                       perr, sizeof(perr))) {
-            send_text(sess, perr);
-            send_text(sess, "\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (!oyk_is_regular_file(abs_f)) {
-            send_text(sess, "File not found.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
-        bbs_yapp_tx_sess_ = sess;
-        oyk_yapp_init(bbs_yapp_, "incoming",
-                      OykPortableNode::bbs_yapp_send_trampoline, this,
-                      portable_bbs_yapp_no_overwrite_cb, this);
-        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
-        char yerr[80];
-        if (!oyk_yapp_start_send(bbs_yapp_, abs_f, yerr, sizeof(yerr))) {
-            bbs_yapp_tx_sess_ = NULL;
-            send_text(sess, "*** YAPP error: ");
-            send_text(sess, yerr);
-            send_text(sess, "\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        bbs_yapp_sid_ = sess->id;
-        sess->bbs_yapp_active = 1;
-        sess->bbs_yapp_upload = 0;
-        return;
-    }
-
-    if (strcmp(cmd, "U") == 0 || strcmp(cmd, "UPLOAD") == 0 || strcmp(cmd, "YU") == 0) {
-        if (sess->is_local_loopback) {
-            send_text(sess, "*** YAPP file transfer is disallowed when both sides are local.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (bbs_yapp_sid_ != 0 && bbs_yapp_sid_ != sess->id) {
-            send_text(sess, "*** BBS YAPP channel busy; try again shortly.\r");
-            bbs_send_prompt(sess);
-            return;
-        }
-        if (!bbs_yapp_) bbs_yapp_ = new OykYappSession();
-        bbs_yapp_tx_sess_ = sess;
-        oyk_yapp_init(bbs_yapp_, "incoming",
-                      OykPortableNode::bbs_yapp_send_trampoline, this,
-                      portable_bbs_yapp_no_overwrite_cb, this);
-        oyk_yapp_set_remote(bbs_yapp_, &sess->remote_call);
-        bbs_yapp_sid_ = sess->id;
-        sess->bbs_yapp_active = 1;
-        sess->bbs_yapp_upload = 1;
-        send_text(sess, "*** Ready for YAPP upload into incoming/. Start YAPP send now (Ctrl-X to cancel).\r");
+        handle_bbs_file_cmd(sess, cmd, arg);
         return;
     }
 
@@ -5379,6 +5410,224 @@ void OykPortableNode::handle_chat_line(OykSession* sess, const char* raw_line) {
     chat_broadcast_topic(sess->chat_topic, sess->id, out);
 }
 
+OYK_NOINLINE void OykPortableNode::send_ctrl_frame(int iface_idx,
+                                                  const OykCallsign* dst,
+                                                  const OykCallsign* src,
+                                                  oyk_u8 control,
+                                                  int is_response,
+                                                  oyk_u32 peer_ip,
+                                                  oyk_u16 peer_port,
+                                                  oyk_u16 peer_handle,
+                                                  int count_tx) {
+    if (!tx_cb_ || !dst || !src) return;
+    OykFrame cf;
+    memset(&cf, 0, sizeof(cf));
+    cf.dst = *dst;
+    cf.src = *src;
+    cf.is_response = is_response ? 1 : 0;
+    cf.control = control;
+    tx_cb_(iface_idx, &cf, peer_ip, peer_port, peer_handle, tx_ctx_);
+    if (count_tx && iface_idx >= 0 && iface_idx < iface_count_) {
+        ifaces_[iface_idx].tx_frames++;
+    }
+}
+
+OYK_NOINLINE void OykPortableNode::handle_rx_sabm(int iface_idx, const OykFrame* frame,
+                                                 OykSession* sess, time_t now_t,
+                                                 oyk_u32 peer_ip, oyk_u16 peer_port,
+                                                 oyk_u16 peer_handle) {
+    char now_compact[16], today[10], src_s[12];
+    oyk_format_now_compact(now_t, now_compact, sizeof(now_compact));
+    oyk_format_now_yyyymmdd(now_t, today, sizeof(today));
+    oyk_format_callsign(&frame->src, src_s, sizeof(src_s));
+
+    if (!sess && !accept_incoming_) {
+        send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                        peer_ip, peer_port, peer_handle, 0);
+        log_message(OYK_LOG_WARNING, "Denied incoming SABM (incoming disabled)");
+        return;
+    }
+
+    if (!sess) {
+        if (ifaces_[iface_idx].cfg.block_inbound) {
+            send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                            peer_ip, peer_port, peer_handle, 0);
+            char msg[72];
+            sprintf(msg, "Denied incoming %s on %s (interface disabled)", src_s, ifaces_[iface_idx].cfg.id);
+            log_message(OYK_LOG_WARNING, msg);
+            return;
+        }
+        const OykPeerConfig* existing_peer = find_config_peer(iface_idx, &frame->src);
+        if (existing_peer && !existing_peer->allow_inbound) {
+            send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                            peer_ip, peer_port, peer_handle, 0);
+            char msg[72];
+            sprintf(msg, "Denied incoming %s on %s (peer disabled)", src_s, ifaces_[iface_idx].cfg.id);
+            log_message(OYK_LOG_WARNING, msg);
+            return;
+        }
+
+        int ban_idx = find_ban_index(&frame->src, now_compact);
+        int restricted = 0;
+        int appeal_ok = 0;
+        char ban_key[12];
+        ban_key[0] = '\0';
+
+        if (ban_idx >= 0) {
+            OykBanEntry* be = &bans_[ban_idx];
+            safe_copy(ban_key, sizeof(ban_key), be->key);
+            int notified = (be->flags & OYK_BAN_NOTIFIED) ? 1 : 0;
+            int hard = (be->flags & OYK_BAN_HARD_BAN) ? 1 : 0;
+            int app_allowed = (be->flags & OYK_BAN_APPEAL_ALLOWED) ? 1 : 0;
+            int app_used = (be->flags & OYK_BAN_APPEAL_USED) ? 1 : 0;
+
+            if (notified && hard) {
+                send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                                peer_ip, peer_port, peer_handle, 0);
+                char msg[72];
+                sprintf(msg, "Rejected hard-banned %s", src_s);
+                log_message(OYK_LOG_BAN, msg);
+                return;
+            }
+            if (notified && !hard && strcmp(be->last_check_date, today) == 0) {
+                send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                                peer_ip, peer_port, peer_handle, 0);
+                char msg[80];
+                sprintf(msg, "Rejected soft-banned %s (daily check used)", src_s);
+                log_message(OYK_LOG_BAN, msg);
+                return;
+            }
+            restricted = 1;
+            appeal_ok = (app_allowed && !app_used) ? 1 : 0;
+            if (!notified) {
+                be->flags |= OYK_BAN_NOTIFIED;
+                safe_copy(be->last_check_date, sizeof(be->last_check_date), today);
+                save_banlist();
+            } else {
+                safe_copy(be->last_check_date, sizeof(be->last_check_date), today);
+            }
+        }
+
+        /* Allocate free session slot */
+        for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
+            if (sessions_[i].state == OYK_SESS_FREE) {
+                sess = &sessions_[i];
+                break;
+            }
+        }
+        if (!sess) {
+            send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                            peer_ip, peer_port, peer_handle, 0);
+            return;
+        }
+
+        const OykIfaceConfig& ifc = ifaces_[iface_idx].cfg;
+        int is_telnet = (stricmp_ascii(ifc.type, "telnet") == 0) ? 1 : 0;
+        if (!existing_peer && !is_telnet && !ifc.no_auto_learn &&
+            !is_for_node(&frame->src) && !is_for_bbs(&frame->src) && !is_for_chat(&frame->src)) {
+            oyk_u8 pol = resolve_learned_policy(iface_idx);
+            oyk_u8 allow_in = (pol == OYK_LEARN_INBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
+            oyk_u8 allow_out = (pol == OYK_LEARN_OUTBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
+            if (cfg_.peer_count < OYK_MAX_CONFIG_PEERS) {
+                OykPeerConfig* lp = &cfg_.peers[cfg_.peer_count++];
+                memset(lp, 0, sizeof(*lp));
+                oyk_derive_default_peer_id(&cfg_, src_s, lp->id, sizeof(lp->id));
+                safe_copy(lp->callsign, sizeof(lp->callsign), src_s);
+                safe_copy(lp->interface_id, sizeof(lp->interface_id), ifc.id);
+                format_ipv4_dotted(peer_ip, lp->host, sizeof(lp->host));
+                lp->resolved_ip = peer_ip;
+                lp->port = peer_port;
+                lp->allow_inbound = allow_in;
+                lp->allow_outbound = allow_out;
+                lp->auto_learned = 1;
+                char lmsg[96];
+                sprintf(lmsg, "Auto-learned peer %s (%s) on %s", lp->id, lp->callsign, lp->interface_id);
+                log_message(OYK_LOG_INFO, lmsg);
+            }
+            if (!allow_in) {
+                send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                                peer_ip, peer_port, peer_handle, 0);
+                log_message(OYK_LOG_WARNING, "Denied auto-learned peer inbound (policy)");
+                return;
+            }
+        }
+        int is_first_time = !is_welcomed_call(src_s);
+        mark_welcomed_call(src_s);
+
+        memset(sess, 0, sizeof(*sess));
+        oyk_term_eol_init(&sess->rx_eol, is_telnet ? OYK_TERM_EOL_CRLF : OYK_TERM_EOL_CR,
+                          is_telnet ? 0 : 1);
+        sess->id = next_session_id_++;
+        sess->iface_idx = iface_idx;
+        sess->local_call = frame->dst;
+        sess->remote_call = frame->src;
+        sess->peer_ip = peer_ip;
+        sess->peer_port = peer_port;
+        sess->peer_handle = peer_handle;
+        sess->state = OYK_SESS_CONNECTED;
+        sess->restricted_ban = restricted;
+        sess->appeal_eligible = appeal_ok;
+        safe_copy(sess->ban_key, sizeof(sess->ban_key), ban_key);
+        oyk_format_now_hms(now_t, sess->since_hms, sizeof(sess->since_hms));
+        sess->last_activity = now_t;
+
+        /* Send UA */
+        send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x73U, 1,
+                        peer_ip, peer_port, peer_handle, 1);
+
+        if (restricted) {
+            OykBanEntry* be = &bans_[ban_idx];
+            char notice[360];
+            sprintf(notice,
+                    "*** RESTRICTED SESSION - CALLSIGN BANNED ***\r"
+                    "Type: %s | Banned: %s | Lifts: %s\r"
+                    "Reason: %s\r%s",
+                    (be->flags & OYK_BAN_HARD_BAN) ? "HARD BAN" : "SOFT BAN",
+                    be->banned_at, be->lift_at, be->reason,
+                    appeal_ok
+                        ? "Submit ONE appeal (max 140 ASCII chars) or QUIT:\rAppeal> "
+                        : ((be->flags & OYK_BAN_APPEAL_USED)
+                               ? "Appeal already submitted.\rDisconnecting.\r"
+                               : "Appeals not permitted.\rDisconnecting.\r"));
+            send_text(sess, notice);
+            if (!appeal_ok) {
+                send_disc(sess);
+                sess->state = OYK_SESS_FREE;
+            }
+        } else if (is_for_bbs(&frame->dst)) {
+            bbs_enter(sess, 1);
+            char msg[72];
+            sprintf(msg, "BBS session #%lu connected: %s on %s",
+                    static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
+            log_message(OYK_LOG_INFO, msg);
+        } else if (is_for_chat(&frame->dst)) {
+            chat_join(sess, 1);
+            char msg[72];
+            sprintf(msg, "CHAT session #%lu connected: %s on %s",
+                    static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
+            log_message(OYK_LOG_INFO, msg);
+        } else {
+            char node_s[16], banner[220];
+            oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
+            const char* wmsg = (is_first_time && cfg_.new_user_welcome[0])
+                                   ? cfg_.new_user_welcome
+                                   : cfg_.welcome_text;
+            if (wmsg[0]) {
+                sprintf(banner, "*** Connected to %s Packet Node\r%s\r%s> ",
+                        node_s, wmsg, node_s);
+            } else {
+                sprintf(banner, "*** Connected to %s Packet Node\r%s> ",
+                        node_s, node_s);
+            }
+            send_text(sess, banner);
+            char msg[72];
+            sprintf(msg, "Session #%lu connected: %s on %s",
+                    static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
+            log_message(OYK_LOG_INFO, msg);
+        }
+    }
+}
+
 void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
                                   oyk_u32 peer_ip, oyk_u16 peer_port, oyk_u16 peer_handle) {
     if (iface_idx < 0 || iface_idx >= iface_count_ || !frame) return;
@@ -5412,252 +5661,16 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     }
 
     time_t now_t = now_time();
-    char now_compact[16], today[10], src_s[12];
-    oyk_format_now_compact(now_t, now_compact, sizeof(now_compact));
-    oyk_format_now_yyyymmdd(now_t, today, sizeof(today));
-    oyk_format_callsign(&frame->src, src_s, sizeof(src_s));
 
     if (ft == OYK_FT_SABM) {
-        if (!sess && !accept_incoming_) {
-            OykFrame dm;
-            memset(&dm, 0, sizeof(dm));
-            dm.dst = frame->src;
-            dm.src = frame->dst;
-            dm.is_response = 1;
-            dm.control = 0x1FU;
-            if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-            log_message(OYK_LOG_WARNING, "Denied incoming SABM (incoming disabled)");
-            return;
-        }
-
-        if (!sess) {
-            if (ifaces_[iface_idx].cfg.block_inbound) {
-                OykFrame dm;
-                memset(&dm, 0, sizeof(dm));
-                dm.dst = frame->src;
-                dm.src = frame->dst;
-                dm.is_response = 1;
-                dm.control = 0x1FU;
-                if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                char msg[72];
-                sprintf(msg, "Denied incoming %s on %s (interface disabled)", src_s, ifaces_[iface_idx].cfg.id);
-                log_message(OYK_LOG_WARNING, msg);
-                return;
-            }
-            const OykPeerConfig* existing_peer = find_config_peer(iface_idx, &frame->src);
-            if (existing_peer && !existing_peer->allow_inbound) {
-                OykFrame dm;
-                memset(&dm, 0, sizeof(dm));
-                dm.dst = frame->src;
-                dm.src = frame->dst;
-                dm.is_response = 1;
-                dm.control = 0x1FU;
-                if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                char msg[72];
-                sprintf(msg, "Denied incoming %s on %s (peer disabled)", src_s, ifaces_[iface_idx].cfg.id);
-                log_message(OYK_LOG_WARNING, msg);
-                return;
-            }
-
-            int ban_idx = find_ban_index(&frame->src, now_compact);
-            int restricted = 0;
-            int appeal_ok = 0;
-            char ban_key[12];
-            ban_key[0] = '\0';
-
-            if (ban_idx >= 0) {
-                OykBanEntry* be = &bans_[ban_idx];
-                safe_copy(ban_key, sizeof(ban_key), be->key);
-                int notified = (be->flags & OYK_BAN_NOTIFIED) ? 1 : 0;
-                int hard = (be->flags & OYK_BAN_HARD_BAN) ? 1 : 0;
-                int app_allowed = (be->flags & OYK_BAN_APPEAL_ALLOWED) ? 1 : 0;
-                int app_used = (be->flags & OYK_BAN_APPEAL_USED) ? 1 : 0;
-
-                if (notified && hard) {
-                    OykFrame dm;
-                    memset(&dm, 0, sizeof(dm));
-                    dm.dst = frame->src;
-                    dm.src = frame->dst;
-                    dm.is_response = 1;
-                    dm.control = 0x1FU;
-                    if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                    char msg[72];
-                    sprintf(msg, "Rejected hard-banned %s", src_s);
-                    log_message(OYK_LOG_BAN, msg);
-                    return;
-                }
-                if (notified && !hard && strcmp(be->last_check_date, today) == 0) {
-                    OykFrame dm;
-                    memset(&dm, 0, sizeof(dm));
-                    dm.dst = frame->src;
-                    dm.src = frame->dst;
-                    dm.is_response = 1;
-                    dm.control = 0x1FU;
-                    if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                    char msg[80];
-                    sprintf(msg, "Rejected soft-banned %s (daily check used)", src_s);
-                    log_message(OYK_LOG_BAN, msg);
-                    return;
-                }
-                restricted = 1;
-                appeal_ok = (app_allowed && !app_used) ? 1 : 0;
-                if (!notified) {
-                    be->flags |= OYK_BAN_NOTIFIED;
-                    safe_copy(be->last_check_date, sizeof(be->last_check_date), today);
-                    save_banlist();
-                } else {
-                    safe_copy(be->last_check_date, sizeof(be->last_check_date), today);
-                }
-            }
-
-            /* Allocate free session slot */
-            for (int i = 0; i < OYK_MAX_SESSIONS; ++i) {
-                if (sessions_[i].state == OYK_SESS_FREE) {
-                    sess = &sessions_[i];
-                    break;
-                }
-            }
-            if (!sess) {
-                OykFrame dm;
-                memset(&dm, 0, sizeof(dm));
-                dm.dst = frame->src;
-                dm.src = frame->dst;
-                dm.is_response = 1;
-                dm.control = 0x1FU;
-                if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                return;
-            }
-
-            const OykIfaceConfig& ifc = ifaces_[iface_idx].cfg;
-            int is_telnet = (stricmp_ascii(ifc.type, "telnet") == 0) ? 1 : 0;
-            if (!existing_peer && !is_telnet && !ifc.no_auto_learn &&
-                !is_for_node(&frame->src) && !is_for_bbs(&frame->src) && !is_for_chat(&frame->src)) {
-                oyk_u8 pol = resolve_learned_policy(iface_idx);
-                oyk_u8 allow_in = (pol == OYK_LEARN_INBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
-                oyk_u8 allow_out = (pol == OYK_LEARN_OUTBOUND || pol == OYK_LEARN_BOTH) ? 1 : 0;
-                if (cfg_.peer_count < OYK_MAX_CONFIG_PEERS) {
-                    OykPeerConfig* lp = &cfg_.peers[cfg_.peer_count++];
-                    memset(lp, 0, sizeof(*lp));
-                    oyk_derive_default_peer_id(&cfg_, src_s, lp->id, sizeof(lp->id));
-                    safe_copy(lp->callsign, sizeof(lp->callsign), src_s);
-                    safe_copy(lp->interface_id, sizeof(lp->interface_id), ifc.id);
-                    format_ipv4_dotted(peer_ip, lp->host, sizeof(lp->host));
-                    lp->resolved_ip = peer_ip;
-                    lp->port = peer_port;
-                    lp->allow_inbound = allow_in;
-                    lp->allow_outbound = allow_out;
-                    lp->auto_learned = 1;
-                    char lmsg[96];
-                    sprintf(lmsg, "Auto-learned peer %s (%s) on %s", lp->id, lp->callsign, lp->interface_id);
-                    log_message(OYK_LOG_INFO, lmsg);
-                }
-                if (!allow_in) {
-                    OykFrame dm;
-                    memset(&dm, 0, sizeof(dm));
-                    dm.dst = frame->src;
-                    dm.src = frame->dst;
-                    dm.is_response = 1;
-                    dm.control = 0x1FU;
-                    if (tx_cb_) tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
-                    log_message(OYK_LOG_WARNING, "Denied auto-learned peer inbound (policy)");
-                    return;
-                }
-            }
-            int is_first_time = !is_welcomed_call(src_s);
-            mark_welcomed_call(src_s);
-
-            memset(sess, 0, sizeof(*sess));
-            oyk_term_eol_init(&sess->rx_eol, is_telnet ? OYK_TERM_EOL_CRLF : OYK_TERM_EOL_CR,
-                              is_telnet ? 0 : 1);
-            sess->id = next_session_id_++;
-            sess->iface_idx = iface_idx;
-            sess->local_call = frame->dst;
-            sess->remote_call = frame->src;
-            sess->peer_ip = peer_ip;
-            sess->peer_port = peer_port;
-            sess->peer_handle = peer_handle;
-            sess->state = OYK_SESS_CONNECTED;
-            sess->restricted_ban = restricted;
-            sess->appeal_eligible = appeal_ok;
-            safe_copy(sess->ban_key, sizeof(sess->ban_key), ban_key);
-            oyk_format_now_hms(now_t, sess->since_hms, sizeof(sess->since_hms));
-            sess->last_activity = now_t;
-
-            /* Send UA */
-            OykFrame ua;
-            memset(&ua, 0, sizeof(ua));
-            ua.dst = frame->src;
-            ua.src = frame->dst;
-            ua.is_response = 1;
-            ua.control = 0x73U;
-            if (tx_cb_) {
-                tx_cb_(iface_idx, &ua, peer_ip, peer_port, peer_handle, tx_ctx_);
-                ifaces_[iface_idx].tx_frames++;
-            }
-
-            if (restricted) {
-                OykBanEntry* be = &bans_[ban_idx];
-                char notice[360];
-                sprintf(notice,
-                        "*** RESTRICTED SESSION - CALLSIGN BANNED ***\r"
-                        "Type: %s | Banned: %s | Lifts: %s\r"
-                        "Reason: %s\r%s",
-                        (be->flags & OYK_BAN_HARD_BAN) ? "HARD BAN" : "SOFT BAN",
-                        be->banned_at, be->lift_at, be->reason,
-                        appeal_ok
-                            ? "Submit ONE appeal (max 140 ASCII chars) or QUIT:\rAppeal> "
-                            : ((be->flags & OYK_BAN_APPEAL_USED)
-                                   ? "Appeal already submitted.\rDisconnecting.\r"
-                                   : "Appeals not permitted.\rDisconnecting.\r"));
-                send_text(sess, notice);
-                if (!appeal_ok) {
-                    send_disc(sess);
-                    sess->state = OYK_SESS_FREE;
-                }
-            } else if (is_for_bbs(&frame->dst)) {
-                bbs_enter(sess, 1);
-                char msg[72];
-                sprintf(msg, "BBS session #%lu connected: %s on %s",
-                        static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
-                log_message(OYK_LOG_INFO, msg);
-            } else if (is_for_chat(&frame->dst)) {
-                chat_join(sess, 1);
-                char msg[72];
-                sprintf(msg, "CHAT session #%lu connected: %s on %s",
-                        static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
-                log_message(OYK_LOG_INFO, msg);
-            } else {
-                char node_s[16], banner[220];
-                oyk_format_callsign(&cfg_.callsign, node_s, sizeof(node_s));
-                const char* wmsg = (is_first_time && cfg_.new_user_welcome[0])
-                                       ? cfg_.new_user_welcome
-                                       : cfg_.welcome_text;
-                if (wmsg[0]) {
-                    sprintf(banner, "*** Connected to %s Packet Node\r%s\r%s> ",
-                            node_s, wmsg, node_s);
-                } else {
-                    sprintf(banner, "*** Connected to %s Packet Node\r%s> ",
-                            node_s, node_s);
-                }
-                send_text(sess, banner);
-                char msg[72];
-                sprintf(msg, "Session #%lu connected: %s on %s",
-                        static_cast<unsigned long>(sess->id), src_s, ifaces_[iface_idx].cfg.id);
-                log_message(OYK_LOG_INFO, msg);
-            }
-        }
+        handle_rx_sabm(iface_idx, frame, sess, now_t, peer_ip, peer_port, peer_handle);
         return;
     }
 
     if (!sess) {
-        if (ft != OYK_FT_DM && tx_cb_) {
-            OykFrame dm;
-            memset(&dm, 0, sizeof(dm));
-            dm.dst = frame->src;
-            dm.src = frame->dst;
-            dm.is_response = 1;
-            dm.control = 0x1FU;
-            tx_cb_(iface_idx, &dm, peer_ip, peer_port, peer_handle, tx_ctx_);
+        if (ft != OYK_FT_DM) {
+            send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x1FU, 1,
+                            peer_ip, peer_port, peer_handle, 0);
         }
         return;
     }
@@ -5686,16 +5699,8 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
     }
 
     if (ft == OYK_FT_DISC) {
-        OykFrame ua;
-        memset(&ua, 0, sizeof(ua));
-        ua.dst = frame->src;
-        ua.src = frame->dst;
-        ua.is_response = 1;
-        ua.control = 0x73U;
-        if (tx_cb_) {
-            tx_cb_(iface_idx, &ua, peer_ip, peer_port, peer_handle, tx_ctx_);
-            ifaces_[iface_idx].tx_frames++;
-        }
+        send_ctrl_frame(iface_idx, &frame->src, &frame->dst, 0x73U, 1,
+                        peer_ip, peer_port, peer_handle, 1);
         oyk_u32 sid = sess->id;
         int was_local = sess->is_local_term;
         if (sess->in_bbs) bbs_cleanup_yapp(sess);
@@ -5723,16 +5728,9 @@ void OykPortableNode::on_rx_frame(int iface_idx, const OykFrame* frame,
         oyk_u8 ns = static_cast<oyk_u8>((frame->control >> 1) & 0x07U);
         if (ns == sess->vr) {
             sess->vr = static_cast<oyk_u8>((sess->vr + 1) & 0x07U);
-            OykFrame rr;
-            memset(&rr, 0, sizeof(rr));
-            rr.dst = sess->remote_call;
-            rr.src = sess->local_call;
-            rr.is_response = 1;
-            rr.control = static_cast<oyk_u8>(0x01U | ((sess->vr & 0x07U) << 5));
-            if (tx_cb_) {
-                tx_cb_(iface_idx, &rr, peer_ip, peer_port, peer_handle, tx_ctx_);
-                ifaces_[iface_idx].tx_frames++;
-            }
+            send_ctrl_frame(iface_idx, &sess->remote_call, &sess->local_call,
+                            static_cast<oyk_u8>(0x01U | ((sess->vr & 0x07U) << 5)), 1,
+                            peer_ip, peer_port, peer_handle, 1);
 
             if (sess->is_local_term) {
                 if (local_cb_ && frame->info_len > 0) {

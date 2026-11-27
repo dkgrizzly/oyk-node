@@ -17,6 +17,14 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifndef OYK_NOINLINE
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__WATCOMC__)
+#define OYK_NOINLINE __attribute__((noinline))
+#else
+#define OYK_NOINLINE
+#endif
+#endif
+
 /* Fixed-width integer types safe across 16-bit (int=16, long=32) and 32/64-bit targets */
 typedef unsigned char  oyk_u8;
 typedef unsigned short oyk_u16;
@@ -702,7 +710,20 @@ private:
     void bbs_cleanup_yapp(OykSession* sess);
     static int bbs_yapp_send_trampoline(const oyk_u8* data, size_t len, void* ctx);
     void bbs_handle_raw_bytes(OykSession* sess, const oyk_u8* data, size_t len);
+    OYK_NOINLINE void handle_bbs_draft_line(OykSession* sess, const char* raw_line);
+    OYK_NOINLINE void handle_bbs_list_cmd(OykSession* sess, const char* cmd, const char* arg);
+    OYK_NOINLINE void handle_bbs_file_type(OykSession* sess, const char* abs_path);
+    OYK_NOINLINE void handle_bbs_file_cmd(OykSession* sess, const char* cmd, const char* arg);
     void handle_bbs_line(OykSession* sess, const char* line);
+    OYK_NOINLINE void send_ctrl_frame(int iface_idx, const OykCallsign* dst,
+                                      const OykCallsign* src, oyk_u8 control,
+                                      int is_response, oyk_u32 peer_ip,
+                                      oyk_u16 peer_port, oyk_u16 peer_handle,
+                                      int count_tx);
+    OYK_NOINLINE void handle_rx_sabm(int iface_idx, const OykFrame* frame,
+                                     OykSession* sess, time_t now_t,
+                                     oyk_u32 peer_ip, oyk_u16 peer_port,
+                                     oyk_u16 peer_handle);
     void chat_broadcast_topic(const char* topic, oyk_u32 exclude_sid, const char* text);
     void chat_join(OykSession* sess, int direct_connect);
     void chat_leave(OykSession* sess, const char* reason);

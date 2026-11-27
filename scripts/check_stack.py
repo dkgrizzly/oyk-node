@@ -32,6 +32,7 @@ def main() -> int:
                 args.cxx,
                 "-std=c++98",
                 "-Os",
+                "-fstack-protector-strong",
                 "-fno-exceptions",
                 "-fno-rtti",
                 "-Wall",
