@@ -13,6 +13,7 @@ SKIP_EXACT = {
     ".gitignore",
     ".gitattributes",
     "REUSE.toml",
+    "assets/oyk-logo.txt",
 }
 SKIP_PREFIXES = (
     "docs/specs/rfc",
@@ -23,7 +24,7 @@ SKIP_SUFFIXES = (
     "/gradlew.bat",
 )
 BINARY_EXTS = {
-    ".png", ".bmp", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".img",
+    ".png", ".bmp", ".jpg", ".jpeg", ".gif", ".ico", ".icns", ".info", ".zip", ".img",
     ".bin", ".jar", ".woff", ".ttf", ".keystore", ".jks", ".so", ".a", ".o",
 }
 

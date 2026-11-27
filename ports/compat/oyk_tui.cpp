@@ -3,6 +3,7 @@
 
 #include "oyk_tui.hpp"
 #include "oyk_gui.hpp"
+#include "oyk_logo_data.hpp"
 #include "oyk_term.hpp"
 
 #include <stdio.h>
@@ -384,6 +385,55 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal(const OykTuiBackend* b,
     }
     oyk_tui_draw_modal_footer(b, &mr, "",
                               "Press hotkey to run, or Esc / Enter / [X] to close");
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykTuiRect* rect,
+                                              const char* platform_line) {
+    if (!b || !b->put_text || !rect || rect->h < 10 || rect->w < 36) return;
+    const int logo_col = rect->left + 2;
+    const int logo_rows = (rect->h - 5 < OYK_LOGO_ASCII_ROWS) ? (rect->h - 5) : OYK_LOGO_ASCII_ROWS;
+    for (int i = 0; i < logo_rows; ++i) {
+        b->put_text(b->ctx, rect->top + 2 + i, logo_col, OYK_LOGO_ASCII_COLS,
+                    OYK_TUI_STYLE_TITLE, kOykLogoAscii[i]);
+    }
+    const int text_col = rect->left + 2 + OYK_LOGO_ASCII_COLS + 2;
+    const int text_w = (rect->left + rect->w - 2) - text_col;
+    if (text_w <= 4) return;
+
+    const char* lines[8] = {
+        "OYK Amateur Radio Packet Node (OYK-Node)",
+        "Copyright (C) 2026 KR4OYK - David Kuder",
+        "License: GPL-3.0-or-later",
+        "",
+        (platform_line && platform_line[0]) ? platform_line : "Platform: Portable Node",
+        "",
+        "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP",
+        "Hotkeys: F10/M Menu | Tab/F9 Term | S Settings"
+    };
+    const int body_rows = rect->h - 5;
+    for (int i = 0; i < 8 && i < body_rows; ++i) {
+        if (lines[i][0]) {
+            b->put_text(b->ctx, rect->top + 2 + i, text_col, text_w,
+                        (i == 0) ? OYK_TUI_STYLE_TITLE : OYK_TUI_STYLE_DLG_FILL, lines[i]);
+        }
+    }
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_about_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                               const char* platform_line) {
+    if (!b || !b->put_text) return;
+    OykTuiRect mr;
+    oyk_tui_center_modal(screen_rows, screen_cols, 16, 72, &mr);
+    oyk_tui_draw_modal(b, &mr, "About OYK Amateur Radio Packet Node", 1);
+    oyk_tui_draw_about_body(b, &mr, platform_line);
+    if (b->put_hdiv) {
+        b->put_hdiv(b->ctx, mr.top + mr.h - 3, mr.left, mr.w, OYK_TUI_STYLE_DLG_BORDER);
+    }
+    OykTuiButton abtns[1];
+    abtns[0].label = "Close";
+    abtns[0].enabled = 1;
+    oyk_tui_draw_button_row(b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
+                            abtns, 1, 0, "Enter / Esc / Q: Close");
 }
 
 static void tui_format_fm_entry_row(const OykBbsDirEntry* e, int width,

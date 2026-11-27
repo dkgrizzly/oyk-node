@@ -3,6 +3,7 @@
 
 #include "atari_ui.hpp"
 #include "atari_capture.hpp"
+#include "oyk_logo_data.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1108,14 +1109,31 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_draw_button(ui, mx + mw - 80, by, 68, 22, "Close", 0);
         at_add_hit(ui, mx + mw - 80, by, 68, 22, 999);
     } else if (scr == OYK_SCR_ABOUT) {
-        at_draw_text(ui, lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
-                     ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 34, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
-                     ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 54, "Platform: Atari ST / TT GEM (EmuTOS VDI + AES + RS-232 AUX)",
-                     ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 76, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
-                     ui->pen_fg, bw / 8);
+        for (int py = 0; py < 32; ++py) {
+            for (int px = 0; px < 32; ++px) {
+                if (ui->colors <= 2) {
+                    unsigned char b = kOykLogoLine32Bits[py * 4 + (px >> 3)];
+                    if ((b & (0x80U >> (px & 7))) == 0U) continue;
+                    at_fill_rect(ui, lx + px * 2, ty + 8 + py * 2, 2, 2, ui->pen_fg);
+                } else {
+                    unsigned char pval = kOykLogoSolid32Pal[py * 32 + px];
+                    if (pval == 0U) continue;
+                    int pen = (pval == 2U) ? ui->pen_bg
+                            : ((pval == 3U) ? ui->pen_fg : ui->pen_accent);
+                    at_fill_rect(ui, lx + px * 2, ty + 8 + py * 2, 2, 2, pen);
+                }
+            }
+        }
+        const int tx = lx + 74;
+        const int tc = (bw > 74) ? ((bw - 74) / 8) : 16;
+        at_draw_text(ui, tx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     ui->pen_fg, tc);
+        at_draw_text(ui, tx, ty + 34, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / YAPP",
+                     ui->pen_fg, tc);
+        at_draw_text(ui, tx, ty + 54, "Platform: Atari ST / TT GEM (VDI + AES + RS-232)",
+                     ui->pen_fg, tc);
+        at_draw_text(ui, tx, ty + 76, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     ui->pen_fg, tc);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "OK", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else {

@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 KR4OYK - David Kuder */
 
 #include "Multiverse.r"
+#include "oyk_mac_icons.r"
 
 resource 'MBAR' (128) {
     { 128, 129, 130, 131, 132, 133 };

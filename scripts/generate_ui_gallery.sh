@@ -346,36 +346,42 @@ flow_title() {
         theme)            echo "19. Theme Settings Dialog" ;;
         terminal)         echo "20. Local Packet Terminal (Ctrl-A Hotkeys & BBS Session)" ;;
         terminal_help)    echo "21. Terminal Hotkey Help Modal" ;;
-        files)            echo "22. Dual-Pane File Manager (Incoming | Files)" ;;
-        about)            echo "23. About OYK-Node Dialog" ;;
+        files)               echo "22. Dual-Pane File Manager (Incoming | Files)" ;;
+        about)               echo "23. About OYK-Node Dialog" ;;
+        main_landscape)      echo "24. Operator Console (Landscape)" ;;
+        terminal_landscape)  echo "25. Local Packet Terminal (Landscape)" ;;
+        files_landscape)     echo "26. Dual-Pane File Manager (Landscape)" ;;
     esac
 }
 
 flow_short() {
     case "$1" in
-        main)             echo "1. Console" ;;
-        menu)             echo "2. Node Menu" ;;
-        settings)         echo "3. Set: Node" ;;
-        settings_bbs)     echo "4. Set: BBS" ;;
-        settings_chat)    echo "5. Set: CHAT" ;;
-        settings_ifaces)  echo "6. Set: Ifaces" ;;
-        peers)            echo "7. Set: Peers" ;;
-        settings_rig)     echo "8. Set: Rig" ;;
-        settings_printer) echo "9. Set: Printer" ;;
-        add_iface_1)      echo "10. Wiz 1: Driver" ;;
-        add_iface_2)      echo "11. Wiz 2: Identity" ;;
-        add_iface_3)      echo "12. Wiz 3: Policy" ;;
-        add_iface_4)      echo "13. Wiz 4: Review" ;;
-        edit_iface)       echo "14. Edit Iface" ;;
-        edit_peer)        echo "15. Edit Peer" ;;
-        terminate)        echo "16. Terminate" ;;
-        ban)              echo "17. Ban/Unban" ;;
-        exit)             echo "18. Exit/Boot" ;;
-        theme)            echo "19. Theme" ;;
-        terminal)         echo "20. Terminal" ;;
-        terminal_help)    echo "21. Term Help" ;;
-        files)            echo "22. Files" ;;
-        about)            echo "23. About" ;;
+        main)                echo "1. Console" ;;
+        menu)                echo "2. Node Menu" ;;
+        settings)            echo "3. Set: Node" ;;
+        settings_bbs)        echo "4. Set: BBS" ;;
+        settings_chat)       echo "5. Set: CHAT" ;;
+        settings_ifaces)     echo "6. Set: Ifaces" ;;
+        peers)               echo "7. Set: Peers" ;;
+        settings_rig)        echo "8. Set: Rig" ;;
+        settings_printer)    echo "9. Set: Printer" ;;
+        add_iface_1)         echo "10. Wiz 1: Driver" ;;
+        add_iface_2)         echo "11. Wiz 2: Identity" ;;
+        add_iface_3)         echo "12. Wiz 3: Policy" ;;
+        add_iface_4)         echo "13. Wiz 4: Review" ;;
+        edit_iface)          echo "14. Edit Iface" ;;
+        edit_peer)           echo "15. Edit Peer" ;;
+        terminate)           echo "16. Terminate" ;;
+        ban)                 echo "17. Ban/Unban" ;;
+        exit)                echo "18. Exit/Boot" ;;
+        theme)               echo "19. Theme" ;;
+        terminal)            echo "20. Terminal" ;;
+        terminal_help)       echo "21. Term Help" ;;
+        files)               echo "22. Files" ;;
+        about)               echo "23. About" ;;
+        main_landscape)      echo "24. Console (Land)" ;;
+        terminal_landscape)  echo "25. Terminal (Land)" ;;
+        files_landscape)     echo "26. Files (Land)" ;;
     esac
 }
 
@@ -394,8 +400,12 @@ Click any thumbnail in the port tables below to open the full-resolution native 
 
 HEADER
     for port in "${PORTS[@]}"; do
+        port_flows=("${FLOWS[@]}")
+        if [[ "${port}" == "android" ]]; then
+            port_flows+=(main_landscape terminal_landscape files_landscape)
+        fi
         has_any=0
-        for flow in "${FLOWS[@]}"; do
+        for flow in "${port_flows[@]}"; do
             if [[ -f "${OUT_IMG_DIR}/${port}_${flow}.png" ]]; then
                 has_any=1
                 break
@@ -409,8 +419,12 @@ HEADER
     echo ""
 
     for port in "${PORTS[@]}"; do
+        port_flows=("${FLOWS[@]}")
+        if [[ "${port}" == "android" ]]; then
+            port_flows+=(main_landscape terminal_landscape files_landscape)
+        fi
         cells=()
-        for flow in "${FLOWS[@]}"; do
+        for flow in "${port_flows[@]}"; do
             img="${port}_${flow}.png"
             if [[ -f "${OUT_IMG_DIR}/${img}" && -f "${OUT_IMG_DIR}/thumbs/${img}" ]]; then
                 short="$(flow_short "${flow}")"

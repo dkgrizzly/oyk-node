@@ -1011,26 +1011,8 @@ void Esp32C6Console::render_bootloader() {
 }
 
 void Esp32C6Console::render_about() {
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 13, 64, &mr);
-    const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "About OYK Amateur Radio Packet Node", 1, 1);
-    draw_shadow(top, left, mr.h, mr.w);
-    char buf[160];
-    sprintf(buf, "\033[%d;%dHOYK Amateur Radio Packet Node (OYK-Node ESP32-C6)", top + 2, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHCopyright (C) 2026 KR4OYK - David Kuder", top + 3, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHLicense: GPL-3.0-or-later", top + 4, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHAX.25 v2.2 / SX1262 LoRa / Wi-Fi 6 / BLE 5 / YAPP", top + 6, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHHotkeys: F10/M Menu | Tab/F9 Term | O OLED | ? About", top + 7, left + 3);
-    write_str(buf);
-    draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-60.60s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "Enter / Esc / Q: Close");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_about_modal(&b, term_rows_, term_cols_, "Platform: ESP32-C6 (M5Stack Unit C6L)");
 }
 
 void Esp32C6Console::render_local_term() {

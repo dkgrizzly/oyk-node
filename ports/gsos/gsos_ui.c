@@ -3,6 +3,7 @@
 
 #include "gsos_ui.h"
 #include "gsos_capture.h"
+#include "gsos_logo_data.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -933,14 +934,25 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_draw_button(mx + mw - 86, by, 74, 13, "Close", 0);
         gs_add_hit(ui, mx + mw - 86, by, 74, 13, 999);
     } else if (scr == OYK_GSOS_SCR_ABOUT) {
-        gs_draw_text(lx, ty + 8, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
-                     GS_CLR_FG, GS_CLR_BG, 68);
-        gs_draw_text(lx, ty + 22, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
-                     GS_CLR_FG, GS_CLR_BG, 72);
-        gs_draw_text(lx, ty + 36, "Platform: Apple IIGS GS/OS (65C816 QuickDraw II + SCC .A/.B)",
-                     GS_CLR_FG, GS_CLR_BG, 72);
-        gs_draw_text(lx, ty + 52, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
-                     GS_CLR_FG, GS_CLR_BG, 72);
+        int px, py, tx, tc;
+        for (py = 0; py < 32; ++py) {
+            for (px = 0; px < 32; ++px) {
+                unsigned char pval = kOykGsosLogo32[py * 32 + px];
+                if (pval == 0U) continue;
+                gs_fill_rect(lx + px * 2, ty + 6 + py, 2, 1,
+                             (pval == 2U) ? GS_CLR_BG : ((pval == 3U) ? GS_CLR_FG : GS_CLR_ACCENT));
+            }
+        }
+        tx = lx + 74;
+        tc = 56;
+        gs_draw_text(tx, ty + 8,  "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     GS_CLR_FG, GS_CLR_BG, tc);
+        gs_draw_text(tx, ty + 20, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / YAPP",
+                     GS_CLR_FG, GS_CLR_BG, tc);
+        gs_draw_text(tx, ty + 32, "Platform: Apple IIGS GS/OS (65C816 QuickDraw II)",
+                     GS_CLR_FG, GS_CLR_BG, tc);
+        gs_draw_text(tx, ty + 46, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     GS_CLR_FG, GS_CLR_BG, tc);
         gs_draw_button(mx + mw - 96, by, 82, 13, "OK", 1);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else {

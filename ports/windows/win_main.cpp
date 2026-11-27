@@ -148,6 +148,18 @@ static int g_win_headless = 0;
 static int g_win_shutdown_drained = 0;
 static void drain_win_shutdown();
 
+static void win_apply_window_icon(HWND hwnd) {
+    if (!hwnd || !g_hinst) return;
+#if defined(_WIN32) && !defined(OYK_WIN16)
+    HICON hBig = static_cast<HICON>(LoadImage(
+        g_hinst, MAKEINTRESOURCE(IDI_OYK_NODE), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
+    HICON hSmall = static_cast<HICON>(LoadImage(
+        g_hinst, MAKEINTRESOURCE(IDI_OYK_NODE), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
+    if (hBig) SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hBig));
+    if (hSmall) SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hSmall));
+#endif
+}
+
 static int        g_th_custom_active = 0;
 static COLORREF   g_th_bg_c = RGB(0, 0, 0);
 static COLORREF   g_th_fg_c = RGB(0, 0, 0);
@@ -1432,6 +1444,7 @@ OYK_DLG_RET TermHelpDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
         case WM_INITDIALOG: {
+            win_apply_window_icon(hdlg);
             SendDlgItemMessage(hdlg, IDC_THELP_TEXT, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
             static char help_txt[1280];
             strcpy(help_txt, "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)\r\n");
@@ -1601,6 +1614,7 @@ OYK_DLG_RET TerminalDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
     switch (msg) {
         case WM_INITDIALOG: {
+            win_apply_window_icon(hdlg);
             g_lterm_hwnd = hdlg;
             g_lterm_sid = 0;
             g_lterm_connected = 0;
@@ -1917,6 +1931,7 @@ OYK_DLG_RET ApproveFilesDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
     switch (msg) {
         case WM_INITDIALOG: {
+            win_apply_window_icon(hdlg);
             if (!s_fm) s_fm = new OykGuiFileMgr;
             oyk_gui_filemgr_init(s_fm, "incoming", g_node.config().bbs_files_path);
             SendDlgItemMessage(hdlg, IDC_APP_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
@@ -2719,9 +2734,18 @@ OYK_DLG_RET AboutDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
         case WM_INITDIALOG:
+            win_apply_window_icon(hdlg);
             SetWindowText(hdlg, oyk_gui_screen_title(OYK_SCR_ABOUT));
             SetDlgItemText(hdlg, IDC_ABOUT_TEXT, oyk_gui_about_summary());
 #if defined(_WIN32) && !defined(OYK_WIN16)
+            {
+                HICON hLogo = static_cast<HICON>(LoadImage(
+                    g_hinst, MAKEINTRESOURCE(IDI_OYK_NODE), IMAGE_ICON, 64, 64, LR_DEFAULTCOLOR));
+                if (hLogo) {
+                    SendDlgItemMessage(hdlg, IDC_ABOUT_LOGO, STM_SETICON,
+                                       reinterpret_cast<WPARAM>(hLogo), 0);
+                }
+            }
             if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
 #endif
             return TRUE;
@@ -4140,6 +4164,7 @@ OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
+            win_apply_window_icon(hwnd);
             g_mono_font = (HFONT)GetStockObject(OEM_FIXED_FONT);
             g_ctl_header = CreateWindow("STATIC", "", WS_CHILD | WS_VISIBLE,
                                         0, 0, 100, 20, hwnd, OYK_HMENU(IDC_HEADER_TEXT), g_hinst, NULL);
@@ -4856,6 +4881,7 @@ static int win_init_runtime(HINSTANCE hinst, HINSTANCE hprev, const WinCliOpts* 
         memset(&wc, 0, sizeof(wc));
         wc.lpfnWndProc = MainWndProc;
         wc.hInstance = hinst;
+        wc.hIcon = LoadIcon(hinst, MAKEINTRESOURCE(IDI_OYK_NODE));
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
         wc.hbrBackground = OYK_HBRUSH(COLOR_BTNFACE + 1);
         wc.lpszMenuName = MAKEINTRESOURCE(IDR_MAINMENU);

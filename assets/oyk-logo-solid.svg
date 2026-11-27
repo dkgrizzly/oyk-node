@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 KR4OYK - David Kuder -->
+<svg
+   viewBox="0 0 440 480"
+   width="440"
+   height="480"
+   role="img"
+   aria-label="OYK NODE Line-Art Logo"
+   version="1.1"
+   id="svg5"
+   sodipodi:docname="oyk-logo-solid.svg"
+   inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs5">
+    <rect
+       x="95.291057"
+       y="280.48569"
+       width="308.09652"
+       height="177.78685"
+       id="rect5" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview5"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.74246212"
+     inkscape:cx="-560.29794"
+     inkscape:cy="269.37401"
+     inkscape:window-width="2560"
+     inkscape:window-height="1369"
+     inkscape:window-x="0"
+     inkscape:window-y="23"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg5" />
+  <!-- Outer encapsulating rounded frame -->
+  <rect
+     x="25"
+     y="30"
+     width="390"
+     height="420"
+     rx="42"
+     ry="42"
+     fill="none"
+     stroke="#1e354d"
+     stroke-width="10"
+     id="rect1"
+     style="display:inline;stroke:none;fill:#1e354d;fill-opacity:1" />
+  <!-- Outer envelope outline -->
+  <!-- V-shaped sealing flap shaft stopping cleanly at the base of the arrowhead -->
+  <!-- Solid triangular arrowhead (no line crossing through it) -->
+  <!-- Line-art packet routing indicator nodes -->
+  <g
+     id="g6"
+     style="display:inline;stroke:#ffffff;stroke-opacity:1">
+    <rect
+       x="110"
+       y="88"
+       width="220"
+       height="146"
+       rx="20"
+       ry="20"
+       fill="none"
+       stroke="#1e354d"
+       stroke-width="9"
+       id="rect2"
+       style="stroke:#ffffff;stroke-opacity:1" />
+    <path
+       id="polyline2"
+       style="fill:none;stroke:#ffffff;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+       d="m 134,114 86,72 64,-54" />
+    <path
+       id="polyline2-3"
+       style="display:inline;fill:none;stroke:#ffffff;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+       d="m 284,132 v 22"
+       sodipodi:nodetypes="cc" />
+    <path
+       id="polyline2-3-6"
+       style="display:inline;fill:none;stroke:#ffffff;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+       d="M 284,132 H 262"
+       sodipodi:nodetypes="cc" />
+    <circle
+       cx="154"
+       cy="204"
+       r="6.5"
+       fill="none"
+       stroke="#1e354d"
+       stroke-width="4.5"
+       id="circle2"
+       style="stroke:#ffffff;stroke-opacity:1" />
+    <circle
+       cx="186"
+       cy="204"
+       r="4.5"
+       fill="none"
+       stroke="#1e354d"
+       stroke-width="4.5"
+       id="circle3"
+       style="stroke:#ffffff;stroke-opacity:1" />
+    <circle
+       cx="254"
+       cy="204"
+       r="4.5"
+       fill="none"
+       stroke="#1e354d"
+       stroke-width="4.5"
+       id="circle4"
+       style="stroke:#ffffff;stroke-opacity:1" />
+    <circle
+       cx="286"
+       cy="204"
+       r="8.5"
+       fill="none"
+       stroke="#1e354d"
+       stroke-width="4.5"
+       id="circle5"
+       style="stroke:#ffffff;stroke-opacity:1" />
+  </g>
+  <!-- Monospaced line-art text aligned to the exact 13-column ASCII grid -->
+  <text
+     xml:space="preserve"
+     id="text5"
+     style="font-size:64px;text-align:start;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect5);display:inline;fill:#ffffff;fill-opacity:1"
+     x="22.623047"
+     y="0"
+     transform="translate(-30.151367,-11.448396)"><tspan
+       x="153.32324"
+       y="337.11133"
+       id="tspan2"><tspan
+         style="font-weight:bold;font-family:'Liberation Mono';-inkscape-font-specification:'Liberation Mono Bold';text-align:center;text-anchor:middle"
+         id="tspan1">O Y K
+</tspan></tspan><tspan
+       x="114.91699"
+       y="417.61575"
+       id="tspan4"><tspan
+         style="font-weight:bold;font-family:'Liberation Mono';-inkscape-font-specification:'Liberation Mono Bold';text-align:center;text-anchor:middle"
+         id="tspan3">N O D E</tspan></tspan></text>
+</svg>

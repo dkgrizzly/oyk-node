@@ -4,8 +4,9 @@
 #ifndef OYK_WIN_RESOURCE_H
 #define OYK_WIN_RESOURCE_H
 
-/* Menu & Command IDs */
+/* Menu, Icon & Command IDs */
 #define IDR_MAINMENU        101
+#define IDI_OYK_NODE        102
 #define IDM_ALLOW_INCOMING  201
 #define IDM_DENY_INCOMING   202
 #define IDM_TERMINAL        203
@@ -266,6 +267,7 @@
 /* About Dialog */
 #define IDD_ABOUT           660
 #define IDC_ABOUT_TEXT      661
+#define IDC_ABOUT_LOGO      662
 
 /* Terminal Hotkey Help Dialog */
 #define IDD_TERM_HELP       670

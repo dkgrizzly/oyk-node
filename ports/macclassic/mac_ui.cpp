@@ -3,6 +3,7 @@
 
 #include "mac_ui.hpp"
 #include "mac_capture.hpp"
+#include "oyk_logo_data.hpp"
 #include "oyk_rig.hpp"
 
 #include <ctype.h>
@@ -1191,10 +1192,41 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_button(ui, lx + 306, by, 44, 20, "View",    0, MC_HIT_NONE, 0);
         mc_draw_button(ui, box.right - 68, by, 54, 20, "Close", 0, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_ABOUT) {
-        mc_draw_text(lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)");
-        mc_draw_text(lx, ty + 32, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT");
-        mc_draw_text(lx, ty + 50, "Platform: Classic Macintosh 68k & PowerPC Fat (System 6.0.8 - OS 9)");
-        mc_draw_text(lx, ty + 70, "Hotkeys: Cmd+, Settings | Cmd+T Term | 1..7 Tabs | Esc Close");
+        const int scale = ui->has_color ? 2 : 1;
+        const int logo_sz = 32 * scale;
+        const int lx_logo = lx;
+        const int ty_logo = ty + 8;
+        for (int py = 0; py < 32; ++py) {
+            for (int px = 0; px < 32; ++px) {
+                if (ui->has_color) {
+                    unsigned char pval = kOykLogoSolid32Pal[py * 32 + px];
+                    if (pval == 0U) continue;
+                    oyk_u32 col = (pval == 2U) ? 0xFFFFFFUL : ((pval == 3U) ? 0x0F1B28UL : 0x1E354DUL);
+                    Rect pr;
+                    SetRect(&pr,
+                            static_cast<short>(lx_logo + px * scale),
+                            static_cast<short>(ty_logo + py * scale),
+                            static_cast<short>(lx_logo + (px + 1) * scale),
+                            static_cast<short>(ty_logo + (py + 1) * scale));
+                    mc_fill_color(ui, &pr, col, &qd.black);
+                } else {
+                    unsigned char b = kOykLogoLine32Bits[py * 4 + (px >> 3)];
+                    if ((b & (0x80U >> (px & 7))) == 0U) continue;
+                    Rect pr;
+                    SetRect(&pr,
+                            static_cast<short>(lx_logo + px),
+                            static_cast<short>(ty_logo + py),
+                            static_cast<short>(lx_logo + px + 1),
+                            static_cast<short>(ty_logo + py + 1));
+                    mc_fill_color(ui, &pr, 0x000000UL, &qd.black);
+                }
+            }
+        }
+        const int tx = lx + logo_sz + 12;
+        mc_draw_text(tx, ty + 10, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)");
+        mc_draw_text(tx, ty + 28, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP");
+        mc_draw_text(tx, ty + 46, "Platform: Classic Mac 68k & PowerPC (System 6.0.8 - OS 9)");
+        mc_draw_text(tx, ty + 64, "Hotkeys: Cmd+, Settings | Cmd+T Term | 1..7 Tabs | Esc Close");
         mc_draw_button(ui, box.right - 92, by, 78, 20, "OK", 1, MC_HIT_CLOSE_MODAL, 0);
     } else {
         mc_draw_text(lx, ty + 14, "Radio CAT / Hamlib Rig Control");

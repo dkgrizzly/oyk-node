@@ -8,6 +8,8 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>OYK Node</string>
+    <key>CFBundleIconFile</key>
+    <string>OYKNode</string>
     <key>CFBundleIdentifier</key>
     <string>net.kr4oyk.oyk-node</string>
     <key>CFBundleInfoDictionaryVersion</key>

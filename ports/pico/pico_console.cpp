@@ -943,26 +943,8 @@ void PicoConsole::render_bootloader() {
 }
 
 void PicoConsole::render_about() {
-    char buf[128];
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 13, 64, &mr);
-    const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "About OYK Amateur Radio Packet Node", 1, 1);
-    draw_shadow(top, left, mr.h, mr.w);
-    sprintf(buf, "\033[%d;%dHOYK Amateur Radio Packet Node (OYK-Node)", top + 2, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHCopyright (C) 2026 KR4OYK - David Kuder", top + 3, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHLicense: GPL-3.0-or-later", top + 4, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHAX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", top + 6, left + 3);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHHotkeys: F10/M Menu | Tab/F9 Term | S Settings | ? About", top + 7, left + 3);
-    write_str(buf);
-    draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-60.60s \033[0m",
-            top + mr.h - 2, left + 1, sgr_menubar(), "Enter / Esc / Q: Close");
-    write_str(buf);
+    OykTuiBackend b = make_tui_backend();
+    oyk_tui_draw_about_modal(&b, term_rows_, term_cols_, "Platform: Raspberry Pi Pico (RP2040/RP2350)");
 }
 
 void PicoConsole::render_local_term() {

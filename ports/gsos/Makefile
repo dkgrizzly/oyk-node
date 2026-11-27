@@ -17,7 +17,7 @@ all: $(BUILD_DIR)/OYKNODE.SYS16 $(BUILD_DIR)/OYKTEST.SYS16
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/%.o: %.c gsos_core.h gsos_net.h gsos_ui.h gsos_capture.h | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.c gsos_core.h gsos_net.h gsos_ui.h gsos_capture.h gsos_logo_data.h | $(BUILD_DIR)
 	$(VC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/OYKNODE.SYS16: $(BUILD_DIR)/gsos_main.o $(COMMON_OBJS)

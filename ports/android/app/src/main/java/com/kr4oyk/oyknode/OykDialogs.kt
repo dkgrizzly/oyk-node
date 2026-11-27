@@ -4,6 +4,7 @@
 package com.kr4oyk.oyknode
 
 import android.content.res.Configuration
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -785,82 +787,6 @@ fun ExitDialog(
 }
 
 @Composable
-fun TerminalCard(
-    remoteLabel: String,
-    lines: List<String>,
-    inputText: String,
-    onSend: () -> Unit,
-    onBack: () -> Unit,
-    onOpenHelp: () -> Unit = {}
-) {
-    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Local Packet Terminal", style = MaterialTheme.typography.titleMedium)
-                    Text("Session: $remoteLabel", style = MaterialTheme.typography.labelSmall)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = onOpenHelp) { Text("Help") }
-                    TextButton(onClick = onBack) { Text("Console") }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                    .padding(10.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    lines.forEach { ln ->
-                        Text(
-                            ln,
-                            color = Color(0xFFE2E8F0),
-                            fontFamily = FontFamily.Monospace,
-                            softWrap = true,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    "Ctrl-A Z:Help  |  F2:Conn  F3:YAPP  F4:Disc  Ctrl-A E:EOL",
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = {},
-                    label = { Text("Command") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                Button(onClick = onSend, modifier = Modifier.align(Alignment.CenterVertically)) {
-                    Text("Send")
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun TerminalHelpCard(onDismiss: () -> Unit) {
     val entries = listOf(
         Triple("Ctrl-A Z", "Show hotkey help", "F1"),
@@ -907,7 +833,7 @@ fun TerminalHelpCard(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun FilePaneBox(
+fun FilePaneBox(
     title: String,
     entries: List<OykBbsDirEntryState>,
     selectedIdx: Int,
@@ -942,195 +868,41 @@ private fun FilePaneBox(
             Text("Size", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(2.dp))
-        if (entries.isEmpty()) {
-            Text("(empty)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(6.dp))
-        } else {
-            entries.forEachIndexed { idx, e ->
-                val isSel = active && idx == selectedIdx
-                val sz = when {
-                    e.isParent -> "<UP>"
-                    e.isDir -> "<DIR>"
-                    else -> "${e.sizeBytes} B"
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                        .clickable {
-                            onSelect(idx)
-                            if (e.isDir || e.isParent) onOpenDir(e.name)
-                        }
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(e.name, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                    Text(sz, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun FilesCard(
-    incomingFiles: List<Triple<String, String, String>> = emptyList(),
-    approvedFiles: List<Pair<String, String>> = emptyList(),
-    incomingRoot: File? = null,
-    filesRoot: File? = null,
-    onDismiss: () -> Unit
-) {
-    var incRel by remember { mutableStateOf("") }
-    var filesRel by remember { mutableStateOf("") }
-    var activePane by remember { mutableIntStateOf(0) }
-    var incSel by remember { mutableIntStateOf(0) }
-    var filesSel by remember { mutableIntStateOf(0) }
-    var refreshNonce by remember { mutableIntStateOf(0) }
-    var feedback by remember { mutableStateOf("Tap folder to navigate; panes are jailed to their root.") }
-
-    val incEntries: List<OykBbsDirEntryState> = remember(incomingRoot, incRel, refreshNonce, incomingFiles) {
-        if (incomingRoot != null) {
-            OykJailedFileBrowser.listDir(incomingRoot, incRel)?.second ?: emptyList()
-        } else {
-            incomingFiles.map { (u, n, _) -> OykBbsDirEntryState("$u / $n", 1024L, isDir = false) }
-        }
-    }
-    val filesEntries: List<OykBbsDirEntryState> = remember(filesRoot, filesRel, refreshNonce, approvedFiles) {
-        if (filesRoot != null) {
-            OykJailedFileBrowser.listDir(filesRoot, filesRel)?.second ?: emptyList()
-        } else {
-            approvedFiles.map { (rel, _) -> OykBbsDirEntryState(rel, 512L, isDir = false) }
-        }
-    }
-
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text("Manage BBS Files Area", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(4.dp))
-            Text(feedback, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-            Spacer(Modifier.height(8.dp))
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val useSideBySide = isLandscape || maxWidth >= 560.dp
-                if (useSideBySide) {
+        Column(modifier = Modifier.weight(1f, fill = true).fillMaxWidth().verticalScroll(rememberScrollState())) {
+            if (entries.isEmpty()) {
+                Text("(empty)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(6.dp))
+            } else {
+                entries.forEachIndexed { idx, e ->
+                    val isSel = active && idx == selectedIdx
+                    val sz = when {
+                        e.isParent -> "<UP>"
+                        e.isDir -> "<DIR>"
+                        else -> "${e.sizeBytes} B"
+                    }
                     Row(
-                        modifier = Modifier.fillMaxWidth().testTag("files_layout_row"),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                            .clickable {
+                                onSelect(idx)
+                                if (e.isDir || e.isParent) onOpenDir(e.name)
+                            }
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        FilePaneBox(
-                            title = "Incoming: /$incRel",
-                            entries = incEntries,
-                            selectedIdx = incSel,
-                            active = activePane == 0,
-                            onSelect = { activePane = 0; incSel = it },
-                            onOpenDir = { child ->
-                                incomingRoot?.let { r ->
-                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
-                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
-                                        .onFailure { feedback = it.message ?: "Blocked" }
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilePaneBox(
-                            title = "Files: /$filesRel",
-                            entries = filesEntries,
-                            selectedIdx = filesSel,
-                            active = activePane == 1,
-                            onSelect = { activePane = 1; filesSel = it },
-                            onOpenDir = { child ->
-                                filesRoot?.let { r ->
-                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
-                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
-                                        .onFailure { feedback = it.message ?: "Blocked" }
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().testTag("files_layout_column"),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilePaneBox(
-                            title = "Incoming: /$incRel",
-                            entries = incEntries,
-                            selectedIdx = incSel,
-                            active = activePane == 0,
-                            onSelect = { activePane = 0; incSel = it },
-                            onOpenDir = { child ->
-                                incomingRoot?.let { r ->
-                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
-                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
-                                        .onFailure { feedback = it.message ?: "Blocked" }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        FilePaneBox(
-                            title = "Files: /$filesRel",
-                            entries = filesEntries,
-                            selectedIdx = filesSel,
-                            active = activePane == 1,
-                            onSelect = { activePane = 1; filesSel = it },
-                            onOpenDir = { child ->
-                                filesRoot?.let { r ->
-                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
-                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
-                                        .onFailure { feedback = it.message ?: "Blocked" }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Text(e.name, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                        Text(sz, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                     }
                 }
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                OutlinedButton(onClick = { refreshNonce++ }) { Text("Upload") }
-                Button(onClick = {
-                    val e = incEntries.getOrNull(incSel)
-                    if (incomingRoot != null && filesRoot != null && e != null && !e.isDir) {
-                        val rel = if (incRel.isEmpty()) e.name else "$incRel/${e.name}"
-                        OykJailedFileBrowser.approveRelFile(incomingRoot, rel, filesRoot, filesRel)
-                            .onSuccess { refreshNonce++; feedback = "Approved ${e.name}" }
-                            .onFailure { feedback = it.message ?: "Error" }
-                    }
-                }) { Text("Approve") }
-                OutlinedButton(onClick = { refreshNonce++ }) { Text("Rename") }
-                OutlinedButton(onClick = {
-                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
-                    val curRel = if (activePane == 0) incRel else filesRel
-                    if (targetRoot != null) {
-                        OykJailedFileBrowser.mkdir(targetRoot, curRel, "new_dir")
-                            .onSuccess { refreshNonce++; feedback = "Created folder" }
-                    }
-                }) { Text("New Dir") }
-                OutlinedButton(onClick = {
-                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
-                    val curRel = if (activePane == 0) incRel else filesRel
-                    val e = (if (activePane == 0) incEntries else filesEntries).getOrNull(if (activePane == 0) incSel else filesSel)
-                    if (targetRoot != null && e != null && !e.isParent) {
-                        OykJailedFileBrowser.deleteEntry(targetRoot, curRel, e.name)
-                            .onSuccess { refreshNonce++; feedback = "Deleted ${e.name}" }
-                    }
-                }) { Text("Delete") }
-                OutlinedButton(onClick = { feedback = "Previewing selected file" }) { Text("View") }
-                Button(onClick = onDismiss) { Text("Close") }
             }
         }
     }
 }
 
 @Composable
-fun NodeMenuCard(
+fun NodeMenuDrawerContent(
     acceptIncoming: Boolean,
-    onAction: (String) -> Unit,
-    onDismiss: () -> Unit
+    onAction: (String) -> Unit
 ) {
     val entries = listOf(
         "Allow Incoming Connections",
@@ -1146,27 +918,27 @@ fun NodeMenuCard(
         "About OYK-Node...",
         "Exit"
     )
-    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                "Node Menu (${if (acceptIncoming) "INCOMING: ALLOW" else "INCOMING: DENY"})",
-                style = MaterialTheme.typography.titleLarge
-            )
-            Spacer(Modifier.height(8.dp))
-            entries.forEachIndexed { idx, label ->
-                if (idx == 2 || idx == 11) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                }
-                TextButton(
-                    onClick = { onAction(label) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(label, modifier = Modifier.fillMaxWidth())
-                }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(14.dp)
+    ) {
+        Text(
+            "Node Menu (${if (acceptIncoming) "IN: ALLOW" else "IN: DENY"})",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.height(8.dp))
+        entries.forEachIndexed { idx, label ->
+            if (idx == 2 || idx == 11) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             }
-            Spacer(Modifier.height(6.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                OutlinedButton(onClick = onDismiss) { Text("Close") }
+            TextButton(
+                onClick = { onAction(label) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(label, modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -1181,16 +953,29 @@ fun AboutCard(
     Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
             Text("About OYK Amateur Radio Packet Node", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            Text("Station: $callsign ($alias)", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "OYK Amateur Radio Packet Node (OYK-Node)\n" +
-                    "Copyright (C) 2026 KR4OYK - David Kuder\n" +
-                    "License: GPL-3.0-or-later\n" +
-                    "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Hamlib",
-                style = MaterialTheme.typography.bodyMedium
-            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_oyk_logo),
+                    contentDescription = "OYK Node Logo",
+                    modifier = Modifier.size(64.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Station: $callsign ($alias)", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "OYK Amateur Radio Packet Node (OYK-Node)\n" +
+                            "Copyright (C) 2026 KR4OYK - David Kuder\n" +
+                            "License: GPL-3.0-or-later\n" +
+                            "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Hamlib",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Button(onClick = onDismiss) { Text("OK") }

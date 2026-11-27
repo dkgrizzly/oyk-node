@@ -229,6 +229,7 @@ if(BUILD_WINDOWS_PORT)
                 DEPENDS
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_node.ico"
                 COMMENT "Compiling 64-bit Windows resources (oyk_win64.res)"
             )
             add_custom_command(
@@ -289,6 +290,7 @@ if(BUILD_WINDOWS_PORT)
                 DEPENDS
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_win.rc"
                     "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/resource.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/ports/windows/oyk_node.ico"
                 COMMENT "Compiling 32-bit Windows resources (oyk_win32.res)"
             )
             add_custom_command(

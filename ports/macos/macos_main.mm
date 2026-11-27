@@ -14,6 +14,7 @@
 
 #include "macos_engine_bridge.hpp"
 #include "oyk_gui.hpp"
+#include "oyk_logo_data.hpp"
 #include "oyk_term.hpp"
 
 #include <stdio.h>
@@ -431,6 +432,27 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
     delete snap;
 }
 
+static NSImage* oykCreateLogoImage(void) {
+    NSImage* named = [NSImage imageNamed:@"OYKNode"];
+    if (named) return named;
+    NSBitmapImageRep* rep = [[[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL
+                      pixelsWide:64
+                      pixelsHigh:64
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSCalibratedRGBColorSpace
+                     bytesPerRow:64 * 4
+                    bitsPerPixel:32] autorelease];
+    if (!rep) return nil;
+    memcpy([rep bitmapData], kOykLogoSolid64Rgba, sizeof(kOykLogoSolid64Rgba));
+    NSImage* img = [[[NSImage alloc] initWithSize:NSMakeSize(64, 64)] autorelease];
+    [img addRepresentation:rep];
+    return img;
+}
+
 - (NSWindow*)presentDialogScreen:(int)screenId bodyText:(NSString*)text height:(CGFloat)h {
     NSRect frame = NSMakeRect(160, 180, 660, h);
     NSWindow* w = [[NSWindow alloc]
@@ -441,8 +463,21 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
     [w setTitle:[NSString stringWithUTF8String:oyk_gui_screen_title(screenId)]];
     [w setBackgroundColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_BG])];
 
-    NSTextView* tv = [[[NSTextView alloc] initWithFrame:NSMakeRect(16, 48, 628, h - 68)] autorelease];
+    CGFloat tvLeft = 16.0;
+    if (screenId == OYK_SCR_ABOUT) {
+        NSImage* logo = oykCreateLogoImage();
+        if (logo) {
+            NSImageView* iv = [[[NSImageView alloc] initWithFrame:NSMakeRect(18, h - 84, 64, 64)] autorelease];
+            [iv setImage:logo];
+            [iv setImageScaling:NSImageScaleProportionallyUpOrDown];
+            [[w contentView] addSubview:iv];
+            tvLeft = 96.0;
+        }
+    }
+
+    NSTextView* tv = [[[NSTextView alloc] initWithFrame:NSMakeRect(tvLeft, 48, 644 - tvLeft, h - 68)] autorelease];
     [tv setEditable:NO];
+    [tv setAlignment:NSLeftTextAlignment];
     [tv setFont:[NSFont fontWithName:@"Monaco" size:11.0]];
     [tv setTextColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_FG])];
     [tv setBackgroundColor:oyk_color_from_u32(activeTheme_.colors[OYK_TR_BG])];
@@ -914,9 +949,10 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 - (void)focusConsole:(id)sender { (void)sender; [mainWindow_ makeKeyAndOrderFront:nil]; }
 - (void)showAbout:(id)sender {
     (void)sender;
-    NSRunAlertPanel(@"About OYK Packet Node",
-                    @"OYK Amateur Radio Packet Node (macOS AppKit)\nShared oyk_gui + oyk_term middleware",
-                    @"OK", nil, nil);
+    NSWindow* w = [self presentDialogScreen:OYK_SCR_ABOUT
+                                   bodyText:[self buildScreenText:OYK_SCR_ABOUT]
+                                     height:260.0];
+    (void)w;
 }
 - (void)showHotkeys:(id)sender {
     (void)sender;
@@ -988,6 +1024,8 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
     oyk_term_eol_init(&termEol_, OYK_TERM_EOL_AUTO, 1);
 
     [self buildMenuBar];
+    NSImage* appIcon = oykCreateLogoImage();
+    if (appIcon) [NSApp setApplicationIconImage:appIcon];
 
     NSRect frame = NSMakeRect(120, 120, 760, 520);
     mainWindow_ = [[NSWindow alloc]

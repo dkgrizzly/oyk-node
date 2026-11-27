@@ -2455,12 +2455,11 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
 
     /* 13. About OYK-Node modal */
     dos_render_mock_main_pal(v, g, p);
-    oyk_tui_center_modal(rows, cols, 13, 64, &mr);
+    oyk_tui_center_modal(rows, cols, 16, 72, &mr);
     dos_modal_frame(v, g, mr, "About OYK Amateur Radio Packet Node", bdr, fill);
-    dos_vid_puts(v, mr.top + 2, mr.left + 3, fill, "OYK Amateur Radio Packet Node (OYK-Node)", mr.w - 6);
-    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Copyright (C) 2026 KR4OYK - David Kuder", mr.w - 6);
-    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "License: GPL-3.0-or-later", mr.w - 6);
-    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", mr.w - 6);
+    oyk_tui_draw_about_body(&mtb, &mr,
+                            g ? "Platform: MS-DOS 386+ Graphical (VBE/VGA/EGA)"
+                              : "Platform: MS-DOS 80x25 Text Mode");
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
     {
         const OykTuiButton ab[1] = { { "Close", 1 } };

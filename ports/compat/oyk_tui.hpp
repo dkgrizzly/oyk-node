@@ -141,6 +141,10 @@ void oyk_tui_draw_dropdown_menu(const OykTuiBackend* b, const OykTuiRect* rect,
                                 const char* const* items, const int* item_rows, int item_count,
                                 const int* sep_rows, int sep_count, int sel_idx);
 void oyk_tui_draw_term_help_modal(const OykTuiBackend* b, int screen_rows, int screen_cols);
+void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykTuiRect* rect,
+                             const char* platform_line);
+void oyk_tui_draw_about_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                              const char* platform_line);
 
 struct OykGuiFileMgr;
 void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,

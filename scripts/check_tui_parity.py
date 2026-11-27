@@ -190,6 +190,9 @@ def check_flow(port: str, flow: str, lines: list, bg_grid, errors: list) -> None
     elif flow == "about":
         need("About OYK")
         need("GPL-3.0-or-later")
+        need(".-------------.", "ASCII logo top")
+        need("O Y K", "ASCII logo O Y K")
+        need("N O D E", "ASCII logo N O D E")
     elif flow == "edit_iface":
         need("Edit Interface")
         need("Same-Iface")

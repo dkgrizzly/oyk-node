@@ -7,6 +7,7 @@
 #include "oyk/protocol/yapp.hpp"
 #include "oyk_term.hpp"
 #include "oyk_gui.hpp"
+#include "oyk_logo_data.hpp"
 
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
@@ -4296,6 +4297,15 @@ bool confirm_and_exit(GtkAppState* st) {
     return false;
 }
 
+GdkPixbuf* create_oyk_pixbuf(const unsigned char* rgba, int w, int h) {
+    GdkPixbuf* src = gdk_pixbuf_new_from_data(
+        rgba, GDK_COLORSPACE_RGB, TRUE, 8, w, h, w * 4, nullptr, nullptr);
+    if (!src) return nullptr;
+    GdkPixbuf* copy = gdk_pixbuf_copy(src);
+    g_object_unref(src);
+    return copy;
+}
+
 void on_about_clicked(GtkWidget*, gpointer user_data) {
     auto* st = static_cast<GtkAppState*>(user_data);
     GtkWidget* dlg = gtk_dialog_new_with_buttons(
@@ -4304,9 +4314,21 @@ void on_about_clicked(GtkWidget*, gpointer user_data) {
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         GTK_STOCK_OK, GTK_RESPONSE_OK,
         static_cast<const char*>(nullptr));
+    GtkWidget* hbox = gtk_hbox_new(FALSE, 14);
+    gtk_container_set_border_width(GTK_CONTAINER(hbox), 16);
+    GdkPixbuf* pb64 = create_oyk_pixbuf(kOykLogoSolid64Rgba, 64, 64);
+    if (pb64) {
+        GtkWidget* align = gtk_alignment_new(0.0f, 0.0f, 0.0f, 0.0f);
+        GtkWidget* img = gtk_image_new_from_pixbuf(pb64);
+        g_object_unref(pb64);
+        gtk_container_add(GTK_CONTAINER(align), img);
+        gtk_box_pack_start(GTK_BOX(hbox), align, FALSE, FALSE, 0);
+    }
     GtkWidget* lbl = gtk_label_new(oyk_gui_about_summary());
-    gtk_misc_set_padding(GTK_MISC(lbl), 18, 14);
-    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
+    gtk_misc_set_alignment(GTK_MISC(lbl), 0.0f, 0.0f);
+    gtk_label_set_justify(GTK_LABEL(lbl), GTK_JUSTIFY_LEFT);
+    gtk_box_pack_start(GTK_BOX(hbox), lbl, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), hbox, TRUE, TRUE, 4);
     gtk_widget_show_all(dlg);
     GtkSimpleCapCtx cap_ctx{dlg, "about", GTK_RESPONSE_OK, 0};
     if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
@@ -4341,8 +4363,21 @@ bool Gtk2UI::run(int& argc, char**& argv) {
     st.engine = &engine_;
     st.stop_flag = external_stop_flag_;
 
+    GdkPixbuf* pb16 = create_oyk_pixbuf(kOykLogoSolid16Rgba, 16, 16);
+    GdkPixbuf* pb32 = create_oyk_pixbuf(kOykLogoSolid32Rgba, 32, 32);
+    GList* icon_list = nullptr;
+    if (pb16) icon_list = g_list_append(icon_list, pb16);
+    if (pb32) icon_list = g_list_append(icon_list, pb32);
+    if (icon_list) {
+        gtk_window_set_default_icon_list(icon_list);
+        g_list_free(icon_list);
+    }
+
     st.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(st.window), oyk_gui_screen_title(OYK_SCR_MAIN));
+    if (pb32) gtk_window_set_icon(GTK_WINDOW(st.window), pb32);
+    if (pb16) g_object_unref(pb16);
+    if (pb32) g_object_unref(pb32);
 
     int init_w = 920;
     int init_h = 640;

@@ -5,10 +5,16 @@ if(APPLE)
     option(OYK_MACOS_PORTABLE_CORE "Use C++98 OykPortableNode core (required for PowerPC / Mac OS X 10.4-10.6)" OFF)
     set(OYK_MACOS_MIN_VERSION "11.0" CACHE STRING "macOS deployment target")
 
+    set(OYK_MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/OYKNode.icns")
+    set_source_files_properties("${OYK_MACOS_ICON}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources
+    )
+
     add_executable(oyk-node-macos MACOSX_BUNDLE
         macos_main.mm
         macos_engine_bridge.cpp
         macos_engine_bridge.hpp
+        "${OYK_MACOS_ICON}"
         ../compat/oyk_portable.cpp
         ../compat/oyk_yapp.cpp
         ../compat/oyk_rig.cpp

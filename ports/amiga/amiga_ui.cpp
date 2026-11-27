@@ -3,6 +3,7 @@
 
 #include "amiga_ui.hpp"
 #include "amiga_capture.hpp"
+#include "oyk_logo_data.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1091,14 +1092,26 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_draw_button(ui, mx + mw - 76, by, 64, 15, "Close", 0);
         am_add_hit(ui, mx + mw - 76, by, 64, 15, 999);
     } else if (scr == OYK_SCR_ABOUT) {
-        am_draw_text(ui, lx, ty + 10, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
-        am_draw_text(ui, lx, ty + 24, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
-        am_draw_text(ui, lx, ty + 38, "Platform: Amiga Workbench (Intuition/GadTools + serial.device)",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
-        am_draw_text(ui, lx, ty + 54, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
+        const int px_h = (ui->scr_w >= 512 && ui->scr_h <= 300) ? 1 : 2;
+        for (int py = 0; py < 32; ++py) {
+            for (int px = 0; px < 32; ++px) {
+                unsigned char pval = kOykLogoSolid32Pal[py * 32 + px];
+                if (pval == 0U) continue;
+                int pen = (pval == 2U) ? ui->pen_shine
+                        : ((pval == 3U) ? ui->pen_fg : ui->pen_accent);
+                am_fill_rect(ui, lx + px * 2, ty + 6 + py * px_h, 2, px_h, pen);
+            }
+        }
+        const int tx = lx + 74;
+        const int tc = (bw > 74) ? ((bw - 74) / 8) : 16;
+        am_draw_text(ui, tx, ty + 8,  "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     ui->pen_fg, ui->pen_panel, tc);
+        am_draw_text(ui, tx, ty + 22, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / YAPP",
+                     ui->pen_fg, ui->pen_panel, tc);
+        am_draw_text(ui, tx, ty + 36, "Platform: Amiga Workbench (Intuition + serial.device)",
+                     ui->pen_fg, ui->pen_panel, tc);
+        am_draw_text(ui, tx, ty + 52, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     ui->pen_fg, ui->pen_panel, tc);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "OK", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else {

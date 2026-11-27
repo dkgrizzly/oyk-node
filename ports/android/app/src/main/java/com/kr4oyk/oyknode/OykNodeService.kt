@@ -106,7 +106,7 @@ class OykNodeService : Service() {
         return builder
             .setContentTitle(getString(R.string.service_notification_title))
             .setContentText("AXUDP / USB PPP Packet Node")
-            .setSmallIcon(android.R.drawable.sym_def_app_icon)
+            .setSmallIcon(R.drawable.ic_oyk_notif)
             .setOngoing(true)
             .build()
     }

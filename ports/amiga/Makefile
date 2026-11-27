@@ -23,7 +23,10 @@ COMMON_SRCS := amiga_policy.cpp amiga_net.cpp amiga_capture.cpp amiga_ui.cpp $(C
 
 .PHONY: all clean
 
-all: $(BUILD_DIR)/OYKNode $(BUILD_DIR)/OYKTest
+all: $(BUILD_DIR)/OYKNode $(BUILD_DIR)/OYKNode.info $(BUILD_DIR)/OYKTest
+
+$(BUILD_DIR)/OYKNode.info: OYKNode.info | $(BUILD_DIR)
+	cp $< $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

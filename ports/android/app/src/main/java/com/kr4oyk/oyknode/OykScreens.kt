@@ -3,10 +3,18 @@
 
 package com.kr4oyk.oyknode
 
+import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -15,9 +23,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.io.File
 
 @Composable
 fun OnboardingPermissionScreen(
@@ -83,6 +97,9 @@ fun ConsoleScreen(
     usbStatus: String,
     nodeRunning: Boolean,
     acceptIncoming: Boolean,
+    menuOpen: Boolean = false,
+    onToggleMenu: () -> Unit = {},
+    onMenuAction: (String) -> Unit = {},
     onToggleIncoming: () -> Unit,
     onOpenSettings: (SettingsTab) -> Unit,
     onOpenTerminate: () -> Unit,
@@ -91,16 +108,47 @@ fun ConsoleScreen(
     onOpenExit: () -> Unit,
     onQuickUsbConnect: () -> Unit
 ) {
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    IconButton(
+                        onClick = onToggleMenu,
+                        modifier = Modifier.testTag("node_menu_toggle")
+                    ) {
+                        Icon(Icons.Default.Menu, contentDescription = "Node Menu")
+                    }
+                },
                 title = {
-                    Column {
-                        Text("${cfg.callsign} (${cfg.alias})", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Conn: ${sessions.size} | IN: ${if (acceptIncoming) "ALLOW" else "DENY"} | USB: $usbStatus",
-                            style = MaterialTheme.typography.labelSmall
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_oyk_logo),
+                            contentDescription = "OYK Logo",
+                            modifier = Modifier.size(28.dp)
                         )
+                        Column {
+                            Text(
+                                "${cfg.callsign} (${cfg.alias})",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (isLandscape) {
+                                    "Conn: ${sessions.size} | IN: ${if (acceptIncoming) "ALLOW" else "DENY"} | USB: $usbStatus"
+                                } else {
+                                    "Conn: ${sessions.size} | IN: ${if (acceptIncoming) "ALLOW" else "DENY"}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -110,123 +158,476 @@ fun ConsoleScreen(
                             contentDescription = "Toggle Incoming"
                         )
                     }
-                    IconButton(onClick = onOpenTheme) {
-                        Icon(Icons.Default.Palette, contentDescription = "Theme")
+                    if (isLandscape) {
+                        IconButton(onClick = onOpenTheme) {
+                            Icon(Icons.Default.Palette, contentDescription = "Theme")
+                        }
                     }
                     IconButton(onClick = { onOpenSettings(SettingsTab.NODE) }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
-                    IconButton(onClick = onOpenExit) {
-                        Icon(Icons.Default.PowerSettingsNew, contentDescription = "Exit")
+                    if (isLandscape) {
+                        IconButton(onClick = onOpenExit) {
+                            Icon(Icons.Default.PowerSettingsNew, contentDescription = "Exit")
+                        }
                     }
                 }
             )
         }
     ) { pad ->
-        LazyColumn(
+        Box(modifier = Modifier.fillMaxSize().padding(pad)) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val twoCol = isLandscape || maxWidth >= 600.dp
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                        .testTag(if (twoCol) "console_layout_landscape" else "console_layout_portrait"),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AssistChip(
+                                onClick = onOpenTerminate,
+                                label = { Text("Terminate") },
+                                leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) }
+                            )
+                            AssistChip(
+                                onClick = onOpenBan,
+                                label = { Text("Ban (${bans.size})") },
+                                leadingIcon = { Icon(Icons.Default.Block, contentDescription = null) }
+                            )
+                            AssistChip(
+                                onClick = onQuickUsbConnect,
+                                label = { Text("USB PPP") },
+                                leadingIcon = { Icon(Icons.Default.Usb, contentDescription = null) }
+                            )
+                        }
+                    }
+
+                    if (twoCol) {
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                InterfacesConsoleCard(cfg, modifier = Modifier.weight(1f))
+                                MheardConsoleCard(newHeard, modifier = Modifier.weight(1f))
+                            }
+                        }
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ActiveConnectionsConsoleCard(sessions, nodeRunning, modifier = Modifier.weight(1f))
+                                EventLogConsoleCard(cfg, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    } else {
+                        item { InterfacesConsoleCard(cfg, modifier = Modifier.fillMaxWidth()) }
+                        item { MheardConsoleCard(newHeard, modifier = Modifier.fillMaxWidth()) }
+                        item { ActiveConnectionsConsoleCard(sessions, nodeRunning, modifier = Modifier.fillMaxWidth()) }
+                        item { EventLogConsoleCard(cfg, modifier = Modifier.fillMaxWidth()) }
+                    }
+                }
+            }
+
+            if (menuOpen) {
+                BackHandler(enabled = true) { onToggleMenu() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.50f))
+                        .clickable(onClick = onToggleMenu)
+                        .testTag("node_menu_scrim")
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp,
+                    modifier = Modifier
+                        .width(280.dp)
+                        .fillMaxHeight()
+                        .align(Alignment.CenterStart)
+                        .testTag("node_menu_drawer")
+                ) {
+                    NodeMenuDrawerContent(
+                        acceptIncoming = acceptIncoming,
+                        onAction = onMenuAction
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InterfacesConsoleCard(cfg: NodeConfigState, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Interfaces (${cfg.interfaces.size})", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            cfg.interfaces.forEach { ic ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("${ic.id} (${ic.type})", fontFamily = FontFamily.Monospace)
+                    Text("C:${ic.activeConnections} ${ic.status}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MheardConsoleCard(newHeard: List<HeardStationState>, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Last 5 New Callsigns Heard (MHEARD)", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            if (newHeard.isEmpty()) {
+                Text("No stations heard yet.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                newHeard.take(5).forEachIndexed { idx, h ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("${idx + 1}. ${h.callsign} (${h.ifaceId})", fontFamily = FontFamily.Monospace)
+                        Text(h.heardHms, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveConnectionsConsoleCard(
+    sessions: List<SessionState>,
+    nodeRunning: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Card(modifier = modifier) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Active Connections (${sessions.size}) | Node: ${if (nodeRunning) "RUNNING" else "STOPPED"}",
+                style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            if (sessions.isEmpty()) {
+                Text("No active connections.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                sessions.forEach { s ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("#${s.id} ${s.callsign} (${s.ifaceId})", fontWeight = FontWeight.Medium)
+                        Text("${s.sinceHms} ${s.role}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EventLogConsoleCard(cfg: NodeConfigState, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Status & Event Log", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text("[INFO] Active theme: ${cfg.themeName}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            Text("[INFO] Config storage: internal filesDir/oyk/node.cfg", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            Text("[INFO] Listening AXUDP on 0.0.0.0:10093", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TerminalScreen(
+    remoteLabel: String,
+    lines: List<String>,
+    inputText: String,
+    onInputChange: (String) -> Unit = {},
+    onSend: () -> Unit,
+    onOpenHelp: () -> Unit = {},
+    onBack: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        modifier = Modifier.fillMaxSize().testTag("terminal_fullscreen"),
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Console")
+                    }
+                },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_oyk_logo),
+                            contentDescription = "OYK Logo",
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text("Local Packet Terminal", style = MaterialTheme.typography.titleMedium)
+                            Text("Session: $remoteLabel", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                },
+                actions = {
+                    TextButton(onClick = onOpenHelp) { Text("Help") }
+                }
+            )
+        }
+    ) { pad ->
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(pad)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(12.dp)
         ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    AssistChip(
-                        onClick = onOpenTerminate,
-                        label = { Text("Terminate") },
-                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) }
-                    )
-                    AssistChip(
-                        onClick = onOpenBan,
-                        label = { Text("Ban (${bans.size})") },
-                        leadingIcon = { Icon(Icons.Default.Block, contentDescription = null) }
-                    )
-                    AssistChip(
-                        onClick = onQuickUsbConnect,
-                        label = { Text("USB PPP") },
-                        leadingIcon = { Icon(Icons.Default.Usb, contentDescription = null) }
-                    )
-                }
-            }
-
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Interfaces (${cfg.interfaces.size})", style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(6.dp))
-                        cfg.interfaces.forEach { ic ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("${ic.id} (${ic.type})", fontFamily = FontFamily.Monospace)
-                                Text("C:${ic.activeConnections} ${ic.status}", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
+                    lines.forEach { ln ->
+                        Text(
+                            ln,
+                            color = Color(0xFFE2E8F0),
+                            fontFamily = FontFamily.Monospace,
+                            softWrap = true,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Ctrl-A Z:Help  |  F2:Conn  F3:YAPP  F4:Disc  Ctrl-A E:EOL",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = onInputChange,
+                    label = { Text("Command") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = onSend, modifier = Modifier.align(Alignment.CenterVertically)) {
+                    Text("Send")
+                }
+            }
+        }
+    }
+}
 
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Last 5 New Callsigns Heard (MHEARD)", style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(6.dp))
-                        if (newHeard.isEmpty()) {
-                            Text("No stations heard yet.", style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            newHeard.take(5).forEachIndexed { idx, h ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("${idx + 1}. ${h.callsign} (${h.ifaceId})",
-                                        fontFamily = FontFamily.Monospace)
-                                    Text(h.heardHms, style = MaterialTheme.typography.bodySmall)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FilesScreen(
+    incomingFiles: List<Triple<String, String, String>> = emptyList(),
+    approvedFiles: List<Pair<String, String>> = emptyList(),
+    incomingRoot: File? = null,
+    filesRoot: File? = null,
+    onBack: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+    var incRel by remember { mutableStateOf("") }
+    var filesRel by remember { mutableStateOf("") }
+    var activePane by remember { mutableIntStateOf(0) }
+    var incSel by remember { mutableIntStateOf(0) }
+    var filesSel by remember { mutableIntStateOf(0) }
+    var refreshNonce by remember { mutableIntStateOf(0) }
+    var feedback by remember { mutableStateOf("Tap folder to navigate; panes are jailed to their root.") }
+
+    val incEntries: List<OykBbsDirEntryState> = remember(incomingRoot, incRel, refreshNonce, incomingFiles) {
+        if (incomingRoot != null) {
+            OykJailedFileBrowser.listDir(incomingRoot, incRel)?.second ?: emptyList()
+        } else {
+            incomingFiles.map { (u, n, _) -> OykBbsDirEntryState("$u / $n", 1024L, isDir = false) }
+        }
+    }
+    val filesEntries: List<OykBbsDirEntryState> = remember(filesRoot, filesRel, refreshNonce, approvedFiles) {
+        if (filesRoot != null) {
+            OykJailedFileBrowser.listDir(filesRoot, filesRel)?.second ?: emptyList()
+        } else {
+            approvedFiles.map { (rel, _) -> OykBbsDirEntryState(rel, 512L, isDir = false) }
+        }
+    }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize().testTag("files_fullscreen"),
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Console")
+                    }
+                },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_oyk_logo),
+                            contentDescription = "OYK Logo",
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text("Manage BBS Files Area", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            )
+        }
+    ) { pad ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(pad)
+                .padding(12.dp)
+        ) {
+            Text(feedback, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.height(8.dp))
+            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val useSideBySide = isLandscape || maxWidth >= 560.dp
+                if (useSideBySide) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().testTag("files_layout_row"),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilePaneBox(
+                            title = "Incoming: /$incRel",
+                            entries = incEntries,
+                            selectedIdx = incSel,
+                            active = activePane == 0,
+                            onSelect = { activePane = 0; incSel = it },
+                            onOpenDir = { child ->
+                                incomingRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
+                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Active Connections (${sessions.size}) | Node: ${if (nodeRunning) "RUNNING" else "STOPPED"}",
-                            style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(6.dp))
-                        if (sessions.isEmpty()) {
-                            Text("No active connections.", style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            sessions.forEach { s ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("#${s.id} ${s.callsign} (${s.ifaceId})", fontWeight = FontWeight.Medium)
-                                    Text("${s.sinceHms} ${s.role}", style = MaterialTheme.typography.bodySmall)
+                            },
+                            modifier = Modifier.weight(1f).fillMaxHeight().testTag("files_pane_incoming")
+                        )
+                        FilePaneBox(
+                            title = "Files: /$filesRel",
+                            entries = filesEntries,
+                            selectedIdx = filesSel,
+                            active = activePane == 1,
+                            onSelect = { activePane = 1; filesSel = it },
+                            onOpenDir = { child ->
+                                filesRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
+                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
                                 }
-                            }
-                        }
+                            },
+                            modifier = Modifier.weight(1f).fillMaxHeight().testTag("files_pane_approved")
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize().testTag("files_layout_column"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilePaneBox(
+                            title = "Incoming: /$incRel",
+                            entries = incEntries,
+                            selectedIdx = incSel,
+                            active = activePane == 0,
+                            onSelect = { activePane = 0; incSel = it },
+                            onOpenDir = { child ->
+                                incomingRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, incRel, child)
+                                        .onSuccess { incRel = it; incSel = 0; feedback = "Incoming: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("files_pane_incoming")
+                        )
+                        FilePaneBox(
+                            title = "Files: /$filesRel",
+                            entries = filesEntries,
+                            selectedIdx = filesSel,
+                            active = activePane == 1,
+                            onSelect = { activePane = 1; filesSel = it },
+                            onOpenDir = { child ->
+                                filesRoot?.let { r ->
+                                    OykJailedFileBrowser.enterSubdir(r, filesRel, child)
+                                        .onSuccess { filesRel = it; filesSel = 0; feedback = "Files: /$it" }
+                                        .onFailure { feedback = it.message ?: "Blocked" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("files_pane_approved")
+                        )
                     }
                 }
             }
-
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Status & Event Log", style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(4.dp))
-                        Text("[INFO] Active theme: ${cfg.themeName}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                        Text("[INFO] Config storage: internal filesDir/oyk/node.cfg", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                        Text("[INFO] Listening AXUDP on 0.0.0.0:10093", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedButton(onClick = { refreshNonce++ }) { Text("Upload") }
+                Button(onClick = {
+                    val e = incEntries.getOrNull(incSel)
+                    if (incomingRoot != null && filesRoot != null && e != null && !e.isDir) {
+                        val rel = if (incRel.isEmpty()) e.name else "$incRel/${e.name}"
+                        OykJailedFileBrowser.approveRelFile(incomingRoot, rel, filesRoot, filesRel)
+                            .onSuccess { refreshNonce++; feedback = "Approved ${e.name}" }
+                            .onFailure { feedback = it.message ?: "Error" }
                     }
-                }
+                }) { Text("Approve") }
+                OutlinedButton(onClick = { refreshNonce++ }) { Text("Rename") }
+                OutlinedButton(onClick = {
+                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
+                    val curRel = if (activePane == 0) incRel else filesRel
+                    if (targetRoot != null) {
+                        OykJailedFileBrowser.mkdir(targetRoot, curRel, "new_dir")
+                            .onSuccess { refreshNonce++; feedback = "Created folder" }
+                    }
+                }) { Text("New Dir") }
+                OutlinedButton(onClick = {
+                    val targetRoot = if (activePane == 0) incomingRoot else filesRoot
+                    val curRel = if (activePane == 0) incRel else filesRel
+                    val e = (if (activePane == 0) incEntries else filesEntries).getOrNull(if (activePane == 0) incSel else filesSel)
+                    if (targetRoot != null && e != null && !e.isParent) {
+                        OykJailedFileBrowser.deleteEntry(targetRoot, curRel, e.name)
+                            .onSuccess { refreshNonce++; feedback = "Deleted ${e.name}" }
+                    }
+                }) { Text("Delete") }
+                OutlinedButton(onClick = { feedback = "Previewing selected file" }) { Text("View") }
             }
         }
     }

@@ -14,8 +14,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -31,7 +40,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             var cfg by remember { mutableStateOf(repo.loadInternal()) }
             var showOnboarding by remember { mutableStateOf(!repo.isOnboardingShown) }
-            var inSettings by remember { mutableStateOf(false) }
+            var activeScreen by remember { mutableStateOf("console") }
+            var menuOpen by remember { mutableStateOf(false) }
             var settingsTab by remember { mutableStateOf(SettingsTab.NODE) }
             var showAddIface by remember { mutableStateOf(false) }
             var editingIface by remember { mutableStateOf<InterfaceConfigState?>(null) }
@@ -39,6 +49,17 @@ class MainActivity : ComponentActivity() {
             var showTerminate by remember { mutableStateOf(false) }
             var showBan by remember { mutableStateOf(false) }
             var showTheme by remember { mutableStateOf(false) }
+            var showAbout by remember { mutableStateOf(false) }
+            var showTermHelp by remember { mutableStateOf(false) }
+            var termInput by remember { mutableStateOf("") }
+            var termLines by remember {
+                mutableStateOf(
+                    listOf(
+                        "*** Local Packet Terminal (YAPP / YAPP-C ready)",
+                        "*** Tap Help or press Ctrl-A Z for hotkeys."
+                    )
+                )
+            }
             var previewTheme by remember { mutableStateOf<Pair<String, List<ThemeConfigState>>?>(null) }
             var showExit by remember { mutableStateOf(false) }
             var acceptIncoming by remember { mutableStateOf(true) }
@@ -172,7 +193,7 @@ class MainActivity : ComponentActivity() {
                             showOnboarding = false
                         }
                     )
-                    inSettings -> SettingsScreen(
+                    activeScreen == "settings" -> SettingsScreen(
                         cfg = cfg,
                         initialTab = settingsTab,
                         storagePermissionState = permState,
@@ -196,8 +217,32 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         onEditPeer = { editingPeer = it },
-                        onBack = { inSettings = false }
+                        onBack = { activeScreen = "console" }
                     )
+                    activeScreen == "terminal" -> TerminalScreen(
+                        remoteLabel = "${cfg.callsign} (${cfg.alias})",
+                        lines = termLines,
+                        inputText = termInput,
+                        onInputChange = { termInput = it },
+                        onSend = {
+                            if (termInput.isNotEmpty()) {
+                                termLines = termLines + "> $termInput"
+                                termInput = ""
+                            }
+                        },
+                        onOpenHelp = { showTermHelp = true },
+                        onBack = { activeScreen = "console" }
+                    )
+                    activeScreen == "files" -> {
+                        val baseOykDir = File(filesDir, "oyk")
+                        val incDir = File(baseOykDir, "incoming").apply { mkdirs() }
+                        val bbsDir = File(baseOykDir, "files").apply { mkdirs() }
+                        FilesScreen(
+                            incomingRoot = incDir,
+                            filesRoot = bbsDir,
+                            onBack = { activeScreen = "console" }
+                        )
+                    }
                     else -> ConsoleScreen(
                         cfg = cfg,
                         sessions = sessions,
@@ -206,10 +251,29 @@ class MainActivity : ComponentActivity() {
                         usbStatus = usbStatus,
                         nodeRunning = OykNodeService.running,
                         acceptIncoming = acceptIncoming,
+                        menuOpen = menuOpen,
+                        onToggleMenu = { menuOpen = !menuOpen },
+                        onMenuAction = { label ->
+                            menuOpen = false
+                            when (label) {
+                                "Allow Incoming Connections" -> acceptIncoming = true
+                                "Deny Incoming Connections" -> acceptIncoming = false
+                                "Local Terminal..." -> activeScreen = "terminal"
+                                "Manage Files Area..." -> activeScreen = "files"
+                                "Radio Control..." -> { settingsTab = SettingsTab.RIG; activeScreen = "settings" }
+                                "Settings..." -> { settingsTab = SettingsTab.NODE; activeScreen = "settings" }
+                                "Peers..." -> { settingsTab = SettingsTab.PEERS; activeScreen = "settings" }
+                                "Theme..." -> showTheme = true
+                                "Terminate Connection..." -> showTerminate = true
+                                "Ban / Unban Callsign..." -> showBan = true
+                                "About OYK-Node..." -> showAbout = true
+                                "Exit" -> showExit = true
+                            }
+                        },
                         onToggleIncoming = { acceptIncoming = !acceptIncoming },
                         onOpenSettings = { t ->
                             settingsTab = t
-                            inSettings = true
+                            activeScreen = "settings"
                         },
                         onOpenTerminate = { showTerminate = true },
                         onOpenBan = { showBan = true },
@@ -325,9 +389,23 @@ class MainActivity : ComponentActivity() {
                         onReviewPeers = {
                             showExit = false
                             settingsTab = SettingsTab.PEERS
-                            inSettings = true
+                            activeScreen = "settings"
                         }
                     )
+                }
+                if (showTermHelp) {
+                    Dialog(onDismissRequest = { showTermHelp = false }) {
+                        TerminalHelpCard(onDismiss = { showTermHelp = false })
+                    }
+                }
+                if (showAbout) {
+                    Dialog(onDismissRequest = { showAbout = false }) {
+                        AboutCard(
+                            callsign = cfg.callsign,
+                            alias = cfg.alias,
+                            onDismiss = { showAbout = false }
+                        )
+                    }
                 }
             }
         }

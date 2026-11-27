@@ -24,9 +24,12 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -59,17 +62,29 @@ class OykUiGalleryTest {
         BanEntryState("B4NTST", hardBan = false, appealAllowed = true, liftAt = "permanent", reason = "Banned by sysop.")
     )
 
-    private fun captureComposableToPng(name: String, content: @Composable () -> Unit) {
-        val widthPx = 1080
-        val heightPx = 2280
+    private fun captureComposableToPng(
+        name: String,
+        landscape: Boolean = false,
+        content: @Composable () -> Unit
+    ) {
+        val widthPx = if (landscape) 2280 else 1080
+        val heightPx = if (landscape) 1080 else 2280
         val controller = Robolectric.buildActivity(ComponentActivity::class.java).setup()
         val activity = controller.get()
         try {
             val view = ComposeView(activity)
             view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
             view.setContent {
-                OykAndroidTheme(cfg = sampleCfg) {
-                    content()
+                val baseCfg = LocalConfiguration.current
+                val effCfg = Configuration(baseCfg).apply {
+                    orientation = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
+                    screenWidthDp = if (landscape) 891 else 411
+                    screenHeightDp = if (landscape) 411 else 891
+                }
+                CompositionLocalProvider(LocalConfiguration provides effCfg) {
+                    OykAndroidTheme(cfg = sampleCfg) {
+                        content()
+                    }
                 }
             }
             activity.setContentView(view)
@@ -226,9 +241,25 @@ class OykUiGalleryTest {
             )
         }
         captureComposableToPng("menu") {
-            ModalOverlayFrame {
-                NodeMenuCard(acceptIncoming = true, onAction = {}, onDismiss = {})
-            }
+            ConsoleScreen(
+                cfg = sampleCfg,
+                sessions = sampleSessions,
+                newHeard = sampleNewHeard,
+                bans = sampleBans,
+                usbStatus = "USB PPP ready",
+                nodeRunning = true,
+                acceptIncoming = true,
+                menuOpen = true,
+                onToggleMenu = {},
+                onMenuAction = {},
+                onToggleIncoming = {},
+                onOpenSettings = {},
+                onOpenTerminate = {},
+                onOpenBan = {},
+                onOpenTheme = {},
+                onOpenExit = {},
+                onQuickUsbConnect = {}
+            )
         }
         fun captureSettingsTab(flow: String, tab: SettingsTab, perm: StoragePermissionState, hint: String) {
             captureComposableToPng(flow) {
@@ -309,28 +340,42 @@ class OykUiGalleryTest {
                 ThemeSettingsCard(cfg = sampleCfg, systemDark = true, onDismiss = {}, onSave = { _, _ -> })
             }
         }
+        val termSampleLines = listOf(
+            "*** Local Packet Terminal (YAPP ready)",
+            "*** Connected to KR4OYK-1 BBS",
+            "Welcome to KR4OYK-1 Packet BBS (OYKNOD)",
+            "KR4OYK-1> LIST",
+            "Msg#  Size  From     Subject",
+            "1     248   W3TRM-1  Welcome to OYK Node",
+            "KR4OYK-1> "
+        )
         captureComposableToPng("terminal") {
-            ModalOverlayFrame {
-                TerminalCard(
+            TerminalScreen(
+                remoteLabel = "KR4OYK-1 BBS (LOCAL)",
+                lines = termSampleLines,
+                inputText = "R 1",
+                onSend = {},
+                onBack = {}
+            )
+        }
+        captureComposableToPng("terminal_help") {
+            Box(modifier = Modifier.fillMaxSize()) {
+                TerminalScreen(
                     remoteLabel = "KR4OYK-1 BBS (LOCAL)",
-                    lines = listOf(
-                        "*** Local Packet Terminal (YAPP ready)",
-                        "*** Connected to KR4OYK-1 BBS",
-                        "Welcome to KR4OYK-1 Packet BBS (OYKNOD)",
-                        "KR4OYK-1> LIST",
-                        "Msg#  Size  From     Subject",
-                        "1     248   W3TRM-1  Welcome to OYK Node",
-                        "KR4OYK-1> "
-                    ),
+                    lines = termSampleLines,
                     inputText = "R 1",
                     onSend = {},
                     onBack = {}
                 )
-            }
-        }
-        captureComposableToPng("terminal_help") {
-            ModalOverlayFrame {
-                TerminalHelpCard(onDismiss = {})
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.58f))
+                        .padding(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TerminalHelpCard(onDismiss = {})
+                }
             }
         }
         val tmpRoot = File(System.getProperty("java.io.tmpdir") ?: "/tmp", "oyk_android_fm_gallery")
@@ -340,18 +385,50 @@ class OykUiGalleryTest {
         File(filesDir, "bulletins").apply { mkdirs(); File(this, "welcome.txt").writeText("Welcome\n") }
         File(filesDir, "readme.txt").writeText("Readme\n")
         captureComposableToPng("files") {
-            ModalOverlayFrame {
-                FilesCard(
-                    incomingRoot = incDir,
-                    filesRoot = filesDir,
-                    onDismiss = {}
-                )
-            }
+            FilesScreen(
+                incomingRoot = incDir,
+                filesRoot = filesDir,
+                onBack = {}
+            )
         }
         captureComposableToPng("about") {
             ModalOverlayFrame {
                 AboutCard(callsign = sampleCfg.callsign, alias = sampleCfg.alias, onDismiss = {})
             }
+        }
+        captureComposableToPng("main_landscape", landscape = true) {
+            ConsoleScreen(
+                cfg = sampleCfg,
+                sessions = sampleSessions,
+                newHeard = sampleNewHeard,
+                bans = sampleBans,
+                usbStatus = "USB PPP ready",
+                nodeRunning = true,
+                acceptIncoming = true,
+                onToggleIncoming = {},
+                onOpenSettings = {},
+                onOpenTerminate = {},
+                onOpenBan = {},
+                onOpenTheme = {},
+                onOpenExit = {},
+                onQuickUsbConnect = {}
+            )
+        }
+        captureComposableToPng("terminal_landscape", landscape = true) {
+            TerminalScreen(
+                remoteLabel = "KR4OYK-1 BBS (LOCAL)",
+                lines = termSampleLines,
+                inputText = "R 1",
+                onSend = {},
+                onBack = {}
+            )
+        }
+        captureComposableToPng("files_landscape", landscape = true) {
+            FilesScreen(
+                incomingRoot = incDir,
+                filesRoot = filesDir,
+                onBack = {}
+            )
         }
     }
 
@@ -362,20 +439,86 @@ class OykUiGalleryTest {
             val baseCfg = LocalConfiguration.current
             val effCfg = Configuration(baseCfg).apply {
                 orientation = if (isLand.value) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
+                screenWidthDp = if (isLand.value) 891 else 411
+                screenHeightDp = if (isLand.value) 411 else 891
             }
             CompositionLocalProvider(LocalConfiguration provides effCfg) {
                 OykAndroidTheme(cfg = sampleCfg) {
-                    FilesCard(
+                    FilesScreen(
                         incomingFiles = listOf(Triple("W3TRM-1", "fieldday.txt", "1.4 KB")),
                         approvedFiles = listOf(Pair("bulletins/welcome.txt", "420 B")),
-                        onDismiss = {}
+                        onBack = {}
                     )
                 }
             }
         }
+        composeRule.onNodeWithTag("files_fullscreen").assertIsDisplayed()
         composeRule.onNodeWithTag("files_layout_column").assertIsDisplayed()
+        val p1 = composeRule.onNodeWithTag("files_pane_incoming").fetchSemanticsNode().size
+        val p2 = composeRule.onNodeWithTag("files_pane_approved").fetchSemanticsNode().size
+        assertTrue("Portrait pane heights should match (${p1.height} vs ${p2.height})",
+                   kotlin.math.abs(p1.height - p2.height) <= 2)
+
         isLand.value = true
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("files_layout_row").assertIsDisplayed()
+        val l1 = composeRule.onNodeWithTag("files_pane_incoming").fetchSemanticsNode().size
+        val l2 = composeRule.onNodeWithTag("files_pane_approved").fetchSemanticsNode().size
+        assertTrue("Landscape pane widths should match (${l1.width} vs ${l2.width})",
+                   kotlin.math.abs(l1.width - l2.width) <= 2)
+        assertTrue("Landscape pane heights should match (${l1.height} vs ${l2.height})",
+                   kotlin.math.abs(l1.height - l2.height) <= 2)
+    }
+
+    @Test
+    fun nodeMenuDrawerTogglesAndHasNoCloseOrOkButtons() {
+        val openState = mutableStateOf(false)
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                ConsoleScreen(
+                    cfg = sampleCfg,
+                    sessions = sampleSessions,
+                    newHeard = sampleNewHeard,
+                    bans = sampleBans,
+                    usbStatus = "USB PPP ready",
+                    nodeRunning = true,
+                    acceptIncoming = true,
+                    menuOpen = openState.value,
+                    onToggleMenu = { openState.value = !openState.value },
+                    onToggleIncoming = {},
+                    onOpenSettings = {},
+                    onOpenTerminate = {},
+                    onOpenBan = {},
+                    onOpenTheme = {},
+                    onOpenExit = {},
+                    onQuickUsbConnect = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("node_menu_toggle").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("node_menu_drawer").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Close").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("OK").fetchSemanticsNodes().size)
+
+        composeRule.onNodeWithTag("node_menu_toggle").performClick()
+        composeRule.waitForIdle()
+        assertTrue(!openState.value)
+    }
+
+    @Test
+    fun terminalScreenRendersFullScreenView() {
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                TerminalScreen(
+                    remoteLabel = "KR4OYK-1 BBS",
+                    lines = listOf("*** Connected"),
+                    inputText = "",
+                    onSend = {},
+                    onBack = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("terminal_fullscreen").assertIsDisplayed()
     }
 }

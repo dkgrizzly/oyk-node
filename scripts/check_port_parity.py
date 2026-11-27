@@ -53,6 +53,12 @@ GALLERY_SUFFIXES = (
     "about",
 )
 
+ANDROID_EXTRA_SUFFIXES = (
+    "main_landscape",
+    "terminal_landscape",
+    "files_landscape",
+)
+
 RETRO_GUI_FILES = (
     "ports/macclassic/mac_ui.cpp",
     "ports/gsos/gsos_ui.c",
@@ -76,7 +82,8 @@ def check_gallery_completeness(errors):
         stale_sheet = os.path.join(img_dir, f"{prefix}_contact_sheet.png")
         if os.path.exists(stale_sheet):
             errors.append(f"Stale composite contact sheet still present: {os.path.relpath(stale_sheet, ROOT)}")
-        for suffix in GALLERY_SUFFIXES:
+        suffixes = GALLERY_SUFFIXES + (ANDROID_EXTRA_SUFFIXES if prefix == "android" else ())
+        for suffix in suffixes:
             path = os.path.join(img_dir, f"{prefix}_{suffix}.png")
             if not os.path.isfile(path) or os.path.getsize(path) == 0:
                 errors.append(f"Missing or empty UI gallery image: {os.path.relpath(path, ROOT)}")
@@ -119,6 +126,20 @@ def check_retro_gui_parity(errors):
 
 
 def check_native_and_android_parity(errors):
+    for req_asset in (
+        "ports/compat/oyk_logo_data.hpp",
+        "ports/gsos/gsos_logo_data.h",
+        "ports/windows/oyk_node.ico",
+        "ports/macos/OYKNode.icns",
+        "ports/amiga/OYKNode.info",
+        "ports/macclassic/oyk_mac_icons.r",
+        "ports/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+        "ports/android/app/src/main/res/drawable/ic_oyk_logo.png",
+        "ports/android/app/src/main/res/drawable/ic_oyk_notif.png",
+    ):
+        if not os.path.isfile(os.path.join(ROOT, req_asset)):
+            errors.append(f"Missing generated brand logo/icon asset: {req_asset}")
+
     gtk_src = read_text("src/ui/gtk2_ui.cpp")
     if "gtk_check_button_new" not in gtk_src or "gtk_combo_box_new" not in gtk_src:
         errors.append("src/ui/gtk2_ui.cpp: missing native GTK check/combo controls")
@@ -126,12 +147,17 @@ def check_native_and_android_parity(errors):
         errors.append("src/ui/gtk2_ui.cpp: missing dual-pane GtkHPaned File Manager")
     if "Ctrl-A Z:Help" not in gtk_src and "oyk_term_hotkey_bar_text" not in gtk_src:
         errors.append("src/ui/gtk2_ui.cpp: missing Ctrl-A Z:Help terminal status bar")
+    if "gtk_window_set_icon" not in gtk_src:
+        errors.append("src/ui/gtk2_ui.cpp: missing GTK app/titlebar icon setup")
 
+    win_src = read_text("ports/windows/win_main.cpp")
     win_rc = read_text("ports/windows/oyk_win.rc")
     if "AUTOCHECKBOX" not in win_rc or "COMBOBOX" not in win_rc:
         errors.append("ports/windows/oyk_win.rc: missing native Win32 check/combo controls")
     if "IDD_TERM_HELP" not in win_rc:
         errors.append("ports/windows/oyk_win.rc: missing IDD_TERM_HELP modal")
+    if "IDI_OYK_NODE" not in win_rc or "WM_SETICON" not in win_src:
+        errors.append("ports/windows: missing native IDI_OYK_NODE / WM_SETICON icon wiring")
 
     android_screens = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykScreens.kt"
@@ -139,14 +165,18 @@ def check_native_and_android_parity(errors):
     android_dialogs = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykDialogs.kt"
     )
+    android_combined = android_screens + "\n" + android_dialogs
     if "Last 5 New Callsigns Heard" not in android_screens:
         errors.append("Android OykScreens.kt: missing 'Last 5 New Callsigns Heard' card")
     if "Checkbox(" not in android_screens:
         errors.append("Android OykScreens.kt: missing Material Checkbox controls")
-    if "ORIENTATION_LANDSCAPE" not in android_dialogs or "BoxWithConstraints" not in android_dialogs:
-        errors.append("Android OykDialogs.kt: missing portrait/landscape adaptive File Manager layout")
-    if "Ctrl-A Z:Help" not in android_dialogs:
-        errors.append("Android OykDialogs.kt: missing 'Ctrl-A Z:Help' terminal hotkey bar")
+    if "ORIENTATION_LANDSCAPE" not in android_combined or "BoxWithConstraints" not in android_combined:
+        errors.append("Android UI: missing portrait/landscape adaptive File Manager layout")
+    if "Ctrl-A Z:Help" not in android_combined:
+        errors.append("Android UI: missing 'Ctrl-A Z:Help' terminal hotkey bar")
+    for req_tok in ("node_menu_drawer", "node_menu_toggle", "terminal_fullscreen", "files_fullscreen", "ic_oyk_logo"):
+        if req_tok not in android_combined:
+            errors.append(f"Android UI: missing required mobile/brand token '{req_tok}'")
 
     android_tests = read_text(
         "ports/android/app/src/test/java/com/kr4oyk/oyknode/OykUiGalleryTest.kt"
