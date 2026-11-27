@@ -7,7 +7,7 @@ A modular Amateur Radio AX.25 Packet Node written in C++ with native local opera
 
 ## Supported Platforms & Ports
 
-See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○` / `—` across all **15 build targets**) and [UI Gallery](docs/user/ui-gallery.md) for side-by-side screenshots.
+See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○` / `—` across all **15 build targets**) and [UI Gallery](docs/user/ui-gallery.md) for side-by-side screenshots. Retro UNIX and OpenVMS ports share the strict-C89 core under [ports/sysv/](ports/sysv/README.md).
 
 | Category | Target / Port | UI / Hardware Stack | Documentation |
 | --- | --- | --- | --- |

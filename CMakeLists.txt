@@ -877,6 +877,36 @@ if(BUILD_TESTS AND NOT WIN32)
         )
     endif()
 
+    # Strict ANSI C89 host verification of shared System V core, TUI, and net layer
+    add_executable(oyk_sysv_tests
+        tests/test_sysv.cpp
+        ports/sysv/sysv_core.c
+        ports/sysv/sysv_tui.c
+        ports/sysv/sysv_net.c
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
+    )
+    target_include_directories(oyk_sysv_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/sysv
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+    )
+    set_target_properties(oyk_sysv_tests PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_sysv_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_sysv_tests)
+    add_test(NAME oyk_sysv_tests COMMAND oyk_sysv_tests)
+
     # Seeded mutation fuzz harness across AX.25, KISS, config, banlist, YAPP, terminal, and PPP parsers
     add_executable(oyk_fuzz_tests
         tests/test_fuzz.cpp

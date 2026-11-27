@@ -311,6 +311,45 @@ def write_oyk_logo_headers(ascii_lines, solid16, solid32, solid64, line16, line3
     with open(os.path.join(ROOT, "ports", "gsos", "gsos_logo_data.h"), "w", encoding="utf-8") as f:
         f.write("\n".join(gsos_h))
 
+    sysv_h = [
+        "/* SPDX-License-Identifier: GPL-3.0-or-later */",
+        "/* Copyright (C) 2026 KR4OYK - David Kuder */",
+        "/* Auto-generated from assets/ by scripts/generate_icons.py. */",
+        "",
+        "#ifndef OYK_SYSV_LOGO_DATA_H",
+        "#define OYK_SYSV_LOGO_DATA_H",
+        "",
+        "#if defined(__GNUC__) || defined(__clang__)",
+        "#define OYK_LOGO_UNUSED __attribute__((unused))",
+        "#else",
+        "#define OYK_LOGO_UNUSED",
+        "#endif",
+        "",
+        f"#define OYK_SYSV_LOGO_ASCII_ROWS {len(ascii_lines)}",
+        f"#define OYK_SYSV_LOGO_ASCII_COLS {max(len(x) for x in ascii_lines)}",
+        "",
+        f"OYK_LOGO_UNUSED static const char * const kOykSysvLogoAscii[{len(ascii_lines)}] = {{",
+        ",\n".join(esc_lines),
+        "};",
+        "",
+        format_c_byte_array("kOykSysvLogoSolid32Pal", pal32, 32),
+        "",
+        format_c_byte_array("kOykSysvLogoLine16Bits", l16_bits),
+        "",
+        format_c_byte_array("kOykSysvLogoLine16Mask", l16_mask),
+        "",
+        format_c_byte_array("kOykSysvLogoLine32Bits", l32_bits),
+        "",
+        format_c_byte_array("kOykSysvLogoLine32Mask", l32_mask),
+        "",
+        "#endif /* OYK_SYSV_LOGO_DATA_H */",
+        "",
+    ]
+    sysv_dir = os.path.join(ROOT, "ports", "sysv")
+    os.makedirs(sysv_dir, exist_ok=True)
+    with open(os.path.join(sysv_dir, "sysv_logo_data.h"), "w", encoding="utf-8") as f:
+        f.write("\n".join(sysv_h))
+
     return l16_bits, l16_mask, l32_bits, l32_mask, pal32
 
 
