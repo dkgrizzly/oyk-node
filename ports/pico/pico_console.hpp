@@ -28,7 +28,8 @@ enum PicoConsoleView {
     PICO_VIEW_RIG,
     PICO_VIEW_PSRAM,
     PICO_VIEW_STORAGE,
-    PICO_VIEW_BOOTLOADER
+    PICO_VIEW_BOOTLOADER,
+    PICO_VIEW_ABOUT
 };
 
 enum PicoPromptKind {
@@ -96,6 +97,7 @@ private:
     void render_storage();
     void render_psram();
     void render_bootloader();
+    void render_about();
     void render_local_term();
     void render_local_term_help_modal();
     void render_wizard_modal();

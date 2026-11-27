@@ -3,761 +3,220 @@
 
 # OYK-Node UI Gallery
 
-Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
-
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, **Amiga Workbench**, and **Atari ST/TT GEM**.
-
-## Port Contact Sheets
-
-### POSIX ncurses
-
-![POSIX ncurses — Contact Sheet](images/ui-gallery/ncurses_contact_sheet.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — Contact Sheet](images/ui-gallery/dos_contact_sheet.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — Contact Sheet](images/ui-gallery/dos_gfx_contact_sheet.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — Contact Sheet](images/ui-gallery/tinytmux_contact_sheet.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — Contact Sheet](images/ui-gallery/pico_contact_sheet.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — Contact Sheet](images/ui-gallery/gtk_contact_sheet.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — Contact Sheet](images/ui-gallery/win_contact_sheet.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — Contact Sheet](images/ui-gallery/android_contact_sheet.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — Contact Sheet](images/ui-gallery/macclassic_bw_contact_sheet.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — Contact Sheet](images/ui-gallery/macclassic_color_contact_sheet.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — Contact Sheet](images/ui-gallery/gsos_contact_sheet.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — Contact Sheet](images/ui-gallery/amiga_contact_sheet.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — Contact Sheet](images/ui-gallery/atarist_mono_contact_sheet.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — Contact Sheet](images/ui-gallery/atarist_color_contact_sheet.png)
-
-## 1. Operator Console (Main View)
-
-### POSIX ncurses
-
-![POSIX ncurses — 1. Operator Console (Main View)](images/ui-gallery/ncurses_main.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 1. Operator Console (Main View)](images/ui-gallery/dos_main.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 1. Operator Console (Main View)](images/ui-gallery/dos_gfx_main.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 1. Operator Console (Main View)](images/ui-gallery/tinytmux_main.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 1. Operator Console (Main View)](images/ui-gallery/pico_main.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 1. Operator Console (Main View)](images/ui-gallery/gtk_main.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 1. Operator Console (Main View)](images/ui-gallery/win_main.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 1. Operator Console (Main View)](images/ui-gallery/android_main.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 1. Operator Console (Main View)](images/ui-gallery/macclassic_bw_main.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 1. Operator Console (Main View)](images/ui-gallery/macclassic_color_main.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 1. Operator Console (Main View)](images/ui-gallery/gsos_main.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 1. Operator Console (Main View)](images/ui-gallery/amiga_main.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 1. Operator Console (Main View)](images/ui-gallery/atarist_mono_main.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 1. Operator Console (Main View)](images/ui-gallery/atarist_color_main.png)
-
-## 2. Settings — Node Tab
-
-### POSIX ncurses
-
-![POSIX ncurses — 2. Settings — Node Tab](images/ui-gallery/ncurses_settings.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 2. Settings — Node Tab](images/ui-gallery/dos_settings.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 2. Settings — Node Tab](images/ui-gallery/dos_gfx_settings.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 2. Settings — Node Tab](images/ui-gallery/tinytmux_settings.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 2. Settings — Node Tab](images/ui-gallery/pico_settings.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 2. Settings — Node Tab](images/ui-gallery/gtk_settings.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 2. Settings — Node Tab](images/ui-gallery/win_settings.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 2. Settings — Node Tab](images/ui-gallery/android_settings.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 2. Settings — Node Tab](images/ui-gallery/macclassic_bw_settings.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 2. Settings — Node Tab](images/ui-gallery/macclassic_color_settings.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 2. Settings — Node Tab](images/ui-gallery/gsos_settings.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 2. Settings — Node Tab](images/ui-gallery/amiga_settings.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 2. Settings — Node Tab](images/ui-gallery/atarist_mono_settings.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 2. Settings — Node Tab](images/ui-gallery/atarist_color_settings.png)
-
-## 3. Add Interface Wizard
-
-### POSIX ncurses
-
-![POSIX ncurses — 3. Add Interface Wizard](images/ui-gallery/ncurses_add_iface.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 3. Add Interface Wizard](images/ui-gallery/dos_add_iface.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 3. Add Interface Wizard](images/ui-gallery/dos_gfx_add_iface.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 3. Add Interface Wizard](images/ui-gallery/tinytmux_add_iface.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 3. Add Interface Wizard](images/ui-gallery/pico_add_iface.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 3. Add Interface Wizard](images/ui-gallery/gtk_add_iface.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 3. Add Interface Wizard](images/ui-gallery/win_add_iface.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 3. Add Interface Wizard](images/ui-gallery/android_add_iface.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 3. Add Interface Wizard](images/ui-gallery/macclassic_bw_add_iface.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 3. Add Interface Wizard](images/ui-gallery/macclassic_color_add_iface.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 3. Add Interface Wizard](images/ui-gallery/gsos_add_iface.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 3. Add Interface Wizard](images/ui-gallery/amiga_add_iface.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 3. Add Interface Wizard](images/ui-gallery/atarist_mono_add_iface.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 3. Add Interface Wizard](images/ui-gallery/atarist_color_add_iface.png)
-
-## 4. Edit Interface (Single-View Dialog)
-
-### POSIX ncurses
-
-![POSIX ncurses — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/ncurses_edit_iface.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/dos_edit_iface.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/dos_gfx_edit_iface.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/tinytmux_edit_iface.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/pico_edit_iface.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/gtk_edit_iface.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/win_edit_iface.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/android_edit_iface.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/macclassic_bw_edit_iface.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/macclassic_color_edit_iface.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/gsos_edit_iface.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/amiga_edit_iface.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/atarist_mono_edit_iface.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/atarist_color_edit_iface.png)
-
-## 5. Settings — Peers Tab
-
-### POSIX ncurses
-
-![POSIX ncurses — 5. Settings — Peers Tab](images/ui-gallery/ncurses_peers.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 5. Settings — Peers Tab](images/ui-gallery/dos_peers.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 5. Settings — Peers Tab](images/ui-gallery/dos_gfx_peers.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 5. Settings — Peers Tab](images/ui-gallery/tinytmux_peers.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 5. Settings — Peers Tab](images/ui-gallery/pico_peers.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 5. Settings — Peers Tab](images/ui-gallery/gtk_peers.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 5. Settings — Peers Tab](images/ui-gallery/win_peers.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 5. Settings — Peers Tab](images/ui-gallery/android_peers.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 5. Settings — Peers Tab](images/ui-gallery/macclassic_bw_peers.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 5. Settings — Peers Tab](images/ui-gallery/macclassic_color_peers.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 5. Settings — Peers Tab](images/ui-gallery/gsos_peers.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 5. Settings — Peers Tab](images/ui-gallery/amiga_peers.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 5. Settings — Peers Tab](images/ui-gallery/atarist_mono_peers.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 5. Settings — Peers Tab](images/ui-gallery/atarist_color_peers.png)
-
-## 6. Edit / Add Peer Dialog
-
-### POSIX ncurses
-
-![POSIX ncurses — 6. Edit / Add Peer Dialog](images/ui-gallery/ncurses_edit_peer.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 6. Edit / Add Peer Dialog](images/ui-gallery/dos_edit_peer.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 6. Edit / Add Peer Dialog](images/ui-gallery/dos_gfx_edit_peer.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 6. Edit / Add Peer Dialog](images/ui-gallery/tinytmux_edit_peer.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 6. Edit / Add Peer Dialog](images/ui-gallery/pico_edit_peer.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 6. Edit / Add Peer Dialog](images/ui-gallery/gtk_edit_peer.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 6. Edit / Add Peer Dialog](images/ui-gallery/win_edit_peer.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 6. Edit / Add Peer Dialog](images/ui-gallery/android_edit_peer.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 6. Edit / Add Peer Dialog](images/ui-gallery/macclassic_bw_edit_peer.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 6. Edit / Add Peer Dialog](images/ui-gallery/macclassic_color_edit_peer.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 6. Edit / Add Peer Dialog](images/ui-gallery/gsos_edit_peer.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 6. Edit / Add Peer Dialog](images/ui-gallery/amiga_edit_peer.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 6. Edit / Add Peer Dialog](images/ui-gallery/atarist_mono_edit_peer.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 6. Edit / Add Peer Dialog](images/ui-gallery/atarist_color_edit_peer.png)
-
-## 7. Terminate Connection Modal
-
-### POSIX ncurses
-
-![POSIX ncurses — 7. Terminate Connection Modal](images/ui-gallery/ncurses_terminate.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 7. Terminate Connection Modal](images/ui-gallery/dos_terminate.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 7. Terminate Connection Modal](images/ui-gallery/dos_gfx_terminate.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 7. Terminate Connection Modal](images/ui-gallery/tinytmux_terminate.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 7. Terminate Connection Modal](images/ui-gallery/pico_terminate.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 7. Terminate Connection Modal](images/ui-gallery/gtk_terminate.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 7. Terminate Connection Modal](images/ui-gallery/win_terminate.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 7. Terminate Connection Modal](images/ui-gallery/android_terminate.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 7. Terminate Connection Modal](images/ui-gallery/macclassic_bw_terminate.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 7. Terminate Connection Modal](images/ui-gallery/macclassic_color_terminate.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 7. Terminate Connection Modal](images/ui-gallery/gsos_terminate.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 7. Terminate Connection Modal](images/ui-gallery/amiga_terminate.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 7. Terminate Connection Modal](images/ui-gallery/atarist_mono_terminate.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 7. Terminate Connection Modal](images/ui-gallery/atarist_color_terminate.png)
-
-## 8. Ban / Unban Callsign Dialog
-
-### POSIX ncurses
-
-![POSIX ncurses — 8. Ban / Unban Callsign Dialog](images/ui-gallery/ncurses_ban.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/dos_ban.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/dos_gfx_ban.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/tinytmux_ban.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/pico_ban.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 8. Ban / Unban Callsign Dialog](images/ui-gallery/gtk_ban.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/win_ban.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/android_ban.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/macclassic_bw_ban.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/macclassic_color_ban.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/gsos_ban.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/amiga_ban.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/atarist_mono_ban.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/atarist_color_ban.png)
-
-## 9. Auto-Learned Peers Exit / Bootloader Prompt
-
-### POSIX ncurses
-
-![POSIX ncurses — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/ncurses_exit.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/dos_exit.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/dos_gfx_exit.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/tinytmux_exit.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/pico_exit.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/gtk_exit.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/win_exit.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/android_exit.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/macclassic_bw_exit.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/macclassic_color_exit.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/gsos_exit.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/amiga_exit.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/atarist_mono_exit.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/atarist_color_exit.png)
-
-## 10. Theme Settings Dialog
-
-### POSIX ncurses
-
-![POSIX ncurses — 10. Theme Settings Dialog](images/ui-gallery/ncurses_theme.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 10. Theme Settings Dialog](images/ui-gallery/dos_theme.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 10. Theme Settings Dialog](images/ui-gallery/dos_gfx_theme.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 10. Theme Settings Dialog](images/ui-gallery/tinytmux_theme.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 10. Theme Settings Dialog](images/ui-gallery/pico_theme.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 10. Theme Settings Dialog](images/ui-gallery/gtk_theme.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 10. Theme Settings Dialog](images/ui-gallery/win_theme.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 10. Theme Settings Dialog](images/ui-gallery/android_theme.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 10. Theme Settings Dialog](images/ui-gallery/macclassic_bw_theme.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 10. Theme Settings Dialog](images/ui-gallery/macclassic_color_theme.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 10. Theme Settings Dialog](images/ui-gallery/gsos_theme.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 10. Theme Settings Dialog](images/ui-gallery/amiga_theme.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 10. Theme Settings Dialog](images/ui-gallery/atarist_mono_theme.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 10. Theme Settings Dialog](images/ui-gallery/atarist_color_theme.png)
-
-## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
-
-### POSIX ncurses
-
-![POSIX ncurses — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/ncurses_terminal.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/dos_terminal.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/dos_gfx_terminal.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/tinytmux_terminal.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/pico_terminal.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/gtk_terminal.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/win_terminal.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/android_terminal.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/macclassic_bw_terminal.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/macclassic_color_terminal.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/gsos_terminal.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/amiga_terminal.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/atarist_mono_terminal.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/atarist_color_terminal.png)
-
-## 12. File Manager / Pending & Approved BBS Files
-
-### POSIX ncurses
-
-![POSIX ncurses — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/ncurses_files.png)
-
-### MS-DOS (80x25 Text)
-
-![MS-DOS (80x25 Text) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/dos_files.png)
-
-### MS-DOS 386+ Graphical (VBE/VGA/EGA)
-
-![MS-DOS 386+ Graphical (VBE/VGA/EGA) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/dos_gfx_files.png)
-
-### Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
-
-![Teensy 4.1 / TinyTMUX (VT340/xterm-256color) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/tinytmux_files.png)
-
-### Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
-
-![Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/pico_files.png)
-
-### X11 GTK+ 2.0
-
-![X11 GTK+ 2.0 — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/gtk_files.png)
-
-### Windows GUI (Wine / Win32/64)
-
-![Windows GUI (Wine / Win32/64) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/win_files.png)
-
-### Android (Material 3 / Jetpack Compose)
-
-![Android (Material 3 / Jetpack Compose) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/android_files.png)
-
-### Classic Macintosh (System 6.0.8 B&W 512x342)
-
-![Classic Macintosh (System 6.0.8 B&W 512x342) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/macclassic_bw_files.png)
-
-### Classic Macintosh (Color QuickDraw 640x480)
-
-![Classic Macintosh (Color QuickDraw 640x480) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/macclassic_color_files.png)
-
-### Apple IIGS GS/OS (QuickDraw II 640x200)
-
-![Apple IIGS GS/OS (QuickDraw II 640x200) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/gsos_files.png)
-
-### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
-
-![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/amiga_files.png)
-
-### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
-
-![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/atarist_mono_files.png)
-
-### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
-
-![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/atarist_color_files.png)
+Automated native-resolution screenshots and per-port thumbnail contact sheets generated across all 22 canonical operator screens (`./scripts/generate_ui_gallery.sh`).
+
+Click any thumbnail in the port tables below to open the full-resolution native PNG capture.
+
+## Table of Contents
+
+- [POSIX ncurses](#ncurses)
+- [MS-DOS (80x25 Text)](#dos)
+- [MS-DOS 386+ Graphical (VBE/VGA/EGA)](#dos_gfx)
+- [Teensy 4.1 / TinyTMUX (VT340/xterm-256color)](#tinytmux)
+- [Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)](#pico)
+- [ESP32-C6 (M5Stack Unit C6L VT340/xterm-256color)](#esp32c6)
+- [X11 GTK+ 2.0](#gtk)
+- [Windows GUI (Wine / Win32/64)](#win)
+- [Android (Material 3 / Jetpack Compose)](#android)
+- [Classic Macintosh (System 6.0.8 B&W 512x342)](#macclassic_bw)
+- [Classic Macintosh (Color QuickDraw 640x480)](#macclassic_color)
+- [Apple IIGS GS/OS (QuickDraw II 640x200)](#gsos)
+- [Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)](#amiga)
+- [Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)](#atarist_mono)
+- [Atari TT / VDI GEM (640x480 16-Color + EmuTOS)](#atarist_color)
+
+<a id="ncurses"></a>
+
+## POSIX ncurses
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/ncurses_main.png)](images/ui-gallery/ncurses_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/ncurses_menu.png)](images/ui-gallery/ncurses_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/ncurses_settings.png)](images/ui-gallery/ncurses_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/ncurses_settings_bbs.png)](images/ui-gallery/ncurses_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/ncurses_settings_chat.png)](images/ui-gallery/ncurses_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/ncurses_settings_ifaces.png)](images/ui-gallery/ncurses_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/ncurses_peers.png)](images/ui-gallery/ncurses_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/ncurses_settings_rig.png)](images/ui-gallery/ncurses_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/ncurses_settings_printer.png)](images/ui-gallery/ncurses_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/ncurses_add_iface_1.png)](images/ui-gallery/ncurses_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/ncurses_add_iface_2.png)](images/ui-gallery/ncurses_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/ncurses_add_iface_3.png)](images/ui-gallery/ncurses_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/ncurses_add_iface_4.png)](images/ui-gallery/ncurses_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/ncurses_edit_iface.png)](images/ui-gallery/ncurses_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/ncurses_edit_peer.png)](images/ui-gallery/ncurses_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/ncurses_terminate.png)](images/ui-gallery/ncurses_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/ncurses_ban.png)](images/ui-gallery/ncurses_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/ncurses_exit.png)](images/ui-gallery/ncurses_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/ncurses_theme.png)](images/ui-gallery/ncurses_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/ncurses_terminal.png)](images/ui-gallery/ncurses_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/ncurses_files.png)](images/ui-gallery/ncurses_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/ncurses_about.png)](images/ui-gallery/ncurses_about.png)<br>**22. About** |  |  |
+
+<a id="dos"></a>
+
+## MS-DOS (80x25 Text)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/dos_main.png)](images/ui-gallery/dos_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/dos_menu.png)](images/ui-gallery/dos_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/dos_settings.png)](images/ui-gallery/dos_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/dos_settings_bbs.png)](images/ui-gallery/dos_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/dos_settings_chat.png)](images/ui-gallery/dos_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/dos_settings_ifaces.png)](images/ui-gallery/dos_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/dos_peers.png)](images/ui-gallery/dos_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/dos_settings_rig.png)](images/ui-gallery/dos_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/dos_settings_printer.png)](images/ui-gallery/dos_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/dos_add_iface_1.png)](images/ui-gallery/dos_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/dos_add_iface_2.png)](images/ui-gallery/dos_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/dos_add_iface_3.png)](images/ui-gallery/dos_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/dos_add_iface_4.png)](images/ui-gallery/dos_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/dos_edit_iface.png)](images/ui-gallery/dos_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/dos_edit_peer.png)](images/ui-gallery/dos_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/dos_terminate.png)](images/ui-gallery/dos_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/dos_ban.png)](images/ui-gallery/dos_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/dos_exit.png)](images/ui-gallery/dos_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/dos_theme.png)](images/ui-gallery/dos_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/dos_terminal.png)](images/ui-gallery/dos_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/dos_files.png)](images/ui-gallery/dos_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/dos_about.png)](images/ui-gallery/dos_about.png)<br>**22. About** |  |  |
+
+<a id="dos_gfx"></a>
+
+## MS-DOS 386+ Graphical (VBE/VGA/EGA)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/dos_gfx_main.png)](images/ui-gallery/dos_gfx_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/dos_gfx_menu.png)](images/ui-gallery/dos_gfx_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/dos_gfx_settings.png)](images/ui-gallery/dos_gfx_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/dos_gfx_settings_bbs.png)](images/ui-gallery/dos_gfx_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/dos_gfx_settings_chat.png)](images/ui-gallery/dos_gfx_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/dos_gfx_settings_ifaces.png)](images/ui-gallery/dos_gfx_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/dos_gfx_peers.png)](images/ui-gallery/dos_gfx_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/dos_gfx_settings_rig.png)](images/ui-gallery/dos_gfx_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/dos_gfx_settings_printer.png)](images/ui-gallery/dos_gfx_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/dos_gfx_add_iface_1.png)](images/ui-gallery/dos_gfx_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/dos_gfx_add_iface_2.png)](images/ui-gallery/dos_gfx_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/dos_gfx_add_iface_3.png)](images/ui-gallery/dos_gfx_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/dos_gfx_add_iface_4.png)](images/ui-gallery/dos_gfx_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/dos_gfx_edit_iface.png)](images/ui-gallery/dos_gfx_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/dos_gfx_edit_peer.png)](images/ui-gallery/dos_gfx_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/dos_gfx_terminate.png)](images/ui-gallery/dos_gfx_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/dos_gfx_ban.png)](images/ui-gallery/dos_gfx_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/dos_gfx_exit.png)](images/ui-gallery/dos_gfx_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/dos_gfx_theme.png)](images/ui-gallery/dos_gfx_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/dos_gfx_terminal.png)](images/ui-gallery/dos_gfx_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/dos_gfx_files.png)](images/ui-gallery/dos_gfx_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/dos_gfx_about.png)](images/ui-gallery/dos_gfx_about.png)<br>**22. About** |  |  |
+
+<a id="tinytmux"></a>
+
+## Teensy 4.1 / TinyTMUX (VT340/xterm-256color)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/tinytmux_main.png)](images/ui-gallery/tinytmux_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/tinytmux_menu.png)](images/ui-gallery/tinytmux_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/tinytmux_settings.png)](images/ui-gallery/tinytmux_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/tinytmux_settings_bbs.png)](images/ui-gallery/tinytmux_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/tinytmux_settings_chat.png)](images/ui-gallery/tinytmux_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/tinytmux_settings_ifaces.png)](images/ui-gallery/tinytmux_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/tinytmux_peers.png)](images/ui-gallery/tinytmux_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/tinytmux_settings_rig.png)](images/ui-gallery/tinytmux_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/tinytmux_settings_printer.png)](images/ui-gallery/tinytmux_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/tinytmux_add_iface_1.png)](images/ui-gallery/tinytmux_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/tinytmux_add_iface_2.png)](images/ui-gallery/tinytmux_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/tinytmux_add_iface_3.png)](images/ui-gallery/tinytmux_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/tinytmux_add_iface_4.png)](images/ui-gallery/tinytmux_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/tinytmux_edit_iface.png)](images/ui-gallery/tinytmux_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/tinytmux_edit_peer.png)](images/ui-gallery/tinytmux_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/tinytmux_terminate.png)](images/ui-gallery/tinytmux_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/tinytmux_ban.png)](images/ui-gallery/tinytmux_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/tinytmux_exit.png)](images/ui-gallery/tinytmux_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/tinytmux_theme.png)](images/ui-gallery/tinytmux_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/tinytmux_terminal.png)](images/ui-gallery/tinytmux_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/tinytmux_files.png)](images/ui-gallery/tinytmux_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/tinytmux_about.png)](images/ui-gallery/tinytmux_about.png)<br>**22. About** |  |  |
+
+<a id="pico"></a>
+
+## Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/pico_main.png)](images/ui-gallery/pico_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/pico_menu.png)](images/ui-gallery/pico_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/pico_settings.png)](images/ui-gallery/pico_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/pico_settings_bbs.png)](images/ui-gallery/pico_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/pico_settings_chat.png)](images/ui-gallery/pico_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/pico_settings_ifaces.png)](images/ui-gallery/pico_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/pico_peers.png)](images/ui-gallery/pico_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/pico_settings_rig.png)](images/ui-gallery/pico_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/pico_settings_printer.png)](images/ui-gallery/pico_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/pico_add_iface_1.png)](images/ui-gallery/pico_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/pico_add_iface_2.png)](images/ui-gallery/pico_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/pico_add_iface_3.png)](images/ui-gallery/pico_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/pico_add_iface_4.png)](images/ui-gallery/pico_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/pico_edit_iface.png)](images/ui-gallery/pico_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/pico_edit_peer.png)](images/ui-gallery/pico_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/pico_terminate.png)](images/ui-gallery/pico_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/pico_ban.png)](images/ui-gallery/pico_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/pico_exit.png)](images/ui-gallery/pico_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/pico_theme.png)](images/ui-gallery/pico_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/pico_terminal.png)](images/ui-gallery/pico_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/pico_files.png)](images/ui-gallery/pico_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/pico_about.png)](images/ui-gallery/pico_about.png)<br>**22. About** |  |  |
+
+<a id="esp32c6"></a>
+
+## ESP32-C6 (M5Stack Unit C6L VT340/xterm-256color)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/esp32c6_main.png)](images/ui-gallery/esp32c6_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/esp32c6_menu.png)](images/ui-gallery/esp32c6_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/esp32c6_settings.png)](images/ui-gallery/esp32c6_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/esp32c6_settings_bbs.png)](images/ui-gallery/esp32c6_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/esp32c6_settings_chat.png)](images/ui-gallery/esp32c6_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/esp32c6_settings_ifaces.png)](images/ui-gallery/esp32c6_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/esp32c6_peers.png)](images/ui-gallery/esp32c6_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/esp32c6_settings_rig.png)](images/ui-gallery/esp32c6_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/esp32c6_settings_printer.png)](images/ui-gallery/esp32c6_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/esp32c6_add_iface_1.png)](images/ui-gallery/esp32c6_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/esp32c6_add_iface_2.png)](images/ui-gallery/esp32c6_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/esp32c6_add_iface_3.png)](images/ui-gallery/esp32c6_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/esp32c6_add_iface_4.png)](images/ui-gallery/esp32c6_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/esp32c6_edit_iface.png)](images/ui-gallery/esp32c6_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/esp32c6_edit_peer.png)](images/ui-gallery/esp32c6_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/esp32c6_terminate.png)](images/ui-gallery/esp32c6_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/esp32c6_ban.png)](images/ui-gallery/esp32c6_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/esp32c6_exit.png)](images/ui-gallery/esp32c6_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/esp32c6_theme.png)](images/ui-gallery/esp32c6_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/esp32c6_terminal.png)](images/ui-gallery/esp32c6_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/esp32c6_files.png)](images/ui-gallery/esp32c6_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/esp32c6_about.png)](images/ui-gallery/esp32c6_about.png)<br>**22. About** |  |  |
+
+<a id="gtk"></a>
+
+## X11 GTK+ 2.0
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/gtk_main.png)](images/ui-gallery/gtk_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/gtk_menu.png)](images/ui-gallery/gtk_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/gtk_settings.png)](images/ui-gallery/gtk_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/gtk_settings_bbs.png)](images/ui-gallery/gtk_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/gtk_settings_chat.png)](images/ui-gallery/gtk_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/gtk_settings_ifaces.png)](images/ui-gallery/gtk_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/gtk_peers.png)](images/ui-gallery/gtk_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/gtk_settings_rig.png)](images/ui-gallery/gtk_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/gtk_settings_printer.png)](images/ui-gallery/gtk_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/gtk_add_iface_1.png)](images/ui-gallery/gtk_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/gtk_add_iface_2.png)](images/ui-gallery/gtk_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/gtk_add_iface_3.png)](images/ui-gallery/gtk_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/gtk_add_iface_4.png)](images/ui-gallery/gtk_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/gtk_edit_iface.png)](images/ui-gallery/gtk_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/gtk_edit_peer.png)](images/ui-gallery/gtk_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/gtk_terminate.png)](images/ui-gallery/gtk_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/gtk_ban.png)](images/ui-gallery/gtk_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/gtk_exit.png)](images/ui-gallery/gtk_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/gtk_theme.png)](images/ui-gallery/gtk_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/gtk_terminal.png)](images/ui-gallery/gtk_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/gtk_files.png)](images/ui-gallery/gtk_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/gtk_about.png)](images/ui-gallery/gtk_about.png)<br>**22. About** |  |  |
+
+<a id="win"></a>
+
+## Windows GUI (Wine / Win32/64)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/win_main.png)](images/ui-gallery/win_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/win_menu.png)](images/ui-gallery/win_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/win_settings.png)](images/ui-gallery/win_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/win_settings_bbs.png)](images/ui-gallery/win_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/win_settings_chat.png)](images/ui-gallery/win_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/win_settings_ifaces.png)](images/ui-gallery/win_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/win_peers.png)](images/ui-gallery/win_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/win_settings_rig.png)](images/ui-gallery/win_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/win_settings_printer.png)](images/ui-gallery/win_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/win_add_iface_1.png)](images/ui-gallery/win_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/win_add_iface_2.png)](images/ui-gallery/win_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/win_add_iface_3.png)](images/ui-gallery/win_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/win_add_iface_4.png)](images/ui-gallery/win_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/win_edit_iface.png)](images/ui-gallery/win_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/win_edit_peer.png)](images/ui-gallery/win_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/win_terminate.png)](images/ui-gallery/win_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/win_ban.png)](images/ui-gallery/win_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/win_exit.png)](images/ui-gallery/win_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/win_theme.png)](images/ui-gallery/win_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/win_terminal.png)](images/ui-gallery/win_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/win_files.png)](images/ui-gallery/win_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/win_about.png)](images/ui-gallery/win_about.png)<br>**22. About** |  |  |
+
+<a id="android"></a>
+
+## Android (Material 3 / Jetpack Compose)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/android_main.png)](images/ui-gallery/android_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/android_menu.png)](images/ui-gallery/android_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/android_settings.png)](images/ui-gallery/android_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/android_settings_bbs.png)](images/ui-gallery/android_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/android_settings_chat.png)](images/ui-gallery/android_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/android_settings_ifaces.png)](images/ui-gallery/android_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/android_peers.png)](images/ui-gallery/android_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/android_settings_rig.png)](images/ui-gallery/android_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/android_settings_printer.png)](images/ui-gallery/android_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/android_add_iface_1.png)](images/ui-gallery/android_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/android_add_iface_2.png)](images/ui-gallery/android_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/android_add_iface_3.png)](images/ui-gallery/android_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/android_add_iface_4.png)](images/ui-gallery/android_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/android_edit_iface.png)](images/ui-gallery/android_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/android_edit_peer.png)](images/ui-gallery/android_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/android_terminate.png)](images/ui-gallery/android_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/android_ban.png)](images/ui-gallery/android_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/android_exit.png)](images/ui-gallery/android_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/android_theme.png)](images/ui-gallery/android_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/android_terminal.png)](images/ui-gallery/android_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/android_files.png)](images/ui-gallery/android_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/android_about.png)](images/ui-gallery/android_about.png)<br>**22. About** |  |  |
+
+<a id="macclassic_bw"></a>
+
+## Classic Macintosh (System 6.0.8 B&W 512x342)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/macclassic_bw_main.png)](images/ui-gallery/macclassic_bw_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/macclassic_bw_menu.png)](images/ui-gallery/macclassic_bw_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/macclassic_bw_settings.png)](images/ui-gallery/macclassic_bw_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/macclassic_bw_settings_bbs.png)](images/ui-gallery/macclassic_bw_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/macclassic_bw_settings_chat.png)](images/ui-gallery/macclassic_bw_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/macclassic_bw_settings_ifaces.png)](images/ui-gallery/macclassic_bw_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/macclassic_bw_peers.png)](images/ui-gallery/macclassic_bw_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/macclassic_bw_settings_rig.png)](images/ui-gallery/macclassic_bw_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/macclassic_bw_settings_printer.png)](images/ui-gallery/macclassic_bw_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/macclassic_bw_add_iface_1.png)](images/ui-gallery/macclassic_bw_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/macclassic_bw_add_iface_2.png)](images/ui-gallery/macclassic_bw_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/macclassic_bw_add_iface_3.png)](images/ui-gallery/macclassic_bw_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/macclassic_bw_add_iface_4.png)](images/ui-gallery/macclassic_bw_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/macclassic_bw_edit_iface.png)](images/ui-gallery/macclassic_bw_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/macclassic_bw_edit_peer.png)](images/ui-gallery/macclassic_bw_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/macclassic_bw_terminate.png)](images/ui-gallery/macclassic_bw_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/macclassic_bw_ban.png)](images/ui-gallery/macclassic_bw_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/macclassic_bw_exit.png)](images/ui-gallery/macclassic_bw_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/macclassic_bw_theme.png)](images/ui-gallery/macclassic_bw_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/macclassic_bw_terminal.png)](images/ui-gallery/macclassic_bw_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/macclassic_bw_files.png)](images/ui-gallery/macclassic_bw_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/macclassic_bw_about.png)](images/ui-gallery/macclassic_bw_about.png)<br>**22. About** |  |  |
+
+<a id="macclassic_color"></a>
+
+## Classic Macintosh (Color QuickDraw 640x480)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/macclassic_color_main.png)](images/ui-gallery/macclassic_color_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/macclassic_color_menu.png)](images/ui-gallery/macclassic_color_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/macclassic_color_settings.png)](images/ui-gallery/macclassic_color_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/macclassic_color_settings_bbs.png)](images/ui-gallery/macclassic_color_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/macclassic_color_settings_chat.png)](images/ui-gallery/macclassic_color_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/macclassic_color_settings_ifaces.png)](images/ui-gallery/macclassic_color_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/macclassic_color_peers.png)](images/ui-gallery/macclassic_color_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/macclassic_color_settings_rig.png)](images/ui-gallery/macclassic_color_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/macclassic_color_settings_printer.png)](images/ui-gallery/macclassic_color_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/macclassic_color_add_iface_1.png)](images/ui-gallery/macclassic_color_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/macclassic_color_add_iface_2.png)](images/ui-gallery/macclassic_color_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/macclassic_color_add_iface_3.png)](images/ui-gallery/macclassic_color_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/macclassic_color_add_iface_4.png)](images/ui-gallery/macclassic_color_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/macclassic_color_edit_iface.png)](images/ui-gallery/macclassic_color_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/macclassic_color_edit_peer.png)](images/ui-gallery/macclassic_color_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/macclassic_color_terminate.png)](images/ui-gallery/macclassic_color_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/macclassic_color_ban.png)](images/ui-gallery/macclassic_color_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/macclassic_color_exit.png)](images/ui-gallery/macclassic_color_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/macclassic_color_theme.png)](images/ui-gallery/macclassic_color_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/macclassic_color_terminal.png)](images/ui-gallery/macclassic_color_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/macclassic_color_files.png)](images/ui-gallery/macclassic_color_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/macclassic_color_about.png)](images/ui-gallery/macclassic_color_about.png)<br>**22. About** |  |  |
+
+<a id="gsos"></a>
+
+## Apple IIGS GS/OS (QuickDraw II 640x200)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/gsos_main.png)](images/ui-gallery/gsos_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/gsos_menu.png)](images/ui-gallery/gsos_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/gsos_settings.png)](images/ui-gallery/gsos_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/gsos_settings_bbs.png)](images/ui-gallery/gsos_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/gsos_settings_chat.png)](images/ui-gallery/gsos_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/gsos_settings_ifaces.png)](images/ui-gallery/gsos_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/gsos_peers.png)](images/ui-gallery/gsos_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/gsos_settings_rig.png)](images/ui-gallery/gsos_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/gsos_settings_printer.png)](images/ui-gallery/gsos_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/gsos_add_iface_1.png)](images/ui-gallery/gsos_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/gsos_add_iface_2.png)](images/ui-gallery/gsos_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/gsos_add_iface_3.png)](images/ui-gallery/gsos_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/gsos_add_iface_4.png)](images/ui-gallery/gsos_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/gsos_edit_iface.png)](images/ui-gallery/gsos_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/gsos_edit_peer.png)](images/ui-gallery/gsos_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/gsos_terminate.png)](images/ui-gallery/gsos_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/gsos_ban.png)](images/ui-gallery/gsos_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/gsos_exit.png)](images/ui-gallery/gsos_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/gsos_theme.png)](images/ui-gallery/gsos_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/gsos_terminal.png)](images/ui-gallery/gsos_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/gsos_files.png)](images/ui-gallery/gsos_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/gsos_about.png)](images/ui-gallery/gsos_about.png)<br>**22. About** |  |  |
+
+<a id="amiga"></a>
+
+## Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/amiga_main.png)](images/ui-gallery/amiga_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/amiga_menu.png)](images/ui-gallery/amiga_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/amiga_settings.png)](images/ui-gallery/amiga_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/amiga_settings_bbs.png)](images/ui-gallery/amiga_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/amiga_settings_chat.png)](images/ui-gallery/amiga_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/amiga_settings_ifaces.png)](images/ui-gallery/amiga_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/amiga_peers.png)](images/ui-gallery/amiga_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/amiga_settings_rig.png)](images/ui-gallery/amiga_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/amiga_settings_printer.png)](images/ui-gallery/amiga_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/amiga_add_iface_1.png)](images/ui-gallery/amiga_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/amiga_add_iface_2.png)](images/ui-gallery/amiga_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/amiga_add_iface_3.png)](images/ui-gallery/amiga_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/amiga_add_iface_4.png)](images/ui-gallery/amiga_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/amiga_edit_iface.png)](images/ui-gallery/amiga_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/amiga_edit_peer.png)](images/ui-gallery/amiga_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/amiga_terminate.png)](images/ui-gallery/amiga_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/amiga_ban.png)](images/ui-gallery/amiga_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/amiga_exit.png)](images/ui-gallery/amiga_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/amiga_theme.png)](images/ui-gallery/amiga_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/amiga_terminal.png)](images/ui-gallery/amiga_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/amiga_files.png)](images/ui-gallery/amiga_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/amiga_about.png)](images/ui-gallery/amiga_about.png)<br>**22. About** |  |  |
+
+<a id="atarist_mono"></a>
+
+## Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/atarist_mono_main.png)](images/ui-gallery/atarist_mono_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/atarist_mono_menu.png)](images/ui-gallery/atarist_mono_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/atarist_mono_settings.png)](images/ui-gallery/atarist_mono_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/atarist_mono_settings_bbs.png)](images/ui-gallery/atarist_mono_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/atarist_mono_settings_chat.png)](images/ui-gallery/atarist_mono_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/atarist_mono_settings_ifaces.png)](images/ui-gallery/atarist_mono_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/atarist_mono_peers.png)](images/ui-gallery/atarist_mono_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/atarist_mono_settings_rig.png)](images/ui-gallery/atarist_mono_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/atarist_mono_settings_printer.png)](images/ui-gallery/atarist_mono_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/atarist_mono_add_iface_1.png)](images/ui-gallery/atarist_mono_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/atarist_mono_add_iface_2.png)](images/ui-gallery/atarist_mono_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/atarist_mono_add_iface_3.png)](images/ui-gallery/atarist_mono_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/atarist_mono_add_iface_4.png)](images/ui-gallery/atarist_mono_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/atarist_mono_edit_iface.png)](images/ui-gallery/atarist_mono_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/atarist_mono_edit_peer.png)](images/ui-gallery/atarist_mono_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/atarist_mono_terminate.png)](images/ui-gallery/atarist_mono_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/atarist_mono_ban.png)](images/ui-gallery/atarist_mono_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/atarist_mono_exit.png)](images/ui-gallery/atarist_mono_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/atarist_mono_theme.png)](images/ui-gallery/atarist_mono_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/atarist_mono_terminal.png)](images/ui-gallery/atarist_mono_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/atarist_mono_files.png)](images/ui-gallery/atarist_mono_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/atarist_mono_about.png)](images/ui-gallery/atarist_mono_about.png)<br>**22. About** |  |  |
+
+<a id="atarist_color"></a>
+
+## Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/atarist_color_main.png)](images/ui-gallery/atarist_color_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/atarist_color_menu.png)](images/ui-gallery/atarist_color_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/atarist_color_settings.png)](images/ui-gallery/atarist_color_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/atarist_color_settings_bbs.png)](images/ui-gallery/atarist_color_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/atarist_color_settings_chat.png)](images/ui-gallery/atarist_color_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/atarist_color_settings_ifaces.png)](images/ui-gallery/atarist_color_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/atarist_color_peers.png)](images/ui-gallery/atarist_color_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/atarist_color_settings_rig.png)](images/ui-gallery/atarist_color_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/atarist_color_settings_printer.png)](images/ui-gallery/atarist_color_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/atarist_color_add_iface_1.png)](images/ui-gallery/atarist_color_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/atarist_color_add_iface_2.png)](images/ui-gallery/atarist_color_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/atarist_color_add_iface_3.png)](images/ui-gallery/atarist_color_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/atarist_color_add_iface_4.png)](images/ui-gallery/atarist_color_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/atarist_color_edit_iface.png)](images/ui-gallery/atarist_color_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/atarist_color_edit_peer.png)](images/ui-gallery/atarist_color_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/atarist_color_terminate.png)](images/ui-gallery/atarist_color_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/atarist_color_ban.png)](images/ui-gallery/atarist_color_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/atarist_color_exit.png)](images/ui-gallery/atarist_color_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/atarist_color_theme.png)](images/ui-gallery/atarist_color_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/atarist_color_terminal.png)](images/ui-gallery/atarist_color_terminal.png)<br>**20. Terminal** |
+| [![21. Files](images/ui-gallery/thumbs/atarist_color_files.png)](images/ui-gallery/atarist_color_files.png)<br>**21. Files** | [![22. About](images/ui-gallery/thumbs/atarist_color_about.png)](images/ui-gallery/atarist_color_about.png)<br>**22. About** |  |  |
 

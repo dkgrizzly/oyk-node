@@ -31,6 +31,7 @@ option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) 
 option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
 option(BUILD_TINYTMUX_PORT   "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
 option(BUILD_PICO_PORT       "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
+option(BUILD_ESP32C6_PORT    "Add target to build ESP32-C6 (M5Stack Unit C6L) firmware via ESP-IDF" OFF)
 option(BUILD_MACCLASSIC_PORT "Add targets to build Classic Macintosh (68k + PPC Fat) via Retro68" OFF)
 option(BUILD_GSOS_PORT       "Add targets to build Apple IIGS GS/OS (65C816 S16) via vbcc" OFF)
 option(BUILD_AMIGA_PORT      "Add targets to build Amiga Workbench (m68k OS 3.1/2.04/1.3) via amiga-gcc" OFF)
@@ -434,6 +435,28 @@ if(BUILD_PICO_PORT)
     add_custom_target(oyk-pico DEPENDS ${_pico_board_targets})
 endif()
 
+# Optional ESP32-C6 (M5Stack Unit C6L) firmware target via ESP-IDF v5.x
+if(BUILD_ESP32C6_PORT)
+    set(_esp_idf_dir "")
+    if(DEFINED ENV{IDF_PATH} AND EXISTS "$ENV{IDF_PATH}/export.sh")
+        set(_esp_idf_dir "$ENV{IDF_PATH}")
+    elseif(EXISTS "$ENV{HOME}/opt/esp-idf/export.sh")
+        set(_esp_idf_dir "$ENV{HOME}/opt/esp-idf")
+    endif()
+    if(NOT _esp_idf_dir)
+        message(FATAL_ERROR "BUILD_ESP32C6_PORT requires ESP-IDF (set IDF_PATH or install in ~/opt/esp-idf)")
+    endif()
+    set(_esp_tools_dir "$ENV{HOME}/opt/espressif")
+    if(DEFINED ENV{IDF_TOOLS_PATH} AND NOT "$ENV{IDF_TOOLS_PATH}" STREQUAL "")
+        set(_esp_tools_dir "$ENV{IDF_TOOLS_PATH}")
+    endif()
+    add_custom_target(oyk-esp32c6
+        COMMAND /usr/bin/env bash -lc
+                "IDF_TOOLS_PATH='${_esp_tools_dir}' source '${_esp_idf_dir}/export.sh' >/dev/null && cd '${CMAKE_CURRENT_SOURCE_DIR}/ports/esp32c6' && idf.py set-target esp32c6 && idf.py build && mkdir -p '${CMAKE_CURRENT_BINARY_DIR}/esp32c6' && cp -f build/oyk-esp32c6-unit_c6l.bin '${CMAKE_CURRENT_BINARY_DIR}/esp32c6/oyk-esp32c6-unit_c6l.bin'"
+        COMMENT "Building ESP32-C6 (M5Stack Unit C6L) firmware via ESP-IDF"
+    )
+endif()
+
 if(BUILD_MACCLASSIC_PORT)
     add_subdirectory(ports/macclassic)
 endif()
@@ -718,6 +741,40 @@ if(BUILD_TESTS AND NOT WIN32)
     target_compile_options(oyk_pico_tests PRIVATE -Wall -Wextra -Wpedantic)
     oyk_apply_host_hardening(oyk_pico_tests)
     add_test(NAME oyk_pico_tests COMMAND oyk_pico_tests)
+
+    # Strict C++98 host verification of ESP32-C6 (M5Stack Unit C6L) board, SX1262 LoRa, OLED, LittleFS, Wi-Fi/BLE & VT340 TUI
+    add_executable(oyk_esp32c6_tests
+        tests/test_esp32c6.cpp
+        ports/esp32c6/main/board_esp32c6.cpp
+        ports/esp32c6/main/esp32c6_lora.cpp
+        ports/esp32c6/main/esp32c6_oled.cpp
+        ports/esp32c6/main/esp32c6_fs.cpp
+        ports/esp32c6/main/esp32c6_radio.cpp
+        ports/esp32c6/main/esp32c6_net_bridge.cpp
+        ports/esp32c6/main/esp32c6_console.cpp
+        ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
+    )
+    target_include_directories(oyk_esp32c6_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/oyk_tinytmux
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/esp32c6/main
+    )
+    set_target_properties(oyk_esp32c6_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_definitions(oyk_esp32c6_tests PRIVATE OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(oyk_esp32c6_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_esp32c6_tests)
+    add_test(NAME oyk_esp32c6_tests COMMAND oyk_esp32c6_tests)
 
     # Seeded mutation fuzz harness across AX.25, KISS, config, banlist, YAPP, terminal, and PPP parsers
     add_executable(oyk_fuzz_tests

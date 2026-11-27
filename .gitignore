@@ -25,6 +25,8 @@ ports/macclassic/build_macclassic/
 ports/gsos/build_gsos/
 ports/amiga/build_amiga/
 ports/atarist/build_atarist/
+ports/esp32c6/build/
+ports/esp32c6/sdkconfig*
 build_macos/
 ports/android/.gradle/
 ports/android/local.properties

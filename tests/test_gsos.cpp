@@ -75,6 +75,14 @@ int main() {
     }
     oyk_gsos_wiz_select_driver(&wiz, &cfg, 2);
     CHECK(strcmp(wiz.draft.type, "kiss-serial") == 0);
+    CHECK(wiz.step == 0);
+    CHECK(oyk_gsos_wiz_advance(&wiz, &cfg) == 1 && wiz.step == 1);
+    CHECK(oyk_gsos_wiz_advance(&wiz, &cfg) == 1 && wiz.step == 2);
+    CHECK(oyk_gsos_wiz_advance(&wiz, &cfg) == 1 && wiz.step == 3);
+    oyk_gsos_wiz_format_summary(&wiz, buf, sizeof(buf));
+    CHECK(strstr(buf, "kiss-serial") != NULL);
+    CHECK(strcmp(oyk_gsos_format_learned_policy(0), "inherit") == 0);
+    CHECK(oyk_gsos_cycle_learned_policy(0, 1) == 1);
     oyk_gsos_format_console_header("KR4OYK-7", "OYKNOD", 1, buf, sizeof(buf));
     CHECK(strstr(buf, "OYK PACKET NODE:") != NULL);
     CHECK(strcmp(oyk_gsos_format_incoming_pill(1), "[INCOMING: ALLOW]") == 0);

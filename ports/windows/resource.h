@@ -17,6 +17,7 @@
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
+#define IDM_ABOUT           212
 
 /* Main Window Control IDs */
 #define IDC_HEADER_TEXT     301
@@ -261,5 +262,9 @@
 #define IDC_TH_PICK         656
 #define IDC_TH_APPLY_COLOR  657
 #define IDC_TH_PREVIEW      658
+
+/* About Dialog */
+#define IDD_ABOUT           660
+#define IDC_ABOUT_TEXT      661
 
 #endif /* OYK_WIN_RESOURCE_H */

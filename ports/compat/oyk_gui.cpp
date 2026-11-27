@@ -195,6 +195,7 @@ const char* oyk_gui_screen_title(int screen_id) {
         case OYK_SCR_FILES:      return "Manage BBS Files Area";
         case OYK_SCR_RIG:        return "Radio Control";
         case OYK_SCR_ABOUT:      return "About OYK Amateur Radio Packet Node";
+        case OYK_SCR_MENU:       return "Node Menu";
         default:                 return "OYK Packet Node";
     }
 }
@@ -266,6 +267,35 @@ int oyk_gui_control_box_size(int char_h) {
 
 int oyk_gui_control_label_offset(int char_h) {
     return oyk_gui_control_box_size(char_h) + 6;
+}
+
+int oyk_gui_vertical_text_offset(int box_h, int char_h) {
+    if (box_h <= 0 || char_h <= 0 || box_h <= char_h) return 0;
+    return (box_h - char_h) / 2;
+}
+
+int oyk_gui_control_height(int char_h, int pad_y) {
+    int ch = (char_h > 0) ? char_h : 8;
+    int py = (pad_y > 0) ? pad_y : 0;
+    return ch + (py * 2);
+}
+
+const char* oyk_gui_format_learned_policy(int policy) {
+    return gui_format_learned_policy(static_cast<oyk_u8>(policy));
+}
+
+int oyk_gui_cycle_learned_policy(int policy, int delta) {
+    int cur = policy;
+    if (cur < 0 || cur > static_cast<int>(OYK_LEARN_BOTH)) cur = 0;
+    int step = (delta < 0) ? -1 : 1;
+    int next = (cur + 5 + step) % 5;
+    return next;
+}
+
+const char* oyk_gui_about_summary() {
+    return "OYK Amateur Radio Packet Node (GPL-3.0-or-later)\n"
+           "AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / Rig CAT\n"
+           "Hotkeys: M/F10 Node Menu | Tab/F9 Terminal | 1..7 Tabs | Esc Close";
 }
 
 void oyk_gui_format_duration(oyk_u32 secs, char* dst, size_t cap) {

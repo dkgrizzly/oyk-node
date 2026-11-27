@@ -22,6 +22,14 @@ static void test_menus_titles_tabs_and_tables() {
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_TERMINATE), "Terminate Active Connection") == 0);
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_THEME), "Theme Settings") == 0);
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_EXIT_PEERS), "Auto-Learned Peers") == 0);
+    assert(strcmp(oyk_gui_screen_title(OYK_SCR_MENU), "Node Menu") == 0);
+    assert(oyk_gui_vertical_text_offset(16, 8) == 4);
+    assert(oyk_gui_vertical_text_offset(22, 16) == 3);
+    assert(oyk_gui_control_height(8, 3) == 14);
+    assert(strcmp(oyk_gui_format_learned_policy(OYK_LEARN_INHERIT), "inherit") == 0);
+    assert(oyk_gui_cycle_learned_policy(OYK_LEARN_INHERIT, 1) == OYK_LEARN_NONE);
+    assert(oyk_gui_cycle_learned_policy(OYK_LEARN_INHERIT, -1) == OYK_LEARN_BOTH);
+    assert(strstr(oyk_gui_about_summary(), "AX.25") != NULL);
 
     assert(oyk_gui_settings_tab_count() == 7);
     assert(strcmp(oyk_gui_settings_tab_title(0), "Node") == 0);

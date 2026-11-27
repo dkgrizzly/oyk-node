@@ -983,24 +983,26 @@ static void win_capture_hwnd_bmp(HWND hwnd, const char* tag) {
     if (w <= 0 || h <= 0) return;
 
     /* Position main window cleanly and center modal dialogs over it for full-frame capture */
-    if (hwnd == g_hwnd_main || g_hwnd_main == NULL || !IsWindow(g_hwnd_main)) {
-        SetWindowPos(hwnd, HWND_TOP, 40, 40, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
-    } else {
-        RECT mrc;
-        SetWindowPos(g_hwnd_main, HWND_TOP, 40, 40, 0, 0,
-                     SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
-        if (GetWindowRect(g_hwnd_main, &mrc)) {
-            int cx = static_cast<int>(mrc.left) + (static_cast<int>(mrc.right - mrc.left) - w) / 2;
-            int cy = static_cast<int>(mrc.top) + (static_cast<int>(mrc.bottom - mrc.top) - h) / 2;
-            if (cx < 16) cx = 16;
-            if (cy < 16) cy = 16;
-            SetWindowPos(hwnd, HWND_TOPMOST, cx, cy, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    if (strcmp(tag, "menu") != 0) {
+        if (hwnd == g_hwnd_main || g_hwnd_main == NULL || !IsWindow(g_hwnd_main)) {
+            SetWindowPos(hwnd, HWND_TOP, 40, 40, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
         } else {
-            SetWindowPos(hwnd, HWND_TOPMOST, 80, 80, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+            RECT mrc;
+            SetWindowPos(g_hwnd_main, HWND_TOP, 40, 40, 0, 0,
+                         SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+            if (GetWindowRect(g_hwnd_main, &mrc)) {
+                int cx = static_cast<int>(mrc.left) + (static_cast<int>(mrc.right - mrc.left) - w) / 2;
+                int cy = static_cast<int>(mrc.top) + (static_cast<int>(mrc.bottom - mrc.top) - h) / 2;
+                if (cx < 16) cx = 16;
+                if (cy < 16) cy = 16;
+                SetWindowPos(hwnd, HWND_TOPMOST, cx, cy, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+            } else {
+                SetWindowPos(hwnd, HWND_TOPMOST, 80, 80, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+            }
+            RedrawWindow(g_hwnd_main, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
         }
-        RedrawWindow(g_hwnd_main, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
+        RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
     }
-    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
     MSG pm;
     while (PeekMessage(&pm, NULL, WM_PAINT, WM_PAINT, PM_REMOVE)) {
         TranslateMessage(&pm);
@@ -2669,6 +2671,36 @@ OYK_DLG_RET EditPeerDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+OYK_DLG_RET AboutDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+        case WM_INITDIALOG:
+            SetWindowText(hdlg, oyk_gui_screen_title(OYK_SCR_ABOUT));
+            SetDlgItemText(hdlg, IDC_ABOUT_TEXT, oyk_gui_about_summary());
+#if defined(_WIN32) && !defined(OYK_WIN16)
+            if (g_win_ui_test) SetTimer(hdlg, 99, 200, NULL);
+#endif
+            return TRUE;
+#if defined(_WIN32) && !defined(OYK_WIN16)
+        case WM_TIMER:
+            if (wp == 99) {
+                KillTimer(hdlg, 99);
+                win_capture_hwnd_bmp(hdlg, "about");
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            }
+            break;
+#endif
+        case WM_COMMAND:
+            if (OYK_CMD_ID(wp, lp) == IDOK || OYK_CMD_ID(wp, lp) == IDCANCEL) {
+                EndDialog(hdlg, IDOK);
+                return TRUE;
+            }
+            break;
+    }
+    return FALSE;
+}
+
 OYK_DLG_RET ExitPeersDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
@@ -2921,12 +2953,19 @@ OYK_DLG_RET AddIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 #if defined(_WIN32) && !defined(OYK_WIN16)
         case WM_TIMER:
             if (wp == 99) {
-                if (g_win_wiz_step < 2) {
-                    ++g_win_wiz_step;
+                ++g_win_wiz_step;
+                if (g_win_wiz_step == 1) {
+                    win_capture_hwnd_bmp(hdlg, "add_iface_1");
+                    PostMessage(hdlg, WM_COMMAND, IDC_AIF_NEXT, 0);
+                } else if (g_win_wiz_step == 2) {
+                    win_capture_hwnd_bmp(hdlg, "add_iface_2");
+                    PostMessage(hdlg, WM_COMMAND, IDC_AIF_NEXT, 0);
+                } else if (g_win_wiz_step == 3) {
+                    win_capture_hwnd_bmp(hdlg, "add_iface_3");
                     PostMessage(hdlg, WM_COMMAND, IDC_AIF_NEXT, 0);
                 } else {
                     KillTimer(hdlg, 99);
-                    win_capture_hwnd_bmp(hdlg, "add_iface");
+                    win_capture_hwnd_bmp(hdlg, "add_iface_4");
                     EndDialog(hdlg, IDCANCEL);
                 }
                 return TRUE;
@@ -3537,7 +3576,12 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == 99) {
                 KillTimer(hdlg, 99);
                 win_capture_hwnd_bmp(hdlg, "settings");
+                switch_settings_tab(hdlg, 1);
+                win_capture_hwnd_bmp(hdlg, "settings_bbs");
+                switch_settings_tab(hdlg, 2);
+                win_capture_hwnd_bmp(hdlg, "settings_chat");
                 switch_settings_tab(hdlg, 3);
+                win_capture_hwnd_bmp(hdlg, "settings_ifaces");
                 SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_SETCURSEL, 0, 0);
                 SendMessage(hdlg, WM_COMMAND, IDC_SET_IF_ADD, 0);
                 SendDlgItemMessage(hdlg, IDC_SET_IF_LIST, LB_SETCURSEL, 0, 0);
@@ -3546,6 +3590,10 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 SendDlgItemMessage(hdlg, IDC_SET_PEER_LIST, LB_SETCURSEL, 0, 0);
                 win_capture_hwnd_bmp(hdlg, "peers");
                 SendMessage(hdlg, WM_COMMAND, IDC_SET_PEER_EDIT, 0);
+                switch_settings_tab(hdlg, 5);
+                win_capture_hwnd_bmp(hdlg, "settings_rig");
+                switch_settings_tab(hdlg, 6);
+                win_capture_hwnd_bmp(hdlg, "settings_printer");
                 EndDialog(hdlg, IDCANCEL);
                 return TRUE;
             }
@@ -4191,10 +4239,28 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (wp == 2) {
                 refresh_gui();
 #if defined(_WIN32) && !defined(OYK_WIN16)
+            } else if (wp == 97 && g_win_ui_test) {
+                KillTimer(hwnd, 97);
+                win_capture_hwnd_bmp(hwnd, "menu");
+                PostMessage(hwnd, WM_CANCELMODE, 0, 0);
             } else if (wp == 99 && g_win_ui_test) {
                 KillTimer(hwnd, 99);
                 refresh_gui();
                 win_capture_hwnd_bmp(hwnd, "main");
+                {
+                    HMENU hm = GetMenu(hwnd);
+                    HMENU hsub = hm ? GetSubMenu(hm, 0) : NULL;
+                    if (hsub) {
+                        RECT wrc;
+                        GetWindowRect(hwnd, &wrc);
+                        SetTimer(hwnd, 97, 220, NULL);
+                        TrackPopupMenu(hsub, TPM_LEFTALIGN | TPM_TOPALIGN,
+                                       wrc.left + 8,
+                                       wrc.top + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYMENU) + 4,
+                                       0, hwnd, NULL);
+                        KillTimer(hwnd, 97);
+                    }
+                }
                 g_settings_initial_tab = 0;
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
@@ -4207,6 +4273,8 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
                 refresh_gui();
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                refresh_gui();
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ABOUT), hwnd, (DLGPROC)AboutDlgProc);
                 refresh_gui();
                 if (!g_lterm_hwnd) {
                     g_lterm_hwnd = CreateDialog(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL),
@@ -4270,6 +4338,8 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (id == IDM_BAN) {
                 DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
                 refresh_gui();
+            } else if (id == IDM_ABOUT) {
+                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ABOUT), hwnd, (DLGPROC)AboutDlgProc);
             } else if (id == IDM_EXIT) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
             }

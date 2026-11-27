@@ -82,6 +82,7 @@ const char *oyk_gsos_screen_title(int screen_id) {
         case OYK_GSOS_SCR_FILES:      return "Manage BBS Files Area";
         case OYK_GSOS_SCR_RIG:        return "Radio Control";
         case OYK_GSOS_SCR_ABOUT:      return "About OYK Amateur Radio Packet Node";
+        case OYK_GSOS_SCR_MENU:       return "Node Menu";
         default:                      return "OYK Packet Node";
     }
 }
@@ -568,9 +569,14 @@ void oyk_gsos_node_seed_demo(OykGsosNode *node) {
     memset(&node->cfg.ifaces[0], 0, sizeof(OykGsosIfaceConfig));
     g_copy(node->cfg.ifaces[0].id, 16U, "axudp0");
     g_copy(node->cfg.ifaces[0].type, 16U, "axudp");
+    g_copy(node->cfg.ifaces[0].description, 32U, "AXUDP Primary Link");
     g_copy(node->cfg.ifaces[0].host, 32U, "127.0.0.1");
     node->cfg.ifaces[0].port = 10093U;
     g_copy(node->cfg.ifaces[0].netmask, 20U, "255.0.0.0");
+    node->cfg.ifaces[0].allow_inbound = 1;
+    node->cfg.ifaces[0].allow_outbound = 1;
+    node->cfg.ifaces[0].allow_same_interface = 0;
+    node->cfg.ifaces[0].learned_peer_policy = 0;
     node->iface_rt[0].running = 1;
     node->iface_rt[0].rx_frames = 14UL;
     node->iface_rt[0].tx_frames = 9UL;
@@ -578,8 +584,13 @@ void oyk_gsos_node_seed_demo(OykGsosNode *node) {
     memset(&node->cfg.ifaces[1], 0, sizeof(OykGsosIfaceConfig));
     g_copy(node->cfg.ifaces[1].id, 16U, "kiss0");
     g_copy(node->cfg.ifaces[1].type, 16U, "kiss-serial");
+    g_copy(node->cfg.ifaces[1].description, 32U, "SCC .A TNC Port");
     g_copy(node->cfg.ifaces[1].device, 32U, ".A");
     node->cfg.ifaces[1].baud = 9600UL;
+    node->cfg.ifaces[1].allow_inbound = 1;
+    node->cfg.ifaces[1].allow_outbound = 1;
+    node->cfg.ifaces[1].allow_same_interface = 0;
+    node->cfg.ifaces[1].learned_peer_policy = 2;
     node->iface_rt[1].running = 1;
     node->iface_rt[1].rx_frames = 5UL;
     node->iface_rt[1].tx_frames = 3UL;
@@ -725,16 +736,122 @@ void oyk_gsos_wiz_select_driver(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cf
     drv = oyk_gsos_wiz_driver_name(idx);
     memset(&wiz->draft, 0, sizeof(wiz->draft));
     g_copy(wiz->draft.type, sizeof(wiz->draft.type), drv);
+    g_copy(wiz->draft.id, sizeof(wiz->draft.id), "");
     sprintf(wiz->draft.id, "%s%d",
             (idx == 2) ? "kiss" : drv,
             cfg ? cfg->iface_count : 0);
+    g_copy(wiz->draft.description, sizeof(wiz->draft.description), oyk_gsos_wiz_driver_desc(idx));
     g_copy(wiz->draft.host, sizeof(wiz->draft.host), "0.0.0.0");
     g_copy(wiz->draft.netmask, sizeof(wiz->draft.netmask), "255.0.0.0");
     g_copy(wiz->draft.device, sizeof(wiz->draft.device), ".A");
     wiz->draft.port = (idx == 4) ? 2300U : 10093U;
     wiz->draft.baud = 9600UL;
     wiz->draft.allow_inbound = 1;
-    wiz->draft.allow_outbound = 1;
+    wiz->draft.allow_outbound = (idx == 4) ? 0 : 1;
+    wiz->draft.allow_same_interface = 0;
+    wiz->draft.learned_peer_policy = 0;
+    wiz->error[0] = '\0';
+}
+
+const char *oyk_gsos_format_learned_policy(int policy) {
+    switch (policy) {
+        case 1: return "none";
+        case 2: return "inbound";
+        case 3: return "outbound";
+        case 4: return "both";
+        default: return "inherit";
+    }
+}
+
+int oyk_gsos_cycle_learned_policy(int policy, int delta) {
+    int cur = policy;
+    int step = (delta < 0) ? -1 : 1;
+    if (cur < 0 || cur > 4) cur = 0;
+    return (cur + 5 + step) % 5;
+}
+
+int oyk_gsos_wiz_advance(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cfg) {
+    int i;
+    if (!wiz) return 0;
+    wiz->error[0] = '\0';
+    if (wiz->step == 0) {
+        wiz->step = 1;
+        return 1;
+    }
+    if (wiz->step == 1) {
+        if (!wiz->draft.id[0]) {
+            g_copy(wiz->error, sizeof(wiz->error), "Interface ID cannot be empty.");
+            return 0;
+        }
+        if (cfg) {
+            for (i = 0; i < cfg->iface_count; ++i) {
+                if (g_strieq(cfg->ifaces[i].id, wiz->draft.id)) {
+                    g_copy(wiz->error, sizeof(wiz->error), "Interface ID already exists.");
+                    return 0;
+                }
+            }
+        }
+        wiz->step = 2;
+        return 1;
+    }
+    if (wiz->step == 2) {
+        if (g_strieq(wiz->draft.type, "kiss-serial")) {
+            if (!wiz->draft.device[0] || wiz->draft.baud < 300UL) {
+                g_copy(wiz->error, sizeof(wiz->error), "Serial device/baud invalid.");
+                return 0;
+            }
+        } else if (!wiz->draft.host[0] || wiz->draft.port == 0U) {
+            g_copy(wiz->error, sizeof(wiz->error), "Host or port invalid.");
+            return 0;
+        }
+        wiz->step = 3;
+        return 1;
+    }
+    return 1;
+}
+
+void oyk_gsos_wiz_back(OykGsosAddIfaceWiz *wiz) {
+    if (!wiz) return;
+    wiz->error[0] = '\0';
+    if (wiz->step > 0) --wiz->step;
+}
+
+const char *oyk_gsos_wiz_step_prompt(const OykGsosAddIfaceWiz *wiz) {
+    int st = wiz ? wiz->step : 0;
+    if (st == 0) return "Step 1 of 4: Select interface driver";
+    if (st == 1) return "Step 2 of 4: Configure interface ID & description";
+    if (st == 2) return "Step 3 of 4: Configure endpoint & peer policy";
+    return "Step 4 of 4: Review interface settings";
+}
+
+void oyk_gsos_wiz_format_summary(const OykGsosAddIfaceWiz *wiz, char *dst, size_t cap) {
+    char buf[320];
+    const char *lp;
+    const OykGsosIfaceConfig *d;
+    if (!wiz || !dst || cap == 0U) return;
+    d = &wiz->draft;
+    lp = oyk_gsos_format_learned_policy(d->learned_peer_policy);
+    if (g_strieq(d->type, "kiss-serial")) {
+        sprintf(buf,
+                "Driver:        %s\nInterface ID:  %s\nDevice / Baud: %s @ %lu\n"
+                "Allow In/Out:  %s / %s\nSame-Iface:    %s\nLearned Pol:   %s",
+                d->type, d->id, d->device, (unsigned long)d->baud,
+                d->allow_inbound ? "true" : "false",
+                d->allow_outbound ? "true" : "false",
+                d->allow_same_interface ? "true" : "false",
+                lp);
+    } else {
+        sprintf(buf,
+                "Driver:        %s\nInterface ID:  %s\nBind / Port:   %s:%u (Mask %s)\n"
+                "Allow In/Out:  %s / %s\nSame-Iface:    %s\nLearned Pol:   %s",
+                d->type, d->id, d->host, (unsigned int)d->port,
+                d->netmask[0] ? d->netmask : "255.0.0.0",
+                d->allow_inbound ? "true" : "false",
+                d->allow_outbound ? "true" : "false",
+                d->allow_same_interface ? "true" : "false",
+                lp);
+    }
+    g_copy(dst, cap, buf);
 }
 
 void oyk_gsos_theme_init(OykGsosThemeCtrl *tc, OykGsosConfig *draft,

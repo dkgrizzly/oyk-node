@@ -129,6 +129,12 @@ int main(void) {
     GS_CHECK(strcmp(tctrl.active_name, "native") == 0, "parity_theme_revert");
     oyk_gsos_wiz_select_driver(&wiz, &g_test_cfg, 2);
     GS_CHECK(strcmp(wiz.draft.type, "kiss-serial") == 0, "gui_wiz_kiss_serial");
+    GS_CHECK(oyk_gsos_wiz_advance(&wiz, &g_test_cfg) == 1 && wiz.step == 1 &&
+             oyk_gsos_wiz_advance(&wiz, &g_test_cfg) == 1 && wiz.step == 2 &&
+             oyk_gsos_wiz_advance(&wiz, &g_test_cfg) == 1 && wiz.step == 3,
+             "gui_wiz_4_steps");
+    GS_CHECK(strcmp(oyk_gsos_format_learned_policy(0), "inherit") == 0 &&
+             oyk_gsos_cycle_learned_policy(0, 1) == 1, "gui_learned_policy_cycle");
 
     /* 5. Config EOL detection + Ctrl+A hotkeys + word-wrap */
     GS_CHECK(oyk_gsos_detect_text_eol("a\rb\r", 4U) == OYK_GSOS_EOL_CR, "eol_detect_cr");

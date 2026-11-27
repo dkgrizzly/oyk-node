@@ -221,51 +221,59 @@ class OykUiGalleryTest {
                 onQuickUsbConnect = {}
             )
         }
-        captureComposableToPng("settings") {
-            SettingsScreen(
-                cfg = sampleCfg,
-                initialTab = SettingsTab.NODE,
-                storagePermissionState = StoragePermissionState.DECLINED,
-                missingPermissionHint = "Storage permission declined: enable storage/document access in Settings to import or export configs.",
-                sdStatusMessage = "",
-                onUpdateCfg = {},
-                onImportFromSd = {},
-                onExportToSd = {},
-                onOpenTheme = {},
-                onAddIface = {},
-                onEditIface = {},
-                onAddPeer = {},
-                onEditPeer = {},
-                onBack = {}
-            )
-        }
-        captureComposableToPng("add_iface") {
+        captureComposableToPng("menu") {
             ModalOverlayFrame {
-                AddIfaceWizardCard(existingIfaces = sampleCfg.interfaces, initialStep = 1, onDismiss = {}, onCommit = {})
+                NodeMenuCard(acceptIncoming = true, onAction = {}, onDismiss = {})
+            }
+        }
+        fun captureSettingsTab(flow: String, tab: SettingsTab, perm: StoragePermissionState, hint: String) {
+            captureComposableToPng(flow) {
+                SettingsScreen(
+                    cfg = sampleCfg,
+                    initialTab = tab,
+                    storagePermissionState = perm,
+                    missingPermissionHint = hint,
+                    sdStatusMessage = "",
+                    onUpdateCfg = {},
+                    onImportFromSd = {},
+                    onExportToSd = {},
+                    onOpenTheme = {},
+                    onAddIface = {},
+                    onEditIface = {},
+                    onAddPeer = {},
+                    onEditPeer = {},
+                    onBack = {}
+                )
+            }
+        }
+        captureSettingsTab(
+            "settings",
+            SettingsTab.NODE,
+            StoragePermissionState.DECLINED,
+            "Storage permission declined: enable storage/document access in Settings to import or export configs."
+        )
+        captureSettingsTab("settings_bbs", SettingsTab.BBS, StoragePermissionState.GRANTED, "")
+        captureSettingsTab("settings_chat", SettingsTab.CHAT, StoragePermissionState.GRANTED, "")
+        captureSettingsTab("settings_ifaces", SettingsTab.INTERFACES, StoragePermissionState.GRANTED, "")
+        captureSettingsTab("peers", SettingsTab.PEERS, StoragePermissionState.GRANTED, "")
+        captureSettingsTab("settings_rig", SettingsTab.RIG, StoragePermissionState.GRANTED, "")
+        captureSettingsTab("settings_printer", SettingsTab.PRINTER, StoragePermissionState.GRANTED, "")
+        for (step in 1..4) {
+            captureComposableToPng("add_iface_$step") {
+                ModalOverlayFrame {
+                    AddIfaceWizardCard(
+                        existingIfaces = sampleCfg.interfaces,
+                        initialStep = step,
+                        onDismiss = {},
+                        onCommit = {}
+                    )
+                }
             }
         }
         captureComposableToPng("edit_iface") {
             ModalOverlayFrame {
                 EditIfaceCard(initial = sampleCfg.interfaces.first(), onDismiss = {}, onSave = {})
             }
-        }
-        captureComposableToPng("peers") {
-            SettingsScreen(
-                cfg = sampleCfg,
-                initialTab = SettingsTab.PEERS,
-                storagePermissionState = StoragePermissionState.GRANTED,
-                missingPermissionHint = "",
-                sdStatusMessage = "",
-                onUpdateCfg = {},
-                onImportFromSd = {},
-                onExportToSd = {},
-                onOpenTheme = {},
-                onAddIface = {},
-                onEditIface = {},
-                onAddPeer = {},
-                onEditPeer = {},
-                onBack = {}
-            )
         }
         captureComposableToPng("edit_peer") {
             ModalOverlayFrame {
@@ -329,6 +337,11 @@ class OykUiGalleryTest {
                     ),
                     onDismiss = {}
                 )
+            }
+        }
+        captureComposableToPng("about") {
+            ModalOverlayFrame {
+                AboutCard(callsign = sampleCfg.callsign, alias = sampleCfg.alias, onDismiss = {})
             }
         }
     }

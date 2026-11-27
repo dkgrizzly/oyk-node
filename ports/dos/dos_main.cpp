@@ -4607,6 +4607,51 @@ static void run_dos_theme_dialog() {
     render_dos_screen();
 }
 
+static void run_dos_about_modal() {
+    DosTuiCtx dc;
+    OykTuiBackend tb;
+    dos_init_tui_backend(NULL, &dc, &tb);
+    const DosThemeAttrs& ta = dc.ta;
+    const int srows = g_vid ? g_vid->rows : 25;
+    const int scols = g_vid ? g_vid->cols : 80;
+    OykTuiRect mr;
+    oyk_tui_center_modal(srows, scols, 13, 64, &mr);
+
+    int dirty = 1;
+    while (!g_break_flag) {
+        dos_pump_network();
+        g_node.tick();
+        if (dirty) {
+            dirty = 0;
+            draw_dos_console_to_back();
+            oyk_tui_draw_modal(&tb, &mr, "About OYK Amateur Radio Packet Node", 1);
+            vid_puts(mr.top + 2, mr.left + 3, ta.dlg_fill, "OYK Amateur Radio Packet Node (OYK-Node)", mr.w - 6);
+            vid_puts(mr.top + 3, mr.left + 3, ta.dlg_fill, "Copyright (C) 2026 KR4OYK - David Kuder", mr.w - 6);
+            vid_puts(mr.top + 4, mr.left + 3, ta.dlg_fill, "License: GPL-3.0-or-later", mr.w - 6);
+            vid_puts(mr.top + 6, mr.left + 3, ta.dlg_fill, "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", mr.w - 6);
+            vid_puts(mr.top + 7, mr.left + 3, ta.dlg_fill, "Hotkeys: F10/M Menu | Tab/F9 Term | S Settings | ? About", mr.w - 6);
+            dos_vid_hdiv(g_vid, mr.top + mr.h - 3, mr.left, mr.w, ta.dlg_bdr);
+            vid_puts(mr.top + mr.h - 2, mr.left + 2, ta.dlg_bar, " Enter / Esc / Q: Close", mr.w - 4);
+            vid_flush();
+        }
+        int ch = 0;
+        OykDosMouseEvent mev;
+        int inp = dos_poll_input(&ch, &mev);
+        if (inp == 2) {
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_RIGHT)) break;
+            if (mev.kind == OYK_MOUSE_DOWN && (mev.button & OYK_MOUSE_BTN_LEFT) &&
+                oyk_tui_hit_close_btn(&mr, mev.row, mev.col)) break;
+        } else if (inp == 1) {
+            if (ch == 0 || ch == 0xE0) {
+                (void)getch();
+            } else if (ch == 27 || ch == '\r' || ch == '\n' || ch == 'q' || ch == 'Q') {
+                break;
+            }
+        }
+    }
+    render_dos_screen();
+}
+
 static void run_dos_menu_action(int chosen, int* running) {
     if (chosen == 0) {
         g_node.set_accept_incoming(1);
@@ -5088,11 +5133,15 @@ int main(int argc, char* argv[]) {
             } else if (inp == 1) {
                 if (ch == 0 || ch == 0xE0) {
                     int ext = getch();
-                    if (ext == 68) { /* F10 */
+                    if (ext == 59) { /* F1: About */
+                        run_dos_about_modal();
+                    } else if (ext == 68) { /* F10 */
                         open_dos_node_menu(&running);
                     } else if (ext == 67) { /* F9: Switch to Local Terminal */
                         run_dos_local_terminal();
                     }
+                } else if (ch == '?') {
+                    run_dos_about_modal();
                 } else if (ch == '\t') {
                     run_dos_local_terminal();
                 } else if (ch == 'm' || ch == 'M' || ch == 'n' || ch == 'N' || ch == '\r' || ch == '\n') {

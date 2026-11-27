@@ -1391,6 +1391,14 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(strstr(cap->buf, "axudp0") != NULL);
     tmux_save_capture("main", con, cap);
 
+    /* 1b. Drop-down Node Menu */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    assert(con->view_mode() == TMUX_VIEW_MENU);
+    tmux_save_capture("menu", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
     /* 2. Terminate Connection centered modal */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
@@ -1411,7 +1419,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(550UL);
 
-    /* 4. Settings (Node tab) */
+    /* 4. Settings (All 7 Canonical Tabs) */
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS && con->settings_tab() == 0);
@@ -1421,12 +1429,42 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(strstr(cap->buf, "1:Node") != NULL);
     tmux_save_capture("settings", con, cap);
 
-    /* 5. Add Interface Wizard (Step 3 showing Same-Iface Fwd toggle) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("4n1\r\r"), 5);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
+    assert(con->settings_tab() == 1);
+    tmux_save_capture("settings_bbs", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("3"), 1);
+    assert(con->settings_tab() == 2);
+    tmux_save_capture("settings_chat", con, cap);
+
+    /* 5. Settings Ifaces & Add Interface Wizard (Steps 1..4) */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("4"), 1);
+    assert(con->settings_tab() == 3);
+    tmux_save_capture("settings_ifaces", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n"), 1);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    tmux_save_capture("add_iface_1", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("1\r"), 2);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    tmux_save_capture("add_iface_2", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
     assert(strstr(cap->buf, "Add Interface") != NULL);
     assert(strstr(cap->buf, "Same-Iface Fwd") != NULL);
-    tmux_save_capture("add_iface", con, cap);
+    tmux_save_capture("add_iface_3", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+    assert(strstr(cap->buf, "Add Interface") != NULL);
+    tmux_save_capture("add_iface_4", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
 
     /* 6. Edit Interface Single View */
@@ -1453,6 +1491,16 @@ static void test_tinytmux_ui_flows_and_captures() {
     tmux_save_capture("edit_peer", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(600UL);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
+    assert(con->settings_tab() == 5);
+    tmux_save_capture("settings_rig", con, cap);
+
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
+    assert(con->settings_tab() == 6);
+    tmux_save_capture("settings_printer", con, cap);
 
     /* 8b. Theme Settings Modal (from main console via 'h') & whole-screen live preview */
     OykThemeConfig dt_pal, lt_pal;
@@ -1534,6 +1582,14 @@ static void test_tinytmux_ui_flows_and_captures() {
     tmux_save_capture("files", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1000UL);
+    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+
+    /* 8c4. About OYK-Node modal */
+    cap->len = 0; cap->buf[0] = '\0';
+    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    assert(con->view_mode() == TMUX_VIEW_ABOUT);
+    tmux_save_capture("about", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
     /* 9. Auto-Learned Peer 3-way Bootloader Exit + 73 de sign-off */

@@ -119,10 +119,19 @@ case "${MODE}" in
         python3 "${MKPRODOS}" extract-bmps "${TMP_WORK}/out.po" "${OUT_DIR}"
         declare -A MAP=(
             [gmain.bmp]=gsos_main.bmp
-            [gsett.bmp]=gsos_settings.bmp
-            [gaddi.bmp]=gsos_add_iface.bmp
-            [gedti.bmp]=gsos_edit_iface.bmp
+            [gmenu.bmp]=gsos_menu.bmp
+            [gset1.bmp]=gsos_settings.bmp
+            [gset2.bmp]=gsos_settings_bbs.bmp
+            [gset3.bmp]=gsos_settings_chat.bmp
+            [gset4.bmp]=gsos_settings_ifaces.bmp
             [gpeer.bmp]=gsos_peers.bmp
+            [gset6.bmp]=gsos_settings_rig.bmp
+            [gset7.bmp]=gsos_settings_printer.bmp
+            [gadd1.bmp]=gsos_add_iface_1.bmp
+            [gadd2.bmp]=gsos_add_iface_2.bmp
+            [gadd3.bmp]=gsos_add_iface_3.bmp
+            [gadd4.bmp]=gsos_add_iface_4.bmp
+            [gedti.bmp]=gsos_edit_iface.bmp
             [gedtp.bmp]=gsos_edit_peer.bmp
             [gterm.bmp]=gsos_terminate.bmp
             [gban.bmp]=gsos_ban.bmp
@@ -130,13 +139,14 @@ case "${MODE}" in
             [gthme.bmp]=gsos_theme.bmp
             [gtml.bmp]=gsos_terminal.bmp
             [gfile.bmp]=gsos_files.bmp
+            [gabt.bmp]=gsos_about.bmp
         )
         for src_name in "${!MAP[@]}"; do
             if [[ -f "${OUT_DIR}/${src_name}" ]]; then
                 mv -f "${OUT_DIR}/${src_name}" "${OUT_DIR}/${MAP[${src_name}]}"
             fi
         done
-        FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
+        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal files about)
         copied=0
         for flow in "${FLOWS[@]}"; do
             if [[ -f "${OUT_DIR}/gsos_${flow}.bmp" ]]; then
@@ -144,7 +154,7 @@ case "${MODE}" in
             fi
         done
         echo "Extracted ${copied}/${#FLOWS[@]} gsos BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 12 ]]
+        [[ "${copied}" -eq 22 ]]
         ;;
     *)
         usage

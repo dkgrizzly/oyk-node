@@ -40,7 +40,8 @@ enum TinyTmuxViewMode {
     TMUX_VIEW_SETTINGS,
     TMUX_VIEW_PSRAM,
     TMUX_VIEW_BOOTLOADER,
-    TMUX_VIEW_STORAGE
+    TMUX_VIEW_STORAGE,
+    TMUX_VIEW_ABOUT
 };
 
 enum TinyTmuxTermType {
@@ -144,6 +145,7 @@ private:
     void render_psram();
     void render_bootloader();
     void render_storage();
+    void render_about();
     void render_prompt_overlay();
     void render_add_iface_wizard();
     void render_edit_iface_dialog();

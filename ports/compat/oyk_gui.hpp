@@ -59,7 +59,8 @@ enum OykGuiScreenId {
     OYK_SCR_TERMINAL,
     OYK_SCR_FILES,
     OYK_SCR_RIG,
-    OYK_SCR_ABOUT
+    OYK_SCR_ABOUT,
+    OYK_SCR_MENU
 };
 
 enum OykGuiTableId {
@@ -136,6 +137,11 @@ enum OykGuiControlKind {
 
 int         oyk_gui_control_box_size(int char_h);
 int         oyk_gui_control_label_offset(int char_h);
+int         oyk_gui_vertical_text_offset(int box_h, int char_h);
+int         oyk_gui_control_height(int char_h, int pad_y);
+const char* oyk_gui_format_learned_policy(int policy);
+int         oyk_gui_cycle_learned_policy(int policy, int delta);
+const char* oyk_gui_about_summary();
 
 /* Formatting & validation helpers */
 void        oyk_gui_format_duration(oyk_u32 secs, char* dst, size_t cap);

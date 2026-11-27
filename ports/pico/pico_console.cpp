@@ -360,6 +360,7 @@ void PicoConsole::render() {
         case PICO_VIEW_STORAGE:    render_console(); render_storage(); break;
         case PICO_VIEW_PSRAM:      render_console(); render_psram(); break;
         case PICO_VIEW_BOOTLOADER: render_console(); render_bootloader(); break;
+        case PICO_VIEW_ABOUT:      render_console(); render_about(); break;
         case PICO_VIEW_MENU:       render_console(); render_menu(); break;
         default:                   render_console(); break;
     }
@@ -923,6 +924,29 @@ void PicoConsole::render_bootloader() {
                 top + 8, left + 1, sgr_menubar(), "Y/Enter:Enter BOOTSEL   N/Esc:Cancel");
         write_str(buf);
     }
+}
+
+void PicoConsole::render_about() {
+    char buf[128];
+    OykTuiRect mr;
+    oyk_tui_center_modal(term_rows_, term_cols_, 13, 64, &mr);
+    const int top = mr.top + 1, left = mr.left + 1;
+    draw_box(top, left, mr.h, mr.w, "About OYK Amateur Radio Packet Node", 1, 1);
+    draw_shadow(top, left, mr.h, mr.w);
+    sprintf(buf, "\033[%d;%dHOYK Amateur Radio Packet Node (OYK-Node)", top + 2, left + 3);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHCopyright (C) 2026 KR4OYK - David Kuder", top + 3, left + 3);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHLicense: GPL-3.0-or-later", top + 4, left + 3);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHAX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", top + 6, left + 3);
+    write_str(buf);
+    sprintf(buf, "\033[%d;%dHHotkeys: F10/M Menu | Tab/F9 Term | S Settings | ? About", top + 7, left + 3);
+    write_str(buf);
+    draw_hdiv(top + mr.h - 3, left, mr.w);
+    sprintf(buf, "\033[%d;%dH%s %-60.60s \033[0m",
+            top + mr.h - 2, left + 1, sgr_menubar(), "Enter / Esc / Q: Close");
+    write_str(buf);
 }
 
 void PicoConsole::render_local_term() {
@@ -2217,6 +2241,11 @@ void PicoConsole::handle_key_code(int key) {
         case PICO_VIEW_PSRAM:
             if (key == PK_ESC) { view_ = PICO_VIEW_CONSOLE; render(); }
             break;
+        case PICO_VIEW_ABOUT:
+            if (key == PK_ESC || key == PK_ENTER || key == 'q' || key == 'Q') {
+                view_ = PICO_VIEW_CONSOLE; render();
+            }
+            break;
         case PICO_VIEW_LOCAL_TERM: handle_local_term_key(key); break;
         default:                   handle_console_key(key); break;
     }
@@ -2258,6 +2287,8 @@ void PicoConsole::handle_console_key(int key) {
         status_fb_[0] = '\0'; view_ = PICO_VIEW_STORAGE; render();
     } else if (key == 'u' || key == 'U') {
         bootloader_pending_ = 0; view_ = PICO_VIEW_BOOTLOADER; render();
+    } else if (key == '?') {
+        view_ = PICO_VIEW_ABOUT; render();
     } else if (key == 0x0C) {
         send_size_probe();
         render();

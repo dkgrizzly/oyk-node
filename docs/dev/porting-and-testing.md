@@ -45,6 +45,7 @@ ctest --test-dir build --output-on-failure -V
 | `oyk_atarist_tests` | Atari ST/TT display tiers, VDI RGB conversion, 4-plane hardware-VDI color mapping |
 | `oyk_tinytmux_tests` | Teensy 4.1 8-UART carrier, PSRAM, FS hooks, USB Host RadioFoundry, PPP, Ethernet bridge, VT100 console |
 | `oyk_pico_tests` | RP2040/RP2350 profiles, PSRAM/Flash fallback, RM2 optional radio, 2-UART console |
+| `oyk_esp32c6_tests` | M5Stack Unit C6L pinout, `PI4IO` RF/button, SX1262 LoRa KISS, 64x48 OLED 4 pages, LittleFS, VT340 TUI |
 | `oyk_fuzz_tests` | Deterministic seeded mutation fuzzing across 7 untrusted wire/config parsers (`OYK_FUZZ_ITERS`, `OYK_FUZZ_SEED`) |
 | `oyk_ncurses_ui_tests` | End-to-end PTY UI test for `oyk-node` |
 

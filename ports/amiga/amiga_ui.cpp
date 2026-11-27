@@ -60,7 +60,10 @@ struct OykAmigaUiState {
     int                active_screen;
     int                modal_scr;
     int                settings_tab;
+    int                sel_iface;
     int                sel_peer;
+    int                sel_conn;
+    int                sel_ban;
     int                running;
     int                hit_count;
     AmHitZone          hits[32];
@@ -447,6 +450,31 @@ static void am_draw_button(const OykAmigaUiState* ui, int x, int y, int w, int h
     }
 }
 
+static void am_draw_listview_header(const OykAmigaUiState* ui, int x, int y, int w,
+                                    int ncols, const int* col_x, const char* const* cols,
+                                    int bg, int fg) {
+    am_fill_rect(ui, x, y, w, 10, bg);
+    for (int c = 0; c < ncols; ++c) {
+        if (cols[c] && cols[c][0]) {
+            am_draw_text(ui, col_x[c], y + 1, cols[c], fg, bg, 24);
+        }
+    }
+}
+
+static void am_draw_listview_row(const OykAmigaUiState* ui, int x, int y, int w, int h,
+                                 int selected, int ncols, const int* col_x,
+                                 const char* const* cells, const int* max_c,
+                                 int norm_bg, int norm_fg) {
+    int bg = selected ? ui->pen_accent : norm_bg;
+    int fg = selected ? ui->pen_accent_fg : norm_fg;
+    am_fill_rect(ui, x, y, w, h, bg);
+    for (int c = 0; c < ncols; ++c) {
+        if (cells[c] && cells[c][0]) {
+            am_draw_text(ui, col_x[c], y + 1, cells[c], fg, bg, max_c[c]);
+        }
+    }
+}
+
 static void am_draw_console(OykAmigaUiState* ui) {
     OykPortableNode* node = ui->node;
     const OykConfig& cfg = node->config();
@@ -488,50 +516,70 @@ static void am_draw_console(OykAmigaUiState* ui) {
     int half = (bw - 6) / 2;
     int top_h = (ch >= 320) ? 88 : 50;
     am_draw_panel(ui, bx, y0, half, top_h, "Interfaces");
-    am_draw_text(ui, bx + 6, y0 + 14, "Port    Type       State RX/TX", ui->pen_fg, ui->pen_panel, (half - 12) / 8);
-    int max_top_rows = (top_h - 24) / 10;
-    for (int i = 0; i < cfg.iface_count && i < max_top_rows; ++i) {
-        const OykIfaceRuntime& rt = node->iface(i);
-        char row[80];
-        sprintf(row, "%-7s %-10s %-4s  %lu/%lu",
-                cfg.ifaces[i].id, cfg.ifaces[i].type,
-                rt.running ? "UP" : "DN",
-                static_cast<unsigned long>(rt.rx_frames),
-                static_cast<unsigned long>(rt.tx_frames));
-        am_draw_text(ui, bx + 6, y0 + 24 + i * 10, row, ui->pen_fg, ui->pen_panel, (half - 12) / 8);
+    {
+        int ix[4] = { bx + 6, bx + 72, bx + 164, bx + 208 };
+        const char* ih[4] = { "Port", "Type", "State", "RX/TX" };
+        int iw[4] = { 8, 11, 5, 10 };
+        am_draw_listview_header(ui, bx + 2, y0 + 13, half - 4, 4, ix, ih, ui->pen_panel, ui->pen_fg);
+        int max_top_rows = (top_h - 24) / 10;
+        for (int i = 0; i < cfg.iface_count && i < max_top_rows; ++i) {
+            const OykIfaceRuntime& rt = node->iface(i);
+            char rxtx[20];
+            sprintf(rxtx, "%lu/%lu",
+                    static_cast<unsigned long>(rt.rx_frames),
+                    static_cast<unsigned long>(rt.tx_frames));
+            const char* cells[4] = { cfg.ifaces[i].id, cfg.ifaces[i].type, rt.running ? "UP" : "DN", rxtx };
+            am_draw_listview_row(ui, bx + 2, y0 + 24 + i * 10, half - 4, 9, 0, 4, ix, cells, iw,
+                                 ui->pen_panel, ui->pen_fg);
+        }
     }
 
     int rx = bx + half + 6;
     am_draw_panel(ui, rx, y0, half, top_h, "Last 5 New Callsigns Heard");
-    am_draw_text(ui, rx + 6, y0 + 14, "#  Callsign  Port   Heard", ui->pen_fg, ui->pen_panel, (half - 12) / 8);
-    for (int i = 0; i < node->new_heard_count() && i < max_top_rows; ++i) {
-        const OykNewHeard& he = node->new_heard(i);
-        char row[64];
-        sprintf(row, "%-2d %-9s %-6s %s", i + 1, he.callsign, he.iface_id, he.time_hms);
-        am_draw_text(ui, rx + 6, y0 + 24 + i * 10, row, ui->pen_fg, ui->pen_panel, (half - 12) / 8);
+    {
+        int hx[4] = { rx + 6, rx + 28, rx + 110, rx + 168 };
+        const char* hh[4] = { "#", "Callsign", "Port", "Heard" };
+        int hw[4] = { 3, 10, 7, 10 };
+        am_draw_listview_header(ui, rx + 2, y0 + 13, half - 4, 4, hx, hh, ui->pen_panel, ui->pen_fg);
+        int max_top_rows = (top_h - 24) / 10;
+        for (int i = 0; i < node->new_heard_count() && i < max_top_rows; ++i) {
+            const OykNewHeard& he = node->new_heard(i);
+            char idx_s[12];
+            sprintf(idx_s, "%d", i + 1);
+            const char* cells[4] = { idx_s, he.callsign, he.iface_id, he.time_hms };
+            am_draw_listview_row(ui, rx + 2, y0 + 24 + i * 10, half - 4, 9, 0, 4, hx, cells, hw,
+                                 ui->pen_panel, ui->pen_fg);
+        }
     }
 
     int conn_y = y0 + top_h + 3;
     int ch_box = (ch >= 320) ? 86 : 48;
     am_draw_panel(ui, bx, conn_y, bw, ch_box, "Active Connections");
-    am_draw_text(ui, bx + 6, conn_y + 14, "ID   Callsign   Port    Dir   State      Since",
-                 ui->pen_fg, ui->pen_panel, (bw - 12) / 8);
-    int max_conn_rows = (ch_box - 24) / 10;
-    int shown_c = 0;
-    for (int i = 0; i < node->max_sessions() && shown_c < max_conn_rows; ++i) {
-        const OykSession& s = node->session_slot(i);
-        if (s.state == OYK_SESS_FREE) continue;
-        char scs[16], row[96];
-        oyk_format_callsign(&s.remote_call, scs, sizeof(scs));
-        const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
-                                ? cfg.ifaces[s.iface_idx].id : "local";
-        sprintf(row, "%-4lu %-10s %-7s %-5s %-10s %s",
-                static_cast<unsigned long>(s.id), scs, pname,
+    {
+        int cx_c[6] = { bx + 6, bx + 42, bx + 130, bx + 206, bx + 258, bx + 354 };
+        const char* ch_c[6] = { "ID", "Callsign", "Port", "Dir", "State", "Since" };
+        int cw_c[6] = { 4, 10, 8, 6, 10, 10 };
+        am_draw_listview_header(ui, bx + 2, conn_y + 13, bw - 4, 6, cx_c, ch_c, ui->pen_panel, ui->pen_fg);
+        int max_conn_rows = (ch_box - 24) / 10;
+        int shown_c = 0;
+        for (int i = 0; i < node->max_sessions() && shown_c < max_conn_rows; ++i) {
+            const OykSession& s = node->session_slot(i);
+            if (s.state == OYK_SESS_FREE) continue;
+            char scs[16], id_s[12];
+            oyk_format_callsign(&s.remote_call, scs, sizeof(scs));
+            sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
+            const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
+                                    ? cfg.ifaces[s.iface_idx].id : "local";
+            const char* cells[6] = {
+                id_s, scs, pname,
                 s.is_local_term ? "LOCAL" : "IN",
                 (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
-                s.since_hms);
-        am_draw_text(ui, bx + 6, conn_y + 24 + shown_c * 10, row, ui->pen_fg, ui->pen_panel, (bw - 12) / 8);
-        ++shown_c;
+                s.since_hms
+            };
+            am_draw_listview_row(ui, bx + 2, conn_y + 24 + shown_c * 10, bw - 4, 9, 0,
+                                 6, cx_c, cells, cw_c, ui->pen_panel, ui->pen_fg);
+            ++shown_c;
+        }
     }
 
     int ly = conn_y + ch_box + 3;
@@ -562,7 +610,7 @@ static void am_sync_modal_window(OykAmigaUiState* ui) {
     if (!ui) return;
     int scr = ui->active_screen;
 #ifdef __AMIGA__
-    if (scr == OYK_SCR_MAIN) {
+    if (scr == OYK_SCR_MAIN || scr == OYK_SCR_MENU) {
         if (ui->modal_win) {
             CloseWindow(ui->modal_win);
             ui->modal_win = NULL;
@@ -627,7 +675,7 @@ static void am_draw_modal(OykAmigaUiState* ui) {
 
 #ifdef __AMIGA__
     struct RastPort* saved_rp = ui->rp;
-    if (ui->modal_win && ui->modal_rp) {
+    if (scr != OYK_SCR_MENU && ui->modal_win && ui->modal_rp) {
         ui->rp = ui->modal_rp;
         mx = ui->modal_win->BorderLeft;
         my = ui->modal_win->BorderTop;
@@ -638,6 +686,37 @@ static void am_draw_modal(OykAmigaUiState* ui) {
 
     ++ui->modal_draw_count;
     ui->last_modal_bg = ui->active_theme.colors[OYK_TR_BG];
+
+    if (scr == OYK_SCR_MENU) {
+        int mmx = (ui->cli_w > 0 ? ui->cli_x : 0) + 8;
+        int mmy = (ui->cli_h > 0 ? ui->cli_y : 0) + 2;
+        int mmw = 248, mmh = 154;
+        int my_pos = mmy + 4;
+        am_fill_rect(ui, mmx + 4, mmy + 3, mmw, mmh, ui->pen_shadow);
+        am_fill_rect(ui, mmx, mmy, mmw, mmh, ui->pen_panel);
+        am_bevel_box(ui, mmx, mmy, mmw, mmh, 0);
+        for (int i = 0; i < oyk_gui_node_menu_count(); ++i) {
+            const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+            if (!mi) continue;
+            if (mi->is_separator) {
+                am_fill_rect(ui, mmx + 3, my_pos + 2, mmw - 6, 1, ui->pen_shadow);
+                my_pos += 6;
+            } else {
+                int hl = (i == 0);
+                char mrow[64];
+                if (mi->shortcut_key) sprintf(mrow, "[%c] %s", mi->shortcut_key, mi->label);
+                else sprintf(mrow, "    %s", mi->label);
+                if (hl) {
+                    am_fill_rect(ui, mmx + 2, my_pos, mmw - 4, 10, ui->pen_accent);
+                    am_draw_text(ui, mmx + 8, my_pos + 1, mrow, ui->pen_accent_fg, ui->pen_accent, 32);
+                } else {
+                    am_draw_text(ui, mmx + 8, my_pos + 1, mrow, ui->pen_fg, ui->pen_panel, 32);
+                }
+                my_pos += 11;
+            }
+        }
+        return;
+    }
 
     am_fill_rect(ui, mx, my, mw, mh, ui->pen_panel);
 
@@ -699,9 +778,12 @@ static void am_draw_modal(OykAmigaUiState* ui) {
             am_draw_field_row(ui, lx, ty + 38, "CHAT SSID:", nbuf, 96, 80);
             am_draw_field_row(ui, lx, ty + 54, "Default Topic:", cfg.chat_topic, 120, 320);
         } else if (active_tab == 3) {
-            am_draw_text(ui, lx, ty + 18, "ID       Driver      Endpoint / Device         Policy",
-                         ui->pen_fg, ui->pen_panel, bw / 8);
+            int ix[4] = { lx + 2, lx + 80, lx + 176, lx + 346 };
+            const char* ih[4] = { "ID", "Driver", "Endpoint / Device", "Policy" };
+            int iw[4] = { 10, 12, 22, 22 };
+            am_draw_listview_header(ui, lx, ty + 18, bw, 4, ix, ih, ui->pen_bg, ui->pen_fg);
             for (int i = 0; i < cfg.iface_count && i < 5; ++i) {
+                char pol[32];
                 if (cfg.ifaces[i].device[0]) {
                     sprintf(nbuf, "%s @ %lu", cfg.ifaces[i].device,
                             static_cast<unsigned long>(cfg.ifaces[i].baud));
@@ -709,27 +791,32 @@ static void am_draw_modal(OykAmigaUiState* ui) {
                     sprintf(nbuf, "%s:%u", cfg.ifaces[i].host,
                             static_cast<unsigned int>(cfg.ifaces[i].port));
                 }
-                sprintf(buf, "%s %-8s %-10s %-24s IN:%s OUT:%s",
-                        (i == 0) ? ">" : " ",
-                        cfg.ifaces[i].id, cfg.ifaces[i].type, nbuf,
-                        cfg.ifaces[i].block_inbound ? "NO" : "YES",
-                        cfg.ifaces[i].block_outbound ? "NO" : "YES");
-                am_draw_text(ui, lx, ty + 30 + i * 11, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+                sprintf(pol, "IN:%s OUT:%s %s",
+                        cfg.ifaces[i].block_inbound ? "N" : "Y",
+                        cfg.ifaces[i].block_outbound ? "N" : "Y",
+                        oyk_gui_format_learned_policy(cfg.ifaces[i].learned_peer_policy));
+                const char* cells[4] = { cfg.ifaces[i].id, cfg.ifaces[i].type, nbuf, pol };
+                am_draw_listview_row(ui, lx, ty + 30 + i * 11, bw, 10, (i == ui->sel_iface),
+                                     4, ix, cells, iw, ui->pen_panel, ui->pen_fg);
             }
             am_draw_button(ui, lx, by, 96, 15, "Add Iface", 0);
             am_add_hit(ui, lx, by, 96, 15, OYK_SCR_ADD_IFACE);
             am_draw_button(ui, lx + 104, by, 96, 15, "Edit Iface", 0);
             am_add_hit(ui, lx + 104, by, 96, 15, OYK_SCR_EDIT_IFACE);
         } else if (active_tab == 4) {
-            am_draw_text(ui, lx, ty + 18, "ID       Callsign  Interface Endpoint          Policy",
-                         ui->pen_fg, ui->pen_panel, bw / 8);
+            int px[5] = { lx + 2, lx + 78, lx + 164, lx + 252, lx + 422 };
+            const char* ph[5] = { "ID", "Callsign", "Interface", "Endpoint", "Policy" };
+            int pw[5] = { 10, 10, 11, 22, 10 };
+            am_draw_listview_header(ui, lx, ty + 18, bw, 5, px, ph, ui->pen_bg, ui->pen_fg);
             for (int p = 0; p < cfg.peer_count && p < 6; ++p) {
-                sprintf(buf, "%s %-8s %-9s %-9s %s:%u %s",
-                        (p == ui->sel_peer) ? ">" : " ",
-                        cfg.peers[p].id, cfg.peers[p].callsign, cfg.peers[p].interface_id,
-                        cfg.peers[p].host, static_cast<unsigned int>(cfg.peers[p].port),
-                        cfg.peers[p].auto_learned ? "AUTO" : "STATIC");
-                am_draw_text(ui, lx, ty + 30 + p * 11, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+                char ep[48];
+                sprintf(ep, "%s:%u", cfg.peers[p].host, static_cast<unsigned int>(cfg.peers[p].port));
+                const char* cells[5] = {
+                    cfg.peers[p].id, cfg.peers[p].callsign, cfg.peers[p].interface_id,
+                    ep, cfg.peers[p].auto_learned ? "AUTO" : "STATIC"
+                };
+                am_draw_listview_row(ui, lx, ty + 30 + p * 11, bw, 10, (p == ui->sel_peer),
+                                     5, px, cells, pw, ui->pen_panel, ui->pen_fg);
             }
             am_draw_button(ui, lx, by, 86, 15, "Edit Peer", 0);
             am_add_hit(ui, lx, by, 86, 15, OYK_SCR_EDIT_PEER);
@@ -760,45 +847,79 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Save", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_ADD_IFACE) {
-        am_draw_text(ui, lx, ty + 2, "Step 1 of 4: Select Driver & Configure Endpoint",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
-        for (int i = 0; i < 5; ++i) {
-            int ry = ty + 16 + i * 13;
-            am_draw_radio(ui, lx + 4, ry, i == ui->wiz.selected_driver_idx,
-                          oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i), ui->pen_fg, 16);
-            am_add_hit(ui, lx + 4, ry, 160, 12, 200 + i);
-        }
-        am_draw_text(ui, lx + 186, ty + 16,
-                     oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, ui->wiz.selected_driver_idx),
-                     ui->pen_fg, ui->pen_panel, 44);
-        am_draw_field_row(ui, lx + 186, ty + 30, "Iface ID:", ui->wiz.draft.id, 84, 120);
-        if (ui->wiz.draft.device[0] || strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
-            am_draw_field_row(ui, lx + 186, ty + 45, "Device:",
-                              ui->wiz.draft.device[0] ? ui->wiz.draft.device : "serial.device", 84, 150);
-            sprintf(nbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud ? ui->wiz.draft.baud : 9600UL));
-            am_draw_field_row(ui, lx + 186, ty + 60, "Baud:", nbuf, 84, 100);
+        int st = ui->wiz.step;
+        sprintf(buf, "Step %d of 4: %s", st + 1, oyk_gui_wiz_step_prompt(&ui->wiz));
+        am_draw_text(ui, lx, ty + 2, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+        if (st == 0) {
+            for (int i = 0; i < 5; ++i) {
+                int ry = ty + 18 + i * 14;
+                am_draw_radio(ui, lx + 4, ry, i == ui->wiz.selected_driver_idx,
+                              oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i), ui->pen_fg, 16);
+                am_draw_text(ui, lx + 150, ry,
+                             oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, i),
+                             ui->pen_fg, ui->pen_panel, 44);
+                am_add_hit(ui, lx + 4, ry, 460, 12, 200 + i);
+            }
+        } else if (st == 1) {
+            am_draw_field_row(ui, lx, ty + 20, "Driver:", ui->wiz.draft.type, 108, 120);
+            am_draw_field_row(ui, lx, ty + 38, "Interface ID:", ui->wiz.draft.id, 108, 160);
+            am_draw_field_row(ui, lx, ty + 56, "Description:",
+                              ui->wiz.draft.description[0] ? ui->wiz.draft.description : "Amiga Interface",
+                              108, 320);
+        } else if (st == 2) {
+            if (ui->wiz.draft.device[0] || strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
+                am_draw_field_row(ui, lx, ty + 18, "Device:",
+                                  ui->wiz.draft.device[0] ? ui->wiz.draft.device : "serial.device", 104, 150);
+                sprintf(nbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud ? ui->wiz.draft.baud : 9600UL));
+                am_draw_field_row(ui, lx, ty + 34, "Baud Rate:", nbuf, 104, 100);
+            } else {
+                am_draw_field_row(ui, lx, ty + 18, "Bind Host:", ui->wiz.draft.host, 104, 150);
+                sprintf(nbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
+                am_draw_field_row(ui, lx + 272, ty + 18, "Port:", nbuf, 48, 80);
+                am_draw_field_row(ui, lx, ty + 34, "Netmask:", ui->wiz.draft.netmask, 104, 150);
+            }
+            am_draw_checkbox(ui, lx, ty + 52, !ui->wiz.draft.block_inbound, "Allow Inbound", ui->pen_fg, 16);
+            am_draw_checkbox(ui, lx + 150, ty + 52, !ui->wiz.draft.block_outbound, "Allow Outbound", ui->pen_fg, 16);
+            am_draw_checkbox(ui, lx + 310, ty + 52, ui->wiz.draft.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+            am_draw_field_row(ui, lx, ty + 68, "Learned Policy:",
+                              oyk_gui_format_learned_policy(ui->wiz.draft.learned_peer_policy), 120, 110);
         } else {
-            am_draw_field_row(ui, lx + 186, ty + 45, "Bind Host:", ui->wiz.draft.host, 84, 140);
-            sprintf(nbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
-            am_draw_field_row(ui, lx + 186, ty + 60, "Port:", nbuf, 84, 90);
+            char sum[320];
+            oyk_gui_wiz_format_summary(&ui->wiz, sum, sizeof(sum), 0);
+            int sy = ty + 18;
+            const char* p = sum;
+            while (*p && sy < by - 12) {
+                const char* nl = strchr(p, '\n');
+                char ln[88];
+                size_t len = nl ? static_cast<size_t>(nl - p) : strlen(p);
+                if (len >= sizeof(ln)) len = sizeof(ln) - 1U;
+                memcpy(ln, p, len);
+                ln[len] = '\0';
+                am_draw_text(ui, lx, sy, ln, ui->pen_fg, ui->pen_panel, bw / 8);
+                sy += 11;
+                p = nl ? (nl + 1) : "";
+            }
         }
-        am_draw_checkbox(ui, lx + 186, ty + 76, !ui->wiz.draft.allow_same_interface,
-                         "Isolate Same-Interface Bridges", ui->pen_fg, 34);
         am_draw_button(ui, lx, by, 72, 15, "< Back", 0);
+        am_add_hit(ui, lx, by, 72, 15, 210);
         am_draw_button(ui, mx + mw - 166, by, 72, 15, "Cancel", 0);
         am_add_hit(ui, mx + mw - 166, by, 72, 15, 999);
-        am_draw_button(ui, mx + mw - 86, by, 74, 15, "Next >", 1);
+        am_draw_button(ui, mx + mw - 86, by, 74, 15, (st >= 3) ? "Finish" : "Next >", 1);
+        am_add_hit(ui, mx + mw - 86, by, 74, 15, 211);
     } else if (scr == OYK_SCR_EDIT_IFACE) {
-        const OykIfaceConfig& ifc = cfg.ifaces[0];
-        am_draw_field_row(ui, lx, ty + 8, "Interface ID:", ifc.id, 112, 120);
-        am_draw_field_row(ui, lx + 250, ty + 8, "Driver:", ifc.type, 64, 120);
-        am_draw_field_row(ui, lx, ty + 24, "Bind Host:", ifc.host, 112, 150);
+        const OykIfaceConfig& ifc = (ui->sel_iface < cfg.iface_count) ? cfg.ifaces[ui->sel_iface] : cfg.ifaces[0];
+        am_draw_field_row(ui, lx, ty + 6, "Interface ID:", ifc.id, 112, 120);
+        am_draw_field_row(ui, lx + 250, ty + 6, "Driver:", ifc.type, 64, 120);
+        am_draw_field_row(ui, lx, ty + 22, "Bind Host:", ifc.host, 112, 150);
         sprintf(nbuf, "%u", static_cast<unsigned int>(ifc.port));
-        am_draw_field_row(ui, lx + 280, ty + 24, "Port:", nbuf, 48, 80);
-        am_draw_field_row(ui, lx, ty + 40, "Netmask:", ifc.netmask, 112, 150);
-        am_draw_checkbox(ui, lx, ty + 58, !ifc.block_inbound, "Allow Inbound", ui->pen_fg, 16);
-        am_draw_checkbox(ui, lx + 150, ty + 58, !ifc.block_outbound, "Allow Outbound", ui->pen_fg, 16);
-        am_draw_checkbox(ui, lx + 310, ty + 58, ifc.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+        am_draw_field_row(ui, lx + 280, ty + 22, "Port:", nbuf, 48, 80);
+        am_draw_field_row(ui, lx, ty + 38, "Netmask:", ifc.netmask, 112, 150);
+        am_draw_checkbox(ui, lx, ty + 55, !ifc.block_inbound, "Allow Inbound", ui->pen_fg, 16);
+        am_draw_checkbox(ui, lx + 150, ty + 55, !ifc.block_outbound, "Allow Outbound", ui->pen_fg, 16);
+        am_draw_checkbox(ui, lx + 310, ty + 55, ifc.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+        am_draw_field_row(ui, lx, ty + 72, "Learned Policy:",
+                          oyk_gui_format_learned_policy(ifc.learned_peer_policy), 120, 110);
+        am_add_hit(ui, lx + 120, ty + 72, 110, 13, 302);
         am_draw_button(ui, mx + mw - 164, by, 72, 15, "Cancel", 0);
         am_add_hit(ui, mx + mw - 164, by, 72, 15, 999);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Save", 1);
@@ -818,41 +939,47 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Save", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_TERMINATE) {
-        sprintf(buf, "%-4s %-10s %-8s %-10s",
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 0),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 1),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 2),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 3));
-        am_draw_text(ui, lx, ty + 4, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+        int tx[4] = { lx + 2, lx + 48, lx + 156, lx + 250 };
+        const char* th[4] = {
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 0),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 1),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 2),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 3)
+        };
+        int tw[4] = { 5, 12, 10, 14 };
+        am_draw_listview_header(ui, lx, ty + 4, bw, 4, tx, th, ui->pen_bg, ui->pen_fg);
         int row_idx = 0;
         for (int i = 0; i < ui->node->max_sessions() && row_idx < 4; ++i) {
             const OykSession& s = ui->node->session_slot(i);
             if (s.state == OYK_SESS_FREE) continue;
+            char id_s[12];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
-            sprintf(buf, "%s %-3lu %-10s %-8s CONNECTED",
-                    (row_idx == 0) ? ">" : " ",
-                    static_cast<unsigned long>(s.id), cs,
-                    (s.iface_idx == 0) ? "axudp0" : "serial0");
-            am_draw_text(ui, lx, ty + 20 + row_idx * 12, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+            sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
+            const char* cells[4] = { id_s, cs, (s.iface_idx == 0) ? "axudp0" : "serial0", "CONNECTED" };
+            am_draw_listview_row(ui, lx, ty + 18 + row_idx * 12, bw, 11, (row_idx == ui->sel_conn),
+                                 4, tx, cells, tw, ui->pen_panel, ui->pen_fg);
             ++row_idx;
         }
         am_draw_button(ui, mx + mw - 188, by, 72, 15, "Cancel", 0);
         am_add_hit(ui, mx + mw - 188, by, 72, 15, 999);
         am_draw_button(ui, mx + mw - 108, by, 96, 15, "Terminate", 1);
     } else if (scr == OYK_SCR_BAN) {
+        int bcol_x[5] = { lx + 2, lx + 80, lx + 204, lx + 290, lx + 344 };
+        const char* bcol_h[5] = { "Callsign", "Banned At", "Lift At", "Flags", "Reason" };
+        int bcol_w[5] = { 10, 16, 11, 7, 24 };
         am_draw_field_row(ui, lx, ty + 2, "Callsign:", "N0BAD", 80, 100);
         am_draw_field_row(ui, lx + 190, ty + 2, "Reason:", "Beacon flood", 64, 150);
         am_draw_field_row(ui, lx + 414, ty + 2, "Dur:", "7d", 40, 56);
         am_draw_checkbox(ui, lx, ty + 18, 1, "Hard Ban (Drop AX.25)", ui->pen_fg, 24);
         am_draw_checkbox(ui, lx + 230, ty + 18, 0, "Allow Appeal", ui->pen_fg, 16);
-        am_draw_text(ui, lx, ty + 35, "Callsign  Banned At        Lift At     Flags  Reason",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_draw_listview_header(ui, lx, ty + 35, bw, 5, bcol_x, bcol_h, ui->pen_bg, ui->pen_fg);
         for (int i = 0; i < ui->node->ban_count() && i < 3; ++i) {
             const OykBanEntry& be = ui->node->ban_entry(i);
-            sprintf(buf, "%-9s %-16s %-10s  0x%02lX   %s",
-                    be.key, be.banned_at, be.lift_at,
-                    static_cast<unsigned long>(be.flags), be.reason);
-            am_draw_text(ui, lx, ty + 48 + i * 11, buf, ui->pen_fg, ui->pen_panel, bw / 8);
+            char fl[12];
+            sprintf(fl, "0x%02lX", static_cast<unsigned long>(be.flags));
+            const char* cells[5] = { be.key, be.banned_at, be.lift_at, fl, be.reason };
+            am_draw_listview_row(ui, lx, ty + 48 + i * 11, bw, 10, (i == ui->sel_ban),
+                                 5, bcol_x, cells, bcol_w, ui->pen_panel, ui->pen_fg);
         }
         am_draw_button(ui, mx + mw - 176, by, 72, 15, "Close", 0);
         am_add_hit(ui, mx + mw - 176, by, 72, 15, 999);
@@ -918,20 +1045,40 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_FILES) {
         int pw = (bw - 10) / 2;
+        int fx1[3] = { lx + 4, lx + 72, lx + 188 };
+        const char* fh1[3] = { "From", "File", "Size" };
+        int fw1[3] = { 9, 14, 7 };
+        const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
+        int fx2[2] = { lx + pw + 14, lx + pw + 190 };
+        const char* fh2[2] = { "Filename", "Size" };
+        int fw2[2] = { 21, 7 };
+        const char* fr2a[2] = { "README.TXT", "1420" };
+        const char* fr2b[2] = { "NETLIST.CFG", "618" };
         am_draw_text(ui, lx, ty + 2, "Pending Uploads", ui->pen_fg, ui->pen_panel, pw / 8);
         am_draw_text(ui, lx + pw + 10, ty + 2, "Approved BBS Files", ui->pen_fg, ui->pen_panel, pw / 8);
         am_fill_rect(ui, lx, ty + 15, pw, mh - 64, ui->pen_bg);
         am_bevel_box(ui, lx, ty + 15, pw, mh - 64, 1);
         am_fill_rect(ui, lx + pw + 10, ty + 15, pw, mh - 64, ui->pen_bg);
         am_bevel_box(ui, lx + pw + 10, ty + 15, pw, mh - 64, 1);
-        am_draw_text(ui, lx + 6, ty + 19, "From     File         Size", ui->pen_fg, ui->pen_bg, (pw - 12) / 8);
-        am_draw_text(ui, lx + 6, ty + 31, "W4ABC-7  PACKETS.TXT  2048", ui->pen_fg, ui->pen_bg, (pw - 12) / 8);
-        am_draw_text(ui, lx + pw + 16, ty + 19, "Filename            Size", ui->pen_fg, ui->pen_bg, (pw - 12) / 8);
-        am_draw_text(ui, lx + pw + 16, ty + 31, "README.TXT          1420", ui->pen_fg, ui->pen_bg, (pw - 12) / 8);
-        am_draw_text(ui, lx + pw + 16, ty + 43, "NETLIST.CFG          618", ui->pen_fg, ui->pen_bg, (pw - 12) / 8);
+        am_draw_listview_header(ui, lx + 2, ty + 17, pw - 4, 3, fx1, fh1, ui->pen_panel, ui->pen_fg);
+        am_draw_listview_row(ui, lx + 2, ty + 28, pw - 4, 10, 1, 3, fx1, fr1, fw1, ui->pen_bg, ui->pen_fg);
+        am_draw_listview_header(ui, lx + pw + 12, ty + 17, pw - 4, 2, fx2, fh2, ui->pen_panel, ui->pen_fg);
+        am_draw_listview_row(ui, lx + pw + 12, ty + 28, pw - 4, 10, 1, 2, fx2, fr2a, fw2, ui->pen_bg, ui->pen_fg);
+        am_draw_listview_row(ui, lx + pw + 12, ty + 39, pw - 4, 10, 0, 2, fx2, fr2b, fw2, ui->pen_bg, ui->pen_fg);
         am_draw_button(ui, lx, by, 86, 15, "Upload...", 0);
         am_draw_button(ui, lx + 92, by, 86, 15, "Approve", 1);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Close", 0);
+        am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
+    } else if (scr == OYK_SCR_ABOUT) {
+        am_draw_text(ui, lx, ty + 10, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_draw_text(ui, lx, ty + 24, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
+                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_draw_text(ui, lx, ty + 38, "Platform: Amiga Workbench (Intuition/GadTools + serial.device)",
+                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_draw_text(ui, lx, ty + 54, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     ui->pen_fg, ui->pen_panel, bw / 8);
+        am_draw_button(ui, mx + mw - 84, by, 72, 15, "OK", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else {
         am_draw_text(ui, lx, ty + 10, "Hamlib rigctld CAT: Port 4532 / serial.device @ 9600",
@@ -1148,22 +1295,34 @@ static void am_seed_demo_node(OykAmigaUiState* ui) {
 
 struct AmGalleryStep {
     int         scr;
+    int         tab;
+    int         wiz_step;
     const char* bmp_path;
 };
 
-static const AmGalleryStep kAmGallery[12] = {
-    { OYK_SCR_MAIN,       "DH0:AM_MAIN.BMP" },
-    { OYK_SCR_SETTINGS,   "DH0:AM_SETT.BMP" },
-    { OYK_SCR_ADD_IFACE,  "DH0:AM_ADDI.BMP" },
-    { OYK_SCR_EDIT_IFACE, "DH0:AM_EDTI.BMP" },
-    { OYK_SCR_PEERS,      "DH0:AM_PEER.BMP" },
-    { OYK_SCR_EDIT_PEER,  "DH0:AM_EDTP.BMP" },
-    { OYK_SCR_TERMINATE,  "DH0:AM_TERM.BMP" },
-    { OYK_SCR_BAN,        "DH0:AM_BAN.BMP" },
-    { OYK_SCR_EXIT_PEERS, "DH0:AM_EXIT.BMP" },
-    { OYK_SCR_THEME,      "DH0:AM_THME.BMP" },
-    { OYK_SCR_TERMINAL,   "DH0:AM_TML.BMP" },
-    { OYK_SCR_FILES,      "DH0:AM_FILE.BMP" }
+static const AmGalleryStep kAmGallery[22] = {
+    { OYK_SCR_MAIN,       0, 0, "DH0:AM_MAIN.BMP" },
+    { OYK_SCR_MENU,       0, 0, "DH0:AM_MENU.BMP" },
+    { OYK_SCR_SETTINGS,   0, 0, "DH0:AM_SET1.BMP" },
+    { OYK_SCR_SETTINGS,   1, 0, "DH0:AM_SET2.BMP" },
+    { OYK_SCR_SETTINGS,   2, 0, "DH0:AM_SET3.BMP" },
+    { OYK_SCR_SETTINGS,   3, 0, "DH0:AM_SET4.BMP" },
+    { OYK_SCR_PEERS,      4, 0, "DH0:AM_PEER.BMP" },
+    { OYK_SCR_SETTINGS,   5, 0, "DH0:AM_SET6.BMP" },
+    { OYK_SCR_SETTINGS,   6, 0, "DH0:AM_SET7.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 0, "DH0:AM_ADD1.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 1, "DH0:AM_ADD2.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 2, "DH0:AM_ADD3.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 3, "DH0:AM_ADD4.BMP" },
+    { OYK_SCR_EDIT_IFACE, 0, 0, "DH0:AM_EDTI.BMP" },
+    { OYK_SCR_EDIT_PEER,  0, 0, "DH0:AM_EDTP.BMP" },
+    { OYK_SCR_TERMINATE,  0, 0, "DH0:AM_TERM.BMP" },
+    { OYK_SCR_BAN,        0, 0, "DH0:AM_BAN.BMP"  },
+    { OYK_SCR_EXIT_PEERS, 0, 0, "DH0:AM_EXIT.BMP" },
+    { OYK_SCR_THEME,      0, 0, "DH0:AM_THME.BMP" },
+    { OYK_SCR_TERMINAL,   0, 0, "DH0:AM_TML.BMP"  },
+    { OYK_SCR_FILES,      0, 0, "DH0:AM_FILE.BMP" },
+    { OYK_SCR_ABOUT,      0, 0, "DH0:AM_ABT.BMP"  }
 };
 
 int oyk_amiga_ui_run(OykPortableNode* node,
@@ -1216,9 +1375,10 @@ int oyk_amiga_ui_run(OykPortableNode* node,
     if (ui_test_mode) {
         am_seed_demo_node(ui);
         ui->draft_cfg = node->config();
-        for (int i = 0; i < 12; ++i) {
+        for (int i = 0; i < 22; ++i) {
             ui->active_screen = kAmGallery[i].scr;
-            ui->settings_tab = (ui->active_screen == OYK_SCR_PEERS) ? 4 : 0;
+            ui->settings_tab = kAmGallery[i].tab;
+            ui->wiz.step = kAmGallery[i].wiz_step;
             am_redraw(ui);
 #ifdef __AMIGA__
             oyk_amiga_capture_screen_bmp(kAmGallery[i].bmp_path, ui->scr);
@@ -1282,6 +1442,27 @@ int oyk_amiga_ui_run(OykPortableNode* node,
                     } else if (act >= 200 && act < 205) {
                         oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), act - 200);
                         am_redraw(ui);
+                    } else if (act == 210) {
+                        oyk_gui_wiz_back(&ui->wiz);
+                        am_redraw(ui);
+                    } else if (act == 211) {
+                        if (ui->wiz.step >= 3) {
+                            ui->active_screen = OYK_SCR_SETTINGS;
+                            ui->settings_tab = 3;
+                        } else {
+                            oyk_gui_wiz_advance(&ui->wiz, &ui->node->config());
+                        }
+                        am_redraw(ui);
+                    } else if (act == 302) {
+                        OykConfig cpy = ui->node->config();
+                        if (cpy.iface_count > 0) {
+                            int idx = (ui->sel_iface < cpy.iface_count) ? ui->sel_iface : 0;
+                            cpy.ifaces[idx].learned_peer_policy = static_cast<oyk_u8>(
+                                oyk_gui_cycle_learned_policy(cpy.ifaces[idx].learned_peer_policy, 1));
+                            OykConfigApplyResult r;
+                            ui->node->apply_config(&cpy, 0, &r);
+                            am_redraw(ui);
+                        }
                     } else if (act == 401 && !ui->locked_to_native) {
                         oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
                     } else if (act == 402 && !ui->locked_to_native) {

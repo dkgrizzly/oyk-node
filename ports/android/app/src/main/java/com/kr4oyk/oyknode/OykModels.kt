@@ -185,6 +185,9 @@ data class NodeConfigState(
     val rigEnabled: Boolean = false,
     val rigHost: String = "127.0.0.1",
     val rigPort: Int = 4532,
+    val printerProtocol: String = "generic",
+    val printerBaud: Int = 9600,
+    val printerCondensed: Boolean = false,
     val interfaces: List<InterfaceConfigState> = listOf(
         InterfaceConfigState(
             id = "axudp0",
@@ -231,10 +234,12 @@ enum class StoragePermissionState {
 
 enum class SettingsTab(val title: String) {
     NODE("Node"),
-    LOCAL("Local"),
-    RADIO("Radio"),
+    BBS("BBS"),
+    CHAT("Chat"),
     INTERFACES("Ifaces"),
-    PEERS("Peers")
+    PEERS("Peers"),
+    RIG("Rig"),
+    PRINTER("Prn")
 }
 
 object PeerValidator {

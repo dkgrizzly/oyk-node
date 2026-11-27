@@ -185,6 +185,9 @@ struct GtkAppState {
     std::atomic<bool>* stop_flag = nullptr;
 
     GtkWidget* window = nullptr;
+    GtkWidget* menubar = nullptr;
+    GtkWidget* node_root = nullptr;
+    GtkWidget* node_menu = nullptr;
     GtkWidget* header_info_label = nullptr;
     GtkWidget* incoming_badge_label = nullptr;
     GtkWidget* sessions_frame = nullptr;
@@ -2502,14 +2505,25 @@ void run_gtk_add_iface_wizard(GtkSettingsCtx* ctx) {
 
     struct WizCapCtx { GtkWidget* dlg; int ticks; } wiz_cap{dlg, 0};
     if (g_gtk_test.enabled) {
-        g_timeout_add(140, +[](gpointer p) -> gboolean {
+        g_timeout_add(160, +[](gpointer p) -> gboolean {
             auto* c = static_cast<WizCapCtx*>(p);
             ++c->ticks;
-            if (c->ticks <= 2) {
+            if (c->ticks == 1) {
+                gtk_capture_window_png(c->dlg, "add_iface_1");
                 gtk_dialog_response(GTK_DIALOG(c->dlg), WIZ_RESP_NEXT);
                 return TRUE;
             }
-            gtk_capture_window_png(c->dlg, "add_iface");
+            if (c->ticks == 2) {
+                gtk_capture_window_png(c->dlg, "add_iface_2");
+                gtk_dialog_response(GTK_DIALOG(c->dlg), WIZ_RESP_NEXT);
+                return TRUE;
+            }
+            if (c->ticks == 3) {
+                gtk_capture_window_png(c->dlg, "add_iface_3");
+                gtk_dialog_response(GTK_DIALOG(c->dlg), WIZ_RESP_NEXT);
+                return TRUE;
+            }
+            gtk_capture_window_png(c->dlg, "add_iface_4");
             gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
             return FALSE;
         }, &wiz_cap);
@@ -3331,38 +3345,51 @@ void open_settings_dialog(GtkAppState* st, int initial_page) {
                 gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(tv)), path);
                 gtk_tree_path_free(path);
             };
-            if (c->phase == 0) {
-                gtk_capture_window_png(c->dlg, "settings");
-                gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 3);
-                c->phase = 1;
-                return TRUE;
+            switch (c->phase++) {
+                case 0:
+                    gtk_capture_window_png(c->dlg, "settings");
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 1);
+                    return TRUE;
+                case 1:
+                    gtk_capture_window_png(c->dlg, "settings_bbs");
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 2);
+                    return TRUE;
+                case 2:
+                    gtk_capture_window_png(c->dlg, "settings_chat");
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 3);
+                    return TRUE;
+                case 3:
+                    gtk_capture_window_png(c->dlg, "settings_ifaces");
+                    gtk_button_clicked(GTK_BUTTON(c->btn_add_if));
+                    return TRUE;
+                case 4:
+                    select_first(c->if_tree);
+                    gtk_button_clicked(GTK_BUTTON(c->btn_edit_if));
+                    return TRUE;
+                case 5:
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 4);
+                    select_first(c->peer_tree);
+                    return TRUE;
+                case 6:
+                    gtk_capture_window_png(c->dlg, "peers");
+                    select_first(c->peer_tree);
+                    gtk_button_clicked(GTK_BUTTON(c->btn_edit_peer));
+                    return TRUE;
+                case 7:
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 5);
+                    return TRUE;
+                case 8:
+                    gtk_capture_window_png(c->dlg, "settings_rig");
+                    gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 6);
+                    return TRUE;
+                case 9:
+                    gtk_capture_window_png(c->dlg, "settings_printer");
+                    gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
+                    return FALSE;
+                default:
+                    gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
+                    return FALSE;
             }
-            if (c->phase == 1) {
-                c->phase = 2;
-                gtk_button_clicked(GTK_BUTTON(c->btn_add_if));
-                return TRUE;
-            }
-            if (c->phase == 2) {
-                c->phase = 3;
-                select_first(c->if_tree);
-                gtk_button_clicked(GTK_BUTTON(c->btn_edit_if));
-                return TRUE;
-            }
-            if (c->phase == 3) {
-                gtk_notebook_set_current_page(GTK_NOTEBOOK(c->nb), 4);
-                select_first(c->peer_tree);
-                c->phase = 4;
-                return TRUE;
-            }
-            if (c->phase == 4) {
-                gtk_capture_window_png(c->dlg, "peers");
-                c->phase = 5;
-                select_first(c->peer_tree);
-                gtk_button_clicked(GTK_BUTTON(c->btn_edit_peer));
-                return TRUE;
-            }
-            gtk_dialog_response(GTK_DIALOG(c->dlg), GTK_RESPONSE_CANCEL);
-            return FALSE;
         }, &st_test);
     }
 
@@ -4083,6 +4110,24 @@ bool confirm_and_exit(GtkAppState* st) {
     return false;
 }
 
+void on_about_clicked(GtkWidget*, gpointer user_data) {
+    auto* st = static_cast<GtkAppState*>(user_data);
+    GtkWidget* dlg = gtk_dialog_new_with_buttons(
+        oyk_gui_screen_title(OYK_SCR_ABOUT),
+        GTK_WINDOW(st->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        GTK_STOCK_OK, GTK_RESPONSE_OK,
+        static_cast<const char*>(nullptr));
+    GtkWidget* lbl = gtk_label_new(oyk_gui_about_summary());
+    gtk_misc_set_padding(GTK_MISC(lbl), 18, 14);
+    gtk_box_pack_start(GTK_BOX(GTK_DIALOG(dlg)->vbox), lbl, TRUE, TRUE, 4);
+    gtk_widget_show_all(dlg);
+    GtkSimpleCapCtx cap_ctx{dlg, "about", GTK_RESPONSE_OK, 0};
+    if (g_gtk_test.enabled) g_timeout_add(160, on_gtk_simple_dlg_cap, &cap_ctx);
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+}
+
 void on_exit_clicked(GtkWidget*, gpointer user_data) {
     confirm_and_exit(static_cast<GtkAppState*>(user_data));
 }
@@ -4159,6 +4204,16 @@ bool Gtk2UI::run(int& argc, char**& argv) {
         gtk_menu_shell_append(GTK_MENU_SHELL(node_menu), w);
     }
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), node_root);
+    GtkWidget* help_menu = gtk_menu_new();
+    GtkWidget* help_root = gtk_menu_item_new_with_mnemonic("_Help");
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(help_root), help_menu);
+    GtkWidget* about_item = gtk_menu_item_new_with_mnemonic("_About OYK-Node...");
+    g_signal_connect(about_item, "activate", G_CALLBACK(on_about_clicked), &st);
+    gtk_menu_shell_append(GTK_MENU_SHELL(help_menu), about_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), help_root);
+    st.menubar = menubar;
+    st.node_root = node_root;
+    st.node_menu = node_menu;
     gtk_box_pack_start(GTK_BOX(root_vbox), menubar, FALSE, FALSE, 0);
 
     // Top Header Status Bar
@@ -4271,26 +4326,35 @@ bool Gtk2UI::run(int& argc, char**& argv) {
                 case 1:
                     refresh_ui(app);
                     gtk_capture_window_png(app->window, "main");
+                    gtk_menu_shell_select_item(GTK_MENU_SHELL(app->menubar), app->node_root);
                     return TRUE;
                 case 2:
-                    on_settings_clicked(nullptr, app);
+                    gtk_capture_window_png(app->window, "menu");
+                    gtk_menu_shell_deactivate(GTK_MENU_SHELL(app->menubar));
+                    gtk_menu_popdown(GTK_MENU(app->node_menu));
                     return TRUE;
                 case 3:
-                    on_terminate_clicked(nullptr, app);
+                    on_settings_clicked(nullptr, app);
                     return TRUE;
                 case 4:
-                    on_ban_clicked(nullptr, app);
+                    on_terminate_clicked(nullptr, app);
                     return TRUE;
                 case 5:
-                    on_theme_clicked(nullptr, app);
+                    on_ban_clicked(nullptr, app);
                     return TRUE;
                 case 6:
-                    on_local_terminal_clicked(nullptr, app);
+                    on_theme_clicked(nullptr, app);
                     return TRUE;
                 case 7:
-                    on_approve_files_clicked(nullptr, app);
+                    on_local_terminal_clicked(nullptr, app);
                     return TRUE;
                 case 8:
+                    on_approve_files_clicked(nullptr, app);
+                    return TRUE;
+                case 9:
+                    on_about_clicked(nullptr, app);
+                    return TRUE;
+                case 10:
                     on_exit_clicked(nullptr, app);
                     return FALSE;
                 default:

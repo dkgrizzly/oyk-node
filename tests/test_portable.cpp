@@ -1968,6 +1968,27 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "main", v, g);
 
+    /* 1b. Drop-down Node Menu */
+    dos_render_mock_main_pal(v, g, p);
+    mr.top = 1; mr.left = 0; mr.h = 15; mr.w = 34;
+    dos_modal_frame(v, g, mr, "", bdr, fill);
+    dos_vid_puts(v, 2, 1, p.msel, " [A] Allow Incoming Connections ", 32);
+    dos_vid_puts(v, 3, 1, fill,   " [D] Deny Incoming Connections  ", 32);
+    dos_vid_hdiv(v, 4, 0, 34, bdr);
+    dos_vid_puts(v, 5, 1, fill,   " [L] Local Terminal...          ", 32);
+    dos_vid_puts(v, 6, 1, fill,   " [F] Manage Files Area...       ", 32);
+    dos_vid_puts(v, 7, 1, fill,   " [R] Radio Control...           ", 32);
+    dos_vid_puts(v, 8, 1, fill,   " [S] Settings...                ", 32);
+    dos_vid_puts(v, 9, 1, fill,   " [P] Peers...                   ", 32);
+    dos_vid_puts(v, 10, 1, fill,  " [H] Theme...                   ", 32);
+    dos_vid_puts(v, 11, 1, fill,  " [T] Terminate Connection...    ", 32);
+    dos_vid_puts(v, 12, 1, fill,  " [B] Ban / Unban Callsign...    ", 32);
+    dos_vid_hdiv(v, 13, 0, 34, bdr);
+    dos_vid_puts(v, 14, 1, fill,  " [X] Exit                       ", 32);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "menu", v, g);
+
     /* 2. Settings (Node tab) */
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
@@ -1986,7 +2007,78 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings", v, g);
 
-    /* 3. Add Interface Wizard */
+    /* 2b. Settings (BBS, CHAT, Ifaces tabs) */
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  [2:BBS]  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Packet BBS : [ON]", 40);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "BBS Callsign      : KR4OYK-1 (OYKBBS)", 48);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Files Area Path   : files", 40);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings_bbs", v, g);
+
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  [3:CHAT]  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Multi-User CHAT : [ON]", 40);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "CHAT Callsign          : KR4OYK-2 (OYKCHT)", 50);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Default Topic          : Lobby", 40);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings_chat", v, g);
+
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  [4:Ifaces]  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 1, lhdr, "ID        Type     Endpoint          Policy", mr.w - 2);
+    dos_vid_puts(v, mr.top + 4, mr.left + 1, sel,  "axudp0    axudp    127.0.0.1:10093   IN/OUT", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "A:Add  E/Enter:Edit  K:Del  S/F2:Save  Esc:Close", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings_ifaces", v, g);
+
+    /* 3. Add Interface Wizard Steps 1..4 */
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 19, 68, &mr);
+    dos_modal_frame(v, g, mr, "Add Interface", bdr, fill);
+    dos_vid_title(v, mr.top, oyk_tui_close_btn_col(&mr) - 15, 14, bdr, "[##......] 1/4");
+    dos_vid_puts(v, mr.top + 1, mr.left + 2, bdr, "Select interface driver protocol:", 62);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, sel, "(*) axudp       AX.25 over UDP/IPv4 link", 58);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "( ) axip        AX.25 IP encapsulation", 58);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "( ) kiss-serial Serial KISS TNC", 58);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "( ) kiss-tcp    Network KISS over TCP", 58);
+    dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "( ) telnet      Telnet server/BBS listener", 58);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ Next > ]  [ Cancel ]", 40);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "add_iface_1", v, g);
+
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 19, 68, &mr);
+    dos_modal_frame(v, g, mr, "Add Interface", bdr, fill);
+    dos_vid_title(v, mr.top, oyk_tui_close_btn_col(&mr) - 15, 14, bdr, "[####....] 2/4");
+    dos_vid_puts(v, mr.top + 1, mr.left + 2, bdr, "Specify interface ID and description:", 62);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Interface ID   : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, sel, "axudp1", 30);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Description    : ", 17); dos_vid_puts(v, mr.top + 5, mr.left + 20, inp, "Secondary AXUDP Link", 30);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "add_iface_2", v, g);
+
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 19, 68, &mr);
     dos_modal_frame(v, g, mr, "Add Interface", bdr, fill);
@@ -2005,7 +2097,23 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Next > ]  [ Cancel ]", 40);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "add_iface", v, g);
+    dos_save_capture_prefixed(prefix, "add_iface_3", v, g);
+
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 19, 68, &mr);
+    dos_modal_frame(v, g, mr, "Add Interface", bdr, fill);
+    dos_vid_title(v, mr.top, oyk_tui_close_btn_col(&mr) - 15, 14, bdr, "[########] 4/4");
+    dos_vid_puts(v, mr.top + 1, mr.left + 2, bdr, "Review interface configuration before committing:", 62);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Driver         : axudp", 50);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Interface ID   : axudp1", 50);
+    dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Bind Endpoint  : 0.0.0.0:10093", 50);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "Allow In/Out   : true / true  (Same: false)", 55);
+    dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "Learned Policy : inherit", 50);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "[ < Back ]  [ Finish ]  [ Cancel ]", 40);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "add_iface_4", v, g);
 
     /* 4. Edit Interface Modal */
     dos_render_mock_main_pal(v, g, p);
@@ -2193,6 +2301,47 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "files", v, g);
+
+    /* 12b. Settings (Rig and Printer Tabs) */
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  5:Peers  [6:Rig]  7:Prn", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Rig Control : [OFF]", 40);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Protocol           : rigctl (127.0.0.1:4532)", 50);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings_rig", v, g);
+
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 21, 74, &mr);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  [7:Prn]", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Line Printer : [OFF]", 40);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Protocol            : generic (9600 baud)", 50);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "settings_printer", v, g);
+
+    /* 13. About OYK-Node modal */
+    dos_render_mock_main_pal(v, g, p);
+    oyk_tui_center_modal(rows, cols, 13, 64, &mr);
+    dos_modal_frame(v, g, mr, "About OYK Amateur Radio Packet Node", bdr, fill);
+    dos_vid_puts(v, mr.top + 2, mr.left + 3, fill, "OYK Amateur Radio Packet Node (OYK-Node)", mr.w - 6);
+    dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Copyright (C) 2026 KR4OYK - David Kuder", mr.w - 6);
+    dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "License: GPL-3.0-or-later", mr.w - 6);
+    dos_vid_puts(v, mr.top + 6, mr.left + 3, fill, "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", mr.w - 6);
+    dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Enter / Esc / Q: Close", mr.w - 4);
+    assert(dos_vid_flush(v) > 0);
+    if (g) dos_gfx_present(g, sim_vram, 1);
+    dos_save_capture_prefixed(prefix, "about", v, g);
 
     dos_vid_shutdown(v);
     delete v;

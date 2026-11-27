@@ -15,6 +15,7 @@ GALLERY_PREFIXES = (
     "dos_gfx",
     "tinytmux",
     "pico",
+    "esp32c6",
     "gtk",
     "win",
     "macclassic_color",
@@ -28,10 +29,19 @@ GALLERY_PREFIXES = (
 
 GALLERY_SUFFIXES = (
     "main",
+    "menu",
     "settings",
-    "add_iface",
-    "edit_iface",
+    "settings_bbs",
+    "settings_chat",
+    "settings_ifaces",
     "peers",
+    "settings_rig",
+    "settings_printer",
+    "add_iface_1",
+    "add_iface_2",
+    "add_iface_3",
+    "add_iface_4",
+    "edit_iface",
     "edit_peer",
     "terminate",
     "ban",
@@ -39,7 +49,7 @@ GALLERY_SUFFIXES = (
     "theme",
     "terminal",
     "files",
-    "contact_sheet",
+    "about",
 )
 
 RETRO_GUI_FILES = (
@@ -60,17 +70,24 @@ def read_text(rel_path):
 
 def check_gallery_completeness(errors):
     img_dir = os.path.join(ROOT, "docs", "user", "images", "ui-gallery")
+    thumbs_dir = os.path.join(img_dir, "thumbs")
     for prefix in GALLERY_PREFIXES:
+        stale_sheet = os.path.join(img_dir, f"{prefix}_contact_sheet.png")
+        if os.path.exists(stale_sheet):
+            errors.append(f"Stale composite contact sheet still present: {os.path.relpath(stale_sheet, ROOT)}")
         for suffix in GALLERY_SUFFIXES:
             path = os.path.join(img_dir, f"{prefix}_{suffix}.png")
             if not os.path.isfile(path) or os.path.getsize(path) == 0:
                 errors.append(f"Missing or empty UI gallery image: {os.path.relpath(path, ROOT)}")
+            tpath = os.path.join(thumbs_dir, f"{prefix}_{suffix}.png")
+            if not os.path.isfile(tpath) or os.path.getsize(tpath) == 0:
+                errors.append(f"Missing or empty UI gallery thumbnail: {os.path.relpath(tpath, ROOT)}")
 
 
 def check_retro_gui_parity(errors):
     for rel_path in RETRO_GUI_FILES:
         src = read_text(rel_path)
-        for token in ("_draw_checkbox", "_draw_radio", "_draw_field_row"):
+        for token in ("_draw_checkbox", "_draw_radio", "_draw_field_row", "_draw_listview_row"):
             if token not in src:
                 errors.append(f"{rel_path}: missing graphical helper '{token}'")
         matched_tabs = [t for t in range(7) if f"active_tab == {t}" in src]
@@ -80,12 +97,22 @@ def check_retro_gui_parity(errors):
             )
         if "Review Peers" not in src:
             errors.append(f"{rel_path}: missing 4-button Exit action 'Review Peers'")
+        if "learned_peer_policy" not in src and "Learned Policy" not in src:
+            errors.append(f"{rel_path}: missing Learned Peer Policy UI control")
+        if "allow_same_interface" not in src:
+            errors.append(f"{rel_path}: missing allow_same_interface control")
+        if rel_path == "ports/gsos/gsos_ui.c" and '"[X]"' in src:
+            errors.append("ports/gsos/gsos_ui.c: forbidden '[X]' string in GS/OS Platinum title bar")
+        if rel_path == "ports/atarist/atari_ui.cpp" and "oyk_gui_vertical_text_offset" not in src:
+            errors.append("ports/atarist/atari_ui.cpp: missing oyk_gui_vertical_text_offset vertical centering")
         for lineno, line in enumerate(src.splitlines(), start=1):
             m = TEXT_MIMIC_RE.search(line)
             if not m:
                 continue
             lit = m.group(0)
-            if '"[X]"' in line and (("mw -" in line) or ("right -" in line) or ("close" in line.lower())):
+            if rel_path != "ports/gsos/gsos_ui.c" and '"[X]"' in line and (
+                ("mw -" in line) or ("right -" in line) or ("close" in line.lower())
+            ):
                 continue
             errors.append(f"{rel_path}:{lineno}: forbidden text control mimic {lit}")
 
@@ -121,6 +148,7 @@ def check_unit_test_parity(errors):
         "ports/atarist/test_atarist.cpp",
         "tests/test_amiga_policy.cpp",
         "tests/test_atarist_policy.cpp",
+        "tests/test_esp32c6.cpp",
     )
     for rel_path in cpp_test_files:
         src = read_text(rel_path)

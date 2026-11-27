@@ -17,6 +17,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Desktop** | macOS (`arm64` / `x86_64` / `ppc`) | Cocoa AppKit (`C++20` + OS X 10.4–10.6 `ppc` `C++98`) | [ports/macos/README.md](ports/macos/README.md) |
 | **Embedded** | Teensy 4.1 (`IMXRT1062` / TinyTMUX) | VT100/VT220 USB Serial, 8 UARTs, `QNEthernet`, USBHost RadioFoundry PPP | [ports/tinytmux/README.md](ports/tinytmux/README.md) |
 | **Embedded** | Raspberry Pi Pico (`RP2040` / `RP2350`) | VT100/VT220 USB CDC, 2 UARTs, `CYW43439`/`RM2` Wi-Fi + BTstack | [ports/pico/README.md](ports/pico/README.md) |
+| **Embedded** | ESP32-C6 (`M5Stack Unit C6L`) | SX1262 LoRa KISS, 64x48 SPI OLED, Wi-Fi 6 + BLE 5, VT340 USB JTAG | [ports/esp32c6/README.md](ports/esp32c6/README.md) |
 | **Mobile** | Android | Jetpack Compose + Material 3 + C++20 NDK `NodeEngine` | [ports/android/](ports/android/) |
 | **Retro** | MS-DOS Text (8088/V20 640 KB) | Direct MDA/CGA/EGA/VGA video RAM (`INT 33h`, optional mTCP/PPP) | [ports/dos/README.md](ports/dos/README.md) |
 | **Retro** | MS-DOS Graphical (386+ XMS/EMS4) | EGA / VGA / VBE 80x30–128x48 smooth-scrolling desktop (`oyknodeg.exe`) | [ports/dos/README.md](ports/dos/README.md) |

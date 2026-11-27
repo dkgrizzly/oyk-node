@@ -100,10 +100,19 @@ case "${MODE}" in
         run_in_fsuae "${APP_BIN}" "--ui-test" "1" "${TMP_WORK}"
         declare -A MAP=(
             [AM_MAIN.BMP]=amiga_main.bmp
-            [AM_SETT.BMP]=amiga_settings.bmp
-            [AM_ADDI.BMP]=amiga_add_iface.bmp
-            [AM_EDTI.BMP]=amiga_edit_iface.bmp
+            [AM_MENU.BMP]=amiga_menu.bmp
+            [AM_SET1.BMP]=amiga_settings.bmp
+            [AM_SET2.BMP]=amiga_settings_bbs.bmp
+            [AM_SET3.BMP]=amiga_settings_chat.bmp
+            [AM_SET4.BMP]=amiga_settings_ifaces.bmp
             [AM_PEER.BMP]=amiga_peers.bmp
+            [AM_SET6.BMP]=amiga_settings_rig.bmp
+            [AM_SET7.BMP]=amiga_settings_printer.bmp
+            [AM_ADD1.BMP]=amiga_add_iface_1.bmp
+            [AM_ADD2.BMP]=amiga_add_iface_2.bmp
+            [AM_ADD3.BMP]=amiga_add_iface_3.bmp
+            [AM_ADD4.BMP]=amiga_add_iface_4.bmp
+            [AM_EDTI.BMP]=amiga_edit_iface.bmp
             [AM_EDTP.BMP]=amiga_edit_peer.bmp
             [AM_TERM.BMP]=amiga_terminate.bmp
             [AM_BAN.BMP]=amiga_ban.bmp
@@ -111,6 +120,7 @@ case "${MODE}" in
             [AM_THME.BMP]=amiga_theme.bmp
             [AM_TML.BMP]=amiga_terminal.bmp
             [AM_FILE.BMP]=amiga_files.bmp
+            [AM_ABT.BMP]=amiga_about.bmp
         )
         copied=0
         for src_name in "${!MAP[@]}"; do
@@ -119,8 +129,8 @@ case "${MODE}" in
                 copied=$((copied + 1))
             fi
         done
-        echo "Extracted ${copied}/12 amiga BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 12 ]]
+        echo "Extracted ${copied}/22 amiga BMP screenshots into ${OUT_DIR}"
+        [[ "${copied}" -eq 22 ]]
         ;;
     *)
         usage

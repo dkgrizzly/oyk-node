@@ -388,6 +388,10 @@ void NcursesUI::run() {
             case 'H':
                 modal_theme();
                 break;
+            case '?':
+            case KEY_F(1):
+                modal_about();
+                break;
             case 'q':
             case 'Q':
             case 'x':
@@ -2760,6 +2764,62 @@ void NcursesUI::modal_rig_control() {
         }
     }
 
+    delwin(win);
+}
+
+void NcursesUI::modal_about() {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    int w = std::min(64, cols - 4);
+    int h = std::min(13, rows - 3);
+    if (w < 44 || h < 10) {
+        set_status("OYK Amateur Radio Packet Node - GPL-3.0-or-later");
+        return;
+    }
+    int y = std::max(1, (rows - h) / 2);
+    int x = std::max(1, (cols - w) / 2);
+
+    WINDOW* win = newwin(h, w, y, x);
+    if (!win) return;
+    NcursesShadow shadow(y, x, h, w, has_colors_);
+    keypad(win, TRUE);
+    wtimeout(win, 250);
+
+    while (true) {
+        if (external_stop_flag_ && external_stop_flag_->load()) break;
+        werase(win);
+        draw_modal_frame(win, h, w, "About OYK Amateur Radio Packet Node", has_colors_, CP_BORDER);
+        mvwaddnstr(win, 2, 3, "OYK Amateur Radio Packet Node (OYK-Node)", w - 6);
+        mvwaddnstr(win, 3, 3, "Copyright (C) 2026 KR4OYK - David Kuder", w - 6);
+        mvwaddnstr(win, 4, 3, "License: GPL-3.0-or-later", w - 6);
+        mvwaddnstr(win, 6, 3, "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Rig", w - 6);
+        mvwaddnstr(win, 7, 3, "Hotkeys: F10/M Menu | Tab/F9 Term | S Settings | ? About", w - 6);
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_BORDER));
+        mvwaddch(win, h - 3, 0, ACS_LTEE);
+        mvwhline(win, h - 3, 1, ACS_HLINE, w - 2);
+        mvwaddch(win, h - 3, w - 1, ACS_RTEE);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_BORDER));
+        if (has_colors_) wattron(win, COLOR_PAIR(CP_MENU));
+        mvwhline(win, h - 2, 1, ' ', w - 2);
+        mvwaddnstr(win, h - 2, 2, "Enter / Esc / Q: Close", w - 4);
+        if (has_colors_) wattroff(win, COLOR_PAIR(CP_MENU));
+        shadow.noutrefresh();
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == KEY_MOUSE) {
+            MEVENT mev{};
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON3_CLICKED | BUTTON3_PRESSED)) break;
+                if ((mev.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)) && hit_modal_close_btn(win, mev)) break;
+            }
+            continue;
+        }
+        if (ch == 27 || ch == '\n' || ch == '\r' || ch == KEY_ENTER || ch == 'q' || ch == 'Q') {
+            break;
+        }
+    }
     delwin(win);
 }
 

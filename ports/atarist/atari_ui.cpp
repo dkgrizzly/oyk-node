@@ -52,7 +52,10 @@ struct OykAtariUiState {
     OykAtariDisplayTier tier;
     int                 active_screen;
     int                 settings_tab;
+    int                 sel_iface;
     int                 sel_peer;
+    int                 sel_conn;
+    int                 sel_ban;
     int                 running;
     int                 hit_count;
     AtHitZone           hits[32];
@@ -300,43 +303,49 @@ static void at_add_hit(OykAtariUiState* ui, int x, int y, int w, int h, int acti
 
 static void at_draw_checkbox(const OykAtariUiState* ui, int x, int y, int checked,
                              const char* label, int label_pen, int max_chars) {
-    int sz = oyk_gui_control_box_size(ui ? ui->char_h : 16);
-    if (sz < 11) sz = 11;
-    at_fill_rect(ui, x, y, sz, sz, ui->pen_bg);
-    at_frame_rect(ui, x, y, sz, sz, ui->pen_fg);
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int sz = oyk_gui_control_box_size(ch);
+    int top_pad = (sz < ch) ? ((ch - sz) / 2) : 0;
+    int box_y = y + top_pad;
+    at_fill_rect(ui, x, box_y, sz, sz, ui->pen_bg);
+    at_frame_rect(ui, x, box_y, sz, sz, ui->pen_fg);
 #ifdef __ATARI__
     if (checked && ui && ui->vdi > 0) {
         short pts[6];
         pts[0] = static_cast<short>(x + 2);
-        pts[1] = static_cast<short>(y + sz / 2);
+        pts[1] = static_cast<short>(box_y + sz / 2);
         pts[2] = static_cast<short>(x + sz / 2 - 1);
-        pts[3] = static_cast<short>(y + sz - 3);
+        pts[3] = static_cast<short>(box_y + sz - 3);
         pts[4] = static_cast<short>(x + sz - 2);
-        pts[5] = static_cast<short>(y + 2);
+        pts[5] = static_cast<short>(box_y + 2);
         vsl_color(ui->vdi, static_cast<short>(ui->pen_accent));
         v_pline(ui->vdi, 3, pts);
-        pts[1] += 1;
-        pts[3] += 1;
-        pts[5] += 1;
-        v_pline(ui->vdi, 3, pts);
+        if (sz >= 12) {
+            pts[1] += 1;
+            pts[3] += 1;
+            pts[5] += 1;
+            v_pline(ui->vdi, 3, pts);
+        }
     }
 #else
     (void)checked;
 #endif
     if (label && label[0]) {
-        at_draw_text(ui, x + sz + 6, y, label, label_pen, max_chars);
+        int ty = y + oyk_gui_vertical_text_offset(sz, ch);
+        at_draw_text(ui, x + sz + 6, ty, label, label_pen, max_chars);
     }
 }
 
 static void at_draw_radio(const OykAtariUiState* ui, int x, int y, int selected,
                           const char* label, int label_pen, int max_chars) {
-    int sz = oyk_gui_control_box_size(ui ? ui->char_h : 16);
-    if (sz < 11) sz = 11;
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int sz = oyk_gui_control_box_size(ch);
+    int box_y = y + ((sz < ch) ? ((ch - sz) / 2) : 0);
 #ifdef __ATARI__
     if (ui && ui->vdi > 0) {
         short r = static_cast<short>(sz / 2);
         short cx = static_cast<short>(x + r);
-        short cy = static_cast<short>(y + r + 1);
+        short cy = static_cast<short>(box_y + r);
         vsf_interior(ui->vdi, FIS_SOLID);
         vsf_color(ui->vdi, static_cast<short>(ui->pen_fg));
         v_circle(ui->vdi, cx, cy, r);
@@ -351,47 +360,99 @@ static void at_draw_radio(const OykAtariUiState* ui, int x, int y, int selected,
     (void)selected;
 #endif
     if (label && label[0]) {
-        at_draw_text(ui, x + sz + 6, y, label, label_pen, max_chars);
+        int ty = y + oyk_gui_vertical_text_offset(sz, ch);
+        at_draw_text(ui, x + sz + 6, ty, label, label_pen, max_chars);
     }
 }
 
 static void at_draw_field_row(const OykAtariUiState* ui, int x, int y, const char* label,
                               const char* value, int label_w, int box_w) {
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int fh = (ch <= 10) ? oyk_gui_control_height(ch, 3) : oyk_gui_control_height(ch, 1);
+    int toff = oyk_gui_vertical_text_offset(fh, ch);
     if (label && label[0]) {
-        at_draw_text(ui, x, y + 1, label, ui->pen_fg, label_w / 8);
+        at_draw_text(ui, x, y + toff, label, ui->pen_fg, label_w / 8);
     }
     int bx = x + label_w;
-    at_fill_rect(ui, bx, y, box_w, 18, ui->pen_bg);
-    at_frame_rect(ui, bx, y, box_w, 18, ui->pen_fg);
+    at_fill_rect(ui, bx, y, box_w, fh, ui->pen_bg);
+    at_frame_rect(ui, bx, y, box_w, fh, ui->pen_fg);
     if (value && value[0]) {
-        at_draw_text(ui, bx + 5, y + 1, value, ui->pen_fg, (box_w - 10) / 8);
+        at_draw_text(ui, bx + 5, y + toff, value, ui->pen_fg, (box_w - 10) / 8);
     }
 }
 
 static void at_draw_box(const OykAtariUiState* ui, int x, int y, int w, int h, const char* title) {
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int hh = (ch <= 10) ? oyk_gui_control_height(ch, 3) : oyk_gui_control_height(ch, 1);
+    int toff = oyk_gui_vertical_text_offset(hh, ch);
     at_fill_rect(ui, x, y, w, h, ui->pen_panel);
     at_frame_rect(ui, x, y, w, h, ui->pen_fg);
-    at_fill_rect(ui, x + 1, y + 1, w - 2, 18, ui->pen_accent);
-    at_hline(ui, x, x + w - 1, y + 19, ui->pen_fg);
+    at_fill_rect(ui, x + 1, y + 1, w - 2, hh, ui->pen_accent);
+    at_hline(ui, x, x + w - 1, y + hh + 1, ui->pen_fg);
     if (title && title[0]) {
-        at_draw_text(ui, x + 8, y + 2, title, ui->pen_accent_fg, (w - 16) / 8);
+        at_draw_text(ui, x + 8, y + 1 + toff, title, ui->pen_accent_fg, (w - 16) / 8);
     }
 }
 
 static void at_draw_button(const OykAtariUiState* ui, int x, int y, int w, int h,
                            const char* label, int is_primary) {
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int eff_h = (ch <= 10 && h > 18) ? oyk_gui_control_height(ch, 3) : h;
+    int y_off = (eff_h < h) ? ((h - eff_h) / 2) : 0;
+    int toff = oyk_gui_vertical_text_offset(eff_h, ch);
     int bg = is_primary ? ui->pen_accent : ui->pen_panel;
     int fg = is_primary ? ui->pen_accent_fg : ui->pen_fg;
-    at_fill_rect(ui, x, y, w, h, bg);
-    at_frame_rect(ui, x, y, w, h, ui->pen_fg);
+    at_fill_rect(ui, x, y + y_off, w, eff_h, bg);
+    at_frame_rect(ui, x, y + y_off, w, eff_h, ui->pen_fg);
     if (label && label[0]) {
-        at_draw_text(ui, x + 8, y + 3, label, fg, (w - 14) / 8);
+        at_draw_text(ui, x + 8, y + y_off + toff, label, fg, (w - 14) / 8);
+    }
+}
+
+static void at_draw_listview_header(const OykAtariUiState* ui, int x, int y, int w,
+                                    int ncols, const int* col_x, const char* const* cols,
+                                    int bg, int fg) {
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int rh = oyk_gui_control_height(ch, (ch <= 10) ? 2 : 1);
+    int toff = oyk_gui_vertical_text_offset(rh, ch);
+    at_fill_rect(ui, x, y, w, rh, bg);
+    for (int c = 0; c < ncols; ++c) {
+        if (cols[c] && cols[c][0]) {
+            at_draw_text(ui, col_x[c], y + toff, cols[c], fg, 24);
+        }
+    }
+}
+
+static void at_draw_listview_row(const OykAtariUiState* ui, int x, int y, int w, int h,
+                                 int selected, int ncols, const int* col_x,
+                                 const char* const* cells, const int* max_c,
+                                 int norm_bg, int norm_fg) {
+    int ch = (ui && ui->char_h > 0) ? ui->char_h : 16;
+    int toff = oyk_gui_vertical_text_offset(h, ch);
+    int bg = norm_bg;
+    int fg = norm_fg;
+    if (selected) {
+        bg = (ui->colors <= 2) ? ui->pen_fg : ui->pen_accent;
+        fg = (ui->colors <= 2) ? ui->pen_bg : ui->pen_accent_fg;
+    }
+    at_fill_rect(ui, x, y, w, h, bg);
+    for (int c = 0; c < ncols; ++c) {
+        if (cells[c] && cells[c][0]) {
+            at_draw_text(ui, col_x[c], y + toff, cells[c], fg, max_c[c]);
+        }
     }
 }
 
 static void at_draw_console_body(OykAtariUiState* ui) {
     OykPortableNode* node = ui->node;
     const OykConfig& cfg = node->config();
+    int ch = (ui->char_h > 0) ? ui->char_h : 16;
+    int row_step = (ch <= 10) ? 13 : 17;
+    int hdr_h = (ch <= 10) ? oyk_gui_control_height(ch, 3) : oyk_gui_control_height(ch, 1);
+    int ban_h = (ch <= 10) ? 18 : 22;
+    int ban_off = oyk_gui_vertical_text_offset(ban_h, ch);
+    int pill_h = ban_h - 4;
+    int pill_off = oyk_gui_vertical_text_offset(pill_h, ch);
     int cx = (ui->ww > 0) ? ui->wx : 0;
     int cy = (ui->wh > 0) ? ui->wy : 0;
     int w  = (ui->ww > 0) ? ui->ww : ui->scr_w;
@@ -402,12 +463,14 @@ static void at_draw_console_body(OykAtariUiState* ui) {
     if (ui->win_handle < 0) {
         at_fill_rect(ui, cx, cy, w, 19, ui->pen_menu_bg);
         at_hline(ui, cx, cx + w - 1, cy + 19, ui->pen_fg);
-        at_draw_text(ui, cx + 10, cy + 2, "Desk  File  Edit  Node  View  Window  Help",
+        at_draw_text(ui, cx + 10, cy + oyk_gui_vertical_text_offset(19, ch),
+                     "Desk  File  Edit  Node  View  Window  Help",
                      ui->pen_menu_fg, 46);
         {
             char rstat[32];
             sprintf(rstat, "%s", (ui->tier == OYK_ATARI_MONO) ? "ST-HIGH (Mono)" : "VDI-16 Color");
-            at_draw_text(ui, cx + w - 124, cy + 2, rstat, ui->pen_menu_fg, 14);
+            at_draw_text(ui, cx + w - 124, cy + oyk_gui_vertical_text_offset(19, ch),
+                         rstat, ui->pen_menu_fg, 14);
         }
         top = cy + 23;
     }
@@ -422,79 +485,109 @@ static void at_draw_console_body(OykAtariUiState* ui) {
     int pill_w = static_cast<int>(strlen(pill)) * 8 + 10;
     int bx = cx + 8;
     int bw = w - 16;
-    at_fill_rect(ui, bx, top, bw, 22, ui->pen_status_bg);
-    at_frame_rect(ui, bx, top, bw, 22, ui->pen_fg);
-    at_draw_text(ui, bx + 6, top + 3, hdr, ui->pen_status_fg, (bw - pill_w - 20) / 8);
-    at_fill_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, 18, ui->pen_panel);
-    at_frame_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, 18, ui->pen_fg);
-    at_draw_text(ui, bx + bw + 1 - pill_w, top + 3, pill, ui->pen_fg, static_cast<int>(strlen(pill)));
+    at_fill_rect(ui, bx, top, bw, ban_h, ui->pen_status_bg);
+    at_frame_rect(ui, bx, top, bw, ban_h, ui->pen_fg);
+    at_draw_text(ui, bx + 6, top + ban_off, hdr, ui->pen_status_fg, (bw - pill_w - 20) / 8);
+    at_fill_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, pill_h, ui->pen_panel);
+    at_frame_rect(ui, bx + bw - 4 - pill_w, top + 2, pill_w, pill_h, ui->pen_fg);
+    at_draw_text(ui, bx + bw + 1 - pill_w, top + 2 + pill_off, pill, ui->pen_fg,
+                 static_cast<int>(strlen(pill)));
 
     /* Side-by-side Interfaces & Last 5 Heard */
     int half = (bw - 6) / 2;
-    int y0 = top + 26;
+    int y0 = top + ban_h + 5;
     int top_h = (h >= 380) ? 104 : 84;
     at_draw_box(ui, bx, y0, half, top_h, "Interfaces");
-    at_draw_text(ui, bx + 6, y0 + 22, "Port    Type        State RX/TX", ui->pen_fg, (half - 16) / 8);
-    int max_top = (top_h - 44) / 17;
-    if (max_top < 2) max_top = 2;
-    for (int i = 0; i < cfg.iface_count && i < max_top; ++i) {
-        const OykIfaceRuntime& rt = node->iface(i);
-        char row[80];
-        sprintf(row, "%-7s %-11s %-4s  %lu/%lu",
-                cfg.ifaces[i].id, cfg.ifaces[i].type,
-                rt.running ? "UP" : "DN",
-                static_cast<unsigned long>(rt.rx_frames),
-                static_cast<unsigned long>(rt.tx_frames));
-        at_draw_text(ui, bx + 6, y0 + 40 + i * 17, row, ui->pen_fg, (half - 16) / 8);
+    {
+        int if_x[4] = { bx + 6, bx + 72, bx + 168, bx + 220 };
+        const char* if_h[4] = { "Port", "Type", "State", "RX/TX" };
+        int if_w[4] = { 8, 11, 5, 10 };
+        int hy = y0 + hdr_h + 4;
+        at_draw_listview_header(ui, bx + 2, hy, half - 4, 4, if_x, if_h, ui->pen_panel, ui->pen_fg);
+        int ry0 = hy + hdr_h + 2;
+        int max_top = (y0 + top_h - ry0) / row_step;
+        if (max_top < 2) max_top = 2;
+        for (int i = 0; i < cfg.iface_count && i < max_top; ++i) {
+            const OykIfaceRuntime& rt = node->iface(i);
+            char rxtx[20];
+            sprintf(rxtx, "%lu/%lu",
+                    static_cast<unsigned long>(rt.rx_frames),
+                    static_cast<unsigned long>(rt.tx_frames));
+            const char* cells[4] = { cfg.ifaces[i].id, cfg.ifaces[i].type, rt.running ? "UP" : "DN", rxtx };
+            at_draw_listview_row(ui, bx + 2, ry0 + i * row_step, half - 4, row_step - 1,
+                                 0, 4, if_x, cells, if_w, ui->pen_panel, ui->pen_fg);
+        }
     }
 
     int rx = bx + half + 6;
     at_draw_box(ui, rx, y0, half, top_h, "Last 5 New Callsigns Heard");
-    at_draw_text(ui, rx + 6, y0 + 22, "#  Callsign  Port    Heard", ui->pen_fg, (half - 16) / 8);
-    for (int i = 0; i < node->new_heard_count() && i < max_top; ++i) {
-        const OykNewHeard& he = node->new_heard(i);
-        char row[64];
-        sprintf(row, "%-2d %-9s %-7s %s", i + 1, he.callsign, he.iface_id, he.time_hms);
-        at_draw_text(ui, rx + 6, y0 + 40 + i * 17, row, ui->pen_fg, (half - 16) / 8);
+    {
+        int hd_x[4] = { rx + 6, rx + 30, rx + 112, rx + 180 };
+        const char* hd_h[4] = { "#", "Callsign", "Port", "Heard" };
+        int hd_w[4] = { 3, 10, 8, 10 };
+        int hy = y0 + hdr_h + 4;
+        at_draw_listview_header(ui, rx + 2, hy, half - 4, 4, hd_x, hd_h, ui->pen_panel, ui->pen_fg);
+        int ry0 = hy + hdr_h + 2;
+        int max_top = (y0 + top_h - ry0) / row_step;
+        if (max_top < 2) max_top = 2;
+        for (int i = 0; i < node->new_heard_count() && i < max_top; ++i) {
+            const OykNewHeard& he = node->new_heard(i);
+            char idx_s[16];
+            sprintf(idx_s, "%d", i + 1);
+            const char* cells[4] = { idx_s, he.callsign, he.iface_id, he.time_hms };
+            at_draw_listview_row(ui, rx + 2, ry0 + i * row_step, half - 4, row_step - 1,
+                                 0, 4, hd_x, cells, hd_w, ui->pen_panel, ui->pen_fg);
+        }
     }
 
     /* Active Connections */
     int conn_y = y0 + top_h + 6;
     int ch_box = (h >= 380) ? 102 : 84;
     at_draw_box(ui, bx, conn_y, bw, ch_box, "Active Connections");
-    at_draw_text(ui, bx + 6, conn_y + 22, "ID   Callsign   Port     Dir    State      Since",
-                 ui->pen_fg, (bw - 16) / 8);
-    int max_conn = (ch_box - 44) / 17;
-    if (max_conn < 2) max_conn = 2;
-    int shown_c = 0;
-    for (int i = 0; i < node->max_sessions() && shown_c < max_conn; ++i) {
-        const OykSession& s = node->session_slot(i);
-        if (s.state == OYK_SESS_FREE) continue;
-        char scs[16], row[96];
-        oyk_format_callsign(&s.remote_call, scs, sizeof(scs));
-        const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
-                                ? cfg.ifaces[s.iface_idx].id : "local";
-        sprintf(row, "%-4lu %-10s %-8s %-6s %-10s %s",
-                static_cast<unsigned long>(s.id), scs, pname,
+    {
+        int cn_x[6] = { bx + 6, bx + 42, bx + 132, bx + 210, bx + 266, bx + 362 };
+        const char* cn_h[6] = { "ID", "Callsign", "Port", "Dir", "State", "Since" };
+        int cn_w[6] = { 4, 10, 9, 6, 11, 10 };
+        int hy = conn_y + hdr_h + 4;
+        at_draw_listview_header(ui, bx + 2, hy, bw - 4, 6, cn_x, cn_h, ui->pen_panel, ui->pen_fg);
+        int ry0 = hy + hdr_h + 2;
+        int max_conn = (conn_y + ch_box - ry0) / row_step;
+        if (max_conn < 2) max_conn = 2;
+        int shown_c = 0;
+        for (int i = 0; i < node->max_sessions() && shown_c < max_conn; ++i) {
+            const OykSession& s = node->session_slot(i);
+            if (s.state == OYK_SESS_FREE) continue;
+            char scs[16], id_s[12];
+            oyk_format_callsign(&s.remote_call, scs, sizeof(scs));
+            sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
+            const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
+                                    ? cfg.ifaces[s.iface_idx].id : "local";
+            const char* cells[6] = {
+                id_s, scs, pname,
                 s.is_local_term ? "LOCAL" : "IN",
                 (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
-                s.since_hms);
-        at_draw_text(ui, bx + 6, conn_y + 40 + shown_c * 17, row, ui->pen_fg, (bw - 16) / 8);
-        ++shown_c;
+                s.since_hms
+            };
+            at_draw_listview_row(ui, bx + 2, ry0 + shown_c * row_step, bw - 4, row_step - 1,
+                                 0, 6, cn_x, cells, cn_w, ui->pen_panel, ui->pen_fg);
+            ++shown_c;
+        }
     }
 
     /* Node Activity Log */
     int ly = conn_y + ch_box + 6;
-    int bar_y = cy + h - 26;
+    int btn_h = oyk_gui_control_height(ch, 3);
+    int bar_y = cy + h - btn_h - 4;
     int lh = bar_y - ly - 6;
     if (lh > 44) {
         at_draw_box(ui, bx, ly, bw, lh, "Node Activity Log");
-        int max_r = (lh - 26) / 17;
+        int ry0 = ly + hdr_h + 4;
+        int max_r = (ly + lh - ry0 - 2) / row_step;
         int total = node->console_log_count();
         int start = (total > max_r) ? (total - max_r) : 0;
         for (int i = start; i < total; ++i) {
             const char* ln = node->console_log_line(i);
-            if (ln) at_draw_text(ui, bx + 6, ly + 22 + (i - start) * 17, ln, ui->pen_fg, (bw - 16) / 8);
+            if (ln) at_draw_text(ui, bx + 6, ry0 + (i - start) * row_step, ln, ui->pen_fg, (bw - 16) / 8);
         }
     }
 
@@ -503,7 +596,7 @@ static void at_draw_console_body(OykAtariUiState* ui) {
     at_draw_button(ui, bx + 168, bar_y, 88, 22, "Settings", 0); at_add_hit(ui, bx + 168, bar_y, 88, 22, OYK_SCR_SETTINGS);
     at_draw_button(ui, bx + 262, bar_y, 68, 22, "Theme",    0); at_add_hit(ui, bx + 262, bar_y, 68, 22, OYK_SCR_THEME);
     at_draw_button(ui, bx + 336, bar_y, 68, 22, "Peers",    0); at_add_hit(ui, bx + 336, bar_y, 68, 22, OYK_SCR_PEERS);
-    at_draw_text(ui, bx + 416, bar_y + 3,
+    at_draw_text(ui, bx + 416, bar_y + oyk_gui_vertical_text_offset(btn_h, ch),
                  ui->net ? ui->net->caps.backend_summary : "ATARI GEM",
                  ui->pen_fg, (bw - 420) / 8);
 }
@@ -532,7 +625,7 @@ static void at_sync_modal_window(OykAtariUiState* ui) {
 #ifdef __ATARI__
     if (ui->ap_id < 0) return;
     int scr = ui->active_screen;
-    if (scr == OYK_SCR_MAIN) {
+    if (scr == OYK_SCR_MAIN || scr == OYK_SCR_MENU) {
         if (ui->modal_win_handle >= 0) {
             wind_close(ui->modal_win_handle);
             wind_delete(ui->modal_win_handle);
@@ -614,6 +707,48 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
     const OykConfig& cfg = ui->node->config();
     char cs[16], al[16], buf[128], nbuf[32];
 
+    int ch = (ui->char_h > 0) ? ui->char_h : 16;
+    int tab_h = oyk_gui_control_height(ch, (ch <= 10) ? 3 : 2);
+    int tab_off = oyk_gui_vertical_text_offset(tab_h, ch);
+    int row_h = (ch <= 10) ? 14 : 18;
+
+    if (scr == OYK_SCR_MENU) {
+        int mmx = (ui->ww > 0 ? ui->wx : 0) + 8;
+        int mmy = (ui->wh > 0 ? ui->wy : 19) + 2;
+        int mmw = 248;
+        int mstep = (ch <= 10) ? 14 : 18;
+        int mmh = 11 * mstep + 2 * 8 + 8;
+        int my_pos = mmy + 4;
+        at_fill_rect(ui, mmx + 4, mmy + 4, mmw, mmh, ui->pen_shadow);
+        at_fill_rect(ui, mmx, mmy, mmw, mmh, ui->pen_panel);
+        at_frame_rect(ui, mmx, mmy, mmw, mmh, ui->pen_fg);
+        for (int i = 0; i < oyk_gui_node_menu_count(); ++i) {
+            const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+            if (!mi) continue;
+            if (mi->is_separator) {
+                at_hline(ui, mmx + 3, mmx + mmw - 4, my_pos + 3, ui->pen_fg);
+                my_pos += 8;
+            } else {
+                int hl = (i == 0);
+                char mrow[64];
+                if (mi->shortcut_key) sprintf(mrow, "[%c] %s", mi->shortcut_key, mi->label);
+                else sprintf(mrow, "    %s", mi->label);
+                if (hl) {
+                    int hbg = (ui->colors <= 2) ? ui->pen_fg : ui->pen_accent;
+                    int hfg = (ui->colors <= 2) ? ui->pen_bg : ui->pen_accent_fg;
+                    at_fill_rect(ui, mmx + 2, my_pos, mmw - 4, mstep, hbg);
+                    at_draw_text(ui, mmx + 8, my_pos + oyk_gui_vertical_text_offset(mstep, ch),
+                                 mrow, hfg, 32);
+                } else {
+                    at_draw_text(ui, mmx + 8, my_pos + oyk_gui_vertical_text_offset(mstep, ch),
+                                 mrow, ui->pen_fg, 32);
+                }
+                my_pos += mstep;
+            }
+        }
+        return;
+    }
+
     if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS) {
         int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ui->settings_tab;
         int tx = lx;
@@ -624,14 +759,15 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
             if (strcmp(tt, "Interfaces") == 0) tt = "Ifaces";
             else if (strcmp(tt, "Printer") == 0) tt = "Prn";
             sprintf(buf, "%d:%s", t + 1, tt);
-            at_fill_rect(ui, tx, ty, tw - 3, 20, sel ? ui->pen_accent : ui->pen_bg);
-            at_frame_rect(ui, tx, ty, tw - 3, 20, ui->pen_fg);
-            at_draw_text(ui, tx + 4, ty + 2, buf,
-                         sel ? ui->pen_accent_fg : ui->pen_fg, (tw - 8) / 8);
-            at_add_hit(ui, tx, ty, tw - 3, 20, 100 + t);
+            int tbg = sel ? ((ui->colors <= 2) ? ui->pen_fg : ui->pen_accent) : ui->pen_bg;
+            int tfg = sel ? ((ui->colors <= 2) ? ui->pen_bg : ui->pen_accent_fg) : ui->pen_fg;
+            at_fill_rect(ui, tx, ty, tw - 3, tab_h, tbg);
+            at_frame_rect(ui, tx, ty, tw - 3, tab_h, ui->pen_fg);
+            at_draw_text(ui, tx + 4, ty + tab_off, buf, tfg, (tw - 8) / 8);
+            at_add_hit(ui, tx, ty, tw - 3, tab_h, 100 + t);
             tx += tw;
         }
-        at_hline(ui, lx, mx + mw - 12, ty + 24, ui->pen_fg);
+        at_hline(ui, lx, mx + mw - 12, ty + tab_h + 4, ui->pen_fg);
 
         if (active_tab == 0) {
             oyk_format_callsign(&cfg.callsign, cs, sizeof(cs));
@@ -661,9 +797,12 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
             at_draw_field_row(ui, lx, ty + 58, "CHAT SSID:", nbuf, 96, 80);
             at_draw_field_row(ui, lx, ty + 84, "Default Topic:", cfg.chat_topic, 120, 320);
         } else if (active_tab == 3) {
-            at_draw_text(ui, lx, ty + 30, "ID       Driver      Endpoint / Device         Policy",
-                         ui->pen_fg, bw / 8);
+            int ix[4] = { lx + 4, lx + 82, lx + 178, lx + 358 };
+            const char* ih[4] = { "ID", "Driver", "Endpoint / Device", "Policy" };
+            int iw[4] = { 10, 12, 22, 24 };
+            at_draw_listview_header(ui, lx, ty + 30, bw, 4, ix, ih, ui->pen_bg, ui->pen_fg);
             for (int i = 0; i < cfg.iface_count && i < 6; ++i) {
+                char pol[32];
                 if (cfg.ifaces[i].device[0]) {
                     sprintf(nbuf, "%s @ %lu", cfg.ifaces[i].device,
                             static_cast<unsigned long>(cfg.ifaces[i].baud));
@@ -671,27 +810,32 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
                     sprintf(nbuf, "%s:%u", cfg.ifaces[i].host,
                             static_cast<unsigned int>(cfg.ifaces[i].port));
                 }
-                sprintf(buf, "%s %-8s %-10s %-24s IN:%s OUT:%s",
-                        (i == 0) ? ">" : " ",
-                        cfg.ifaces[i].id, cfg.ifaces[i].type, nbuf,
-                        cfg.ifaces[i].block_inbound ? "NO" : "YES",
-                        cfg.ifaces[i].block_outbound ? "NO" : "YES");
-                at_draw_text(ui, lx, ty + 50 + i * 18, buf, ui->pen_fg, bw / 8);
+                sprintf(pol, "IN:%s OUT:%s %s",
+                        cfg.ifaces[i].block_inbound ? "N" : "Y",
+                        cfg.ifaces[i].block_outbound ? "N" : "Y",
+                        oyk_gui_format_learned_policy(cfg.ifaces[i].learned_peer_policy));
+                const char* cells[4] = { cfg.ifaces[i].id, cfg.ifaces[i].type, nbuf, pol };
+                at_draw_listview_row(ui, lx, ty + 48 + i * row_h, bw, row_h - 1,
+                                     (i == ui->sel_iface), 4, ix, cells, iw, ui->pen_panel, ui->pen_fg);
             }
             at_draw_button(ui, lx, by, 96, 22, "Add Iface", 0);
             at_add_hit(ui, lx, by, 96, 22, OYK_SCR_ADD_IFACE);
             at_draw_button(ui, lx + 104, by, 96, 22, "Edit Iface", 0);
             at_add_hit(ui, lx + 104, by, 96, 22, OYK_SCR_EDIT_IFACE);
         } else if (active_tab == 4) {
-            at_draw_text(ui, lx, ty + 30, "ID       Callsign  Interface Endpoint          Policy",
-                         ui->pen_fg, bw / 8);
+            int px[5] = { lx + 4, lx + 78, lx + 168, lx + 258, lx + 432 };
+            const char* ph[5] = { "ID", "Callsign", "Interface", "Endpoint", "Policy" };
+            int pw[5] = { 10, 10, 11, 22, 10 };
+            at_draw_listview_header(ui, lx, ty + 30, bw, 5, px, ph, ui->pen_bg, ui->pen_fg);
             for (int p = 0; p < cfg.peer_count && p < 7; ++p) {
-                sprintf(buf, "%s %-8s %-9s %-9s %s:%u %s",
-                        (p == ui->sel_peer) ? ">" : " ",
-                        cfg.peers[p].id, cfg.peers[p].callsign, cfg.peers[p].interface_id,
-                        cfg.peers[p].host, static_cast<unsigned int>(cfg.peers[p].port),
-                        cfg.peers[p].auto_learned ? "AUTO" : "STATIC");
-                at_draw_text(ui, lx, ty + 50 + p * 18, buf, ui->pen_fg, bw / 8);
+                char ep[48];
+                sprintf(ep, "%s:%u", cfg.peers[p].host, static_cast<unsigned int>(cfg.peers[p].port));
+                const char* cells[5] = {
+                    cfg.peers[p].id, cfg.peers[p].callsign, cfg.peers[p].interface_id,
+                    ep, cfg.peers[p].auto_learned ? "AUTO" : "STATIC"
+                };
+                at_draw_listview_row(ui, lx, ty + 48 + p * row_h, bw, row_h - 1,
+                                     (p == ui->sel_peer), 5, px, cells, pw, ui->pen_panel, ui->pen_fg);
             }
             at_draw_button(ui, lx, by, 92, 22, "Edit Peer", 0);
             at_add_hit(ui, lx, by, 92, 22, OYK_SCR_EDIT_PEER);
@@ -722,45 +866,79 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_ADD_IFACE) {
-        at_draw_text(ui, lx, ty + 4, "Step 1 of 4: Select Driver & Configure Endpoint",
-                     ui->pen_fg, bw / 8);
-        for (int i = 0; i < 5; ++i) {
-            int ry = ty + 28 + i * 20;
-            at_draw_radio(ui, lx + 4, ry, i == ui->wiz.selected_driver_idx,
-                          oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i), ui->pen_fg, 16);
-            at_add_hit(ui, lx + 4, ry, 164, 18, 200 + i);
-        }
-        at_draw_text(ui, lx + 186, ty + 28,
-                     oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, ui->wiz.selected_driver_idx),
-                     ui->pen_fg, 44);
-        at_draw_field_row(ui, lx + 186, ty + 52, "Iface ID:", ui->wiz.draft.id, 84, 120);
-        if (ui->wiz.draft.device[0] || strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
-            at_draw_field_row(ui, lx + 186, ty + 76, "Device:",
-                              ui->wiz.draft.device[0] ? ui->wiz.draft.device : "AUX:", 84, 140);
-            sprintf(nbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud ? ui->wiz.draft.baud : 9600UL));
-            at_draw_field_row(ui, lx + 186, ty + 100, "Baud:", nbuf, 84, 100);
+        int st = ui->wiz.step;
+        sprintf(buf, "Step %d of 4: %s", st + 1, oyk_gui_wiz_step_prompt(&ui->wiz));
+        at_draw_text(ui, lx, ty + 4, buf, ui->pen_fg, bw / 8);
+        if (st == 0) {
+            for (int i = 0; i < 5; ++i) {
+                int ry = ty + 28 + i * (row_h + 2);
+                at_draw_radio(ui, lx + 4, ry, i == ui->wiz.selected_driver_idx,
+                              oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i), ui->pen_fg, 16);
+                at_draw_text(ui, lx + 146, ry,
+                             oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, i),
+                             ui->pen_fg, 44);
+                at_add_hit(ui, lx + 4, ry, 480, row_h, 200 + i);
+            }
+        } else if (st == 1) {
+            at_draw_field_row(ui, lx, ty + 30, "Driver:", ui->wiz.draft.type, 112, 120);
+            at_draw_field_row(ui, lx, ty + 54, "Interface ID:", ui->wiz.draft.id, 112, 160);
+            at_draw_field_row(ui, lx, ty + 78, "Description:",
+                              ui->wiz.draft.description[0] ? ui->wiz.draft.description : "Atari Interface",
+                              112, 320);
+        } else if (st == 2) {
+            if (ui->wiz.draft.device[0] || strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
+                at_draw_field_row(ui, lx, ty + 28, "Device:",
+                                  ui->wiz.draft.device[0] ? ui->wiz.draft.device : "AUX:", 104, 140);
+                sprintf(nbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud ? ui->wiz.draft.baud : 9600UL));
+                at_draw_field_row(ui, lx, ty + 52, "Baud Rate:", nbuf, 104, 100);
+            } else {
+                at_draw_field_row(ui, lx, ty + 28, "Bind Host:", ui->wiz.draft.host, 104, 140);
+                sprintf(nbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
+                at_draw_field_row(ui, lx + 266, ty + 28, "Port:", nbuf, 48, 80);
+                at_draw_field_row(ui, lx, ty + 52, "Netmask:", ui->wiz.draft.netmask, 104, 140);
+            }
+            at_draw_checkbox(ui, lx, ty + 78, !ui->wiz.draft.block_inbound, "Allow Inbound", ui->pen_fg, 16);
+            at_draw_checkbox(ui, lx + 152, ty + 78, !ui->wiz.draft.block_outbound, "Allow Outbound", ui->pen_fg, 16);
+            at_draw_checkbox(ui, lx + 312, ty + 78, ui->wiz.draft.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+            at_draw_field_row(ui, lx, ty + 102, "Learned Policy:",
+                              oyk_gui_format_learned_policy(ui->wiz.draft.learned_peer_policy), 120, 120);
         } else {
-            at_draw_field_row(ui, lx + 186, ty + 76, "Bind Host:", ui->wiz.draft.host, 84, 140);
-            sprintf(nbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
-            at_draw_field_row(ui, lx + 186, ty + 100, "Port:", nbuf, 84, 90);
+            char sum[320];
+            oyk_gui_wiz_format_summary(&ui->wiz, sum, sizeof(sum), 0);
+            int sy = ty + 28;
+            const char* p = sum;
+            while (*p && sy < by - 16) {
+                const char* nl = strchr(p, '\n');
+                char ln[88];
+                size_t len = nl ? static_cast<size_t>(nl - p) : strlen(p);
+                if (len >= sizeof(ln)) len = sizeof(ln) - 1U;
+                memcpy(ln, p, len);
+                ln[len] = '\0';
+                at_draw_text(ui, lx, sy, ln, ui->pen_fg, bw / 8);
+                sy += (ch <= 10) ? 13 : 17;
+                p = nl ? (nl + 1) : "";
+            }
         }
-        at_draw_checkbox(ui, lx + 186, ty + 126, !ui->wiz.draft.allow_same_interface,
-                         "Isolate Same-Interface Bridges", ui->pen_fg, 34);
         at_draw_button(ui, lx, by, 76, 22, "< Back", 0);
+        at_add_hit(ui, lx, by, 76, 22, 210);
         at_draw_button(ui, mx + mw - 174, by, 76, 22, "Cancel", 0);
         at_add_hit(ui, mx + mw - 174, by, 76, 22, 999);
-        at_draw_button(ui, mx + mw - 90, by, 78, 22, "Next >", 1);
+        at_draw_button(ui, mx + mw - 90, by, 78, 22, (st >= 3) ? "Finish" : "Next >", 1);
+        at_add_hit(ui, mx + mw - 90, by, 78, 22, 211);
     } else if (scr == OYK_SCR_EDIT_IFACE) {
-        const OykIfaceConfig& ifc = cfg.ifaces[0];
-        at_draw_field_row(ui, lx, ty + 12, "Interface ID:", ifc.id, 112, 120);
-        at_draw_field_row(ui, lx + 250, ty + 12, "Driver:", ifc.type, 64, 120);
-        at_draw_field_row(ui, lx, ty + 38, "Bind Host:", ifc.host, 112, 150);
+        const OykIfaceConfig& ifc = (ui->sel_iface < cfg.iface_count) ? cfg.ifaces[ui->sel_iface] : cfg.ifaces[0];
+        at_draw_field_row(ui, lx, ty + 10, "Interface ID:", ifc.id, 112, 120);
+        at_draw_field_row(ui, lx + 250, ty + 10, "Driver:", ifc.type, 64, 120);
+        at_draw_field_row(ui, lx, ty + 34, "Bind Host:", ifc.host, 112, 150);
         sprintf(nbuf, "%u", static_cast<unsigned int>(ifc.port));
-        at_draw_field_row(ui, lx + 280, ty + 38, "Port:", nbuf, 48, 80);
-        at_draw_field_row(ui, lx, ty + 64, "Netmask:", ifc.netmask, 112, 150);
-        at_draw_checkbox(ui, lx, ty + 94, !ifc.block_inbound, "Allow Inbound", ui->pen_fg, 16);
-        at_draw_checkbox(ui, lx + 152, ty + 94, !ifc.block_outbound, "Allow Outbound", ui->pen_fg, 16);
-        at_draw_checkbox(ui, lx + 312, ty + 94, ifc.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+        at_draw_field_row(ui, lx + 280, ty + 34, "Port:", nbuf, 48, 80);
+        at_draw_field_row(ui, lx, ty + 58, "Netmask:", ifc.netmask, 112, 150);
+        at_draw_checkbox(ui, lx, ty + 84, !ifc.block_inbound, "Allow Inbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 152, ty + 84, !ifc.block_outbound, "Allow Outbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 312, ty + 84, ifc.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+        at_draw_field_row(ui, lx, ty + 108, "Learned Policy:",
+                          oyk_gui_format_learned_policy(ifc.learned_peer_policy), 120, 120);
+        at_add_hit(ui, lx + 120, ty + 108, 120, 18, 302);
         at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
         at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
@@ -780,23 +958,26 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_TERMINATE) {
-        sprintf(buf, "%-4s %-10s %-8s %-10s",
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 0),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 1),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 2),
-                oyk_gui_table_column(OYK_TBL_TERMINATE, 3));
-        at_draw_text(ui, lx, ty + 8, buf, ui->pen_fg, bw / 8);
-        at_hline(ui, lx, mx + mw - 12, ty + 28, ui->pen_fg);
+        int tx[4] = { lx + 4, lx + 56, lx + 166, lx + 266 };
+        const char* th[4] = {
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 0),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 1),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 2),
+            oyk_gui_table_column(OYK_TBL_TERMINATE, 3)
+        };
+        int tw[4] = { 5, 12, 11, 14 };
+        at_draw_listview_header(ui, lx, ty + 8, bw, 4, tx, th, ui->pen_bg, ui->pen_fg);
+        at_hline(ui, lx, mx + mw - 12, ty + 26, ui->pen_fg);
         int row_idx = 0;
         for (int i = 0; i < ui->node->max_sessions() && row_idx < 6; ++i) {
             const OykSession& s = ui->node->session_slot(i);
             if (s.state == OYK_SESS_FREE) continue;
+            char id_s[12];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
-            sprintf(buf, "%s %-3lu %-10s %-8s CONNECTED",
-                    (row_idx == 0) ? ">" : " ",
-                    static_cast<unsigned long>(s.id), cs,
-                    (s.iface_idx == 0) ? "axudp0" : "aux0");
-            at_draw_text(ui, lx, ty + 34 + row_idx * 18, buf, ui->pen_fg, bw / 8);
+            sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
+            const char* cells[4] = { id_s, cs, (s.iface_idx == 0) ? "axudp0" : "aux0", "CONNECTED" };
+            at_draw_listview_row(ui, lx, ty + 30 + row_idx * row_h, bw, row_h - 1,
+                                 (row_idx == ui->sel_conn), 4, tx, cells, tw, ui->pen_panel, ui->pen_fg);
             ++row_idx;
         }
         at_hline(ui, lx, mx + mw - 12, by - 8, ui->pen_fg);
@@ -804,19 +985,22 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_add_hit(ui, mx + mw - 196, by, 76, 22, 999);
         at_draw_button(ui, mx + mw - 114, by, 102, 22, "Terminate", 1);
     } else if (scr == OYK_SCR_BAN) {
+        int bcol_x[5] = { lx + 4, lx + 84, lx + 210, lx + 298, lx + 356 };
+        const char* bcol_h[5] = { "Callsign", "Banned At", "Lift At", "Flags", "Reason" };
+        int bcol_w[5] = { 10, 16, 11, 7, 24 };
         at_draw_field_row(ui, lx, ty + 4, "Callsign:", "N0BAD", 80, 100);
         at_draw_field_row(ui, lx + 190, ty + 4, "Reason:", "Beacon flood", 64, 150);
         at_draw_field_row(ui, lx + 414, ty + 4, "Dur:", "7d", 40, 56);
         at_draw_checkbox(ui, lx, ty + 28, 1, "Hard Ban (Drop AX.25)", ui->pen_fg, 24);
         at_draw_checkbox(ui, lx + 230, ty + 28, 0, "Allow Appeal", ui->pen_fg, 16);
-        at_draw_text(ui, lx, ty + 52, "Callsign  Banned At        Lift At     Flags  Reason",
-                     ui->pen_fg, bw / 8);
+        at_draw_listview_header(ui, lx, ty + 52, bw, 5, bcol_x, bcol_h, ui->pen_bg, ui->pen_fg);
         for (int i = 0; i < ui->node->ban_count() && i < 4; ++i) {
             const OykBanEntry& be = ui->node->ban_entry(i);
-            sprintf(buf, "%-9s %-16s %-10s  0x%02lX   %s",
-                    be.key, be.banned_at, be.lift_at,
-                    static_cast<unsigned long>(be.flags), be.reason);
-            at_draw_text(ui, lx, ty + 72 + i * 18, buf, ui->pen_fg, bw / 8);
+            char fl[12];
+            sprintf(fl, "0x%02lX", static_cast<unsigned long>(be.flags));
+            const char* cells[5] = { be.key, be.banned_at, be.lift_at, fl, be.reason };
+            at_draw_listview_row(ui, lx, ty + 70 + i * row_h, bw, row_h - 1,
+                                 (i == ui->sel_ban), 5, bcol_x, cells, bcol_w, ui->pen_panel, ui->pen_fg);
         }
         at_draw_button(ui, mx + mw - 188, by, 76, 22, "Close", 0);
         at_add_hit(ui, mx + mw - 188, by, 76, 22, 999);
@@ -879,20 +1063,40 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_FILES) {
         int pw = (bw - 12) / 2;
+        int fx1[3] = { lx + 6, lx + 78, lx + 196 };
+        const char* fh1[3] = { "From", "File", "Size" };
+        int fw1[3] = { 9, 14, 7 };
+        const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
+        int fx2[2] = { lx + pw + 18, lx + pw + 196 };
+        const char* fh2[2] = { "Filename", "Size" };
+        int fw2[2] = { 22, 7 };
+        const char* fr2a[2] = { "README.TXT", "1420" };
+        const char* fr2b[2] = { "NETLIST.CFG", "618" };
         at_draw_text(ui, lx, ty + 4, "Pending Uploads", ui->pen_fg, pw / 8);
         at_draw_text(ui, lx + pw + 12, ty + 4, "Approved BBS Files", ui->pen_fg, pw / 8);
         at_fill_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_bg);
         at_frame_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_fg);
         at_fill_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_bg);
         at_frame_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_fg);
-        at_draw_text(ui, lx + 8, ty + 30, "From     File         Size", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 50, "W4ABC-7  PACKETS.TXT  2048", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + pw + 20, ty + 30, "Filename            Size", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + pw + 20, ty + 50, "README.TXT          1420", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + pw + 20, ty + 70, "NETLIST.CFG          618", ui->pen_fg, (pw - 16) / 8);
+        at_draw_listview_header(ui, lx + 2, ty + 26, pw - 4, 3, fx1, fh1, ui->pen_panel, ui->pen_fg);
+        at_draw_listview_row(ui, lx + 2, ty + 44, pw - 4, row_h, 1, 3, fx1, fr1, fw1, ui->pen_bg, ui->pen_fg);
+        at_draw_listview_header(ui, lx + pw + 14, ty + 26, pw - 4, 2, fx2, fh2, ui->pen_panel, ui->pen_fg);
+        at_draw_listview_row(ui, lx + pw + 14, ty + 44, pw - 4, row_h, 1, 2, fx2, fr2a, fw2, ui->pen_bg, ui->pen_fg);
+        at_draw_listview_row(ui, lx + pw + 14, ty + 44 + row_h, pw - 4, row_h, 0, 2, fx2, fr2b, fw2, ui->pen_bg, ui->pen_fg);
         at_draw_button(ui, lx, by, 92, 22, "Upload...", 0);
         at_draw_button(ui, lx + 98, by, 92, 22, "Approve", 1);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
+    } else if (scr == OYK_SCR_ABOUT) {
+        at_draw_text(ui, lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     ui->pen_fg, bw / 8);
+        at_draw_text(ui, lx, ty + 34, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
+                     ui->pen_fg, bw / 8);
+        at_draw_text(ui, lx, ty + 54, "Platform: Atari ST / TT GEM (EmuTOS VDI + AES + RS-232 AUX)",
+                     ui->pen_fg, bw / 8);
+        at_draw_text(ui, lx, ty + 76, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     ui->pen_fg, bw / 8);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "OK", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else {
         at_draw_text(ui, lx, ty + 18, "Hamlib rigctld CAT: Port 4532 / RS-232 AUX @ 9600",
@@ -1046,22 +1250,34 @@ static void at_seed_demo_node(OykAtariUiState* ui) {
 
 struct AtGalleryStep {
     int         scr;
+    int         tab;
+    int         wiz_step;
     const char* bmp_path;
 };
 
-static const AtGalleryStep kAtGallery[12] = {
-    { OYK_SCR_MAIN,       "C:\\AT_MAIN.BMP" },
-    { OYK_SCR_SETTINGS,   "C:\\AT_SETT.BMP" },
-    { OYK_SCR_ADD_IFACE,  "C:\\AT_ADDI.BMP" },
-    { OYK_SCR_EDIT_IFACE, "C:\\AT_EDTI.BMP" },
-    { OYK_SCR_PEERS,      "C:\\AT_PEER.BMP" },
-    { OYK_SCR_EDIT_PEER,  "C:\\AT_EDTP.BMP" },
-    { OYK_SCR_TERMINATE,  "C:\\AT_TERM.BMP" },
-    { OYK_SCR_BAN,        "C:\\AT_BAN.BMP" },
-    { OYK_SCR_EXIT_PEERS, "C:\\AT_EXIT.BMP" },
-    { OYK_SCR_THEME,      "C:\\AT_THME.BMP" },
-    { OYK_SCR_TERMINAL,   "C:\\AT_TML.BMP" },
-    { OYK_SCR_FILES,      "C:\\AT_FILE.BMP" }
+static const AtGalleryStep kAtGallery[22] = {
+    { OYK_SCR_MAIN,       0, 0, "C:\\AT_MAIN.BMP" },
+    { OYK_SCR_MENU,       0, 0, "C:\\AT_MENU.BMP" },
+    { OYK_SCR_SETTINGS,   0, 0, "C:\\AT_SET1.BMP" },
+    { OYK_SCR_SETTINGS,   1, 0, "C:\\AT_SET2.BMP" },
+    { OYK_SCR_SETTINGS,   2, 0, "C:\\AT_SET3.BMP" },
+    { OYK_SCR_SETTINGS,   3, 0, "C:\\AT_SET4.BMP" },
+    { OYK_SCR_PEERS,      4, 0, "C:\\AT_PEER.BMP" },
+    { OYK_SCR_SETTINGS,   5, 0, "C:\\AT_SET6.BMP" },
+    { OYK_SCR_SETTINGS,   6, 0, "C:\\AT_SET7.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 0, "C:\\AT_ADD1.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 1, "C:\\AT_ADD2.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 2, "C:\\AT_ADD3.BMP" },
+    { OYK_SCR_ADD_IFACE,  0, 3, "C:\\AT_ADD4.BMP" },
+    { OYK_SCR_EDIT_IFACE, 0, 0, "C:\\AT_EDTI.BMP" },
+    { OYK_SCR_EDIT_PEER,  0, 0, "C:\\AT_EDTP.BMP" },
+    { OYK_SCR_TERMINATE,  0, 0, "C:\\AT_TERM.BMP" },
+    { OYK_SCR_BAN,        0, 0, "C:\\AT_BAN.BMP"  },
+    { OYK_SCR_EXIT_PEERS, 0, 0, "C:\\AT_EXIT.BMP" },
+    { OYK_SCR_THEME,      0, 0, "C:\\AT_THME.BMP" },
+    { OYK_SCR_TERMINAL,   0, 0, "C:\\AT_TML.BMP"  },
+    { OYK_SCR_FILES,      0, 0, "C:\\AT_FILE.BMP" },
+    { OYK_SCR_ABOUT,      0, 0, "C:\\AT_ABT.BMP"  }
 };
 
 int oyk_atari_ui_run(OykPortableNode* node,
@@ -1101,8 +1317,13 @@ int oyk_atari_ui_run(OykPortableNode* node,
     ui->scr_h = work_out[1] + 1;
     ui->colors = work_out[13];
     ui->tier = oyk_atari_classify_display(ui->scr_w, ui->scr_h, ui->colors);
-    ui->char_w = wchar;
-    ui->char_h = hchar;
+    {
+        short vatt[10];
+        memset(vatt, 0, sizeof(vatt));
+        vqt_attributes(ui->vdi, vatt);
+        ui->char_w = (vatt[6] > 0) ? vatt[6] : wchar;
+        ui->char_h = (vatt[7] > 0) ? vatt[7] : hchar;
+    }
     ui->wx = 0;
     ui->wy = 0;
     ui->ww = static_cast<short>(ui->scr_w);
@@ -1148,9 +1369,10 @@ int oyk_atari_ui_run(OykPortableNode* node,
 #endif
         at_seed_demo_node(ui);
         ui->draft_cfg = node->config();
-        for (int i = 0; i < 12; ++i) {
+        for (int i = 0; i < 22; ++i) {
             ui->active_screen = kAtGallery[i].scr;
-            ui->settings_tab = (ui->active_screen == OYK_SCR_PEERS) ? 4 : 0;
+            ui->settings_tab = kAtGallery[i].tab;
+            ui->wiz.step = kAtGallery[i].wiz_step;
             at_redraw(ui);
 #ifdef __ATARI__
             oyk_atari_capture_screen_bmp(kAtGallery[i].bmp_path, ui->vdi,
@@ -1226,6 +1448,27 @@ int oyk_atari_ui_run(OykPortableNode* node,
             } else if (act >= 200 && act < 205) {
                 oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), act - 200);
                 at_redraw(ui);
+            } else if (act == 210) {
+                oyk_gui_wiz_back(&ui->wiz);
+                at_redraw(ui);
+            } else if (act == 211) {
+                if (ui->wiz.step >= 3) {
+                    ui->active_screen = OYK_SCR_SETTINGS;
+                    ui->settings_tab = 3;
+                } else {
+                    oyk_gui_wiz_advance(&ui->wiz, &ui->node->config());
+                }
+                at_redraw(ui);
+            } else if (act == 302) {
+                OykConfig cpy = ui->node->config();
+                if (cpy.iface_count > 0) {
+                    int idx = (ui->sel_iface < cpy.iface_count) ? ui->sel_iface : 0;
+                    cpy.ifaces[idx].learned_peer_policy = static_cast<oyk_u8>(
+                        oyk_gui_cycle_learned_policy(cpy.ifaces[idx].learned_peer_policy, 1));
+                    OykConfigApplyResult r;
+                    ui->node->apply_config(&cpy, 0, &r);
+                    at_redraw(ui);
+                }
             } else if (act == 401) {
                 oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
             } else if (act == 402) {

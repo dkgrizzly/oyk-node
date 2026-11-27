@@ -546,6 +546,26 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
                         oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 2),
                         oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 0),
                         oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 1)];
+    } else if (scr == OYK_SCR_MENU) {
+        [s appendString:@"Node Menu Actions:\n\n"];
+        for (int i = 0; i < oyk_gui_node_menu_count(); ++i) {
+            const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+            if (!mi) continue;
+            if (mi->is_separator) [s appendString:@"  --------------------------------\n"];
+            else [s appendFormat:@"  %s\n", mi->label];
+        }
+    } else if (scr == OYK_SCR_BBS) {
+        [s appendFormat:@"Tabs: [2:BBS] Active\n\nBBS Enabled: true\nBBS Callsign: KR4OYK-1\nBBS Alias:    OYKBBS\nMail Path:    mail\n"];
+    } else if (scr == OYK_SCR_CHAT) {
+        [s appendFormat:@"Tabs: [3:CHAT] Active\n\nChat Enabled: true\nChat Callsign: KR4OYK-2\nChat Alias:    OYKCHT\nTopic:         Lobby\n"];
+    } else if (scr == OYK_SCR_IFACES) {
+        [s appendFormat:@"Tabs: [4:Ifaces] Active\n\n  axudp0   axudp  127.0.0.1:10093   IN/OUT  SAME=N\n"];
+    } else if (scr == OYK_SCR_RIG) {
+        [s appendFormat:@"Tabs: [6:Rig] Active\n\nHamlib Enabled: false\nHost: 127.0.0.1   Port: 4532\n"];
+    } else if (scr == OYK_SCR_PRINTER) {
+        [s appendFormat:@"Tabs: [7:Prn] Active\n\nProtocol: generic   Baud: 9600   Condensed: false\n"];
+    } else if (scr == OYK_SCR_ABOUT) {
+        [s appendString:[NSString stringWithUTF8String:oyk_gui_about_summary()]];
     }
     delete snap;
     return s;
@@ -792,24 +812,34 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 }
 
 - (void)runUiCaptureTour {
-    struct CapItem { int scr; const char* flow; };
-    static const CapItem kFlows[12] = {
-        { OYK_SCR_MAIN,       "main"       },
-        { OYK_SCR_SETTINGS,   "settings"   },
-        { OYK_SCR_ADD_IFACE,  "add_iface"  },
-        { OYK_SCR_EDIT_IFACE, "edit_iface" },
-        { OYK_SCR_PEERS,      "peers"      },
-        { OYK_SCR_EDIT_PEER,  "edit_peer"  },
-        { OYK_SCR_TERMINATE,  "terminate"  },
-        { OYK_SCR_BAN,        "ban"        },
-        { OYK_SCR_EXIT_PEERS, "exit"       },
-        { OYK_SCR_THEME,      "theme"      },
-        { OYK_SCR_TERMINAL,   "terminal"   },
-        { OYK_SCR_FILES,      "files"      }
+    struct CapItem { int scr; int wiz_step; const char* flow; };
+    static const CapItem kFlows[22] = {
+        { OYK_SCR_MAIN,       0, "main"             },
+        { OYK_SCR_MENU,       0, "menu"             },
+        { OYK_SCR_SETTINGS,   0, "settings"         },
+        { OYK_SCR_BBS,        0, "settings_bbs"     },
+        { OYK_SCR_CHAT,       0, "settings_chat"    },
+        { OYK_SCR_IFACES,     0, "settings_ifaces"  },
+        { OYK_SCR_PEERS,      0, "peers"            },
+        { OYK_SCR_RIG,        0, "settings_rig"     },
+        { OYK_SCR_PRINTER,    0, "settings_printer" },
+        { OYK_SCR_ADD_IFACE,  0, "add_iface_1"      },
+        { OYK_SCR_ADD_IFACE,  1, "add_iface_2"      },
+        { OYK_SCR_ADD_IFACE,  2, "add_iface_3"      },
+        { OYK_SCR_ADD_IFACE,  3, "add_iface_4"      },
+        { OYK_SCR_EDIT_IFACE, 0, "edit_iface"       },
+        { OYK_SCR_EDIT_PEER,  0, "edit_peer"        },
+        { OYK_SCR_TERMINATE,  0, "terminate"        },
+        { OYK_SCR_BAN,        0, "ban"              },
+        { OYK_SCR_EXIT_PEERS, 0, "exit"             },
+        { OYK_SCR_THEME,      0, "theme"            },
+        { OYK_SCR_TERMINAL,   0, "terminal"         },
+        { OYK_SCR_FILES,      0, "files"            },
+        { OYK_SCR_ABOUT,      0, "about"            }
     };
     [self refreshConsole];
     [self captureWindow:mainWindow_ asFlow:@"main"];
-    for (int i = 1; i < 12; ++i) {
+    for (int i = 1; i < 22; ++i) {
         if (kFlows[i].scr == OYK_SCR_THEME) {
             NSWindow* tw = [self presentThemeSettingsWindow];
             int startCount = themePreviewCount_;
@@ -836,6 +866,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
             [tw release];
             themeWindow_ = nil;
         } else {
+            wiz_.step = kFlows[i].wiz_step;
             NSWindow* w = [self presentDialogScreen:kFlows[i].scr
                                            bodyText:[self buildScreenText:kFlows[i].scr]
                                              height:380.0];

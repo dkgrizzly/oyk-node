@@ -347,21 +347,41 @@ fun SettingsScreen(
                             Text(sdStatusMessage, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    SettingsTab.LOCAL -> {
+                    SettingsTab.BBS -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
                                 checked = cfg.bbsEnabled,
                                 onCheckedChange = { onUpdateCfg(cfg.copy(bbsEnabled = it)) }
                             )
-                            Text("Enable Built-in BBS (${cfg.bbsAlias} -${cfg.bbsSsid})")
+                            Text("Enable Built-in BBS (${cfg.bbsAlias}-${cfg.bbsSsid})")
                         }
+                        OutlinedTextField(
+                            value = cfg.bbsAlias,
+                            onValueChange = { onUpdateCfg(cfg.copy(bbsAlias = it.uppercase())) },
+                            label = { Text("BBS Alias") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = cfg.bbsSsid.toString(),
+                            onValueChange = { onUpdateCfg(cfg.copy(bbsSsid = it.toIntOrNull() ?: cfg.bbsSsid)) },
+                            label = { Text("BBS SSID (0-15)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    SettingsTab.CHAT -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
                                 checked = cfg.chatEnabled,
                                 onCheckedChange = { onUpdateCfg(cfg.copy(chatEnabled = it)) }
                             )
-                            Text("Enable Built-in Chat (${cfg.chatAlias} -${cfg.chatSsid})")
+                            Text("Enable Built-in Chat (${cfg.chatAlias}-${cfg.chatSsid})")
                         }
+                        OutlinedTextField(
+                            value = cfg.chatAlias,
+                            onValueChange = { onUpdateCfg(cfg.copy(chatAlias = it.uppercase())) },
+                            label = { Text("Chat Alias") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         OutlinedTextField(
                             value = cfg.chatTopic,
                             onValueChange = { onUpdateCfg(cfg.copy(chatTopic = it)) },
@@ -369,7 +389,7 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    SettingsTab.RADIO -> {
+                    SettingsTab.RIG -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
                                 checked = cfg.rigEnabled,
@@ -389,6 +409,27 @@ fun SettingsScreen(
                             label = { Text("Rig Control Port") },
                             modifier = Modifier.fillMaxWidth()
                         )
+                    }
+                    SettingsTab.PRINTER -> {
+                        OutlinedTextField(
+                            value = cfg.printerProtocol,
+                            onValueChange = { onUpdateCfg(cfg.copy(printerProtocol = it)) },
+                            label = { Text("Printer Protocol (generic / mx80 / escp2)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = cfg.printerBaud.toString(),
+                            onValueChange = { onUpdateCfg(cfg.copy(printerBaud = it.toIntOrNull() ?: cfg.printerBaud)) },
+                            label = { Text("Serial Baud Rate") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = cfg.printerCondensed,
+                                onCheckedChange = { onUpdateCfg(cfg.copy(printerCondensed = it)) }
+                            )
+                            Text("Condensed Print Mode (ESC SI)")
+                        }
                     }
                     SettingsTab.INTERFACES -> {
                         Button(onClick = onAddIface) { Text("Add Interface...") }

@@ -443,6 +443,48 @@ static void mc_draw_field_row(OykMacUiState* ui, int x, int y,
     mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
 }
 
+static void mc_draw_listview_header(const OykMacUiState* ui, int x, int y_base, int w,
+                                    int ncols, const int* col_x, const char* const* cols) {
+    Rect hr;
+    SetRect(&hr, static_cast<short>(x), static_cast<short>(y_base - 10),
+            static_cast<short>(x + w), static_cast<short>(y_base + 3));
+    mc_fill_color(ui, &hr, ui->active_theme.colors[OYK_TR_PANEL_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
+    for (int c = 0; c < ncols; ++c) {
+        if (cols[c] && cols[c][0]) {
+            mc_draw_text(col_x[c], y_base, cols[c]);
+        }
+    }
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+}
+
+static void mc_draw_listview_row(const OykMacUiState* ui, int x, int y_base, int w,
+                                 int selected, int ncols, const int* col_x,
+                                 const char* const* cells, const int* max_c) {
+    Rect rr;
+    SetRect(&rr, static_cast<short>(x), static_cast<short>(y_base - 10),
+            static_cast<short>(x + w), static_cast<short>(y_base + 3));
+    if (selected) {
+        if (ui->has_color) {
+            mc_fill_color(ui, &rr, ui->active_theme.colors[OYK_TR_SELECTION_BG], &qd.black);
+            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_SELECTION_FG]);
+        } else {
+            FillRect(&rr, &qd.black);
+            TextMode(srcBic);
+        }
+    } else {
+        mc_fill_color(ui, &rr, ui->active_theme.colors[OYK_TR_BG], &qd.white);
+        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    }
+    for (int c = 0; c < ncols; ++c) {
+        if (cells[c] && cells[c][0]) {
+            mc_draw_text_clip(col_x[c], y_base, cells[c], max_c[c]);
+        }
+    }
+    TextMode(srcOr);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+}
+
 static void mc_draw_box(OykMacUiState* ui, int x, int y, int w, int h, const char* title) {
     Rect r;
     SetRect(&r, static_cast<short>(x), static_cast<short>(y),
@@ -543,43 +585,44 @@ static void mc_draw_main_console(OykMacUiState* ui) {
 
     TextFont(4);
     TextSize(9);
-    char hdr_if[64];
-    sprintf(hdr_if, "%-8s %-8s %-6s %-6s",
+    {
+        int if_x[4] = { 10, 68, 134, 184 };
+        const char* if_h[4] = {
             oyk_gui_table_column(OYK_TBL_IFACES, 0),
             oyk_gui_table_column(OYK_TBL_IFACES, 1),
             oyk_gui_table_column(OYK_TBL_IFACES, 3),
-            oyk_gui_table_column(OYK_TBL_IFACES, 4));
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-    mc_draw_text_clip(10, 56, hdr_if, (mid_x - 18) / 6);
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-
-    for (int i = 0; i < cfg.iface_count && i < 4 && i < ui->node->iface_count(); ++i) {
-        const OykIfaceRuntime& rt = ui->node->iface(i);
-        char row[80];
-        sprintf(row, "%-8s %-8s %-6s %lu/%lu",
-                cfg.ifaces[i].id,
-                cfg.ifaces[i].type,
-                rt.running ? "UP" : "DOWN",
-                static_cast<unsigned long>(rt.rx_frames),
-                static_cast<unsigned long>(rt.tx_frames));
-        mc_draw_text_clip(10, 70 + i * 13, row, (mid_x - 18) / 6);
+            oyk_gui_table_column(OYK_TBL_IFACES, 4)
+        };
+        int if_w[4] = { 9, 10, 6, 12 };
+        mc_draw_listview_header(ui, 6, 56, mid_x - 10, 4, if_x, if_h);
+        for (int i = 0; i < cfg.iface_count && i < 4 && i < ui->node->iface_count(); ++i) {
+            const OykIfaceRuntime& rt = ui->node->iface(i);
+            char rxtx[24];
+            sprintf(rxtx, "%lu/%lu",
+                    static_cast<unsigned long>(rt.rx_frames),
+                    static_cast<unsigned long>(rt.tx_frames));
+            const char* cells[4] = { cfg.ifaces[i].id, cfg.ifaces[i].type, rt.running ? "UP" : "DOWN", rxtx };
+            mc_draw_listview_row(ui, 6, 70 + i * 13, mid_x - 10, 0, 4, if_x, cells, if_w);
+        }
     }
 
-    char hdr_h[64];
-    sprintf(hdr_h, "%-2s %-9s %-7s %-6s",
+    {
+        int hd_x[4] = { mid_x + 8, mid_x + 28, mid_x + 92, mid_x + 142 };
+        const char* hd_h[4] = {
             oyk_gui_table_column(OYK_TBL_HEARD, 0),
             oyk_gui_table_column(OYK_TBL_HEARD, 1),
             oyk_gui_table_column(OYK_TBL_HEARD, 2),
-            oyk_gui_table_column(OYK_TBL_HEARD, 3));
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-    mc_draw_text_clip(mid_x + 8, 56, hdr_h, (w - mid_x - 18) / 6);
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-
-    for (int i = 0; i < ui->node->new_heard_count() && i < 5; ++i) {
-        const OykNewHeard& he = ui->node->new_heard(i);
-        char row[64];
-        sprintf(row, "%-2d %-9s %-7s %s", i + 1, he.callsign, he.iface_id, he.time_hms);
-        mc_draw_text_clip(mid_x + 8, 70 + i * 13, row, (w - mid_x - 18) / 6);
+            oyk_gui_table_column(OYK_TBL_HEARD, 3)
+        };
+        int hd_w[4] = { 3, 10, 8, 10 };
+        mc_draw_listview_header(ui, mid_x + 4, 56, w - mid_x - 12, 4, hd_x, hd_h);
+        for (int i = 0; i < ui->node->new_heard_count() && i < 5; ++i) {
+            const OykNewHeard& he = ui->node->new_heard(i);
+            char idx_s[12];
+            sprintf(idx_s, "%d", i + 1);
+            const char* cells[4] = { idx_s, he.callsign, he.iface_id, he.time_hms };
+            mc_draw_listview_row(ui, mid_x + 4, 70 + i * 13, w - mid_x - 12, 0, 4, hd_x, cells, hd_w);
+        }
     }
 
     /* Middle: Active Connections */
@@ -587,33 +630,34 @@ static void mc_draw_main_console(OykMacUiState* ui) {
     int conn_h = (h >= 340) ? (h * 25) / 100 : 62;
     if (conn_h < 56) conn_h = 56;
     mc_draw_box(ui, 4, conn_y, w - 8, conn_h, "Active Connections");
-    char hdr_c[96];
-    sprintf(hdr_c, "%-4s %-10s %-8s %-7s %-10s %-8s",
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 0),
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 1),
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 2),
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 3),
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 4),
-            oyk_gui_table_column(OYK_TBL_CONNECTIONS, 5));
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-    mc_draw_text_clip(10, conn_y + 28, hdr_c, (w - 20) / 6);
-    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    int cn_x[6] = { 10, 38, 112, 174, 224, 300 };
+    const char* cn_h[6] = {
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 0),
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 1),
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 2),
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 3),
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 4),
+        oyk_gui_table_column(OYK_TBL_CONNECTIONS, 5)
+    };
+    int cn_w[6] = { 4, 11, 9, 7, 11, 10 };
+    mc_draw_listview_header(ui, 6, conn_y + 28, w - 12, 6, cn_x, cn_h);
 
     int shown_c = 0;
     for (int i = 0; i < ui->node->max_sessions() && shown_c < 3; ++i) {
         const OykSession& s = ui->node->session_slot(i);
         if (s.state == OYK_SESS_FREE) continue;
-        char cs[16];
+        char cs[16], id_s[12];
         oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
+        sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
         const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
                                 ? cfg.ifaces[s.iface_idx].id : "local";
-        char row[96];
-        sprintf(row, "%-4lu %-10s %-8s %-7s %-10s %-8s",
-                static_cast<unsigned long>(s.id), cs, pname,
-                s.is_local_term ? "LOCAL" : "IN",
-                (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
-                s.since_hms);
-        mc_draw_text_clip(10, conn_y + 42 + shown_c * 13, row, (w - 20) / 6);
+        const char* cells[6] = {
+            id_s, cs, pname,
+            s.is_local_term ? "LOCAL" : "IN",
+            (s.state == OYK_SESS_CONNECTED) ? "CONNECTED" : "OPENING",
+            s.since_hms
+        };
+        mc_draw_listview_row(ui, 6, conn_y + 42 + shown_c * 13, w - 12, 0, 6, cn_x, cells, cn_w);
         ++shown_c;
     }
     if (shown_c == 0) {
@@ -653,7 +697,7 @@ static void mc_draw_main_console(OykMacUiState* ui) {
 static void mc_sync_modal_window(OykMacUiState* ui) {
     if (!ui) return;
     int scr = ui->active_screen;
-    if (scr == OYK_SCR_MAIN) {
+    if (scr == OYK_SCR_MAIN || scr == OYK_SCR_MENU) {
         if (ui->modal_win) {
             DisposeWindow(ui->modal_win);
             ui->modal_win = 0;
@@ -745,27 +789,27 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         LineTo(lx + bw, ty + 8);
 
         if (active_tab == 4) {
-            char phdr[80];
-            sprintf(phdr, "%-8s %-9s %-8s %-18s %-7s",
-                    oyk_gui_table_column(OYK_TBL_PEERS, 0),
-                    oyk_gui_table_column(OYK_TBL_PEERS, 1),
-                    oyk_gui_table_column(OYK_TBL_PEERS, 2),
-                    oyk_gui_table_column(OYK_TBL_PEERS, 3),
-                    oyk_gui_table_column(OYK_TBL_PEERS, 4));
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-            mc_draw_text_clip(lx, ty + 24, phdr, bw / 6);
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+            int px[5] = { lx + 2, lx + 64, lx + 138, lx + 206, lx + 344 };
+            const char* ph[5] = {
+                oyk_gui_table_column(OYK_TBL_PEERS, 0),
+                oyk_gui_table_column(OYK_TBL_PEERS, 1),
+                oyk_gui_table_column(OYK_TBL_PEERS, 2),
+                oyk_gui_table_column(OYK_TBL_PEERS, 3),
+                oyk_gui_table_column(OYK_TBL_PEERS, 4)
+            };
+            int pw[5] = { 9, 10, 10, 21, 10 };
+            mc_draw_listview_header(ui, lx, ty + 24, bw, 5, px, ph);
             for (int p = 0; p < cfg.peer_count && p < 8; ++p) {
-                char row[96];
                 char ep[32];
                 sprintf(ep, "%s:%u", cfg.peers[p].host,
                         static_cast<unsigned int>(cfg.peers[p].port));
-                sprintf(row, "%s %-8s %-9s %-8s %-18s %s",
-                        (p == ui->sel_peer) ? ">" : " ",
-                        cfg.peers[p].id, cfg.peers[p].callsign,
-                        cfg.peers[p].interface_id, ep,
-                        cfg.peers[p].auto_learned ? "AUTO" : "STATIC");
-                mc_draw_text_clip(lx, ty + 40 + p * 14, row, bw / 6);
+                const char* cells[5] = {
+                    cfg.peers[p].id, cfg.peers[p].callsign,
+                    cfg.peers[p].interface_id, ep,
+                    cfg.peers[p].auto_learned ? "AUTO" : "STATIC"
+                };
+                mc_draw_listview_row(ui, lx, ty + 40 + p * 14, bw, (p == ui->sel_peer),
+                                     5, px, cells, pw);
             }
             mc_draw_button(ui, lx, by, 72, 20, "Edit Peer", 0, MC_HIT_SET_SCREEN, OYK_SCR_EDIT_PEER);
             mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
@@ -800,16 +844,18 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
             mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
         } else if (active_tab == 3) {
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-            mc_draw_text(lx, ty + 24, "ID       Driver       Endpoint              State");
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+            int ix[4] = { lx + 2, lx + 64, lx + 148, lx + 318 };
+            const char* ih[4] = { "ID", "Driver", "Endpoint", "Policy" };
+            int iw[4] = { 9, 12, 24, 18 };
+            mc_draw_listview_header(ui, lx, ty + 24, bw, 4, ix, ih);
             for (int i = 0; i < ui->draft_cfg.iface_count && i < 6; ++i) {
                 const OykIfaceConfig& ic = ui->draft_cfg.ifaces[i];
-                char ep[40], row[96];
+                char ep[40], pol[28];
                 if (ic.device[0]) sprintf(ep, "%s @ %lu", ic.device, static_cast<unsigned long>(ic.baud));
                 else sprintf(ep, "%s:%u", ic.host, static_cast<unsigned int>(ic.port));
-                sprintf(row, "%-8s %-12s %-21s %s", ic.id, ic.type, ep, "UP");
-                mc_draw_text_clip(lx, ty + 40 + i * 14, row, bw / 6);
+                sprintf(pol, "IN:%s OUT:%s", ic.block_inbound ? "N" : "Y", ic.block_outbound ? "N" : "Y");
+                const char* cells[4] = { ic.id, ic.type, ep, pol };
+                mc_draw_listview_row(ui, lx, ty + 40 + i * 14, bw, (i == ui->sel_iface), 4, ix, cells, iw);
             }
             mc_draw_button(ui, lx, by, 84, 20, "Add Iface...", 0, MC_HIT_SET_SCREEN, OYK_SCR_ADD_IFACE);
             mc_draw_button(ui, lx + 92, by, 84, 20, "Edit...", 0, MC_HIT_SET_SCREEN, OYK_SCR_EDIT_IFACE);
@@ -873,20 +919,28 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
                               MC_HIT_WIZ_DRIVER, i);
             }
         } else if (ui->wiz.step == 1) {
-            char ln[96];
-            sprintf(ln, "Interface ID:   [%s]", ui->wiz.draft.id);
-            mc_draw_text(lx, ty + 42, ln);
-            sprintf(ln, "Description:    [%s]",
-                    ui->wiz.draft.description[0] ? ui->wiz.draft.description : "Classic Mac Interface");
-            mc_draw_text_clip(lx, ty + 62, ln, bw / 6);
+            mc_draw_field_row(ui, lx, ty + 40, "Driver:", ui->wiz.draft.type, 140);
+            mc_draw_field_row(ui, lx, ty + 58, "Interface ID:", ui->wiz.draft.id, 180);
+            mc_draw_field_row(ui, lx, ty + 76, "Description:",
+                              ui->wiz.draft.description[0] ? ui->wiz.draft.description : "Classic Mac Interface",
+                              bw - 130);
         } else if (ui->wiz.step == 2) {
-            char ln[96];
-            sprintf(ln, "Host / Device:  [%s]",
-                    ui->wiz.draft.host[0] ? ui->wiz.draft.host : ui->wiz.draft.device);
-            mc_draw_text(lx, ty + 42, ln);
-            sprintf(ln, "Port / Baud:    [%lu]",
-                    static_cast<unsigned long>(ui->wiz.draft.port ? ui->wiz.draft.port : ui->wiz.draft.baud));
-            mc_draw_text(lx, ty + 62, ln);
+            char pbuf[24];
+            if (strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
+                mc_draw_field_row(ui, lx, ty + 36, "Device:", ui->wiz.draft.device, 160);
+                sprintf(pbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud));
+                mc_draw_field_row(ui, lx, ty + 54, "Baud Rate:", pbuf, 110);
+            } else {
+                mc_draw_field_row(ui, lx, ty + 36, "Bind Host:", ui->wiz.draft.host, 150);
+                sprintf(pbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
+                mc_draw_field_row(ui, lx, ty + 54, "Port:", pbuf, 90);
+                mc_draw_field_row(ui, lx, ty + 72, "Netmask:", ui->wiz.draft.netmask, 150);
+            }
+            mc_draw_checkbox(ui, lx, ty + 92, !ui->wiz.draft.block_inbound, "Allow Inbound", MC_HIT_NONE, 0);
+            mc_draw_checkbox(ui, lx + 135, ty + 92, !ui->wiz.draft.block_outbound, "Allow Outbound", MC_HIT_NONE, 0);
+            mc_draw_checkbox(ui, lx + 275, ty + 92, ui->wiz.draft.allow_same_interface, "Same-Interface", MC_HIT_NONE, 0);
+            mc_draw_field_row(ui, lx, ty + 110, "Learned Policy:",
+                              oyk_gui_format_learned_policy(ui->wiz.draft.learned_peer_policy), 120);
         } else {
             char sum[320];
             oyk_gui_wiz_format_summary(&ui->wiz, sum, sizeof(sum), 0);
@@ -910,86 +964,78 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
                        (ui->wiz.step >= 3) ? "Finish" : "Next >", 1, MC_HIT_WIZ_NEXT, 0);
     } else if (scr == OYK_SCR_EDIT_IFACE) {
         const OykIfaceConfig* ic = (ui->sel_iface < cfg.iface_count) ? &cfg.ifaces[ui->sel_iface] : NULL;
-        char ln[96];
-        sprintf(ln, "Interface ID:   [%s]", ic ? ic->id : "axudp0");
-        mc_draw_text(lx, ty + 8, ln);
-        sprintf(ln, "Driver Type:    [%s]", ic ? ic->type : "axudp");
-        mc_draw_text(lx, ty + 28, ln);
-        sprintf(ln, "Bind / Host:    [%s]", ic ? ic->host : "127.0.0.1");
-        mc_draw_text(lx, ty + 48, ln);
-        sprintf(ln, "Port / Baud:    [%u]", ic ? static_cast<unsigned int>(ic->port) : 10093U);
-        mc_draw_text(lx, ty + 68, ln);
-        sprintf(ln, "Netmask:        [%s]", (ic && ic->netmask[0]) ? ic->netmask : "255.0.0.0");
-        mc_draw_text(lx, ty + 88, ln);
-        mc_draw_checkbox(ui, lx, ty + 108, ic ? !ic->block_inbound : 1,
-                         "Allow Inbound", MC_HIT_NONE, 0);
-        mc_draw_checkbox(ui, lx + 140, ty + 108, ic ? !ic->block_outbound : 1,
-                         "Allow Outbound", MC_HIT_NONE, 0);
+        char pbuf[24];
+        if (ic && ic->device[0]) sprintf(pbuf, "%lu", static_cast<unsigned long>(ic->baud));
+        else sprintf(pbuf, "%u", ic ? static_cast<unsigned int>(ic->port) : 10093U);
+        mc_draw_field_row(ui, lx, ty + 8, "Interface ID:", ic ? ic->id : "axudp0", 140);
+        mc_draw_field_row(ui, lx, ty + 26, "Driver Type:", ic ? ic->type : "axudp", 140);
+        mc_draw_field_row(ui, lx, ty + 44, (ic && ic->device[0]) ? "Serial Dev:" : "Bind / Host:",
+                          ic ? (ic->device[0] ? ic->device : ic->host) : "127.0.0.1", 160);
+        mc_draw_field_row(ui, lx, ty + 62, (ic && ic->device[0]) ? "Baud Rate:" : "Port:", pbuf, 110);
+        mc_draw_field_row(ui, lx, ty + 80, "Netmask:", (ic && ic->netmask[0]) ? ic->netmask : "255.0.0.0", 160);
+        mc_draw_checkbox(ui, lx, ty + 100, ic ? !ic->block_inbound : 1, "Allow Inbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 135, ty + 100, ic ? !ic->block_outbound : 1, "Allow Outbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 275, ty + 100, ic ? ic->allow_same_interface : 0, "Same-Interface", MC_HIT_NONE, 0);
+        mc_draw_field_row(ui, lx, ty + 118, "Learned Policy:",
+                          oyk_gui_format_learned_policy(ic ? ic->learned_peer_policy : 0), 120);
         mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_EDIT_PEER) {
         const OykPeerConfig* pc = (ui->sel_peer < cfg.peer_count) ? &cfg.peers[ui->sel_peer] : NULL;
-        char ln[96];
-        sprintf(ln, "Peer ID:        [%s]", pc ? pc->id : "remote0");
-        mc_draw_text(lx, ty + 8, ln);
-        sprintf(ln, "Callsign:       [%s]", pc ? pc->callsign : "R3MOT-7");
-        mc_draw_text(lx, ty + 28, ln);
-        sprintf(ln, "Interface:      [%s]", pc ? pc->interface_id : "axudp0");
-        mc_draw_text(lx, ty + 48, ln);
-        sprintf(ln, "Host / DMR ID:  [%s]", pc ? pc->host : "12.34.56.78");
-        mc_draw_text(lx, ty + 68, ln);
-        sprintf(ln, "UDP Port:       [%u]", pc ? static_cast<unsigned int>(pc->port) : 10093U);
-        mc_draw_text(lx, ty + 88, ln);
-        mc_draw_checkbox(ui, lx, ty + 108, pc ? pc->allow_inbound : 1,
-                         "Allow Inbound", MC_HIT_NONE, 0);
-        mc_draw_checkbox(ui, lx + 140, ty + 108, pc ? pc->allow_outbound : 1,
-                         "Allow Outbound", MC_HIT_NONE, 0);
+        char pbuf[16];
+        sprintf(pbuf, "%u", pc ? static_cast<unsigned int>(pc->port) : 10093U);
+        mc_draw_field_row(ui, lx, ty + 8, "Peer ID:", pc ? pc->id : "remote0", 150);
+        mc_draw_field_row(ui, lx, ty + 26, "Callsign:", pc ? pc->callsign : "R3MOT-7", 120);
+        mc_draw_field_row(ui, lx, ty + 44, "Interface:", pc ? pc->interface_id : "axudp0", 140);
+        mc_draw_field_row(ui, lx, ty + 62, "Host / DMR:", pc ? pc->host : "12.34.56.78", 160);
+        mc_draw_field_row(ui, lx, ty + 80, "UDP Port:", pbuf, 100);
+        mc_draw_checkbox(ui, lx, ty + 102, pc ? pc->allow_inbound : 1, "Allow Inbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 140, ty + 102, pc ? pc->allow_outbound : 1, "Allow Outbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 280, ty + 102, pc ? pc->auto_learned : 0, "Auto-Learned", MC_HIT_NONE, 0);
         mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_TERMINATE) {
+        int tx[4] = { lx + 2, lx + 48, lx + 150, lx + 240 };
         const char* cols[4];
         oyk_gui_terminate_columns(cols, 4);
-        char thdr[80];
-        sprintf(thdr, "%-5s %-11s %-10s %-10s", cols[0], cols[1], cols[2], cols[3]);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-        mc_draw_text(lx, ty, thdr);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-        MoveTo(lx, ty + 6);
-        LineTo(lx + bw, ty + 6);
-        int y = ty + 22;
+        int tw[4] = { 5, 12, 11, 12 };
+        mc_draw_listview_header(ui, lx, ty, bw, 4, tx, cols);
+        MoveTo(lx, ty + 5);
+        LineTo(lx + bw, ty + 5);
+        int y = ty + 20;
+        int row_idx = 0;
         for (int i = 0; i < ui->node->max_sessions(); ++i) {
             const OykSession& s = ui->node->session_slot(i);
             if (s.state == OYK_SESS_FREE) continue;
-            char cs[16];
+            char cs[16], id_s[12];
             oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
+            sprintf(id_s, "%lu", static_cast<unsigned long>(s.id));
             const char* pname = (s.iface_idx >= 0 && s.iface_idx < cfg.iface_count)
                                     ? cfg.ifaces[s.iface_idx].id : "local";
-            char row[80];
-            sprintf(row, "%-5lu %-11s %-10s %-10s",
-                    static_cast<unsigned long>(s.id), cs, pname, "CONNECTED");
-            mc_draw_text_clip(lx, y, row, bw / 6);
+            const char* cells[4] = { id_s, cs, pname, "CONNECTED" };
+            mc_draw_listview_row(ui, lx, y, bw, (row_idx == ui->sel_conn), 4, tx, cells, tw);
             y += 14;
+            ++row_idx;
         }
         mc_draw_button(ui, lx, by, 108, 20, "Kick Selected", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Cancel", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_BAN) {
+        int bx_c[4] = { lx + 2, lx + 82, lx + 188, lx + 286 };
+        const char* bh_c[4] = {
+            oyk_gui_table_column(OYK_TBL_BANS, 0),
+            oyk_gui_table_column(OYK_TBL_BANS, 1),
+            oyk_gui_table_column(OYK_TBL_BANS, 2),
+            oyk_gui_table_column(OYK_TBL_BANS, 4)
+        };
+        int bw_c[4] = { 10, 16, 12, 18 };
         mc_draw_text(lx, ty, "Callsign: [W9SPAM-9]   Lift: [7d]   Reason: [Flooding]");
         mc_draw_checkbox(ui, lx, ty + 16, 1, "Hard Ban", MC_HIT_NONE, 0);
         mc_draw_checkbox(ui, lx + 130, ty + 16, 1, "Appeal Allowed", MC_HIT_NONE, 0);
-        char bhdr[80];
-        sprintf(bhdr, "%-10s %-11s %-11s %-14s",
-                oyk_gui_table_column(OYK_TBL_BANS, 0),
-                oyk_gui_table_column(OYK_TBL_BANS, 1),
-                oyk_gui_table_column(OYK_TBL_BANS, 2),
-                oyk_gui_table_column(OYK_TBL_BANS, 4));
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-        mc_draw_text(lx, ty + 32, bhdr);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+        mc_draw_listview_header(ui, lx, ty + 32, bw, 4, bx_c, bh_c);
         for (int b = 0; b < ui->node->ban_count() && b < 4; ++b) {
             const OykBanEntry& be = ui->node->ban_entry(b);
-            char row[80];
-            sprintf(row, "%-10s %-11s %-11s %-14s", be.key, be.banned_at, be.lift_at, be.reason);
-            mc_draw_text_clip(lx, ty + 48 + b * 14, row, bw / 6);
+            const char* cells[4] = { be.key, be.banned_at, be.lift_at, be.reason };
+            mc_draw_listview_row(ui, lx, ty + 48 + b * 14, bw, (b == ui->sel_ban), 4, bx_c, cells, bw_c);
         }
         mc_draw_button(ui, lx, by, 72, 20, "Ban Call", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
@@ -1088,44 +1134,61 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         int half = bw / 2 - 4;
         mc_draw_box(ui, lx, ty - 6, half, by - ty - 6, "Pending Incoming");
         mc_draw_box(ui, lx + half + 8, ty - 6, half, by - ty - 6, "Approved BBS Files");
-        char ihdr[48];
-        sprintf(ihdr, "%-9s %-10s %-6s",
-                oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 0),
-                oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 1),
-                oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 2));
-        mc_draw_text_clip(lx + 6, ty + 22, ihdr, (half - 10) / 6);
-        char ahdr[48];
-        sprintf(ahdr, "%-16s %-7s",
-                oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 0),
-                oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 1));
-        mc_draw_text_clip(lx + half + 14, ty + 22, ahdr, (half - 10) / 6);
+        TextFont(4);
+        TextSize(9);
+        int fx1[3] = { lx + 6, lx + 68, lx + 148 };
+        const char* fh1[3] = {
+            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 0),
+            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 1),
+            oyk_gui_table_column(OYK_TBL_FILES_INCOMING, 2)
+        };
+        int fw1[3] = { 9, 13, 7 };
+        mc_draw_listview_header(ui, lx + 2, ty + 22, half - 4, 3, fx1, fh1);
+
+        int fx2[2] = { lx + half + 14, lx + half + 132 };
+        const char* fh2[2] = {
+            oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 0),
+            oyk_gui_table_column(OYK_TBL_FILES_APPROVED, 1)
+        };
+        int fw2[2] = { 18, 7 };
+        mc_draw_listview_header(ui, lx + half + 10, ty + 22, half - 4, 2, fx2, fh2);
 
         OykPendingIncoming pend[4];
         OykApprovedFile appr[4];
         int pcnt = oyk_bbs_list_incoming("INCOMING", pend, 4);
         int acnt = oyk_bbs_list_approved("FILES", appr, 4);
         if (pcnt == 0) {
-            mc_draw_text_clip(lx + 6, ty + 36, "W4ABC-7  PACKETS.TXT 2048", (half - 10) / 6);
+            const char* fr1[3] = { "W4ABC-7", "PACKETS.TXT", "2048" };
+            mc_draw_listview_row(ui, lx + 2, ty + 36, half - 4, 1, 3, fx1, fr1, fw1);
         } else {
             for (int i = 0; i < pcnt; ++i) {
-                char row[160];
-                sprintf(row, "%-9.9s %-10.20s %lu", pend[i].uploader, pend[i].filename,
-                        static_cast<unsigned long>(pend[i].size));
-                mc_draw_text_clip(lx + 6, ty + 36 + i * 13, row, (half - 10) / 6);
+                char sz_s[16];
+                sprintf(sz_s, "%lu", static_cast<unsigned long>(pend[i].size));
+                const char* fr[3] = { pend[i].uploader, pend[i].filename, sz_s };
+                mc_draw_listview_row(ui, lx + 2, ty + 36 + i * 13, half - 4, (i == 0), 3, fx1, fr, fw1);
             }
         }
         if (acnt == 0) {
-            mc_draw_text_clip(lx + half + 14, ty + 36, "README.TXT       1420", (half - 10) / 6);
-            mc_draw_text_clip(lx + half + 14, ty + 49, "NETLIST.CFG       618", (half - 10) / 6);
+            const char* fr2a[2] = { "README.TXT", "1420" };
+            const char* fr2b[2] = { "NETLIST.CFG", "618" };
+            mc_draw_listview_row(ui, lx + half + 10, ty + 36, half - 4, 1, 2, fx2, fr2a, fw2);
+            mc_draw_listview_row(ui, lx + half + 10, ty + 49, half - 4, 0, 2, fx2, fr2b, fw2);
         } else {
             for (int j = 0; j < acnt; ++j) {
-                char row[160];
-                sprintf(row, "%-16.32s %lu", appr[j].rel_path, static_cast<unsigned long>(appr[j].size));
-                mc_draw_text_clip(lx + half + 14, ty + 36 + j * 13, row, (half - 10) / 6);
+                char sz_s[16];
+                sprintf(sz_s, "%lu", static_cast<unsigned long>(appr[j].size));
+                const char* fr[2] = { appr[j].rel_path, sz_s };
+                mc_draw_listview_row(ui, lx + half + 10, ty + 36 + j * 13, half - 4, (j == 0), 2, fx2, fr, fw2);
             }
         }
         mc_draw_button(ui, lx, by, 86, 20, "Upload...", 0, MC_HIT_FILE_UPLOAD, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
+    } else if (scr == OYK_SCR_ABOUT) {
+        mc_draw_text(lx, ty + 14, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)");
+        mc_draw_text(lx, ty + 32, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT");
+        mc_draw_text(lx, ty + 50, "Platform: Classic Macintosh 68k & PowerPC Fat (System 6.0.8 - OS 9)");
+        mc_draw_text(lx, ty + 70, "Hotkeys: Cmd+, Settings | Cmd+T Term | 1..7 Tabs | Esc Close");
+        mc_draw_button(ui, box.right - 92, by, 78, 20, "OK", 1, MC_HIT_CLOSE_MODAL, 0);
     } else {
         mc_draw_text(lx, ty + 14, "Radio CAT / Hamlib Rig Control");
         mc_draw_text(lx, ty + 34, "Protocol:   Hamlib rigctld (port 4532)");
@@ -1133,6 +1196,56 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_text(lx, ty + 70, "Frequency:  145.050 MHz (FM)");
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
     }
+}
+
+static void mc_draw_menu_overlay(OykMacUiState* ui) {
+    Rect mbox, sh;
+    int mx = 84, my = 2, mw = 236, mh = 186;
+    SetRect(&sh, static_cast<short>(mx + 2), static_cast<short>(my + 2),
+            static_cast<short>(mx + mw + 2), static_cast<short>(my + mh + 2));
+    mc_fill_color(ui, &sh, 0x111111UL, &qd.black);
+    SetRect(&mbox, static_cast<short>(mx), static_cast<short>(my),
+            static_cast<short>(mx + mw), static_cast<short>(my + mh));
+    mc_fill_color(ui, &mbox, ui->active_theme.colors[OYK_TR_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
+    FrameRect(&mbox);
+    TextFont(0);
+    TextSize(10);
+    int y = my + 14;
+    for (int i = 0; i < oyk_gui_node_menu_count(); ++i) {
+        const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+        if (!mi) continue;
+        if (mi->is_separator) {
+            MoveTo(static_cast<short>(mx + 2), static_cast<short>(y - 6));
+            LineTo(static_cast<short>(mx + mw - 3), static_cast<short>(y - 6));
+            y += 6;
+        } else {
+            int hl = (i == 0);
+            if (hl) {
+                Rect r;
+                SetRect(&r, static_cast<short>(mx + 1), static_cast<short>(y - 10),
+                        static_cast<short>(mx + mw - 1), static_cast<short>(y + 3));
+                if (ui->has_color) {
+                    mc_fill_color(ui, &r, ui->active_theme.colors[OYK_TR_SELECTION_BG], &qd.black);
+                    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_SELECTION_FG]);
+                } else {
+                    FillRect(&r, &qd.black);
+                    TextMode(srcBic);
+                }
+            } else {
+                mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+            }
+            mc_draw_text_clip(mx + 8, y, mi->mac_label ? mi->mac_label : mi->label, 30);
+            if (mi->shortcut_key) {
+                char sc[8];
+                sprintf(sc, "%c", mi->shortcut_key);
+                mc_draw_text(mx + mw - 18, y, sc);
+            }
+            TextMode(srcOr);
+            y += 14;
+        }
+    }
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
 }
 
 static void mc_redraw(OykMacUiState* ui) {
@@ -1144,8 +1257,11 @@ static void mc_redraw(OykMacUiState* ui) {
     mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
 
     mc_draw_main_console(ui);
+    if (ui->active_screen == OYK_SCR_MENU) {
+        mc_draw_menu_overlay(ui);
+    }
     mc_sync_modal_window(ui);
-    if (ui->active_screen != OYK_SCR_MAIN && ui->modal_win) {
+    if (ui->active_screen != OYK_SCR_MAIN && ui->active_screen != OYK_SCR_MENU && ui->modal_win) {
         SetPort(ui->modal_win);
         ui->hit_count = 0;
         mc_set_bg(ui, ui->active_theme.colors[OYK_TR_BG]);
@@ -1329,30 +1445,43 @@ static void mc_seed_gallery_fixture(OykMacUiState* ui) {
 static void mc_run_capture_tour(OykMacUiState* ui) {
     struct FlowCap {
         int scr;
+        int tab;
+        int wiz_step;
         const char* suffix;
     };
-    static const FlowCap kFlows[12] = {
-        { OYK_SCR_MAIN,       "main"       },
-        { OYK_SCR_SETTINGS,   "settings"   },
-        { OYK_SCR_ADD_IFACE,  "add_iface"  },
-        { OYK_SCR_EDIT_IFACE, "edit_iface" },
-        { OYK_SCR_PEERS,      "peers"      },
-        { OYK_SCR_EDIT_PEER,  "edit_peer"  },
-        { OYK_SCR_TERMINATE,  "terminate"  },
-        { OYK_SCR_BAN,        "ban"        },
-        { OYK_SCR_EXIT_PEERS, "exit"       },
-        { OYK_SCR_THEME,      "theme"      },
-        { OYK_SCR_TERMINAL,   "terminal"   },
-        { OYK_SCR_FILES,      "files"      }
+    static const FlowCap kFlows[22] = {
+        { OYK_SCR_MAIN,       0, 0, "main"             },
+        { OYK_SCR_MENU,       0, 0, "menu"             },
+        { OYK_SCR_SETTINGS,   0, 0, "settings"         },
+        { OYK_SCR_SETTINGS,   1, 0, "settings_bbs"     },
+        { OYK_SCR_SETTINGS,   2, 0, "settings_chat"    },
+        { OYK_SCR_SETTINGS,   3, 0, "settings_ifaces"  },
+        { OYK_SCR_PEERS,      4, 0, "peers"            },
+        { OYK_SCR_SETTINGS,   5, 0, "settings_rig"     },
+        { OYK_SCR_SETTINGS,   6, 0, "settings_printer" },
+        { OYK_SCR_ADD_IFACE,  0, 0, "add_iface_1"      },
+        { OYK_SCR_ADD_IFACE,  0, 1, "add_iface_2"      },
+        { OYK_SCR_ADD_IFACE,  0, 2, "add_iface_3"      },
+        { OYK_SCR_ADD_IFACE,  0, 3, "add_iface_4"      },
+        { OYK_SCR_EDIT_IFACE, 0, 0, "edit_iface"       },
+        { OYK_SCR_EDIT_PEER,  0, 0, "edit_peer"        },
+        { OYK_SCR_TERMINATE,  0, 0, "terminate"        },
+        { OYK_SCR_BAN,        0, 0, "ban"              },
+        { OYK_SCR_EXIT_PEERS, 0, 0, "exit"             },
+        { OYK_SCR_THEME,      0, 0, "theme"            },
+        { OYK_SCR_TERMINAL,   0, 0, "terminal"         },
+        { OYK_SCR_FILES,      0, 0, "files"            },
+        { OYK_SCR_ABOUT,      0, 0, "about"            }
     };
 
     mc_seed_gallery_fixture(ui);
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 22; ++i) {
         ui->active_screen = kFlows[i].scr;
-        ui->settings_tab = (kFlows[i].scr == OYK_SCR_PEERS) ? 4 : 0;
+        ui->settings_tab = kFlows[i].tab;
+        ui->wiz.step = kFlows[i].wiz_step;
         mc_redraw(ui);
 
-        char fname[40];
+        char fname[48];
         sprintf(fname, "%s_%s.bmp",
                 ui->has_color ? "mccl" : "mcbw",
                 kFlows[i].suffix);

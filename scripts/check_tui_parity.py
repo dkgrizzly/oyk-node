@@ -58,7 +58,7 @@ def load_port_captures(cap_dir: str) -> dict:
             loader = meta_to_lines
         else:
             continue
-        for prefix in ("ncurses", "dos_gfx", "dos", "tinytmux", "pico"):
+        for prefix in ("ncurses", "dos_gfx", "dos", "tinytmux", "pico", "esp32c6"):
             tag = prefix + "_"
             if stem.startswith(tag):
                 flow = stem[len(tag):]
@@ -75,8 +75,10 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
         if sub not in text:
             errors.append(f"[{port}/{flow}] missing {desc or repr(sub)}")
 
-    if flow in ("settings", "add_iface", "edit_iface", "peers", "edit_peer",
-                "terminate", "ban", "exit", "theme"):
+    if flow in ("settings", "settings_bbs", "settings_chat", "settings_ifaces",
+                "settings_rig", "settings_printer", "add_iface", "add_iface_1",
+                "add_iface_2", "add_iface_3", "add_iface_4", "edit_iface",
+                "peers", "edit_peer", "terminate", "ban", "exit", "theme", "about"):
         need("[X]", "modal close button [X]")
     elif flow in ("main", "terminal"):
         if "[X]" in text:
@@ -89,15 +91,41 @@ def check_flow(port: str, flow: str, lines: list, errors: list) -> None:
         need("Last 5")
         need("Active Connections")
         need("Activity Log")
-    elif flow == "settings":
+    elif flow == "menu":
+        need("Allow Incoming")
+        need("Settings")
+    elif flow in ("settings", "settings_bbs", "settings_chat", "settings_ifaces",
+                  "settings_rig", "settings_printer"):
         if "Node" not in row0:
-            errors.append(f"[{port}/settings] Settings must float over main console (Row 1 missing 'Node'): {row0!r}")
+            errors.append(f"[{port}/{flow}] Settings must float over main console (Row 1 missing 'Node'): {row0!r}")
         need("Node Settings")
         for tab in ("1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"):
             need(tab, f"canonical tab {tab}")
-    elif flow == "add_iface":
+        if flow == "settings_bbs":
+            need("BBS")
+        elif flow == "settings_chat":
+            need("CHAT")
+        elif flow == "settings_ifaces":
+            need("axudp")
+        elif flow == "settings_rig":
+            need("Rig")
+        elif flow == "settings_printer":
+            need("Printer")
+    elif flow == "add_iface_1":
+        need("Add Interface")
+        need("axudp")
+    elif flow == "add_iface_2":
+        need("Add Interface")
+        need("Interface ID")
+    elif flow in ("add_iface", "add_iface_3"):
         need("Add Interface")
         need("Same-Iface")
+    elif flow == "add_iface_4":
+        need("Add Interface")
+        need("Review")
+    elif flow == "about":
+        need("About OYK")
+        need("GPL-3.0-or-later")
     elif flow == "edit_iface":
         need("Edit Interface")
         need("Same-Iface")

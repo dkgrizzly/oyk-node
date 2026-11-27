@@ -78,7 +78,7 @@ run_in_hatari() {
             "${extra_args[@]}" >/dev/null 2>&1 &
         local emu_pid=$!
         local waited=0
-        while kill -0 "${emu_pid}" 2>/dev/null && [[ "${waited}" -lt 60 ]]; do
+        while kill -0 "${emu_pid}" 2>/dev/null && [[ "${waited}" -lt 200 ]]; do
             if [[ -f "${hdd}/DONE.TXT" ]]; then
                 sleep 0.3
                 break
@@ -124,10 +124,19 @@ case "${MODE}" in
         run_in_hatari "${APP_BIN}" "1" "${HMODE}" "${TMP_WORK}"
         declare -A MAP=(
             [AT_MAIN.BMP]="${OUT_PFX}_main.bmp"
-            [AT_SETT.BMP]="${OUT_PFX}_settings.bmp"
-            [AT_ADDI.BMP]="${OUT_PFX}_add_iface.bmp"
-            [AT_EDTI.BMP]="${OUT_PFX}_edit_iface.bmp"
+            [AT_MENU.BMP]="${OUT_PFX}_menu.bmp"
+            [AT_SET1.BMP]="${OUT_PFX}_settings.bmp"
+            [AT_SET2.BMP]="${OUT_PFX}_settings_bbs.bmp"
+            [AT_SET3.BMP]="${OUT_PFX}_settings_chat.bmp"
+            [AT_SET4.BMP]="${OUT_PFX}_settings_ifaces.bmp"
             [AT_PEER.BMP]="${OUT_PFX}_peers.bmp"
+            [AT_SET6.BMP]="${OUT_PFX}_settings_rig.bmp"
+            [AT_SET7.BMP]="${OUT_PFX}_settings_printer.bmp"
+            [AT_ADD1.BMP]="${OUT_PFX}_add_iface_1.bmp"
+            [AT_ADD2.BMP]="${OUT_PFX}_add_iface_2.bmp"
+            [AT_ADD3.BMP]="${OUT_PFX}_add_iface_3.bmp"
+            [AT_ADD4.BMP]="${OUT_PFX}_add_iface_4.bmp"
+            [AT_EDTI.BMP]="${OUT_PFX}_edit_iface.bmp"
             [AT_EDTP.BMP]="${OUT_PFX}_edit_peer.bmp"
             [AT_TERM.BMP]="${OUT_PFX}_terminate.bmp"
             [AT_BAN.BMP]="${OUT_PFX}_ban.bmp"
@@ -135,6 +144,7 @@ case "${MODE}" in
             [AT_THME.BMP]="${OUT_PFX}_theme.bmp"
             [AT_TML.BMP]="${OUT_PFX}_terminal.bmp"
             [AT_FILE.BMP]="${OUT_PFX}_files.bmp"
+            [AT_ABT.BMP]="${OUT_PFX}_about.bmp"
         )
         copied=0
         for src_name in "${!MAP[@]}"; do
@@ -143,8 +153,8 @@ case "${MODE}" in
                 copied=$((copied + 1))
             fi
         done
-        echo "Extracted ${copied}/12 ${OUT_PFX} BMP screenshots into ${OUT_DIR}"
-        [[ "${copied}" -eq 12 ]]
+        echo "Extracted ${copied}/22 ${OUT_PFX} BMP screenshots into ${OUT_DIR}"
+        [[ "${copied}" -eq 22 ]]
         ;;
     *)
         usage

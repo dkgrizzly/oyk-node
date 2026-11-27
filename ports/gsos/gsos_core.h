@@ -59,7 +59,8 @@ typedef enum {
     OYK_GSOS_SCR_TERMINAL,
     OYK_GSOS_SCR_FILES,
     OYK_GSOS_SCR_RIG,
-    OYK_GSOS_SCR_ABOUT
+    OYK_GSOS_SCR_ABOUT,
+    OYK_GSOS_SCR_MENU
 } OykGsosScreenId;
 
 typedef enum {
@@ -125,6 +126,7 @@ typedef struct {
 typedef struct {
     char     id[16];
     char     type[16];
+    char     description[32];
     char     host[32];
     gsos_u16 port;
     char     netmask[20];
@@ -133,6 +135,7 @@ typedef struct {
     int      allow_inbound;
     int      allow_outbound;
     int      allow_same_interface;
+    int      learned_peer_policy; /* 0=inherit, 1=none, 2=inbound, 3=outbound, 4=both */
 } OykGsosIfaceConfig;
 
 typedef struct {
@@ -306,6 +309,12 @@ int  oyk_gsos_wiz_driver_count(void);
 const char *oyk_gsos_wiz_driver_name(int idx);
 const char *oyk_gsos_wiz_driver_desc(int idx);
 void oyk_gsos_wiz_select_driver(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cfg, int idx);
+int  oyk_gsos_wiz_advance(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cfg);
+void oyk_gsos_wiz_back(OykGsosAddIfaceWiz *wiz);
+const char *oyk_gsos_wiz_step_prompt(const OykGsosAddIfaceWiz *wiz);
+void oyk_gsos_wiz_format_summary(const OykGsosAddIfaceWiz *wiz, char *dst, size_t cap);
+const char *oyk_gsos_format_learned_policy(int policy);
+int  oyk_gsos_cycle_learned_policy(int policy, int delta);
 
 /* Theme controller */
 void        oyk_gsos_theme_preset(const char *name, OykGsosThemeConfig *out);

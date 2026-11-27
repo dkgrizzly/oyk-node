@@ -14,7 +14,7 @@ TMP_CAP="${TMP_WORK}/captures"
 mkdir -p "${TMP_CAP}" "${OUT_IMG_DIR}" "${TMP_WORK}/logs"
 trap 'rm -rf "${TMP_WORK}"' EXIT
 
-if [[ ! -x "${BUILD_DIR}/oyk-node" || ! -x "${BUILD_DIR}/oyk_portable_tests" || ! -x "${BUILD_DIR}/oyk_tinytmux_tests" || ! -x "${BUILD_DIR}/oyk_pico_tests" ]]; then
+if [[ ! -x "${BUILD_DIR}/oyk-node" || ! -x "${BUILD_DIR}/oyk_portable_tests" || ! -x "${BUILD_DIR}/oyk_tinytmux_tests" || ! -x "${BUILD_DIR}/oyk_pico_tests" || ! -x "${BUILD_DIR}/oyk_esp32c6_tests" ]]; then
     echo "Building host binaries in ${BUILD_DIR}..."
     cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}"
     cmake --build "${BUILD_DIR}" -j
@@ -61,6 +61,9 @@ OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_tinytmux_tests"
 
 echo "[4/7] Capturing Raspberry Pi Pico (RP2040/RP2350) ANSI screens..."
 OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_pico_tests"
+
+echo "[4b/7] Capturing ESP32-C6 (M5Stack Unit C6L) ANSI screens..."
+OYK_UI_CAPTURE_DIR="${TMP_CAP}" "${BUILD_DIR}/oyk_esp32c6_tests"
 
 echo "[4/5] Capturing X11 GTK+ 2.0 screens under Xvfb..."
 if [[ -x "${BUILD_DIR}/oyk-node-gtk" ]] && command -v xvfb-run >/dev/null 2>&1; then
@@ -137,7 +140,7 @@ EOF
                 waited=0
                 while kill -0 "${EXP_PID}" 2>/dev/null && [[ "${waited}" -lt 80 ]]; do
                     cnt=$(ls -1 "$3"/win_*.bmp 2>/dev/null | wc -l)
-                    if [[ "${cnt}" -ge 12 ]]; then
+                    if [[ "${cnt}" -ge 22 ]]; then
                         sleep 0.6
                         break
                     fi
@@ -254,9 +257,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT_DIR}/scripts/check_tui_parity.py" "${T
 
 echo "Rendering PNG images into ${OUT_IMG_DIR}..."
 rm -f "${OUT_IMG_DIR}"/*.png
+rm -rf "${OUT_IMG_DIR}/thumbs"
+mkdir -p "${OUT_IMG_DIR}/thumbs"
 
-FLOWS=(main settings add_iface edit_iface peers edit_peer terminate ban exit theme terminal files)
-PORTS=(ncurses dos dos_gfx tinytmux pico gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
+FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal files about)
+PORTS=(ncurses dos dos_gfx tinytmux pico esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -276,32 +281,27 @@ for f in "${TMP_CAP}"/*.bmp; do
     PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
-for f in "${TMP_CAP}"/gtk_*.png; do
+for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png "${TMP_CAP}"/macos_*.png; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
-    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 720 520
+    [[ "${base}" == *_contact_sheet.png ]] && continue
+    cp -f "$f" "${OUT_IMG_DIR}/${base}"
 done
 
-for f in "${TMP_CAP}"/android_*.png; do
+for f in "${OUT_IMG_DIR}"/*.png; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
-    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 520 520
-done
-
-for f in "${TMP_CAP}"/macos_*.png; do
-    [[ -e "$f" ]] || continue
-    base="$(basename "$f")"
-    [[ "${base}" == "macos_contact_sheet.png" ]] && continue
-    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/${base}" 720 520
+    PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --scale "$f" "${OUT_IMG_DIR}/thumbs/${base}" 320 200
 done
 
 port_label() {
     case "$1" in
-        ncurses)  echo "POSIX ncurses" ;;
-        dos)      echo "MS-DOS (80x25 Text)" ;;
-        dos_gfx)  echo "MS-DOS 386+ Graphical (VBE/VGA/EGA)" ;;
-        tinytmux) echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
-        pico)     echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
+        ncurses)          echo "POSIX ncurses" ;;
+        dos)              echo "MS-DOS (80x25 Text)" ;;
+        dos_gfx)          echo "MS-DOS 386+ Graphical (VBE/VGA/EGA)" ;;
+        tinytmux)         echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
+        pico)             echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
+        esp32c6)          echo "ESP32-C6 (M5Stack Unit C6L VT340/xterm-256color)" ;;
         gtk)              echo "X11 GTK+ 2.0" ;;
         win)              echo "Windows GUI (Wine / Win32/64)" ;;
         android)          echo "Android (Material 3 / Jetpack Compose)" ;;
@@ -317,54 +317,57 @@ port_label() {
 
 flow_title() {
     case "$1" in
-        main)       echo "1. Operator Console (Main View)" ;;
-        settings)   echo "2. Settings — Node Tab" ;;
-        add_iface)  echo "3. Add Interface Wizard" ;;
-        edit_iface) echo "4. Edit Interface (Single-View Dialog)" ;;
-        peers)      echo "5. Settings — Peers Tab" ;;
-        edit_peer)  echo "6. Edit / Add Peer Dialog" ;;
-        terminate)  echo "7. Terminate Connection Modal" ;;
-        ban)        echo "8. Ban / Unban Callsign Dialog" ;;
-        exit)       echo "9. Auto-Learned Peers Exit / Bootloader Prompt" ;;
-        theme)      echo "10. Theme Settings Dialog" ;;
-        terminal)   echo "11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)" ;;
-        files)      echo "12. File Manager / Pending & Approved BBS Files" ;;
+        main)             echo "1. Operator Console (Main View)" ;;
+        menu)             echo "2. Node Dropdown Menu" ;;
+        settings)         echo "3. Settings — Node Tab" ;;
+        settings_bbs)     echo "4. Settings — BBS Tab" ;;
+        settings_chat)    echo "5. Settings — CHAT Tab" ;;
+        settings_ifaces)  echo "6. Settings — Interfaces Tab" ;;
+        peers)            echo "7. Settings — Peers Tab" ;;
+        settings_rig)     echo "8. Settings — Rig Control Tab" ;;
+        settings_printer) echo "9. Settings — Printer Tab" ;;
+        add_iface_1)      echo "10. Add Interface Wizard — Step 1 (Driver)" ;;
+        add_iface_2)      echo "11. Add Interface Wizard — Step 2 (Identity)" ;;
+        add_iface_3)      echo "12. Add Interface Wizard — Step 3 (Endpoint & Policy)" ;;
+        add_iface_4)      echo "13. Add Interface Wizard — Step 4 (Review Summary)" ;;
+        edit_iface)       echo "14. Edit Interface Dialog" ;;
+        edit_peer)        echo "15. Edit / Add Peer Dialog" ;;
+        terminate)        echo "16. Terminate Connection Modal" ;;
+        ban)              echo "17. Ban / Unban Callsign Dialog" ;;
+        exit)             echo "18. Auto-Learned Peers Exit / Bootloader Prompt" ;;
+        theme)            echo "19. Theme Settings Dialog" ;;
+        terminal)         echo "20. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)" ;;
+        files)            echo "21. File Manager / Pending & Approved BBS Files" ;;
+        about)            echo "22. About OYK-Node Dialog" ;;
     esac
 }
 
 flow_short() {
     case "$1" in
-        main)       echo "1. Console" ;;
-        settings)   echo "2. Settings" ;;
-        add_iface)  echo "3. Add Iface" ;;
-        edit_iface) echo "4. Edit Iface" ;;
-        peers)      echo "5. Peers" ;;
-        edit_peer)  echo "6. Edit Peer" ;;
-        terminate)  echo "7. Terminate" ;;
-        ban)        echo "8. Ban/Unban" ;;
-        exit)       echo "9. Exit/Boot" ;;
-        theme)      echo "10. Theme" ;;
-        terminal)   echo "11. Terminal" ;;
-        files)      echo "12. Files" ;;
+        main)             echo "1. Console" ;;
+        menu)             echo "2. Node Menu" ;;
+        settings)         echo "3. Set: Node" ;;
+        settings_bbs)     echo "4. Set: BBS" ;;
+        settings_chat)    echo "5. Set: CHAT" ;;
+        settings_ifaces)  echo "6. Set: Ifaces" ;;
+        peers)            echo "7. Set: Peers" ;;
+        settings_rig)     echo "8. Set: Rig" ;;
+        settings_printer) echo "9. Set: Printer" ;;
+        add_iface_1)      echo "10. Wiz 1: Driver" ;;
+        add_iface_2)      echo "11. Wiz 2: Identity" ;;
+        add_iface_3)      echo "12. Wiz 3: Policy" ;;
+        add_iface_4)      echo "13. Wiz 4: Review" ;;
+        edit_iface)       echo "14. Edit Iface" ;;
+        edit_peer)        echo "15. Edit Peer" ;;
+        terminate)        echo "16. Terminate" ;;
+        ban)              echo "17. Ban/Unban" ;;
+        exit)             echo "18. Exit/Boot" ;;
+        theme)            echo "19. Theme" ;;
+        terminal)         echo "20. Terminal" ;;
+        files)            echo "21. Files" ;;
+        about)            echo "22. About" ;;
     esac
 }
-
-for port in "${PORTS[@]}"; do
-    sheet_args=()
-    for flow in "${FLOWS[@]}"; do
-        img="${OUT_IMG_DIR}/${port}_${flow}.png"
-        if [[ -f "${img}" ]]; then
-            sheet_args+=("$(flow_short "${flow}"):${img}")
-        fi
-    done
-    if [[ ${#sheet_args[@]} -gt 0 ]]; then
-        PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --contact-sheet \
-            "${OUT_IMG_DIR}/${port}_contact_sheet.png" \
-            "$(port_label "${port}")" \
-            4 320 200 \
-            "${sheet_args[@]}"
-    fi
-done
 
 {
     cat <<'HEADER'
@@ -373,36 +376,64 @@ done
 
 # OYK-Node UI Gallery
 
-Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
+Automated native-resolution screenshots and per-port thumbnail contact sheets generated across all 22 canonical operator screens (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, **Amiga Workbench**, and **Atari ST/TT GEM**.
+Click any thumbnail in the port tables below to open the full-resolution native PNG capture.
 
-## Port Contact Sheets
+## Table of Contents
 
 HEADER
     for port in "${PORTS[@]}"; do
-        sheet="${port}_contact_sheet.png"
-        if [[ -f "${OUT_IMG_DIR}/${sheet}" ]]; then
-            echo "### $(port_label "${port}")"
-            echo ""
-            echo "![$(port_label "${port}") — Contact Sheet](images/ui-gallery/${sheet})"
-            echo ""
-        fi
-    done
-    for flow in "${FLOWS[@]}"; do
-        echo "## $(flow_title "${flow}")"
-        echo ""
-        for port in "${PORTS[@]}"; do
-            img="${port}_${flow}.png"
-            if [[ -f "${OUT_IMG_DIR}/${img}" ]]; then
-                echo "### $(port_label "${port}")"
-                echo ""
-                echo "![$(port_label "${port}") — $(flow_title "${flow}")](images/ui-gallery/${img})"
-                echo ""
+        has_any=0
+        for flow in "${FLOWS[@]}"; do
+            if [[ -f "${OUT_IMG_DIR}/${port}_${flow}.png" ]]; then
+                has_any=1
+                break
             fi
         done
+        if [[ "${has_any}" -eq 1 ]]; then
+            lbl="$(port_label "${port}")"
+            echo "- [${lbl}](#${port})"
+        fi
+    done
+    echo ""
+
+    for port in "${PORTS[@]}"; do
+        cells=()
+        for flow in "${FLOWS[@]}"; do
+            img="${port}_${flow}.png"
+            if [[ -f "${OUT_IMG_DIR}/${img}" && -f "${OUT_IMG_DIR}/thumbs/${img}" ]]; then
+                short="$(flow_short "${flow}")"
+                cells+=("[![${short}](images/ui-gallery/thumbs/${img})](images/ui-gallery/${img})<br>**${short}**")
+            fi
+        done
+        if [[ ${#cells[@]} -eq 0 ]]; then
+            continue
+        fi
+        echo "<a id=\"${port}\"></a>"
+        echo ""
+        echo "## $(port_label "${port}")"
+        echo ""
+        echo "| | | | |"
+        echo "| :---: | :---: | :---: | :---: |"
+        idx=0
+        total="${#cells[@]}"
+        while [[ "${idx}" -lt "${total}" ]]; do
+            row="|"
+            for col in 0 1 2 3; do
+                pos=$((idx + col))
+                if [[ "${pos}" -lt "${total}" ]]; then
+                    row="${row} ${cells[${pos}]} |"
+                else
+                    row="${row}  |"
+                fi
+            done
+            echo "${row}"
+            idx=$((idx + 4))
+        done
+        echo ""
     done
 } > "${OUT_MD}"
 
 png_count="$(ls -1 "${OUT_IMG_DIR}"/*.png 2>/dev/null | wc -l)"
-echo "Generated ${png_count} PNG screenshots and ${OUT_MD}"
+echo "Generated ${png_count} native PNG screenshots (+ thumbnails) and ${OUT_MD}"

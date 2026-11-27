@@ -394,6 +394,14 @@ def main() -> int:
             drain_quiet(master_fd, scr, 0.25)
             save_cap(cap_dir, "main", scr)
 
+            # 1b. Node Dropdown Menu
+            os.write(master_fd, b"m")
+            drain_and_wait(master_fd, scr, "[A] Allow Incoming")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "menu", scr)
+            os.write(master_fd, b"\x1b")
+            drain_and_wait(master_fd, scr, "Radio Interfaces")
+
             # 2. Terminate Connection modal
             os.write(master_fd, b"t")
             drain_and_wait(master_fd, scr, "Terminate Active Connection")
@@ -413,21 +421,48 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_quiet(master_fd, scr, 0.15)
 
-            # 4. Settings (Node tab)
+            # 4. Settings (All 7 Canonical Tabs)
             os.write(master_fd, b"s")
             drain_and_wait(master_fd, scr, "Node Settings")
             drain_quiet(master_fd, scr, 0.15)
             save_cap(cap_dir, "settings", scr)
 
-            # 5. Add Interface Wizard (Tab 4 -> Add -> step 3 with Same-Iface Fwd)
+            os.write(master_fd, b"2")
+            drain_and_wait(master_fd, scr, "Enable Packet BBS")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "settings_bbs", scr)
+
+            os.write(master_fd, b"3")
+            drain_and_wait(master_fd, scr, "Enable Multi-User CHAT")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "settings_chat", scr)
+
+            # 5. Settings Ifaces + Add Interface Wizard (Steps 1..4)
             os.write(master_fd, b"4")
             drain_and_wait(master_fd, scr, "axudp0")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "settings_ifaces", scr)
+
             os.write(master_fd, b"a")
             drain_and_wait(master_fd, scr, "Add Interface")
-            os.write(master_fd, b"\r\r")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "add_iface_1", scr)
+
+            os.write(master_fd, b"\r")
+            drain_and_wait(master_fd, scr, "Interface ID")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "add_iface_2", scr)
+
+            os.write(master_fd, b"\r")
             drain_and_wait(master_fd, scr, "Same-Iface Fwd")
             drain_quiet(master_fd, scr, 0.15)
-            save_cap(cap_dir, "add_iface", scr)
+            save_cap(cap_dir, "add_iface_3", scr)
+
+            os.write(master_fd, b"\r")
+            drain_and_wait(master_fd, scr, "Review interface")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "add_iface_4", scr)
+
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Node Settings")
 
@@ -452,6 +487,17 @@ def main() -> int:
             save_cap(cap_dir, "edit_peer", scr)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Node Settings")
+
+            os.write(master_fd, b"6")
+            drain_and_wait(master_fd, scr, "Enable Rig Control")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "settings_rig", scr)
+
+            os.write(master_fd, b"7")
+            drain_and_wait(master_fd, scr, "Enable Line Printer")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "settings_printer", scr)
+
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
@@ -517,6 +563,14 @@ def main() -> int:
             drain_and_wait(master_fd, scr, "Manage BBS Files Area")
             drain_quiet(master_fd, scr, 0.15)
             save_cap(cap_dir, "files", scr)
+            os.write(master_fd, b"\x1b")
+            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
+
+            # 8f. About OYK-Node modal
+            os.write(master_fd, b"?")
+            drain_and_wait(master_fd, scr, "About OYK")
+            drain_quiet(master_fd, scr, 0.1)
+            save_cap(cap_dir, "about", scr)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 

@@ -291,6 +291,33 @@ static void gs_draw_button(int x, int y, int w, int h, const char *label, int is
     }
 }
 
+static void gs_draw_listview_header(int x, int y, int w, int ncols,
+                                    const int *col_x, const char * const *cols,
+                                    int bg, int fg) {
+    int c;
+    gs_fill_rect(x, y, w, 10, bg);
+    for (c = 0; c < ncols; ++c) {
+        if (cols[c] && cols[c][0]) {
+            gs_draw_text(col_x[c], y, cols[c], fg, bg, 24);
+        }
+    }
+}
+
+static void gs_draw_listview_row(int x, int y, int w, int h, int selected,
+                                 int ncols, const int *col_x,
+                                 const char * const *cells, const int *max_c,
+                                 int norm_bg, int norm_fg) {
+    int c;
+    int bg = selected ? GS_CLR_ACCENT : norm_bg;
+    int fg = selected ? GS_CLR_BG : norm_fg;
+    gs_fill_rect(x, y, w, h, bg);
+    for (c = 0; c < ncols; ++c) {
+        if (cells[c] && cells[c][0]) {
+            gs_draw_text(col_x[c], y, cells[c], fg, bg, max_c[c]);
+        }
+    }
+}
+
 static void gs_draw_menubar(const OykGsosNode *node) {
     (void)node;
     gs_fill_rect(0, 0, 640, 12, GS_CLR_PANEL);
@@ -339,47 +366,84 @@ static void gs_draw_console(OykGsosUiState *ui) {
     gs_draw_text(630 - pill_w, 29, pill, GS_CLR_FG, GS_CLR_PANEL, (int)strlen(pill));
 
     /* Side-by-side Interfaces & Last 5 New Callsigns Heard */
-    gs_draw_box(10, 41, 307, 47, "Interfaces");
-    gs_draw_text(16, 53, "Port     Type     State  RX/TX", GS_CLR_FG, GS_CLR_BG, 40);
-    for (i = 0; i < node->cfg.iface_count && i < 2; ++i) {
-        char row[64];
-        sprintf(row, "%-8s %-8s %-5s  %lu/%lu",
-                node->cfg.ifaces[i].id,
-                node->cfg.ifaces[i].type,
-                node->iface_rt[i].running ? "UP" : "DOWN",
-                (unsigned long)node->iface_rt[i].rx_frames,
-                (unsigned long)node->iface_rt[i].tx_frames);
-        gs_draw_text(16, 63 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
+    {
+        int if_x[4];
+        const char *if_h[4];
+        int if_w[4];
+        if_x[0] = 16; if_x[1] = 80; if_x[2] = 166; if_x[3] = 216;
+        if_h[0] = "Port"; if_h[1] = "Type"; if_h[2] = "State"; if_h[3] = "RX/TX";
+        if_w[0] = 9; if_w[1] = 11; if_w[2] = 6; if_w[3] = 12;
+        gs_draw_box(10, 41, 307, 47, "Interfaces");
+        gs_draw_listview_header(12, 53, 303, 4, if_x, if_h, GS_CLR_BG, GS_CLR_FG);
+        for (i = 0; i < node->cfg.iface_count && i < 2; ++i) {
+            char rxtx[20];
+            const char *cells[4];
+            sprintf(rxtx, "%lu/%lu",
+                    (unsigned long)node->iface_rt[i].rx_frames,
+                    (unsigned long)node->iface_rt[i].tx_frames);
+            cells[0] = node->cfg.ifaces[i].id;
+            cells[1] = node->cfg.ifaces[i].type;
+            cells[2] = node->iface_rt[i].running ? "UP" : "DOWN";
+            cells[3] = rxtx;
+            gs_draw_listview_row(12, 63 + i * 10, 303, 9, 0, 4, if_x, cells, if_w,
+                                 GS_CLR_BG, GS_CLR_FG);
+        }
     }
 
-    gs_draw_box(323, 41, 307, 47, "Last 5 New Callsigns Heard");
-    gs_draw_text(329, 53, "#  Callsign  Port     Heard", GS_CLR_FG, GS_CLR_BG, 40);
-    for (i = 0; i < node->heard_count && i < 2; ++i) {
-        char row[64];
-        sprintf(row, "%-2d %-9s %-8s %s", i + 1,
-                node->heard[i].callsign, node->heard[i].iface_id, node->heard[i].time_hms);
-        gs_draw_text(329, 63 + i * 9, row, GS_CLR_FG, GS_CLR_BG, 40);
+    {
+        int hd_x[4];
+        const char *hd_h[4];
+        int hd_w[4];
+        hd_x[0] = 329; hd_x[1] = 354; hd_x[2] = 436; hd_x[3] = 502;
+        hd_h[0] = "#"; hd_h[1] = "Callsign"; hd_h[2] = "Port"; hd_h[3] = "Heard";
+        hd_w[0] = 3; hd_w[1] = 10; hd_w[2] = 8; hd_w[3] = 10;
+        gs_draw_box(323, 41, 307, 47, "Last 5 New Callsigns Heard");
+        gs_draw_listview_header(325, 53, 303, 4, hd_x, hd_h, GS_CLR_BG, GS_CLR_FG);
+        for (i = 0; i < node->heard_count && i < 2; ++i) {
+            char idx_s[8];
+            const char *cells[4];
+            sprintf(idx_s, "%d", i + 1);
+            cells[0] = idx_s;
+            cells[1] = node->heard[i].callsign;
+            cells[2] = node->heard[i].iface_id;
+            cells[3] = node->heard[i].time_hms;
+            gs_draw_listview_row(325, 63 + i * 10, 303, 9, 0, 4, hd_x, cells, hd_w,
+                                 GS_CLR_BG, GS_CLR_FG);
+        }
     }
 
     /* Active Connections */
-    gs_draw_box(10, 90, 620, 41, "Active Connections");
-    gs_draw_text(16, 102, "ID   Callsign   Port     Dir    State      Since",
-                 GS_CLR_FG, GS_CLR_BG, 78);
-    shown_c = 0;
-    for (i = 0; i < OYK_GSOS_MAX_SESSIONS && shown_c < 2; ++i) {
-        const OykGsosSession *s = &node->sessions[i];
-        const char *pname;
-        char row[80];
-        if (s->state == 0) continue;
-        pname = (s->iface_idx >= 0 && s->iface_idx < node->cfg.iface_count)
-                    ? node->cfg.ifaces[s->iface_idx].id : "local";
-        sprintf(row, "%-4lu %-10s %-8s %-6s %-10s %s",
-                (unsigned long)s->id, s->callsign, pname,
-                s->is_local_term ? "LOCAL" : "IN",
-                (s->state == 2) ? "CONNECTED" : "OPENING",
-                s->since_hms);
-        gs_draw_text(16, 112 + shown_c * 9, row, GS_CLR_FG, GS_CLR_BG, 78);
-        ++shown_c;
+    {
+        int cn_x[6];
+        const char *cn_h[6];
+        int cn_w[6];
+        cn_x[0] = 16; cn_x[1] = 52; cn_x[2] = 140;
+        cn_x[3] = 214; cn_x[4] = 268; cn_x[5] = 358;
+        cn_h[0] = "ID"; cn_h[1] = "Callsign"; cn_h[2] = "Port";
+        cn_h[3] = "Dir"; cn_h[4] = "State"; cn_h[5] = "Since";
+        cn_w[0] = 4; cn_w[1] = 10; cn_w[2] = 9; cn_w[3] = 6; cn_w[4] = 10; cn_w[5] = 10;
+        gs_draw_box(10, 90, 620, 41, "Active Connections");
+        gs_draw_listview_header(12, 102, 616, 6, cn_x, cn_h, GS_CLR_BG, GS_CLR_FG);
+        shown_c = 0;
+        for (i = 0; i < OYK_GSOS_MAX_SESSIONS && shown_c < 2; ++i) {
+            const OykGsosSession *s = &node->sessions[i];
+            const char *pname;
+            char id_s[12];
+            const char *cells[6];
+            if (s->state == 0) continue;
+            pname = (s->iface_idx >= 0 && s->iface_idx < node->cfg.iface_count)
+                        ? node->cfg.ifaces[s->iface_idx].id : "local";
+            sprintf(id_s, "%lu", (unsigned long)s->id);
+            cells[0] = id_s;
+            cells[1] = s->callsign;
+            cells[2] = pname;
+            cells[3] = s->is_local_term ? "LOCAL" : "IN";
+            cells[4] = (s->state == 2) ? "CONNECTED" : "OPENING";
+            cells[5] = s->since_hms;
+            gs_draw_listview_row(12, 112 + shown_c * 10, 616, 9, 0, 6, cn_x, cells, cn_w,
+                                 GS_CLR_BG, GS_CLR_FG);
+            ++shown_c;
+        }
     }
 
     /* Node Activity Log */
@@ -417,18 +481,49 @@ static void gs_draw_modal(OykGsosUiState *ui) {
     ++ui->modal_draw_count;
     ui->last_modal_bg = ui->active_theme.colors[OYK_GSOS_TR_BG];
 
-    /* Drop shadow + floating GS/OS modal */
+    if (scr == OYK_GSOS_SCR_MENU) {
+        int mmx = 8, mmy = 13, mmw = 248, mmh = 148;
+        int my_pos = mmy + 4;
+        gs_fill_rect(mmx + 4, mmy + 3, mmw, mmh, GS_CLR_FG);
+        gs_fill_rect(mmx, mmy, mmw, mmh, GS_CLR_BG);
+        gs_frame_rect(mmx, mmy, mmw, mmh, GS_CLR_FG);
+        for (i = 0; i < oyk_gsos_node_menu_count(); ++i) {
+            const OykGsosMenuItem *mi = oyk_gsos_node_menu_item(i);
+            if (!mi) continue;
+            if (mi->is_separator) {
+                gs_hline(mmx + 2, mmx + mmw - 3, my_pos + 3, GS_CLR_FG);
+                my_pos += 6;
+            } else {
+                int hl = (i == 0);
+                char mrow[64];
+                if (mi->shortcut_key) {
+                    sprintf(mrow, "[%c] %s", mi->shortcut_key, mi->label);
+                } else {
+                    sprintf(mrow, "    %s", mi->label);
+                }
+                if (hl) {
+                    gs_fill_rect(mmx + 2, my_pos, mmw - 4, 10, GS_CLR_ACCENT);
+                    gs_draw_text(mmx + 8, my_pos, mrow, GS_CLR_BG, GS_CLR_ACCENT, 32);
+                } else {
+                    gs_draw_text(mmx + 8, my_pos, mrow, GS_CLR_FG, GS_CLR_BG, 32);
+                }
+                my_pos += 11;
+            }
+        }
+        gs_add_hit(ui, 0, 0, 640, 12, 999);
+        return;
+    }
+
+    /* Drop shadow + floating GS/OS Platinum modal with top-left close square */
     gs_fill_rect(mx + 4, my + 3, mw, mh, GS_CLR_FG);
     gs_fill_rect(mx, my, mw, mh, GS_CLR_BG);
     gs_frame_rect(mx, my, mw, mh, GS_CLR_FG);
     gs_fill_rect(mx + 1, my + 1, mw - 2, 12, GS_CLR_ACCENT);
     gs_hline(mx, mx + mw - 1, my + 13, GS_CLR_FG);
-    gs_draw_text(mx + 10, my + 2, title, GS_CLR_BG, GS_CLR_ACCENT, 64);
-    /* Apple IIgs close box + [X] marker */
-    gs_fill_rect(mx + mw - 28, my + 2, 24, 10, GS_CLR_PANEL);
-    gs_frame_rect(mx + mw - 28, my + 2, 24, 10, GS_CLR_FG);
-    gs_draw_text(mx + mw - 26, my + 2, "[X]", GS_CLR_FG, GS_CLR_PANEL, 3);
-    gs_add_hit(ui, mx + mw - 28, my + 2, 24, 10, 999);
+    gs_fill_rect(mx + 5, my + 3, 9, 7, GS_CLR_BG);
+    gs_frame_rect(mx + 5, my + 3, 9, 7, GS_CLR_FG);
+    gs_add_hit(ui, mx + 4, my + 2, 12, 10, 999);
+    gs_draw_text(mx + 20, my + 2, title, GS_CLR_BG, GS_CLR_ACCENT, 64);
 
     if (scr == OYK_GSOS_SCR_SETTINGS || scr == OYK_GSOS_SCR_PEERS) {
         int active_tab = (scr == OYK_GSOS_SCR_PEERS) ? 4 : ui->settings_tab;
@@ -483,10 +578,16 @@ static void gs_draw_modal(OykGsosUiState *ui) {
             gs_draw_field_row(lx, ty + 33, "CHAT SSID:", nbuf, 92, 72);
             gs_draw_field_row(lx, ty + 48, "Topic:", cfg->chat_topic, 92, 300);
         } else if (active_tab == 3) {
-            gs_draw_text(lx, ty + 17, "ID       Driver      Endpoint / Device       Policy",
-                         GS_CLR_FG, GS_CLR_BG, 72);
+            int ix[4];
+            const char *ih[4];
+            int iw[4];
+            ix[0] = lx + 2; ix[1] = lx + 82; ix[2] = lx + 178; ix[3] = lx + 354;
+            ih[0] = "ID"; ih[1] = "Driver"; ih[2] = "Endpoint / Device"; ih[3] = "Policy";
+            iw[0] = 10; iw[1] = 12; iw[2] = 22; iw[3] = 20;
+            gs_draw_listview_header(lx, ty + 16, mw - 24, 4, ix, ih, GS_CLR_PANEL, GS_CLR_FG);
             for (i = 0; i < cfg->iface_count && i < 4; ++i) {
-                char ep[40];
+                char ep[40], pol[28];
+                const char *cells[4];
                 if (cfg->ifaces[i].device[0]) {
                     sprintf(ep, "%s @ %lu", cfg->ifaces[i].device,
                             (unsigned long)cfg->ifaces[i].baud);
@@ -494,28 +595,44 @@ static void gs_draw_modal(OykGsosUiState *ui) {
                     sprintf(ep, "%s:%u", cfg->ifaces[i].host,
                             (unsigned int)cfg->ifaces[i].port);
                 }
-                sprintf(buf, "%s %-8s %-10s %-20s IN:%s OUT:%s",
-                        (i == ui->sel_iface) ? ">" : " ",
-                        cfg->ifaces[i].id, cfg->ifaces[i].type, ep,
-                        cfg->ifaces[i].allow_inbound ? "YES" : "NO",
-                        cfg->ifaces[i].allow_outbound ? "YES" : "NO");
-                gs_draw_text(lx, ty + 28 + i * 10, buf, GS_CLR_FG, GS_CLR_BG, 72);
+                sprintf(pol, "IN:%s OUT:%s %s",
+                        cfg->ifaces[i].allow_inbound ? "Y" : "N",
+                        cfg->ifaces[i].allow_outbound ? "Y" : "N",
+                        oyk_gsos_format_learned_policy(cfg->ifaces[i].learned_peer_policy));
+                cells[0] = cfg->ifaces[i].id;
+                cells[1] = cfg->ifaces[i].type;
+                cells[2] = ep;
+                cells[3] = pol;
+                gs_draw_listview_row(lx, ty + 28 + i * 11, mw - 24, 10,
+                                     (i == ui->sel_iface), 4, ix, cells, iw,
+                                     GS_CLR_BG, GS_CLR_FG);
             }
             gs_draw_button(lx, by, 86, 13, "Add Iface", 0);
             gs_add_hit(ui, lx, by, 86, 13, OYK_GSOS_SCR_ADD_IFACE);
             gs_draw_button(lx + 92, by, 86, 13, "Edit Iface", 0);
             gs_add_hit(ui, lx + 92, by, 86, 13, OYK_GSOS_SCR_EDIT_IFACE);
         } else if (active_tab == 4) {
-            gs_draw_text(lx, ty + 17, "ID       Callsign  Interface Endpoint         Policy",
-                         GS_CLR_FG, GS_CLR_BG, 72);
+            int px[5];
+            const char *ph[5];
+            int pw[5];
+            px[0] = lx + 2; px[1] = lx + 78; px[2] = lx + 164;
+            px[3] = lx + 252; px[4] = lx + 420;
+            ph[0] = "ID"; ph[1] = "Callsign"; ph[2] = "Interface";
+            ph[3] = "Endpoint"; ph[4] = "Policy";
+            pw[0] = 10; pw[1] = 10; pw[2] = 11; pw[3] = 22; pw[4] = 10;
+            gs_draw_listview_header(lx, ty + 16, mw - 24, 5, px, ph, GS_CLR_PANEL, GS_CLR_FG);
             for (i = 0; i < cfg->peer_count && i < 6; ++i) {
-                sprintf(buf, "%s %-8s %-9s %-9s %s:%u %s",
-                        (i == ui->sel_peer) ? ">" : " ",
-                        cfg->peers[i].id, cfg->peers[i].callsign,
-                        cfg->peers[i].interface_id, cfg->peers[i].host,
-                        (unsigned int)cfg->peers[i].port,
-                        cfg->peers[i].auto_learned ? "AUTO" : "STATIC");
-                gs_draw_text(lx, ty + 28 + i * 10, buf, GS_CLR_FG, GS_CLR_BG, 72);
+                char ep[48];
+                const char *cells[5];
+                sprintf(ep, "%s:%u", cfg->peers[i].host, (unsigned int)cfg->peers[i].port);
+                cells[0] = cfg->peers[i].id;
+                cells[1] = cfg->peers[i].callsign;
+                cells[2] = cfg->peers[i].interface_id;
+                cells[3] = ep;
+                cells[4] = cfg->peers[i].auto_learned ? "AUTO" : "STATIC";
+                gs_draw_listview_row(lx, ty + 28 + i * 11, mw - 24, 10,
+                                     (i == ui->sel_peer), 5, px, cells, pw,
+                                     GS_CLR_BG, GS_CLR_FG);
             }
             gs_draw_button(lx, by, 86, 13, "Edit Peer", 0);
             gs_add_hit(ui, lx, by, 86, 13, OYK_GSOS_SCR_EDIT_PEER);
@@ -544,45 +661,80 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_ADD_IFACE) {
         char nbuf[32];
-        gs_draw_text(lx, ty + 2, "Step 1 of 4: Select Driver & Configure Endpoint",
-                     GS_CLR_FG, GS_CLR_BG, 60);
-        for (i = 0; i < oyk_gsos_wiz_driver_count(); ++i) {
-            int ry = ty + 16 + i * 11;
-            gs_draw_radio(lx + 4, ry, i == ui->wiz.selected_driver_idx,
-                          oyk_gsos_wiz_driver_name(i), 16);
-            gs_add_hit(ui, lx + 4, ry, 160, 10, 200 + i);
-        }
-        gs_draw_text(lx + 190, ty + 16,
-                     oyk_gsos_wiz_driver_desc(ui->wiz.selected_driver_idx),
-                     GS_CLR_FG, GS_CLR_BG, 44);
-        gs_draw_field_row(lx + 190, ty + 29, "Iface ID:", ui->wiz.draft.id, 84, 120);
-        if (strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
-            gs_draw_field_row(lx + 190, ty + 43, "Device:", ui->wiz.draft.device, 84, 110);
-            sprintf(nbuf, "%lu", (unsigned long)ui->wiz.draft.baud);
-            gs_draw_field_row(lx + 190, ty + 57, "Baud:", nbuf, 84, 90);
+        int st = ui->wiz.step;
+        gs_draw_text(lx, ty + 2, oyk_gsos_wiz_step_prompt(&ui->wiz),
+                     GS_CLR_FG, GS_CLR_BG, 68);
+        if (st == 0) {
+            for (i = 0; i < oyk_gsos_wiz_driver_count(); ++i) {
+                int ry = ty + 18 + i * 13;
+                gs_draw_radio(lx + 4, ry, i == ui->wiz.selected_driver_idx,
+                              oyk_gsos_wiz_driver_name(i), 16);
+                gs_draw_text(lx + 150, ry, oyk_gsos_wiz_driver_desc(i),
+                             GS_CLR_FG, GS_CLR_BG, 46);
+                gs_add_hit(ui, lx + 4, ry, 460, 11, 200 + i);
+            }
+        } else if (st == 1) {
+            gs_draw_field_row(lx, ty + 18, "Driver:", ui->wiz.draft.type, 108, 120);
+            gs_draw_field_row(lx, ty + 34, "Interface ID:", ui->wiz.draft.id, 108, 160);
+            gs_draw_field_row(lx, ty + 50, "Description:",
+                              ui->wiz.draft.description[0] ? ui->wiz.draft.description : "New Interface",
+                              108, 300);
+        } else if (st == 2) {
+            if (strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
+                gs_draw_field_row(lx, ty + 18, "Device:", ui->wiz.draft.device, 104, 140);
+                sprintf(nbuf, "%lu", (unsigned long)ui->wiz.draft.baud);
+                gs_draw_field_row(lx, ty + 33, "Baud Rate:", nbuf, 104, 100);
+            } else {
+                gs_draw_field_row(lx, ty + 18, "Bind Host:", ui->wiz.draft.host, 104, 150);
+                sprintf(nbuf, "%u", (unsigned int)ui->wiz.draft.port);
+                gs_draw_field_row(lx + 272, ty + 18, "Port:", nbuf, 48, 80);
+                gs_draw_field_row(lx, ty + 33, "Netmask:", ui->wiz.draft.netmask, 104, 150);
+            }
+            gs_draw_checkbox(lx, ty + 50, ui->wiz.draft.allow_inbound, "Allow Inbound", 16);
+            gs_draw_checkbox(lx + 150, ty + 50, ui->wiz.draft.allow_outbound, "Allow Outbound", 16);
+            gs_draw_checkbox(lx + 306, ty + 50, ui->wiz.draft.allow_same_interface, "Same-Interface", 16);
+            gs_draw_field_row(lx, ty + 66, "Learned Policy:",
+                              oyk_gsos_format_learned_policy(ui->wiz.draft.learned_peer_policy),
+                              112, 110);
         } else {
-            gs_draw_field_row(lx + 190, ty + 43, "Bind Host:", ui->wiz.draft.host, 84, 130);
-            sprintf(nbuf, "%u", (unsigned int)ui->wiz.draft.port);
-            gs_draw_field_row(lx + 190, ty + 57, "Port:", nbuf, 84, 80);
+            char sum[320];
+            const char *p;
+            int sy = ty + 16;
+            oyk_gsos_wiz_format_summary(&ui->wiz, sum, sizeof(sum));
+            p = sum;
+            while (*p && sy < by - 12) {
+                const char *nl = strchr(p, '\n');
+                char ln[88];
+                size_t len = nl ? (size_t)(nl - p) : strlen(p);
+                if (len >= sizeof(ln)) len = sizeof(ln) - 1U;
+                memcpy(ln, p, len);
+                ln[len] = '\0';
+                gs_draw_text(lx, sy, ln, GS_CLR_FG, GS_CLR_BG, 72);
+                sy += 11;
+                p = nl ? (nl + 1) : "";
+            }
         }
-        gs_draw_checkbox(lx + 190, ty + 72, !ui->wiz.draft.allow_same_interface,
-                         "Isolate Same-Interface Bridges", 34);
         gs_draw_button(lx, by, 76, 13, "< Back", 0);
+        gs_add_hit(ui, lx, by, 76, 13, 210);
         gs_draw_button(mx + mw - 184, by, 82, 13, "Cancel", 0);
         gs_add_hit(ui, mx + mw - 184, by, 82, 13, 999);
-        gs_draw_button(mx + mw - 96, by, 84, 13, "Next >", 1);
+        gs_draw_button(mx + mw - 96, by, 84, 13, (st >= 3) ? "Finish" : "Next >", 1);
+        gs_add_hit(ui, mx + mw - 96, by, 84, 13, 211);
     } else if (scr == OYK_GSOS_SCR_EDIT_IFACE) {
-        const OykGsosIfaceConfig *ifc = &cfg->ifaces[0];
+        const OykGsosIfaceConfig *ifc = (ui->sel_iface < cfg->iface_count) ? &cfg->ifaces[ui->sel_iface] : &cfg->ifaces[0];
         char nbuf[24];
-        gs_draw_field_row(lx, ty + 6, "Interface ID:", ifc->id, 104, 120);
-        gs_draw_field_row(lx + 240, ty + 6, "Driver:", ifc->type, 64, 120);
-        gs_draw_field_row(lx, ty + 21, "Bind Host:", ifc->host, 104, 140);
+        gs_draw_field_row(lx, ty + 4, "Interface ID:", ifc->id, 104, 120);
+        gs_draw_field_row(lx + 240, ty + 4, "Driver:", ifc->type, 64, 120);
+        gs_draw_field_row(lx, ty + 18, "Bind Host:", ifc->host, 104, 140);
         sprintf(nbuf, "%u", (unsigned int)ifc->port);
-        gs_draw_field_row(lx + 260, ty + 21, "Port:", nbuf, 48, 80);
-        gs_draw_field_row(lx, ty + 36, "Netmask:", ifc->netmask, 104, 140);
-        gs_draw_checkbox(lx, ty + 54, ifc->allow_inbound, "Allow Inbound", 16);
-        gs_draw_checkbox(lx + 150, ty + 54, ifc->allow_outbound, "Allow Outbound", 16);
-        gs_draw_checkbox(lx + 306, ty + 54, ifc->allow_same_interface, "Same-Interface", 16);
+        gs_draw_field_row(lx + 260, ty + 18, "Port:", nbuf, 48, 80);
+        gs_draw_field_row(lx, ty + 32, "Netmask:", ifc->netmask, 104, 140);
+        gs_draw_checkbox(lx, ty + 48, ifc->allow_inbound, "Allow Inbound", 16);
+        gs_draw_checkbox(lx + 150, ty + 48, ifc->allow_outbound, "Allow Outbound", 16);
+        gs_draw_checkbox(lx + 306, ty + 48, ifc->allow_same_interface, "Same-Interface", 16);
+        gs_draw_field_row(lx, ty + 64, "Learned Policy:",
+                          oyk_gsos_format_learned_policy(ifc->learned_peer_policy), 112, 110);
+        gs_add_hit(ui, lx + 112, ty + 64, 110, 11, 302);
         gs_draw_button(mx + mw - 184, by, 82, 13, "Cancel", 0);
         gs_add_hit(ui, mx + mw - 184, by, 82, 13, 999);
         gs_draw_button(mx + mw - 96, by, 82, 13, "Save", 1);
@@ -602,40 +754,65 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_draw_button(mx + mw - 96, by, 82, 13, "Save", 1);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_TERMINATE) {
-        sprintf(buf, "%-4s %-10s %-8s %-10s",
-                oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 0),
-                oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 1),
-                oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 2),
-                oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 3));
-        gs_draw_text(lx, ty + 4, buf, GS_CLR_FG, GS_CLR_BG, 68);
+        int tx[4];
+        const char *th[4];
+        int tw[4];
+        int shown_t = 0;
+        tx[0] = lx + 2; tx[1] = lx + 48; tx[2] = lx + 154; tx[3] = lx + 250;
+        th[0] = oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 0);
+        th[1] = oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 1);
+        th[2] = oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 2);
+        th[3] = oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 3);
+        tw[0] = 5; tw[1] = 12; tw[2] = 11; tw[3] = 14;
+        gs_draw_listview_header(lx, ty + 4, mw - 24, 4, tx, th, GS_CLR_PANEL, GS_CLR_FG);
         gs_hline(lx, mx + mw - 12, ty + 15, GS_CLR_FG);
         for (i = 0; i < OYK_GSOS_MAX_SESSIONS; ++i) {
             const OykGsosSession *s = &ui->node->sessions[i];
+            char id_s[12];
+            const char *cells[4];
             if (s->state == 0) continue;
-            sprintf(buf, "%s %-3lu %-10s %-8s CONNECTED",
-                    (i == 0) ? ">" : " ",
-                    (unsigned long)s->id, s->callsign,
-                    (s->iface_idx == 0) ? "axudp0" : "kiss0");
-            gs_draw_text(lx, ty + 20 + i * 11, buf, GS_CLR_FG, GS_CLR_BG, 68);
+            sprintf(id_s, "%lu", (unsigned long)s->id);
+            cells[0] = id_s;
+            cells[1] = s->callsign;
+            cells[2] = (s->iface_idx == 0) ? "axudp0" : "kiss0";
+            cells[3] = "CONNECTED";
+            gs_draw_listview_row(lx, ty + 19 + shown_t * 11, mw - 24, 10,
+                                 (shown_t == ui->sel_conn), 4, tx, cells, tw,
+                                 GS_CLR_BG, GS_CLR_FG);
+            ++shown_t;
         }
         gs_hline(lx, mx + mw - 12, by - 5, GS_CLR_FG);
         gs_draw_button(mx + mw - 196, by, 82, 13, "Cancel", 0);
         gs_add_hit(ui, mx + mw - 196, by, 82, 13, 999);
         gs_draw_button(mx + mw - 108, by, 94, 13, "Terminate", 1);
     } else if (scr == OYK_GSOS_SCR_BAN) {
+        int bx_c[5];
+        const char *bh[5];
+        int bw_c[5];
+        bx_c[0] = lx + 2; bx_c[1] = lx + 82; bx_c[2] = lx + 206;
+        bx_c[3] = lx + 292; bx_c[4] = lx + 348;
+        bh[0] = "Callsign"; bh[1] = "Banned At"; bh[2] = "Lift At";
+        bh[3] = "Flags"; bh[4] = "Reason";
+        bw_c[0] = 10; bw_c[1] = 16; bw_c[2] = 11; bw_c[3] = 7; bw_c[4] = 24;
         gs_draw_field_row(lx, ty + 2, "Callsign:", "N0BAD", 74, 90);
         gs_draw_field_row(lx + 174, ty + 2, "Reason:", "Beacon flood", 58, 140);
         gs_draw_field_row(lx + 384, ty + 2, "Dur:", "7d", 36, 52);
         gs_draw_checkbox(lx, ty + 16, 1, "Hard Ban (Drop AX.25)", 24);
         gs_draw_checkbox(lx + 210, ty + 16, 0, "Allow Appeal", 16);
-        gs_draw_text(lx, ty + 29, "Callsign  Banned At        Lift At     Flags  Reason",
-                     GS_CLR_FG, GS_CLR_BG, 72);
+        gs_draw_listview_header(lx, ty + 29, mw - 24, 5, bx_c, bh, GS_CLR_PANEL, GS_CLR_FG);
         for (i = 0; i < ui->node->ban_count && i < 3; ++i) {
             const OykGsosBanEntry *be = &ui->node->bans[i];
-            sprintf(buf, "%-9s %-16s %-10s  0x%02lX   %s",
-                    be->key, be->banned_at, be->lift_at,
-                    (unsigned long)be->flags, be->reason);
-            gs_draw_text(lx, ty + 41 + i * 10, buf, GS_CLR_FG, GS_CLR_BG, 72);
+            char fl[12];
+            const char *cells[5];
+            sprintf(fl, "0x%02lX", (unsigned long)be->flags);
+            cells[0] = be->key;
+            cells[1] = be->banned_at;
+            cells[2] = be->lift_at;
+            cells[3] = fl;
+            cells[4] = be->reason;
+            gs_draw_listview_row(lx, ty + 41 + i * 11, mw - 24, 10,
+                                 (i == ui->sel_ban), 5, bx_c, cells, bw_c,
+                                 GS_CLR_BG, GS_CLR_FG);
         }
         gs_draw_button(mx + mw - 184, by, 82, 13, "Close", 0);
         gs_add_hit(ui, mx + mw - 184, by, 82, 13, 999);
@@ -695,20 +872,47 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_draw_button(mx + mw - 96, by, 82, 13, "Close", 0);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_FILES) {
+        int fx1[3], fx2[2], fw1[3], fw2[2];
+        const char *fh1[3], *fh2[2], *fr1[3], *fr2a[2], *fr2b[2];
+        fx1[0] = lx + 4; fx1[1] = lx + 72; fx1[2] = lx + 196;
+        fh1[0] = "Uploader"; fh1[1] = "Filename"; fh1[2] = "Size";
+        fw1[0] = 9; fw1[1] = 15; fw1[2] = 7;
+        fr1[0] = "W4ABC-7"; fr1[1] = "PACKETS.TXT"; fr1[2] = "2048";
+
+        fx2[0] = lx + 266; fx2[1] = lx + 464;
+        fh2[0] = "Filename"; fh2[1] = "Size";
+        fw2[0] = 24; fw2[1] = 7;
+        fr2a[0] = "README.TXT"; fr2a[1] = "1420";
+        fr2b[0] = "NETLIST.CFG"; fr2b[1] = "618";
+
         gs_draw_text(lx, ty + 2, "Pending Uploads", GS_CLR_FG, GS_CLR_BG, 30);
         gs_draw_text(lx + 262, ty + 2, "Approved BBS Files", GS_CLR_FG, GS_CLR_BG, 30);
         gs_fill_rect(lx, ty + 14, 250, 96, GS_CLR_PANEL);
         gs_frame_rect(lx, ty + 14, 250, 96, GS_CLR_FG);
         gs_fill_rect(lx + 262, ty + 14, 266, 96, GS_CLR_PANEL);
         gs_frame_rect(lx + 262, ty + 14, 266, 96, GS_CLR_FG);
-        gs_draw_text(lx + 6, ty + 17, "Uploader File         Size", GS_CLR_FG, GS_CLR_PANEL, 32);
-        gs_draw_text(lx + 6, ty + 28, "W4ABC-7  PACKETS.TXT  2048", GS_CLR_FG, GS_CLR_PANEL, 32);
-        gs_draw_text(lx + 268, ty + 17, "Filename            Size", GS_CLR_FG, GS_CLR_PANEL, 34);
-        gs_draw_text(lx + 268, ty + 28, "README.TXT          1420", GS_CLR_FG, GS_CLR_PANEL, 34);
-        gs_draw_text(lx + 268, ty + 39, "NETLIST.CFG          618", GS_CLR_FG, GS_CLR_PANEL, 34);
+        gs_draw_listview_header(lx + 2, ty + 16, 246, 3, fx1, fh1, GS_CLR_PANEL, GS_CLR_FG);
+        gs_draw_listview_row(lx + 2, ty + 27, 246, 10, 1, 3, fx1, fr1, fw1,
+                             GS_CLR_PANEL, GS_CLR_FG);
+        gs_draw_listview_header(lx + 264, ty + 16, 262, 2, fx2, fh2, GS_CLR_PANEL, GS_CLR_FG);
+        gs_draw_listview_row(lx + 264, ty + 27, 262, 10, 1, 2, fx2, fr2a, fw2,
+                             GS_CLR_PANEL, GS_CLR_FG);
+        gs_draw_listview_row(lx + 264, ty + 38, 262, 10, 0, 2, fx2, fr2b, fw2,
+                             GS_CLR_PANEL, GS_CLR_FG);
         gs_draw_button(lx, by, 84, 13, "Upload...", 0);
         gs_draw_button(lx + 90, by, 84, 13, "Approve", 1);
         gs_draw_button(mx + mw - 96, by, 82, 13, "Close", 0);
+        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
+    } else if (scr == OYK_GSOS_SCR_ABOUT) {
+        gs_draw_text(lx, ty + 8, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)",
+                     GS_CLR_FG, GS_CLR_BG, 68);
+        gs_draw_text(lx, ty + 22, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / CAT",
+                     GS_CLR_FG, GS_CLR_BG, 72);
+        gs_draw_text(lx, ty + 36, "Platform: Apple IIGS GS/OS (65C816 QuickDraw II + SCC .A/.B)",
+                     GS_CLR_FG, GS_CLR_BG, 72);
+        gs_draw_text(lx, ty + 52, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+                     GS_CLR_FG, GS_CLR_BG, 72);
+        gs_draw_button(mx + mw - 96, by, 82, 13, "OK", 1);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else {
         gs_draw_text(lx, ty + 10, "Hamlib rigctld CAT: Port 4532 / SCC .A @ 9600 bps",
@@ -742,22 +946,34 @@ void oyk_gsos_query_os_native_theme(OykGsosThemeConfig *out_pal) {
 
 typedef struct {
     int         scr;
+    int         tab;
+    int         wiz_step;
     const char *bmp_path;
 } GsosGalleryStep;
 
-static const GsosGalleryStep kGallerySteps[12] = {
-    { OYK_GSOS_SCR_MAIN,       "/OYKOUT/GMAIN.BMP" },
-    { OYK_GSOS_SCR_SETTINGS,   "/OYKOUT/GSETT.BMP" },
-    { OYK_GSOS_SCR_ADD_IFACE,  "/OYKOUT/GADDI.BMP" },
-    { OYK_GSOS_SCR_EDIT_IFACE, "/OYKOUT/GEDTI.BMP" },
-    { OYK_GSOS_SCR_PEERS,      "/OYKOUT/GPEER.BMP" },
-    { OYK_GSOS_SCR_EDIT_PEER,  "/OYKOUT/GEDTP.BMP" },
-    { OYK_GSOS_SCR_TERMINATE,  "/OYKOUT/GTERM.BMP" },
-    { OYK_GSOS_SCR_BAN,        "/OYKOUT/GBAN.BMP" },
-    { OYK_GSOS_SCR_EXIT_PEERS, "/OYKOUT/GEXIT.BMP" },
-    { OYK_GSOS_SCR_THEME,      "/OYKOUT/GTHME.BMP" },
-    { OYK_GSOS_SCR_TERMINAL,   "/OYKOUT/GTML.BMP" },
-    { OYK_GSOS_SCR_FILES,      "/OYKOUT/GFILE.BMP" }
+static const GsosGalleryStep kGallerySteps[22] = {
+    { OYK_GSOS_SCR_MAIN,       0, 0, "/OYKOUT/GMAIN.BMP" },
+    { OYK_GSOS_SCR_MENU,       0, 0, "/OYKOUT/GMENU.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   0, 0, "/OYKOUT/GSET1.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   1, 0, "/OYKOUT/GSET2.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   2, 0, "/OYKOUT/GSET3.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   3, 0, "/OYKOUT/GSET4.BMP" },
+    { OYK_GSOS_SCR_PEERS,      4, 0, "/OYKOUT/GPEER.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   5, 0, "/OYKOUT/GSET6.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   6, 0, "/OYKOUT/GSET7.BMP" },
+    { OYK_GSOS_SCR_ADD_IFACE,  0, 0, "/OYKOUT/GADD1.BMP" },
+    { OYK_GSOS_SCR_ADD_IFACE,  0, 1, "/OYKOUT/GADD2.BMP" },
+    { OYK_GSOS_SCR_ADD_IFACE,  0, 2, "/OYKOUT/GADD3.BMP" },
+    { OYK_GSOS_SCR_ADD_IFACE,  0, 3, "/OYKOUT/GADD4.BMP" },
+    { OYK_GSOS_SCR_EDIT_IFACE, 0, 0, "/OYKOUT/GEDTI.BMP" },
+    { OYK_GSOS_SCR_EDIT_PEER,  0, 0, "/OYKOUT/GEDTP.BMP" },
+    { OYK_GSOS_SCR_TERMINATE,  0, 0, "/OYKOUT/GTERM.BMP" },
+    { OYK_GSOS_SCR_BAN,        0, 0, "/OYKOUT/GBAN.BMP"  },
+    { OYK_GSOS_SCR_EXIT_PEERS, 0, 0, "/OYKOUT/GEXIT.BMP" },
+    { OYK_GSOS_SCR_THEME,      0, 0, "/OYKOUT/GTHME.BMP" },
+    { OYK_GSOS_SCR_TERMINAL,   0, 0, "/OYKOUT/GTML.BMP"  },
+    { OYK_GSOS_SCR_FILES,      0, 0, "/OYKOUT/GFILE.BMP" },
+    { OYK_GSOS_SCR_ABOUT,      0, 0, "/OYKOUT/GABT.BMP"  }
 };
 
 #ifdef __VBCC__
@@ -781,9 +997,27 @@ static void gs_dispatch_hit(OykGsosUiState *ui, int mx, int my) {
     } else if (act >= 200 && act < 205) {
         oyk_gsos_wiz_select_driver(&ui->wiz, &ui->node->cfg, act - 200);
         gs_redraw(ui);
+    } else if (act == 210) {
+        oyk_gsos_wiz_back(&ui->wiz);
+        gs_redraw(ui);
+    } else if (act == 211) {
+        if (ui->wiz.step >= 3) {
+            ui->active_screen = OYK_GSOS_SCR_SETTINGS;
+            ui->settings_tab = 3;
+        } else {
+            oyk_gsos_wiz_advance(&ui->wiz, &ui->node->cfg);
+        }
+        gs_redraw(ui);
     } else if (act == 301) {
         ui->node->cfg.accept_incoming = ui->node->cfg.accept_incoming ? 0 : 1;
         gs_redraw(ui);
+    } else if (act == 302) {
+        if (ui->node->cfg.iface_count > 0) {
+            int idx = (ui->sel_iface < ui->node->cfg.iface_count) ? ui->sel_iface : 0;
+            ui->node->cfg.ifaces[idx].learned_peer_policy =
+                oyk_gsos_cycle_learned_policy(ui->node->cfg.ifaces[idx].learned_peer_policy, 1);
+            gs_redraw(ui);
+        }
     } else if (act == 401) {
         oyk_gsos_theme_cycle(&ui->theme_ctrl, -1);
     } else if (act == 402) {
@@ -819,10 +1053,10 @@ int oyk_gsos_ui_run(OykGsosNode *node, OykGsosNetState *net, int ui_test_mode) {
         oyk_gsos_node_seed_demo(node);
         ui->draft_cfg = node->cfg;
         oyk_gsos_wiz_init(&ui->wiz, &node->cfg);
-        for (i = 0; i < 12; ++i) {
+        for (i = 0; i < 22; ++i) {
             ui->active_screen = kGallerySteps[i].scr;
-            if (ui->active_screen == OYK_GSOS_SCR_PEERS) ui->settings_tab = 4;
-            else ui->settings_tab = 0;
+            ui->settings_tab = kGallerySteps[i].tab;
+            ui->wiz.step = kGallerySteps[i].wiz_step;
             gs_redraw(ui);
             oyk_gsos_capture_screen_bmp(kGallerySteps[i].bmp_path);
         }

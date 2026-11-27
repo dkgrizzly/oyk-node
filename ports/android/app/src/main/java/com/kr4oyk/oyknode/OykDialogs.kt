@@ -885,3 +885,76 @@ fun FilesCard(
         }
     }
 }
+
+@Composable
+fun NodeMenuCard(
+    acceptIncoming: Boolean,
+    onAction: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val entries = listOf(
+        "Allow Incoming Connections",
+        "Deny Incoming Connections",
+        "Local Terminal...",
+        "Manage Files Area...",
+        "Radio Control...",
+        "Settings...",
+        "Peers...",
+        "Theme...",
+        "Terminate Connection...",
+        "Ban / Unban Callsign...",
+        "About OYK-Node...",
+        "Exit"
+    )
+    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                "Node Menu (${if (acceptIncoming) "INCOMING: ALLOW" else "INCOMING: DENY"})",
+                style = MaterialTheme.typography.titleLarge
+            )
+            Spacer(Modifier.height(8.dp))
+            entries.forEachIndexed { idx, label ->
+                if (idx == 2 || idx == 11) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+                TextButton(
+                    onClick = { onAction(label) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(label, modifier = Modifier.fillMaxWidth())
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                OutlinedButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    }
+}
+
+@Composable
+fun AboutCard(
+    callsign: String,
+    alias: String,
+    onDismiss: () -> Unit
+) {
+    Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+            Text("About OYK Amateur Radio Packet Node", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("Station: $callsign ($alias)", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "OYK Amateur Radio Packet Node (OYK-Node)\n" +
+                    "Copyright (C) 2026 KR4OYK - David Kuder\n" +
+                    "License: GPL-3.0-or-later\n" +
+                    "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP / Hamlib",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onDismiss) { Text("OK") }
+            }
+        }
+    }
+}

@@ -3388,8 +3388,12 @@ static int oyk_list_dir_entries(const char* dir_path, OykDirEnt* out, int max_ou
         char full[240];
         join_path(dir_path, de->d_name, full, sizeof(full));
         struct stat st;
+#if defined(ESP_PLATFORM)
+        if (stat(full, &st) != 0) continue;
+#else
         if (lstat(full, &st) != 0) continue;
         if (S_ISLNK(st.st_mode)) continue; /* Reject symlinks to prevent root escape */
+#endif
         if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) continue;
         safe_copy(out[count].name, sizeof(out[count].name), de->d_name);
         out[count].is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
@@ -3434,7 +3438,7 @@ static int oyk_is_regular_file(const char* path) {
     if (stat(path, &st) != 0) return 0;
     return S_ISREG(st.st_mode) ? 1 : 0;
 #endif
-#elif defined(OYK_TARGET_MACCLASSIC)
+#elif defined(OYK_TARGET_MACCLASSIC) || defined(ESP_PLATFORM)
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     return S_ISREG(st.st_mode) ? 1 : 0;
@@ -3465,7 +3469,7 @@ static int oyk_is_directory(const char* path) {
     if (stat(path, &st) != 0) return 0;
     return S_ISDIR(st.st_mode) ? 1 : 0;
 #endif
-#elif defined(OYK_TARGET_MACCLASSIC)
+#elif defined(OYK_TARGET_MACCLASSIC) || defined(ESP_PLATFORM)
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     return S_ISDIR(st.st_mode) ? 1 : 0;

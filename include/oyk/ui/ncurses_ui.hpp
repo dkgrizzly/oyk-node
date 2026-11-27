@@ -48,6 +48,7 @@ private:
     void modal_ban_callsign();
     void modal_approve_incoming_files();
     void modal_rig_control();
+    void modal_about();
     void modal_settings(int initial_tab = 0);
     bool modal_add_interface_wizard(const std::vector<radio::RadioInterfaceConfig>& existing,
                                     radio::RadioInterfaceConfig& out_iface);
