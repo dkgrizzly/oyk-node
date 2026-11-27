@@ -7,7 +7,7 @@
 #include "oyk_pico_config.h"
 #include "oyk_portable.hpp"
 
-#define PICO_TOTAL_BOARD_PROFILES 4
+#define PICO_TOTAL_BOARD_PROFILES 8
 
 enum PicoMcuKind {
     PICO_MCU_RP2040 = 0,
@@ -17,7 +17,8 @@ enum PicoMcuKind {
 
 enum PicoRadioMode {
     PICO_RADIO_ONBOARD_CYW43 = 0,
-    PICO_RADIO_OPTIONAL_RM2
+    PICO_RADIO_OPTIONAL_RM2,
+    PICO_RADIO_NONE
 };
 
 enum PicoPortRole {
@@ -42,6 +43,8 @@ struct PicoBoardProfile {
     oyk_u8 sd_tx_pin;
     oyk_u8 sd_rx_pin;
     oyk_u8 sd_cs_pin;
+    oyk_u8 has_picocalc_hw;  /* 1 = ClockworkPi PicoCalc v2.0 carrier */
+    oyk_u8 uart_count;       /* 2 on Pico carrier, 1 on PicoCalc (ser0 only) */
 };
 
 struct PicoUartMap {

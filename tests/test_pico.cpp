@@ -7,6 +7,7 @@
 #include "pico_radio.hpp"
 #include "pico_net_bridge.hpp"
 #include "pico_console.hpp"
+#include "pico_picocalc_console.hpp"
 
 #include <assert.h>
 #include <stdio.h>
@@ -46,10 +47,19 @@ static void test_all_board_profiles_and_mac() {
     const PicoBoardProfile* ws = pico_board_profile_by_id("waveshare_core2350b");
     const PicoBoardProfile* pga = pico_board_profile_by_id("pimoroni_pga2350");
 
+    const PicoBoardProfile* pcalc2w = pico_board_profile_by_id("picocalc_pico2_w");
+    const PicoBoardProfile* pcalcw = pico_board_profile_by_id("picocalc_pico_w");
+    const PicoBoardProfile* pcalc2 = pico_board_profile_by_id("picocalc_pico2");
+    const PicoBoardProfile* pcalc = pico_board_profile_by_id("picocalc_pico");
+
     assert(pw && pw->mcu == PICO_MCU_RP2040 && pw->radio_mode == PICO_RADIO_ONBOARD_CYW43);
     assert(p2w && p2w->mcu == PICO_MCU_RP2350A && p2w->radio_mode == PICO_RADIO_ONBOARD_CYW43);
     assert(ws && ws->mcu == PICO_MCU_RP2350B && ws->radio_mode == PICO_RADIO_OPTIONAL_RM2 && ws->psram_cs_pin == 47);
     assert(pga && pga->mcu == PICO_MCU_RP2350B && pga->radio_mode == PICO_RADIO_OPTIONAL_RM2 && pga->psram_cs_pin == 47);
+    assert(pcalc2w && pcalc2w->has_picocalc_hw == 1 && pcalc2w->uart_count == 1 && pcalc2w->psram_cs_pin == 20);
+    assert(pcalcw && pcalcw->mcu == PICO_MCU_RP2040 && pcalcw->has_picocalc_hw == 1 && pcalcw->uart_count == 1);
+    assert(pcalc2 && pcalc2->radio_mode == PICO_RADIO_NONE && pcalc2->uart_count == 1);
+    assert(pcalc && pcalc->mcu == PICO_MCU_RP2040 && pcalc->radio_mode == PICO_RADIO_NONE && pcalc->uart_count == 1);
 
     assert(OYK_PICO_UART_COUNT == 2);
     assert(strcmp(pico_uart_info(0)->name, "ser0") == 0);
@@ -598,6 +608,264 @@ static void test_pico_ui_flows_and_captures() {
     printf("[PASS] test_pico_ui_flows_and_captures\n");
 }
 
+static void picocalc_save_capture(const char* name, PicoConsole* con, PicoCalcConsole* pcalc) {
+    con->render();
+    pcalc->flush();
+    const char* dir = getenv("OYK_UI_CAPTURE_DIR");
+    if (!dir || !dir[0]) return;
+    char path[512];
+    sprintf(path, "%s/picocalc_%s.bmp", dir, name);
+    assert(pcalc->lcd()->save_bmp(path) == 1);
+}
+
+static void test_picocalc_profiles_kbd_battery_audio_and_fonts() {
+    pico_board_set_sim_profile("picocalc_pico");
+    assert(pico_current_board_profile()->has_picocalc_hw == 1);
+    assert(pico_uart_info(0) != NULL);
+    assert(pico_uart_info(1) == NULL); /* GP4..GP7 reserved for PSRAM + I2C1 */
+
+    pico_radio_init(NULL, 0);
+    assert(pico_radio_state()->supported == 0 && pico_radio_state()->module_present == 0);
+
+    pico_board_set_sim_profile("picocalc_pico2_w");
+    pico_psram_set_sim_available(1, 8UL * 1024UL * 1024UL, "Carrier SPI PSRAM (8 MB GP20)");
+    assert(pico_psram_init_and_test() == 1);
+
+    PicoCalcKbd kbd;
+    kbd.init();
+    kbd.sim_set_battery(77);
+    assert(kbd.battery_percent() == 77);
+
+    /* Alt+Up increases LCD backlight, Alt+Left decreases keyboard backlight */
+    const oyk_u8 init_bkl = kbd.lcd_backlight();
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, PICOCALC_MOD_ALT);
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, PICOCALC_KEY_UP);
+    kbd.sim_push_event(PICOCALC_KEY_RELEASED, PICOCALC_MOD_ALT);
+    oyk_u8 vt_out[32];
+    int act = PICOCALC_ACT_NONE;
+    assert(kbd.poll_vt100(100UL, vt_out, sizeof(vt_out), &act) == 0);
+    assert(kbd.lcd_backlight() > init_bkl);
+
+    /* Up arrow + F10 + Ctrl+A translation */
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, PICOCALC_KEY_UP);
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, PICOCALC_KEY_F10);
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, PICOCALC_MOD_CTRL);
+    kbd.sim_push_event(PICOCALC_KEY_PRESSED, 'a');
+    kbd.sim_push_event(PICOCALC_KEY_RELEASED, PICOCALC_MOD_CTRL);
+    size_t n = kbd.poll_vt100(200UL, vt_out, sizeof(vt_out), &act);
+    assert(n == 9 && memcmp(vt_out, "\033[A\033[21~\x01", 9) == 0);
+
+    /* Standalone PicoCalcConsole: 4x8 (80x40) <-> 6x10 (53x32 zoomed + pan) + BEL PWM audio */
+    PicoCalcConsole* pc = new PicoCalcConsole();
+    pc->init(NULL);
+    assert(pc->vt()->cols == 80 && pc->vt()->rows == 40);
+    assert(pc->vt()->font->width == 4 && pc->vt()->font->height == 8);
+    assert(pc->audio()->bel_count() == 0);
+    oyk_vt100_write(pc->vt(), "\007", 1);
+    assert(pc->audio()->bel_count() == 1);
+    assert(pc->audio()->bel_active() == 1);
+    pc->poll_tick(500UL);
+    assert(pc->audio()->bel_active() == 0);
+
+    /* Toggle to 6x10 zoomed mode (53x32 viewport over 80x32 virtual screen) + pan */
+    pc->toggle_font();
+    assert(pc->zoomed_6x10() == 1);
+    assert(pc->vt()->font->width == 6 && pc->vt()->font->height == 10);
+    assert(pc->vt()->view_cols == 53 && pc->vt()->view_rows == 32 && pc->pan_col() == 0);
+    pc->pan_horizontal(10);
+    assert(pc->pan_col() == 10 && pc->vt()->pan_col == 10);
+    pc->toggle_font();
+    assert(pc->zoomed_6x10() == 0 && pc->vt()->cols == 80 && pc->vt()->rows == 40);
+
+    delete pc;
+    pico_board_set_sim_profile("pico2_w");
+    printf("[PASS] test_picocalc_profiles_kbd_battery_audio_and_fonts\n");
+}
+
+static void test_picocalc_ui_flows_and_captures() {
+    pico_board_set_sim_profile("picocalc_pico2_w");
+    pico_psram_set_sim_available(1, 8UL * 1024UL * 1024UL, "Carrier SPI PSRAM (8 MB GP20)");
+    pico_psram_init_and_test();
+    pico_fs_init(1, 0);
+
+    OykConfig* cfg = new OykConfig();
+    oyk_config_init_default(cfg);
+    oyk_parse_callsign("KR4OYK-7", &cfg->callsign);
+    strcpy(cfg->source_path, "/nonexistent_ro_dir/node.cfg");
+    strcpy(cfg->bbs_files_path, "/tmp/oyk_pico_fm/files");
+    cfg->iface_count = 3;
+    memset(&cfg->ifaces[0], 0, sizeof(cfg->ifaces[0]));
+    strcpy(cfg->ifaces[0].id, "axudp0"); strcpy(cfg->ifaces[0].type, "axudp");
+    strcpy(cfg->ifaces[0].host, "0.0.0.0"); cfg->ifaces[0].port = 10093;
+    memset(&cfg->ifaces[1], 0, sizeof(cfg->ifaces[1]));
+    strcpy(cfg->ifaces[1].id, "ppp0"); strcpy(cfg->ifaces[1].type, "ppp");
+    strcpy(cfg->ifaces[1].device, "ser0"); strcpy(cfg->ifaces[1].host, "10.44.0.1");
+    cfg->ifaces[1].port = 10093; cfg->ifaces[1].baud = 115200UL;
+    memset(&cfg->ifaces[2], 0, sizeof(cfg->ifaces[2]));
+    strcpy(cfg->ifaces[2].id, "bt0"); strcpy(cfg->ifaces[2].type, "kiss-bt");
+
+    cfg->peer_count = 1;
+    strcpy(cfg->peers[0].id, "remote0");
+    strcpy(cfg->peers[0].callsign, "R3MOT-7");
+    strcpy(cfg->peers[0].description, "Remote PoPT Node");
+    strcpy(cfg->peers[0].interface_id, "axudp0");
+    strcpy(cfg->peers[0].host, "12.34.56.78");
+    cfg->peers[0].port = 10093;
+    cfg->peers[0].allow_inbound = 1;
+    cfg->peers[0].allow_outbound = 1;
+
+    OykPortableNode* node = new OykPortableNode();
+    PicoNetBridge* net = new PicoNetBridge();
+    char err[96];
+    assert(node->init(cfg, PicoNetBridge::tx_callback_trampoline, net, err, sizeof(err)) == 1);
+    net->init(node, NULL, 1);
+
+    PicoConsole* con = new PicoConsole();
+    PicoCalcConsole* pc = new PicoCalcConsole();
+    con->init(node, net, PicoCalcConsole::tx_trampoline, pc);
+    pc->init(con);
+    pc->kbd()->sim_set_battery(88);
+    con->set_battery_percent(88);
+    node->set_local_event_callback(pico_ui_local_cb, con);
+    con->tick(500UL);
+    pc->connect_and_probe();
+    assert(con->term_rows() == 40 && con->term_cols() == 80);
+
+    OykFrame sabm;
+    memset(&sabm, 0, sizeof(sabm));
+    sabm.dst = cfg->callsign;
+    assert(oyk_parse_callsign("W3TRM-1", &sabm.src) == 1);
+    sabm.is_command = 1;
+    sabm.control = 0x3FU;
+    node->on_rx_frame(0, &sabm, 0x0A000005UL, 10093U, 0);
+
+    /* 1. Main Console + BAT:88% verification */
+    picocalc_save_capture("main", con, pc);
+    char banner_row[81];
+    for (int c = 0; c < 80; ++c) banner_row[c] = static_cast<char>(oyk_vt100_cell_at(pc->vt(), 1, c)->glyph);
+    banner_row[80] = '\0';
+    assert(strstr(banner_row, "BAT:88%") != NULL);
+    /* Framebuffer pixels must be populated across 320x320 screen */
+    assert(pc->lcd()->sample_pixel(10U, 10U) != 0U || pc->lcd()->sample_pixel(2U, 2U) != 0U);
+
+    /* 2..23: Drive all remaining canonical screens into 320x320 RGB565 captures */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    picocalc_save_capture("menu", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    picocalc_save_capture("terminate", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    picocalc_save_capture("ban", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(700UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    picocalc_save_capture("settings", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
+    picocalc_save_capture("settings_bbs", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("3"), 1);
+    picocalc_save_capture("settings_chat", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("4"), 1);
+    picocalc_save_capture("settings_ifaces", con, pc);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("n"), 1);
+    picocalc_save_capture("add_iface_1", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("1\r"), 2);
+    picocalc_save_capture("add_iface_2", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+    picocalc_save_capture("add_iface_3", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
+    picocalc_save_capture("add_iface_4", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(900UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    picocalc_save_capture("edit_iface", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1100UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("5"), 1);
+    picocalc_save_capture("peers", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    picocalc_save_capture("edit_peer", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1300UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
+    picocalc_save_capture("settings_rig", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
+    picocalc_save_capture("settings_printer", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1500UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
+    picocalc_save_capture("theme", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(1700UL);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\t\x01" "b"), 3);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("?\r"), 2);
+    picocalc_save_capture("terminal", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
+    picocalc_save_capture("terminal_help", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b\x1b"), 2);
+    con->tick(1900UL);
+
+    {
+        char orig_cwd[256];
+        orig_cwd[0] = '\0';
+        const char* cap_dir = getenv("OYK_UI_CAPTURE_DIR");
+        char abs_cap[512];
+        abs_cap[0] = '\0';
+#ifndef _WIN32
+        if (getcwd(orig_cwd, sizeof(orig_cwd)) == NULL) orig_cwd[0] = '\0';
+        if (cap_dir && cap_dir[0] && cap_dir[0] != '/' && orig_cwd[0]) {
+            snprintf(abs_cap, sizeof(abs_cap), "%s/%s", orig_cwd, cap_dir);
+            setenv("OYK_UI_CAPTURE_DIR", abs_cap, 1);
+        }
+        mkdir("/tmp/oyk_pico_fm", 0755);
+        mkdir("/tmp/oyk_pico_fm/incoming", 0755);
+        mkdir("/tmp/oyk_pico_fm/incoming/W3TRM-1", 0755);
+        mkdir("/tmp/oyk_pico_fm/files", 0755);
+        mkdir("/tmp/oyk_pico_fm/files/bulletins", 0755);
+        if (FILE* sf = fopen("/tmp/oyk_pico_fm/incoming/W3TRM-1/fieldday.txt", "wb")) {
+            fputs("Field Day Log 2026\n", sf); fclose(sf);
+        }
+        if (FILE* sf = fopen("/tmp/oyk_pico_fm/files/bulletins/welcome.txt", "wb")) {
+            fputs("Welcome to OYK BBS\n", sf); fclose(sf);
+        }
+        assert(chdir("/tmp/oyk_pico_fm") == 0);
+#endif
+        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        picocalc_save_capture("files", con, pc);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+        con->tick(2100UL);
+#ifndef _WIN32
+        if (orig_cwd[0]) assert(chdir(orig_cwd) == 0);
+        if (abs_cap[0]) setenv("OYK_UI_CAPTURE_DIR", cap_dir, 1);
+#endif
+    }
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    picocalc_save_capture("about", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    picocalc_save_capture("exit", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+
+    delete pc;
+    delete con;
+    delete net;
+    delete node;
+    delete cfg;
+    pico_board_set_sim_profile("pico2_w");
+    printf("[PASS] test_picocalc_ui_flows_and_captures\n");
+}
+
 int main() {
     test_all_board_profiles_and_mac();
     test_psram_detection_and_sram_fallback();
@@ -605,6 +873,8 @@ int main() {
     test_rm2_missing_non_fatal_and_2uart_operation();
     test_pico_console_inquiry_storage_format_and_bootsel();
     test_pico_ui_flows_and_captures();
+    test_picocalc_profiles_kbd_battery_audio_and_fonts();
+    test_picocalc_ui_flows_and_captures();
     printf("All Pico (RP2040 / RP2350) host tests passed!\n");
     return 0;
 }

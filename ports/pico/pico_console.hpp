@@ -77,6 +77,8 @@ public:
     int has_active_terminal() const { return (lterm_sid_ != 0) ? 1 : 0; }
     int bootloader_pending() const { return bootloader_pending_; }
     const char* status_line() const { return status_fb_; }
+    void set_battery_percent(int pct) { battery_pct_ = pct; }
+    int battery_percent() const { return battery_pct_; }
 
 private:
     void write_str(const char* s);
@@ -231,6 +233,7 @@ private:
     oyk_u8 mouse_enabled_;
     oyk_u32 esc_ms_;
     oyk_u32 last_ms_;
+    int battery_pct_;
 };
 
 #endif /* OYK_PICO_CONSOLE_HPP */

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
+[submodule "third_party/oyk-vt100"]
+	path = third_party/oyk-vt100
+	url = https://github.com/dkgrizzly/oyk-vt100.git

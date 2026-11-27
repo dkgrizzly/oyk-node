@@ -18,7 +18,8 @@ static const PicoBoardProfile s_profiles[PICO_TOTAL_BOARD_PROFILES] = {
         -1,
         PICO_RADIO_ONBOARD_CYW43,
         255U,
-        18U, 19U, 16U, 17U
+        18U, 19U, 16U, 17U,
+        0U, 2U
     },
     {
         "pico2_w",
@@ -30,7 +31,8 @@ static const PicoBoardProfile s_profiles[PICO_TOTAL_BOARD_PROFILES] = {
         -1,
         PICO_RADIO_ONBOARD_CYW43,
         255U,
-        18U, 19U, 16U, 17U
+        18U, 19U, 16U, 17U,
+        0U, 2U
     },
     {
         "waveshare_core2350b",
@@ -42,7 +44,8 @@ static const PicoBoardProfile s_profiles[PICO_TOTAL_BOARD_PROFILES] = {
         47,
         PICO_RADIO_OPTIONAL_RM2,
         39U,
-        18U, 19U, 16U, 17U
+        18U, 19U, 16U, 17U,
+        0U, 2U
     },
     {
         "pimoroni_pga2350",
@@ -54,7 +57,60 @@ static const PicoBoardProfile s_profiles[PICO_TOTAL_BOARD_PROFILES] = {
         47,
         PICO_RADIO_OPTIONAL_RM2,
         25U,
-        18U, 19U, 16U, 17U
+        18U, 19U, 16U, 17U,
+        0U, 2U
+    },
+    {
+        "picocalc_pico2_w",
+        "ClockworkPi PicoCalc (Pico 2 W)",
+        PICO_MCU_RP2350A,
+        4UL * 1024UL * 1024UL,
+        520UL * 1024UL,
+        8UL * 1024UL * 1024UL,
+        20,
+        PICO_RADIO_ONBOARD_CYW43,
+        255U,
+        18U, 19U, 16U, 17U,
+        1U, 1U
+    },
+    {
+        "picocalc_pico_w",
+        "ClockworkPi PicoCalc (Pico W)",
+        PICO_MCU_RP2040,
+        2UL * 1024UL * 1024UL,
+        264UL * 1024UL,
+        8UL * 1024UL * 1024UL,
+        20,
+        PICO_RADIO_ONBOARD_CYW43,
+        255U,
+        18U, 19U, 16U, 17U,
+        1U, 1U
+    },
+    {
+        "picocalc_pico2",
+        "ClockworkPi PicoCalc (Pico 2)",
+        PICO_MCU_RP2350A,
+        4UL * 1024UL * 1024UL,
+        520UL * 1024UL,
+        8UL * 1024UL * 1024UL,
+        20,
+        PICO_RADIO_NONE,
+        25U,
+        18U, 19U, 16U, 17U,
+        1U, 1U
+    },
+    {
+        "picocalc_pico",
+        "ClockworkPi PicoCalc (Pico)",
+        PICO_MCU_RP2040,
+        2UL * 1024UL * 1024UL,
+        264UL * 1024UL,
+        8UL * 1024UL * 1024UL,
+        20,
+        PICO_RADIO_NONE,
+        25U,
+        18U, 19U, 16U, 17U,
+        1U, 1U
     }
 };
 
@@ -95,7 +151,10 @@ const PicoUartMap* pico_uart_table() {
 }
 
 const PicoUartMap* pico_uart_info(int logical_port) {
-    if (logical_port < 0 || logical_port >= OYK_PICO_UART_COUNT) return NULL;
+    const PicoBoardProfile* prof = pico_current_board_profile();
+    int limit = prof ? static_cast<int>(prof->uart_count) : OYK_PICO_UART_COUNT;
+    if (limit > OYK_PICO_UART_COUNT) limit = OYK_PICO_UART_COUNT;
+    if (logical_port < 0 || logical_port >= limit) return NULL;
     return &s_uart_map[logical_port];
 }
 
@@ -171,12 +230,13 @@ int pico_board_sim_bootloader_count() {
 
 int pico_uart_init(int logical_port, const PicoUartConfig* cfg) {
     const PicoUartMap* m = pico_uart_info(logical_port);
+    const PicoBoardProfile* prof = pico_current_board_profile();
     if (!m || !cfg || cfg->baudrate == 0) return 0;
     uart_inst_t* u = pico_hw_uart(m->hw_uart_index);
     uart_init(u, static_cast<uint>(cfg->baudrate));
     gpio_set_function(m->pin_tx, GPIO_FUNC_UART);
     gpio_set_function(m->pin_rx, GPIO_FUNC_UART);
-    if (cfg->cts_rts) {
+    if (cfg->cts_rts && (!prof || !prof->has_picocalc_hw)) {
         gpio_set_function(m->pin_cts, GPIO_FUNC_UART);
         gpio_set_function(m->pin_rts, GPIO_FUNC_UART);
         uart_set_hw_flow(u, true, true);

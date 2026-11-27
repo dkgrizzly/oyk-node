@@ -56,11 +56,18 @@ void PicoNetBridge::reconfig() {
 
         if (strcmp(ic.type, "ppp") == 0 || strcmp(ic.type, "kiss-serial") == 0) {
             int u_idx = (strcmp(ic.device, "ser1") == 0 || strcmp(ic.device, "uart1") == 0) ? 1 : 0;
+            const PicoBoardProfile* prof = pico_current_board_profile();
+            if (!pico_uart_info(u_idx)) {
+                sl.active = 0;
+                sprintf(sl.status, "%s UNAVAIL", (u_idx == 0) ? "ser0" : "ser1");
+                node_->set_iface_status(i, 0, sl.status);
+                continue;
+            }
             sl.attached_uart = u_idx;
             uart_iface_[u_idx] = i;
             PicoUartConfig ucfg;
             ucfg.baudrate = ic.baud ? ic.baud : 115200UL;
-            ucfg.cts_rts = (ucfg.baudrate >= 57600UL) ? 1 : 0;
+            ucfg.cts_rts = (ucfg.baudrate >= 57600UL && (!prof || !prof->has_picocalc_hw)) ? 1 : 0;
             if (strcmp(ic.type, "ppp") == 0) {
                 uart_role_[u_idx] = PICO_ROLE_PPP_RADIO;
                 ucfg.role = PICO_ROLE_PPP_RADIO;

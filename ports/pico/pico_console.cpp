@@ -105,7 +105,8 @@ PicoConsole::PicoConsole()
       lterm_sid_(0), lterm_is_local_(0), lterm_opening_(0), lterm_scroll_(0),
       lterm_ctrl_a_(0), lterm_help_open_(0),
       lterm_line_count_(0), lterm_curline_len_(0), lterm_input_len_(0),
-      esc_state_(0), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_ms_(0), last_ms_(0) {
+      esc_state_(0), esc_len_(0), x10_len_(0), mouse_enabled_(0), esc_ms_(0), last_ms_(0),
+      battery_pct_(-1) {
     memset(settings_sel_, 0, sizeof(settings_sel_));
     memset(&file_mgr_, 0, sizeof(file_mgr_));
     fm_preview_buf_[0] = '\0';
@@ -465,12 +466,32 @@ void PicoConsole::render_console() {
     write_str(buf);
 
     char hdr_txt[160];
-    sprintf(hdr_txt, " OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s",
-            prof->board_id, call_s,
-            static_cast<unsigned long>(node_->uptime_seconds()),
-            node_->total_active_connections(),
-            node_->accept_incoming() ? "ALLOW" : "DENY",
-            psram_s, rad_s);
+    if (prof->has_picocalc_hw) {
+        if (battery_pct_ >= 0) {
+            sprintf(hdr_txt, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-4s BAT:%d%%",
+                    (prof->mcu == PICO_MCU_RP2040) ? "2040" : "2350",
+                    call_s,
+                    static_cast<unsigned long>(node_->uptime_seconds()),
+                    node_->total_active_connections(),
+                    node_->accept_incoming() ? "ALLOW" : "DENY",
+                    psram_s, rad_s, battery_pct_);
+        } else {
+            sprintf(hdr_txt, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-5s",
+                    (prof->mcu == PICO_MCU_RP2040) ? "2040" : "2350",
+                    call_s,
+                    static_cast<unsigned long>(node_->uptime_seconds()),
+                    node_->total_active_connections(),
+                    node_->accept_incoming() ? "ALLOW" : "DENY",
+                    psram_s, rad_s);
+        }
+    } else {
+        sprintf(hdr_txt, " OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s",
+                prof->board_id, call_s,
+                static_cast<unsigned long>(node_->uptime_seconds()),
+                node_->total_active_connections(),
+                node_->accept_incoming() ? "ALLOW" : "DENY",
+                psram_s, rad_s);
+    }
     sprintf(buf, "\033[2;1H%s%-*.*s\033[0m", sgr_header(), ncols, ncols, hdr_txt);
     write_str(buf);
 

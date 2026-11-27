@@ -2,7 +2,7 @@
 # Copyright (C) 2026 KR4OYK - David Kuder
 
 cmake_minimum_required(VERSION 3.16)
-project(oyk-node VERSION 0.1.0 LANGUAGES CXX)
+project(oyk-node VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -712,7 +712,7 @@ if(BUILD_TESTS AND NOT WIN32)
     oyk_apply_host_hardening(oyk_tinytmux_tests)
     add_test(NAME oyk_tinytmux_tests COMMAND oyk_tinytmux_tests)
 
-    # Strict C++98 host verification of Raspberry Pi Pico (RP2040 / RP2350) boards, PSRAM, storage, RM2 optional radio & 2-UART console
+    # Strict C++98 + C99 host verification of Raspberry Pi Pico & ClockworkPi PicoCalc boards, PSRAM, storage, RM2 & oyk-vt100 LCD/KBD
     add_executable(oyk_pico_tests
         tests/test_pico.cpp
         ports/pico/board_pico.cpp
@@ -721,6 +721,15 @@ if(BUILD_TESTS AND NOT WIN32)
         ports/pico/pico_radio.cpp
         ports/pico/pico_net_bridge.cpp
         ports/pico/pico_console.cpp
+        ports/pico/pico_picocalc_lcd.cpp
+        ports/pico/pico_picocalc_kbd.cpp
+        ports/pico/pico_picocalc_audio.cpp
+        ports/pico/pico_picocalc_console.cpp
+        third_party/oyk-vt100/src/oyk_vt100.c
+        third_party/oyk-vt100/src/oyk_vt_font.c
+        third_party/oyk-vt100/src/vt_font_4x8.c
+        third_party/oyk-vt100/src/vt_font_6x10.c
+        third_party/oyk-vt100/src/oyk_vt_fb.c
         ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp
         ports/compat/oyk_portable.cpp
         ports/compat/oyk_yapp.cpp
@@ -734,13 +743,23 @@ if(BUILD_TESTS AND NOT WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/oyk_tinytmux
         ${CMAKE_CURRENT_SOURCE_DIR}/ports/pico
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/oyk-vt100/include
     )
     set_target_properties(oyk_pico_tests PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
         CXX_STANDARD 98
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF
     )
-    target_compile_definitions(oyk_pico_tests PRIVATE OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(oyk_pico_tests PRIVATE
+        OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        OYK_VT_ENABLE_256COLOR=1
+        OYK_VT_ENABLE_TRUECOLOR=0
+        OYK_VT_MAX_COLS=80
+        OYK_VT_MAX_ROWS=48
+    )
     target_compile_options(oyk_pico_tests PRIVATE -Wall -Wextra -Wpedantic)
     oyk_apply_host_hardening(oyk_pico_tests)
     add_test(NAME oyk_pico_tests COMMAND oyk_pico_tests)

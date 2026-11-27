@@ -14,6 +14,7 @@ Click any thumbnail in the port tables below to open the full-resolution native 
 - [MS-DOS 386+ Graphical (VBE/VGA/EGA)](#dos_gfx)
 - [Teensy 4.1 / TinyTMUX (VT340/xterm-256color)](#tinytmux)
 - [Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)](#pico)
+- [ClockworkPi PicoCalc (320x320 IPS via oyk-vt100)](#picocalc)
 - [ESP32-C6 (M5Stack Unit C6L VT340/xterm-256color)](#esp32c6)
 - [X11 GTK+ 2.0](#gtk)
 - [Windows GUI (Wine / Win32/64)](#win)
@@ -89,6 +90,19 @@ Click any thumbnail in the port tables below to open the full-resolution native 
 | [![13. Wiz 4: Review](images/ui-gallery/thumbs/pico_add_iface_4.png)](images/ui-gallery/pico_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/pico_edit_iface.png)](images/ui-gallery/pico_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/pico_edit_peer.png)](images/ui-gallery/pico_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/pico_terminate.png)](images/ui-gallery/pico_terminate.png)<br>**16. Terminate** |
 | [![17. Ban/Unban](images/ui-gallery/thumbs/pico_ban.png)](images/ui-gallery/pico_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/pico_exit.png)](images/ui-gallery/pico_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/pico_theme.png)](images/ui-gallery/pico_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/pico_terminal.png)](images/ui-gallery/pico_terminal.png)<br>**20. Terminal** |
 | [![21. Term Help](images/ui-gallery/thumbs/pico_terminal_help.png)](images/ui-gallery/pico_terminal_help.png)<br>**21. Term Help** | [![22. Files](images/ui-gallery/thumbs/pico_files.png)](images/ui-gallery/pico_files.png)<br>**22. Files** | [![23. About](images/ui-gallery/thumbs/pico_about.png)](images/ui-gallery/pico_about.png)<br>**23. About** |  |
+
+<a id="picocalc"></a>
+
+## ClockworkPi PicoCalc (320x320 IPS via oyk-vt100)
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| [![1. Console](images/ui-gallery/thumbs/picocalc_main.png)](images/ui-gallery/picocalc_main.png)<br>**1. Console** | [![2. Node Menu](images/ui-gallery/thumbs/picocalc_menu.png)](images/ui-gallery/picocalc_menu.png)<br>**2. Node Menu** | [![3. Set: Node](images/ui-gallery/thumbs/picocalc_settings.png)](images/ui-gallery/picocalc_settings.png)<br>**3. Set: Node** | [![4. Set: BBS](images/ui-gallery/thumbs/picocalc_settings_bbs.png)](images/ui-gallery/picocalc_settings_bbs.png)<br>**4. Set: BBS** |
+| [![5. Set: CHAT](images/ui-gallery/thumbs/picocalc_settings_chat.png)](images/ui-gallery/picocalc_settings_chat.png)<br>**5. Set: CHAT** | [![6. Set: Ifaces](images/ui-gallery/thumbs/picocalc_settings_ifaces.png)](images/ui-gallery/picocalc_settings_ifaces.png)<br>**6. Set: Ifaces** | [![7. Set: Peers](images/ui-gallery/thumbs/picocalc_peers.png)](images/ui-gallery/picocalc_peers.png)<br>**7. Set: Peers** | [![8. Set: Rig](images/ui-gallery/thumbs/picocalc_settings_rig.png)](images/ui-gallery/picocalc_settings_rig.png)<br>**8. Set: Rig** |
+| [![9. Set: Printer](images/ui-gallery/thumbs/picocalc_settings_printer.png)](images/ui-gallery/picocalc_settings_printer.png)<br>**9. Set: Printer** | [![10. Wiz 1: Driver](images/ui-gallery/thumbs/picocalc_add_iface_1.png)](images/ui-gallery/picocalc_add_iface_1.png)<br>**10. Wiz 1: Driver** | [![11. Wiz 2: Identity](images/ui-gallery/thumbs/picocalc_add_iface_2.png)](images/ui-gallery/picocalc_add_iface_2.png)<br>**11. Wiz 2: Identity** | [![12. Wiz 3: Policy](images/ui-gallery/thumbs/picocalc_add_iface_3.png)](images/ui-gallery/picocalc_add_iface_3.png)<br>**12. Wiz 3: Policy** |
+| [![13. Wiz 4: Review](images/ui-gallery/thumbs/picocalc_add_iface_4.png)](images/ui-gallery/picocalc_add_iface_4.png)<br>**13. Wiz 4: Review** | [![14. Edit Iface](images/ui-gallery/thumbs/picocalc_edit_iface.png)](images/ui-gallery/picocalc_edit_iface.png)<br>**14. Edit Iface** | [![15. Edit Peer](images/ui-gallery/thumbs/picocalc_edit_peer.png)](images/ui-gallery/picocalc_edit_peer.png)<br>**15. Edit Peer** | [![16. Terminate](images/ui-gallery/thumbs/picocalc_terminate.png)](images/ui-gallery/picocalc_terminate.png)<br>**16. Terminate** |
+| [![17. Ban/Unban](images/ui-gallery/thumbs/picocalc_ban.png)](images/ui-gallery/picocalc_ban.png)<br>**17. Ban/Unban** | [![18. Exit/Boot](images/ui-gallery/thumbs/picocalc_exit.png)](images/ui-gallery/picocalc_exit.png)<br>**18. Exit/Boot** | [![19. Theme](images/ui-gallery/thumbs/picocalc_theme.png)](images/ui-gallery/picocalc_theme.png)<br>**19. Theme** | [![20. Terminal](images/ui-gallery/thumbs/picocalc_terminal.png)](images/ui-gallery/picocalc_terminal.png)<br>**20. Terminal** |
+| [![21. Term Help](images/ui-gallery/thumbs/picocalc_terminal_help.png)](images/ui-gallery/picocalc_terminal_help.png)<br>**21. Term Help** | [![22. Files](images/ui-gallery/thumbs/picocalc_files.png)](images/ui-gallery/picocalc_files.png)<br>**22. Files** | [![23. About](images/ui-gallery/thumbs/picocalc_about.png)](images/ui-gallery/picocalc_about.png)<br>**23. About** |  |
 
 <a id="esp32c6"></a>
 

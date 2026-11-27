@@ -23,7 +23,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | `BUILD_WIN16_PORT` | `OFF` | Windows 3.1 16-bit | Enable `oyk-node-win16` (`oykw16.exe` via OpenWatcom `wmake`) |
 | `BUILD_WINDOWS_PORT` | `OFF` | Windows 32/64-bit | Enable `oykw32.exe` / `oykw64.exe` (MinGW-w64 cross-compile or MSVC native) |
 | `BUILD_TINYTMUX_PORT` | `OFF` | Teensy 4.1 | Enable IMXRT1060 Teensyduino sketch build via `arduino-builder` |
-| `BUILD_PICO_PORT` | `OFF` | Raspberry Pi Pico | Enable `oyk-pico` UF2 builds (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`) |
+| `BUILD_PICO_PORT` | `OFF` | Raspberry Pi Pico | Enable `oyk-pico` UF2 builds (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_*`) |
 | `BUILD_ESP32C6_PORT` | `OFF` | ESP32-C6 (Unit C6L) | Enable `oyk-esp32c6` firmware build via ESP-IDF v5.x (`idf.py build`) |
 | `BUILD_MACCLASSIC_PORT` | `OFF` | Classic Macintosh | Enable 68k + PPC Fat app build via Retro68 (and Mini vMac CTest runner) |
 | `BUILD_GSOS_PORT` | `OFF` | Apple IIGS GS/OS | Enable `$B3` OMF v2 S16 build via `vbcc` `vc +iigs` (and GSplus CTest runner) |
@@ -52,7 +52,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | **MS-DOS Graphical** | `wmake -C ports/dos -f makefile.gfx` | `USE_MTCP=0\|1`, 386+ DOS/4G or real/XMS/EMS4 ([README](../../ports/dos/README.md)) |
 | **Windows 16/32/64** | `wmake -C ports/windows -f makefile.win16` / `.win32` | `WATCOM_DIR=...`; or MinGW-w64 via CMake ([README](../../ports/windows/README.md)) |
 | **Teensy 4.1 TinyTMUX** | `cmake -S ports/tinytmux -B build-t41 && cmake --build build-t41` | `ARDUINO_DIR=...`, `OYK_TINYTMUX_FETCH_QNETHERNET=ON\|OFF` ([README](../../ports/tinytmux/README.md)) |
-| **Raspberry Pi Pico** | `cmake -S ports/pico -B build-pico -DPICO_BOARD=<board>` | `PICO_BOARD` (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`) ([README](../../ports/pico/README.md)) |
+| **Raspberry Pi Pico** | `cmake -S ports/pico -B build-pico -DPICO_BOARD=<board>` | `PICO_BOARD` (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_pico2_w`, `picocalc_pico_w`, `picocalc_pico2`, `picocalc_pico`) ([README](../../ports/pico/README.md)) |
 | **ESP32-C6 Unit C6L** | `(cd ports/esp32c6 && idf.py set-target esp32c6 && idf.py build)` | Requires ESP-IDF v5.x (`IDF_PATH` / `IDF_TOOLS_PATH`) ([README](../../ports/esp32c6/README.md)) |
 | **Android** | `(cd ports/android && ./gradlew testDebugUnitTest)` | `ANDROID_SDK_ROOT` / `ANDROID_HOME` |
 | **Classic Macintosh** | `make -C ports/macclassic` | `RETRO68_PREFIX` (68k + PPC Fat binary + Mini vMac runner) ([README](../../ports/macclassic/README.md)) |

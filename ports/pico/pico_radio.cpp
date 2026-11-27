@@ -46,12 +46,20 @@ int pico_radio_init(const PicoRadioConfig* cfg, int /*sim_rm2_present*/) {
     }
 
     memset(&s_radio, 0, sizeof(s_radio));
+    const PicoBoardProfile* prof = pico_current_board_profile();
+    if (prof->radio_mode == PICO_RADIO_NONE) {
+        s_radio.supported = 0;
+        s_radio.initialized = 0;
+        s_radio.module_present = 0;
+        pico_board_read_mac(s_radio.mac);
+        strcpy(s_radio.status_text, "NO RADIO (UART0)");
+        return 0;
+    }
     s_radio.supported = 1;
     pico_board_read_mac(s_radio.mac);
     s_bt_initialized = 0;
 
 #if defined(CYW43_PIN_WL_DYNAMIC) && CYW43_PIN_WL_DYNAMIC
-    const PicoBoardProfile* prof = pico_current_board_profile();
     if (prof->radio_mode == PICO_RADIO_OPTIONAL_RM2) {
         uint pins[CYW43_PIN_INDEX_WL_COUNT];
         pins[CYW43_PIN_INDEX_WL_REG_ON] = local_cfg.rm2_reg_on;
@@ -181,10 +189,17 @@ int pico_radio_init(const PicoRadioConfig* cfg, int sim_rm2_present) {
     else pico_radio_default_config(&local_cfg);
 
     memset(&s_radio, 0, sizeof(s_radio));
-    s_radio.supported = 1;
     pico_board_read_mac(s_radio.mac);
 
     const PicoBoardProfile* prof = pico_current_board_profile();
+    if (prof->radio_mode == PICO_RADIO_NONE) {
+        s_radio.supported = 0;
+        s_radio.initialized = 0;
+        s_radio.module_present = 0;
+        strcpy(s_radio.status_text, "NO RADIO (UART0)");
+        return 0;
+    }
+    s_radio.supported = 1;
     int present = 1;
     if (prof->radio_mode == PICO_RADIO_OPTIONAL_RM2) {
         present = (s_sim_present >= 0) ? s_sim_present : sim_rm2_present;

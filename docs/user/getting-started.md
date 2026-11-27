@@ -78,7 +78,7 @@ Cross-platform targets are opt-in and disabled by default (`BUILD_*_PORT=OFF` in
 - **Windows (Win 3.1 16-bit, Win 95–11 32/64-bit)**: Native WinAPI GUI + Win32 Service — [ports/windows/README.md](../../ports/windows/README.md)
 - **macOS (`arm64` / `x86_64` / `ppc`)**: Native AppKit `.app` bundle (OS X 10.4–15+) — [ports/macos/README.md](../../ports/macos/README.md)
 - **Teensy 4.1 / TinyTMUX (`IMXRT1062`)**: 8-UART carrier board, `QNEthernet`, RadioFoundry USB Host + PPP, VT100/VT220 console — [ports/tinytmux/README.md](../../ports/tinytmux/README.md)
-- **Raspberry Pi Pico (`RP2040` / `RP2350`)**: `pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350` UF2 firmware — [ports/pico/README.md](../../ports/pico/README.md)
+- **Raspberry Pi Pico & PicoCalc (`RP2040` / `RP2350`)**: `pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_pico2_w`, `picocalc_pico_w`, `picocalc_pico2`, `picocalc_pico` UF2 firmware — [ports/pico/README.md](../../ports/pico/README.md)
 - **ESP32-C6 (`M5Stack Unit C6L`)**: SX1262 LoRa KISS, 64x48 SPI OLED, Wi-Fi 6 + BLE 5, 16 MB Flash LittleFS — [ports/esp32c6/README.md](../../ports/esp32c6/README.md)
 - **Android**: Jetpack Compose + Material 3 + NDK C++20 engine (`./gradlew testDebugUnitTest`) — [ports/android/](../../ports/android/)
 - **MS-DOS Text & Graphical (`oyknode.exe`, `oyknodeg.exe`)**: 8088/V20 640 KB real-mode + 386+ EGA/VGA/VBE graphical builds — [ports/dos/README.md](../../ports/dos/README.md)

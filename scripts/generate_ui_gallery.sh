@@ -269,7 +269,7 @@ rm -rf "${OUT_IMG_DIR}/thumbs"
 mkdir -p "${OUT_IMG_DIR}/thumbs"
 
 FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
-PORTS=(ncurses dos dos_gfx tinytmux pico esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
+PORTS=(ncurses dos dos_gfx tinytmux pico picocalc esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -309,6 +309,7 @@ port_label() {
         dos_gfx)          echo "MS-DOS 386+ Graphical (VBE/VGA/EGA)" ;;
         tinytmux)         echo "Teensy 4.1 / TinyTMUX (VT340/xterm-256color)" ;;
         pico)             echo "Raspberry Pi Pico (RP2040/RP2350 VT340/xterm-256color)" ;;
+        picocalc)         echo "ClockworkPi PicoCalc (320x320 IPS via oyk-vt100)" ;;
         esp32c6)          echo "ESP32-C6 (M5Stack Unit C6L VT340/xterm-256color)" ;;
         gtk)              echo "X11 GTK+ 2.0" ;;
         win)              echo "Windows GUI (Wine / Win32/64)" ;;

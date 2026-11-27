@@ -15,6 +15,7 @@ GALLERY_PREFIXES = (
     "dos_gfx",
     "tinytmux",
     "pico",
+    "picocalc",
     "esp32c6",
     "gtk",
     "win",

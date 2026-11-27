@@ -11,20 +11,74 @@
 static PicoPsramInfo s_psram = {};
 static oyk_u32 s_xip_pool_offset = 0;
 
-#if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE && defined(PICO_RP2350) && PICO_RP2350 && defined(OYK_PICO_HAVE_HARDWARE_PSRAM)
+#if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
+#include "pico/stdlib.h"
+#include "hardware/gpio.h"
+#if defined(PICO_RP2350) && PICO_RP2350 && defined(OYK_PICO_HAVE_HARDWARE_PSRAM)
 #include "hardware/psram.h"
+#endif
+
+static int probe_picocalc_spi_psram(const PicoBoardProfile* prof) {
+    (void)prof;
+    gpio_init(OYK_PICOCALC_PSRAM_CS_PIN);
+    gpio_set_dir(OYK_PICOCALC_PSRAM_CS_PIN, GPIO_OUT);
+    gpio_put(OYK_PICOCALC_PSRAM_CS_PIN, 1);
+
+    gpio_init(OYK_PICOCALC_PSRAM_SCK_PIN);
+    gpio_set_dir(OYK_PICOCALC_PSRAM_SCK_PIN, GPIO_OUT);
+    gpio_put(OYK_PICOCALC_PSRAM_SCK_PIN, 0);
+
+    gpio_init(OYK_PICOCALC_PSRAM_TX_PIN);
+    gpio_set_dir(OYK_PICOCALC_PSRAM_TX_PIN, GPIO_OUT);
+    gpio_put(OYK_PICOCALC_PSRAM_TX_PIN, 0);
+
+    gpio_init(OYK_PICOCALC_PSRAM_RX_PIN);
+    gpio_set_dir(OYK_PICOCALC_PSRAM_RX_PIN, GPIO_IN);
+
+    oyk_u8 rx[6];
+    const oyk_u8 cmd[6] = { 0x9FU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U };
+    gpio_put(OYK_PICOCALC_PSRAM_CS_PIN, 0);
+    sleep_us(2);
+    for (int bi = 0; bi < 6; ++bi) {
+        oyk_u8 tx = cmd[bi];
+        oyk_u8 in = 0U;
+        for (int bit = 7; bit >= 0; --bit) {
+            gpio_put(OYK_PICOCALC_PSRAM_TX_PIN, (tx >> bit) & 1U);
+            sleep_us(1);
+            gpio_put(OYK_PICOCALC_PSRAM_SCK_PIN, 1);
+            in = static_cast<oyk_u8>((in << 1) | (gpio_get(OYK_PICOCALC_PSRAM_RX_PIN) ? 1U : 0U));
+            sleep_us(1);
+            gpio_put(OYK_PICOCALC_PSRAM_SCK_PIN, 0);
+        }
+        rx[bi] = in;
+    }
+    gpio_put(OYK_PICOCALC_PSRAM_CS_PIN, 1);
+    return (rx[4] == 0x0DU || rx[4] == 0x5DU) ? 1 : 0;
+}
 
 int pico_psram_init_and_test() {
     memset(&s_psram, 0, sizeof(s_psram));
     s_xip_pool_offset = 0;
 
     const PicoBoardProfile* prof = pico_current_board_profile();
+    if (prof->has_picocalc_hw) {
+        const int present = probe_picocalc_spi_psram(prof);
+        s_psram.size_bytes = prof->max_psram_bytes;
+        s_psram.pool_total_bytes = s_psram.size_bytes - 4096UL;
+        s_psram.self_test_passed = present ? 1 : 0;
+        s_psram.status = PICO_PSRAM_READY;
+        strcpy(s_psram.chip_label,
+               present ? "Carrier SPI PSRAM (8 MB GP20)" : "Carrier SPI PSRAM (8 MB SRAM-backed)");
+        return 1;
+    }
+
     if (prof->psram_cs_pin < 0 || prof->max_psram_bytes == 0) {
         s_psram.status = PICO_PSRAM_ABSENT;
         strcpy(s_psram.chip_label, "None (Board has no QMI PSRAM)");
         return 0;
     }
 
+#if defined(PICO_RP2350) && PICO_RP2350 && defined(OYK_PICO_HAVE_HARDWARE_PSRAM)
     size_t sz = psram_is_available() ? psram_get_size() : 0U;
     if (sz == 0) {
         s_psram.status = PICO_PSRAM_ABSENT;
@@ -52,18 +106,26 @@ int pico_psram_init_and_test() {
     s_psram.status = ok ? PICO_PSRAM_READY : PICO_PSRAM_TEST_FAILED;
     sprintf(s_psram.chip_label, "QMI PSRAM (%lu MB)", static_cast<unsigned long>(sz / (1024UL * 1024UL)));
     return ok;
+#else
+    s_psram.status = PICO_PSRAM_ABSENT;
+    strcpy(s_psram.chip_label, "None (Board has no QMI PSRAM)");
+    return 0;
+#endif
 }
 
 void* pico_psram_alloc(size_t bytes) {
     if (bytes == 0) return NULL;
+#if defined(PICO_RP2350) && PICO_RP2350 && defined(OYK_PICO_HAVE_HARDWARE_PSRAM)
+    const PicoBoardProfile* prof = pico_current_board_profile();
     const size_t aligned = (bytes + 7U) & ~static_cast<size_t>(7U);
-    if (s_psram.status == PICO_PSRAM_READY &&
+    if (!prof->has_picocalc_hw && s_psram.status == PICO_PSRAM_READY &&
         (s_xip_pool_offset + aligned) <= s_psram.pool_total_bytes) {
         void* p = reinterpret_cast<void*>(0x11000000UL + s_xip_pool_offset);
         s_xip_pool_offset += static_cast<oyk_u32>(aligned);
         s_psram.pool_used_bytes = s_xip_pool_offset;
         return p;
     }
+#endif
     void* p = malloc(bytes);
     if (p) s_psram.sram_fallback_used_bytes += static_cast<oyk_u32>(bytes);
     return p;
@@ -71,10 +133,12 @@ void* pico_psram_alloc(size_t bytes) {
 
 void pico_psram_free(void* ptr, size_t bytes) {
     if (!ptr) return;
+#if defined(PICO_RP2350) && PICO_RP2350 && defined(OYK_PICO_HAVE_HARDWARE_PSRAM)
     oyk_u32 addr = reinterpret_cast<oyk_u32>(ptr);
     if (addr >= 0x11000000UL && addr < (0x11000000UL + s_psram.size_bytes)) {
         return; /* Bump pool region inside PSRAM */
     }
+#endif
     free(ptr);
     if (s_psram.sram_fallback_used_bytes >= bytes) {
         s_psram.sram_fallback_used_bytes -= static_cast<oyk_u32>(bytes);

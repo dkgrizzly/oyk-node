@@ -9,6 +9,9 @@
 #include "pico_radio.hpp"
 #include "pico_net_bridge.hpp"
 #include "pico_console.hpp"
+#if defined(OYK_PICO_IS_PICOCALC) && OYK_PICO_IS_PICOCALC
+#include "pico_picocalc_console.hpp"
+#endif
 
 #include "pico/stdlib.h"
 #include <stdio.h>
@@ -55,6 +58,43 @@ static void build_default_pico_config(OykConfig* cfg) {
     cfg->chat_ssid = 12;
     oyk_parse_callsign("OYKCHT", &cfg->chat_alias);
     strcpy(cfg->chat_topic, "Lobby");
+
+    if (prof->has_picocalc_hw) {
+        if (prof->radio_mode == PICO_RADIO_NONE) {
+            cfg->iface_count = 1;
+            memset(&cfg->ifaces[0], 0, sizeof(cfg->ifaces[0]));
+            strcpy(cfg->ifaces[0].id, "ppp0");
+            strcpy(cfg->ifaces[0].type, "ppp");
+            strcpy(cfg->ifaces[0].description, "RadioFoundry PPP (ser0)");
+            strcpy(cfg->ifaces[0].device, "ser0");
+            strcpy(cfg->ifaces[0].host, "10.44.0.1");
+            cfg->ifaces[0].port = 10093;
+            cfg->ifaces[0].baud = 115200UL;
+        } else {
+            cfg->iface_count = 3;
+            memset(&cfg->ifaces[0], 0, sizeof(cfg->ifaces[0]));
+            strcpy(cfg->ifaces[0].id, "wifi0");
+            strcpy(cfg->ifaces[0].type, "axudp");
+            strcpy(cfg->ifaces[0].description, "CYW43 Wi-Fi AXUDP");
+            strcpy(cfg->ifaces[0].host, "0.0.0.0");
+            cfg->ifaces[0].port = 10093;
+
+            memset(&cfg->ifaces[1], 0, sizeof(cfg->ifaces[1]));
+            strcpy(cfg->ifaces[1].id, "ppp0");
+            strcpy(cfg->ifaces[1].type, "ppp");
+            strcpy(cfg->ifaces[1].description, "RadioFoundry PPP (ser0)");
+            strcpy(cfg->ifaces[1].device, "ser0");
+            strcpy(cfg->ifaces[1].host, "10.44.0.1");
+            cfg->ifaces[1].port = 10093;
+            cfg->ifaces[1].baud = 115200UL;
+
+            memset(&cfg->ifaces[2], 0, sizeof(cfg->ifaces[2]));
+            strcpy(cfg->ifaces[2].id, "bt0");
+            strcpy(cfg->ifaces[2].type, "kiss-bt");
+            strcpy(cfg->ifaces[2].description, "CYW43 Bluetooth SPP/BLE KISS");
+        }
+        return;
+    }
 
     cfg->iface_count = 4;
 
@@ -121,6 +161,27 @@ int main() {
     pico_radio_default_config(&rcfg);
     g_net->init(g_node, &rcfg, 1);
 
+#if defined(OYK_PICO_IS_PICOCALC) && OYK_PICO_IS_PICOCALC
+    static PicoCalcConsole s_pcalc_storage;
+    g_console->init(g_node, g_net, PicoCalcConsole::tx_trampoline, &s_pcalc_storage);
+    s_pcalc_storage.init(g_console);
+    s_pcalc_storage.connect_and_probe();
+
+    while (true) {
+        const oyk_u32 now = pico_board_millis();
+        g_net->poll(now);
+        g_node->tick();
+        g_console->tick(now);
+        s_pcalc_storage.poll_tick(now);
+
+        if ((now - g_last_blink_ms) >= 1000UL) {
+            g_last_blink_ms = now;
+            g_blink_state = !g_blink_state;
+            pico_board_set_status_led(g_blink_state);
+        }
+        sleep_ms(2);
+    }
+#else
     g_console->init(g_node, g_net, usb_cdc_console_tx, NULL);
 
     while (true) {
@@ -155,5 +216,6 @@ int main() {
 
         sleep_ms(2);
     }
+#endif
     return 0;
 }

@@ -3,8 +3,33 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-# Target board selection: pico_w | pico2_w | waveshare_core2350b | pimoroni_pga2350
+# Target board selection:
+#   pico_w | pico2_w | waveshare_core2350b | pimoroni_pga2350 |
+#   picocalc_pico2_w | picocalc_pico_w | picocalc_pico2 | picocalc_pico
 set(PICO_BOARD "pico2_w" CACHE STRING "Raspberry Pi Pico board target")
+set(OYK_PICO_BOARD_NAME "${PICO_BOARD}")
+set(OYK_PICO_IS_PICOCALC 0)
+set(OYK_PICO_IS_RP2040 0)
+set(OYK_PICO_VT_256COLOR 1)
+if(OYK_PICO_BOARD_NAME STREQUAL "picocalc_pico2_w")
+    set(PICO_BOARD "pico2_w")
+    set(OYK_PICO_IS_PICOCALC 1)
+elseif(OYK_PICO_BOARD_NAME STREQUAL "picocalc_pico_w")
+    set(PICO_BOARD "pico_w")
+    set(OYK_PICO_IS_PICOCALC 1)
+    set(OYK_PICO_IS_RP2040 1)
+    set(OYK_PICO_VT_256COLOR 0)
+elseif(OYK_PICO_BOARD_NAME STREQUAL "picocalc_pico2")
+    set(PICO_BOARD "pico2")
+    set(OYK_PICO_IS_PICOCALC 1)
+elseif(OYK_PICO_BOARD_NAME STREQUAL "picocalc_pico")
+    set(PICO_BOARD "pico")
+    set(OYK_PICO_IS_PICOCALC 1)
+    set(OYK_PICO_IS_RP2040 1)
+    set(OYK_PICO_VT_256COLOR 0)
+elseif(OYK_PICO_BOARD_NAME STREQUAL "pico_w")
+    set(OYK_PICO_IS_RP2040 1)
+endif()
 
 # Discover populated Pico SDK (checking ~/pico-sdk and ~/.pico-sdk/sdk/*)
 if(NOT PICO_SDK_PATH)
@@ -73,9 +98,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 pico_sdk_init()
 
 get_filename_component(OYK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-set(TARGET_NAME "oyk-pico-${PICO_BOARD}")
+set(TARGET_NAME "oyk-pico-${OYK_PICO_BOARD_NAME}")
 
-add_executable(${TARGET_NAME}
+set(_oyk_pico_sources
     main_pico.cpp
     board_pico.cpp
     pico_psram.cpp
@@ -89,18 +114,40 @@ add_executable(${TARGET_NAME}
     "${OYK_ROOT}/ports/compat/oyk_printer.cpp"
     "${OYK_ROOT}/ports/compat/oyk_tui.cpp"
     "${OYK_ROOT}/ports/compat/oyk_term.cpp"
+    "${OYK_ROOT}/ports/compat/oyk_gui.cpp"
     "${OYK_ROOT}/ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp"
 )
+if(OYK_PICO_IS_PICOCALC)
+    list(APPEND _oyk_pico_sources
+        pico_picocalc_lcd.cpp
+        pico_picocalc_kbd.cpp
+        pico_picocalc_audio.cpp
+        pico_picocalc_console.cpp
+        "${OYK_ROOT}/third_party/oyk-vt100/src/oyk_vt100.c"
+        "${OYK_ROOT}/third_party/oyk-vt100/src/oyk_vt_font.c"
+        "${OYK_ROOT}/third_party/oyk-vt100/src/vt_font_4x8.c"
+        "${OYK_ROOT}/third_party/oyk-vt100/src/vt_font_6x10.c"
+        "${OYK_ROOT}/third_party/oyk-vt100/src/oyk_vt_fb.c"
+    )
+endif()
+
+add_executable(${TARGET_NAME} ${_oyk_pico_sources})
 
 target_include_directories(${TARGET_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${OYK_ROOT}/ports/compat"
     "${OYK_ROOT}/ports/tinytmux/oyk_tinytmux"
+    "${OYK_ROOT}/third_party/oyk-vt100/include"
 )
 
 target_compile_definitions(${TARGET_NAME} PRIVATE
     PICO_ON_DEVICE=1
-    OYK_PICO_BOARD_ID="${PICO_BOARD}"
+    OYK_PICO_BOARD_ID="${OYK_PICO_BOARD_NAME}"
+    OYK_PICO_IS_PICOCALC=${OYK_PICO_IS_PICOCALC}
+    OYK_VT_ENABLE_256COLOR=${OYK_PICO_VT_256COLOR}
+    OYK_VT_ENABLE_TRUECOLOR=0
+    OYK_VT_MAX_COLS=80
+    OYK_VT_MAX_ROWS=40
 )
 
 if(PICO_BOARD STREQUAL "waveshare_core2350b" OR PICO_BOARD STREQUAL "pimoroni_pga2350")
@@ -144,8 +191,15 @@ if(TARGET pico_btstack_cyw43)
     target_compile_definitions(${TARGET_NAME} PRIVATE OYK_PICO_HAVE_BTSTACK=1)
 endif()
 
-# Compact static session/BBS buffer bounds so 264KB RP2040 fits comfortably with CYW43 + BTstack
-if(PICO_BOARD STREQUAL "pico_w")
+if(OYK_PICO_IS_PICOCALC)
+    target_link_libraries(${TARGET_NAME} PRIVATE
+        hardware_i2c
+        hardware_pwm
+    )
+endif()
+
+# Compact static session/BBS buffer bounds so 264KB RP2040 fits comfortably with CYW43 + BTstack + VT100
+if(OYK_PICO_IS_RP2040)
     target_compile_definitions(${TARGET_NAME} PRIVATE
         OYK_MAX_SESSIONS=8
         OYK_MAX_BBS_BODY=1024
