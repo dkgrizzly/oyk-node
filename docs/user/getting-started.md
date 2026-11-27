@@ -3,7 +3,7 @@
 
 # Getting Started with oyk-node
 
-**oyk-node** is a modular Amateur Radio AX.25 Packet Node supporting multiple radio/transport interfaces (`axudp`, `axip`, `kiss-serial`, `kiss-tcp`, and incoming `telnet`), configurable severity logging with daily rotation, persistent ban/appeal handling, and native operator interfaces across Linux, MS-DOS, and Windows.
+**oyk-node** is a modular Amateur Radio AX.25 Packet Node supporting multiple radio/transport interfaces (`axudp`, `axip`, `kiss-serial`, `kiss-tcp`, `telnet`, and embedded `ppp`), built-in BBS/CHAT services, configurable severity logging with daily rotation, persistent ban/appeal handling, and native operator interfaces across desktop, embedded, mobile, and vintage computing platforms (see the [Port Feature Matrix](feature-matrix.md)).
 
 ## Requirements (Linux / POSIX)
 
@@ -71,8 +71,17 @@ Linux requires `CAP_NET_RAW` to open raw IP protocol 93 sockets:
 sudo setcap cap_net_raw+ep ./build/oyk-node
 ```
 
-## Optional Retro & Windows Builds
+## Optional Desktop, Embedded, Mobile & Retro Ports
 
-MS-DOS and Windows targets are disabled by default and only built when requested:
-- **MS-DOS (IBM XT 8088 / NEC V20, 640KB + optional EMS 4.0, OpenWatcom + mTCP)**: See [ports/dos/README.md](../../ports/dos/README.md).
-- **Windows (16-bit Win 3.1, 32-bit Win 95–ME & NT 3.51–11, 64-bit Win XP x64–11)**: See [ports/windows/README.md](../../ports/windows/README.md).
+Cross-platform targets are opt-in and disabled by default (`BUILD_*_PORT=OFF` in CMake; see [Build Configuration Reference](../dev/build-config.md)):
+
+- **Windows (Win 3.1 16-bit, Win 95–11 32/64-bit)**: Native WinAPI GUI + Win32 Service — [ports/windows/README.md](../../ports/windows/README.md)
+- **macOS (`arm64` / `x86_64` / `ppc`)**: Native AppKit `.app` bundle (OS X 10.4–15+) — [ports/macos/README.md](../../ports/macos/README.md)
+- **Teensy 4.1 / TinyTMUX (`IMXRT1062`)**: 8-UART carrier board, `QNEthernet`, RadioFoundry USB Host + PPP, VT100/VT220 console — [ports/tinytmux/README.md](../../ports/tinytmux/README.md)
+- **Raspberry Pi Pico (`RP2040` / `RP2350`)**: `pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350` UF2 firmware — [ports/pico/README.md](../../ports/pico/README.md)
+- **Android**: Jetpack Compose + Material 3 + NDK C++20 engine (`./gradlew testDebugUnitTest`) — [ports/android/](../../ports/android/)
+- **MS-DOS Text & Graphical (`oyknode.exe`, `oyknodeg.exe`)**: 8088/V20 640 KB real-mode + 386+ EGA/VGA/VBE graphical builds — [ports/dos/README.md](../../ports/dos/README.md)
+- **Classic Macintosh (System 6.0.8–Mac OS 9.2.2)**: 68k + PPC Fat application (`Retro68`) — [ports/macclassic/README.md](../../ports/macclassic/README.md)
+- **Apple IIGS GS/OS (`65C816` S16)**: QuickDraw II `640x200` Super Hi-Res + Marinetti/SCC — [ports/gsos/README.md](../../ports/gsos/README.md)
+- **Amiga Workbench (`OS 1.3` / `2.04` / `3.1` / AROS)**: Adaptive native-lock/32+ color theme & optional private screen — [ports/amiga/README.md](../../ports/amiga/README.md)
+- **Atari ST / STE / TT / Falcon GEM**: `OYKNODE.PRG` for ST High Monochrome (`640x400`) & 16-color VDI (`640x480`) — [ports/atarist/README.md](../../ports/atarist/README.md)

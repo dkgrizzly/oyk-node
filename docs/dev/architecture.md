@@ -9,16 +9,17 @@
 
 ```
 +-------------------------------------------------------------------+
-|  Local Operator UIs                                               |
-|  - NcursesUI (src/ui/ncurses_ui.cpp)                              |
-|  - Gtk2UI    (src/ui/gtk2_ui.cpp)                                 |
-|  - DOS Video RAM UI (ports/dos/dos_main.cpp)                      |
-|  - Win16/Win32/Win64 Native GUI (ports/windows/win_main.cpp)      |
+|  Local Operator UIs & Platform Frontends                          |
+|  - Desktop (C++20): ncurses (src/ui/), GTK+ 2.0, macOS Cocoa      |
+|  - Mobile: Android Jetpack Compose + NDK (ports/android/)         |
+|  - Embedded VT100: Teensy 4.1 TinyTMUX, Raspberry Pi Pico         |
+|  - Desktop / Retro (C++98): Win16/32/64, MS-DOS Text & GFX,       |
+|    Classic Mac, Apple IIGS GS/OS, Amiga Workbench, Atari ST GEM   |
 +-------------------------------------------------------------------+
-                                | polls immutable NodeSnapshot
-                                v
+         | C++20 NodeSnapshot               | C++98 shared middleware
+         v                                   v (oyk_gui/tui/term)
 +-------------------------------------------------------------------+
-|  Node Engine (include/oyk/node/, src/node/)                       |
+|  Node Engine (include/oyk/node/, src/node/ & ports/compat/)       |
 |  - NodeEngine: sessions, bridging, MHEARD, last-5-new, controls   |
 |  - Session: AX.25 v2.0 modulo-8 L2 state machine                  |
 |  - CommandHandler: node shell + external app command hooks        |

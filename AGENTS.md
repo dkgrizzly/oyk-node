@@ -53,8 +53,9 @@ Example in a forked C++ file:
 
 ## 4. Technical Invariants
 
-- **Build & verify**: Run `cmake --build build -j && ctest --test-dir build --output-on-failure` after changes.
-- **Portable core (`ports/compat/`)**: Must remain strict C++98 with zero STL, zero exceptions, zero RTTI, and 16-bit-safe integer widths (`sizeof(int) == 2`).
+- **Build & verify**: Run `cmake --build build -j && ctest --test-dir build --output-on-failure` (or `./scripts/ci.sh --quick` for SPDX, docs, secrets, `1,024 B` portable stack check, `-DOYK_WERROR=ON`, and `-DOYK_SANITIZE=ON` ASan/UBSan checks) after changes.
+- **Portable core (`ports/compat/`)**: Must remain strict C++98 with zero STL, zero exceptions, zero RTTI, 16-bit-safe integer widths (`sizeof(int) == 2`), and every function's static stack frame within `<= 1,024` bytes (`python3 scripts/check_stack.py --limit 1024`).
+- **Governance checks**: Keep `python3 scripts/check_spdx.py` and `python3 scripts/check_docs.py` passing cleanly whenever adding files or documentation.
 - **Config line endings**: Config I/O must accept `CRLF`, `CR`, and `LF`, write `CRLF` by default on MS-DOS/Windows and `LF` on POSIX, preserve original line endings on write-back, and let `node.cfg`'s first line ending override mixed line endings without changing AX.25/KISS/Telnet wire protocols.
 - **Opt-in ports**: Keep `BUILD_MSDOS_PORT`, `BUILD_MSDOS_GFX_PORT`, `BUILD_WIN16_PORT`, `BUILD_WINDOWS_PORT`, `BUILD_TINYTMUX_PORT`, `BUILD_PICO_PORT`, `BUILD_MACCLASSIC_PORT`, `BUILD_GSOS_PORT`, `BUILD_AMIGA_PORT`, and `BUILD_ATARIST_PORT` `OFF` by default (`BUILD_MACOS_PORT` defaults `OFF` outside Apple hosts and `ON` on `APPLE`); `oyk-node-gtk` builds automatically when `libgtk2.0-dev` is installed.
 - **Shared GUI & TUI middleware**: Keep cross-port menu schemas, screen titles, table columns, wizard validation rules, exit prompts, and theme controllers in `ports/compat/oyk_gui.*` (`oyk_gui_theme.cpp` for portable builds) alongside `ports/compat/oyk_tui.*` and `ports/compat/oyk_term.*` so GTK+ 2.0, Windows, Classic Macintosh, macOS, Amiga Workbench, and Atari ST stay synchronized.
