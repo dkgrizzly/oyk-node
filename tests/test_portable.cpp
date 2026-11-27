@@ -2194,6 +2194,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "files", v, g);
 
+    dos_vid_shutdown(v);
     delete v;
     delete[] sim_vram;
 }

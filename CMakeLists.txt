@@ -11,6 +11,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_NCURSES_UI   "Build with ncurses local text-mode UI" ON)
 option(BUILD_GTK2_UI      "Automatically build X11 GTK+ 2.0 GUI when libgtk2.0-dev is installed" ON)
 option(BUILD_TESTS        "Build unit and integration tests" ON)
+option(OYK_WERROR         "Treat compiler warnings as errors on native host targets" OFF)
+option(OYK_SANITIZE       "Enable AddressSanitizer and UndefinedBehaviorSanitizer on native host targets" OFF)
+
+function(oyk_apply_host_hardening tgt)
+    if(OYK_WERROR)
+        target_compile_options(${tgt} PRIVATE -Werror)
+    endif()
+    if(OYK_SANITIZE)
+        target_compile_options(${tgt} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${tgt} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+endfunction()
 
 # Retro & Windows ports are ONLY built when explicitly requested
 option(BUILD_MSDOS_PORT    "Add target to build MS-DOS (OpenWatcom v2/1.9 + mTCP) executable" OFF)
@@ -77,6 +89,7 @@ if(NOT WIN32)
         PRIVATE
             -Wall -Wextra -Wpedantic
     )
+    oyk_apply_host_hardening(oyknode_core)
 
     add_executable(oyk-node
         src/main.cpp
@@ -91,6 +104,7 @@ if(NOT WIN32)
         PRIVATE
             -Wall -Wextra -Wpedantic
     )
+    oyk_apply_host_hardening(oyk-node)
 
     if(BUILD_NCURSES_UI)
         set(CURSES_NEED_NCURSES TRUE)
@@ -118,6 +132,7 @@ if(NOT WIN32)
             target_link_directories(oyk-node-gtk PRIVATE ${GTK2_LIBRARY_DIRS})
             target_link_libraries(oyk-node-gtk PRIVATE oyknode_core ${GTK2_LIBRARIES})
             target_compile_options(oyk-node-gtk PRIVATE ${GTK2_CFLAGS_OTHER} -Wall -Wextra)
+            oyk_apply_host_hardening(oyk-node-gtk)
         else()
             message(STATUS "libgtk2.0-dev (gtk+-2.0) not found; skipping oyk-node-gtk X11 GUI")
         endif()
@@ -445,6 +460,7 @@ if(BUILD_TESTS AND NOT WIN32)
     add_executable(oyk_node_tests tests/test_node.cpp)
     target_link_libraries(oyk_node_tests PRIVATE oyknode_core)
     target_compile_options(oyk_node_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_node_tests)
     add_test(NAME oyk_node_tests
         COMMAND oyk_node_tests
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
@@ -480,6 +496,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_portable_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_portable_tests)
     add_test(NAME oyk_portable_tests COMMAND oyk_portable_tests)
 
     # Strict C++98 tests for the shared GUI controller & schema layer (oyk_gui)
@@ -502,6 +519,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_gui_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_gui_tests)
     add_test(NAME oyk_gui_tests COMMAND oyk_gui_tests)
 
     # Host C++98 tests for the dual-core macOS AppKit bridge & OykPortableNode transport layer
@@ -527,6 +545,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_macos_bridge_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_macos_bridge_tests)
     add_test(NAME oyk_macos_bridge_tests COMMAND oyk_macos_bridge_tests)
 
     if(BUILD_MACCLASSIC_PORT AND EXISTS "$ENV{HOME}/minivmac/minivmac-plus-bg")
@@ -560,6 +579,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_gsos_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_gsos_tests)
     add_test(NAME oyk_gsos_tests COMMAND oyk_gsos_tests)
 
     if(BUILD_GSOS_PORT AND EXISTS "$ENV{HOME}/gsplus/gsplus/gsplus" AND EXISTS "$ENV{HOME}/gsplus/ROM.01")
@@ -591,6 +611,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_amiga_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_amiga_tests)
     add_test(NAME oyk_amiga_tests COMMAND oyk_amiga_tests)
 
     if(BUILD_AMIGA_PORT AND EXISTS "/usr/bin/fs-uae")
@@ -622,6 +643,7 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_EXTENSIONS OFF
     )
     target_compile_options(oyk_atarist_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_atarist_tests)
     add_test(NAME oyk_atarist_tests COMMAND oyk_atarist_tests)
 
     if(BUILD_ATARIST_PORT AND EXISTS "/usr/bin/hatari")
@@ -659,7 +681,9 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF
     )
+    target_compile_definitions(oyk_tinytmux_tests PRIVATE OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_options(oyk_tinytmux_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_tinytmux_tests)
     add_test(NAME oyk_tinytmux_tests COMMAND oyk_tinytmux_tests)
 
     # Strict C++98 host verification of Raspberry Pi Pico (RP2040 / RP2350) boards, PSRAM, storage, RM2 optional radio & 2-UART console
@@ -690,8 +714,27 @@ if(BUILD_TESTS AND NOT WIN32)
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF
     )
+    target_compile_definitions(oyk_pico_tests PRIVATE OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_options(oyk_pico_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_pico_tests)
     add_test(NAME oyk_pico_tests COMMAND oyk_pico_tests)
+
+    # Seeded mutation fuzz harness across AX.25, KISS, config, banlist, YAPP, terminal, and PPP parsers
+    add_executable(oyk_fuzz_tests
+        tests/test_fuzz.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp
+    )
+    target_include_directories(oyk_fuzz_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/oyk_tinytmux
+    )
+    target_link_libraries(oyk_fuzz_tests PRIVATE oyknode_core)
+    target_compile_options(oyk_fuzz_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_fuzz_tests)
+    add_test(NAME oyk_fuzz_tests COMMAND oyk_fuzz_tests)
 
     if(TARGET oyk-node)
         find_package(Python3 COMPONENTS Interpreter)
@@ -701,6 +744,11 @@ if(BUILD_TESTS AND NOT WIN32)
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ncurses_ui.py
                         $<TARGET_FILE:oyk-node>
             )
+            if(OYK_SANITIZE)
+                set_tests_properties(oyk_ncurses_ui_tests PROPERTIES
+                    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_suppressions.txt"
+                )
+            endif()
         endif()
     endif()
 

@@ -145,9 +145,7 @@ void oyk_gui_theme_resolve(const OykGuiThemeCtrl* c, OykThemeConfig* out_pal) {
         }
         return;
     }
-    OykConfig tmp = *c->draft;
-    gt_copy(tmp.theme_name, sizeof(tmp.theme_name), eff);
-    oyk_theme_resolve_effective(&tmp, c->default_native, c->os_dark, out_pal);
+    oyk_theme_resolve_named(c->draft, eff, c->default_native, c->os_dark, out_pal);
 }
 
 int oyk_gui_theme_set_role_rgb(OykGuiThemeCtrl* c, int role_idx, oyk_u32 rgb,

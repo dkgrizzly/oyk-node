@@ -1234,10 +1234,13 @@ void oyk_theme_make_clone_name(const OykConfig* cfg, int is_dark_base,
     safe_copy(out, out_sz, prefix);
 }
 
-void oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
-                                 int os_prefers_dark, OykThemeConfig* out) {
+void oyk_theme_resolve_named(const OykConfig* cfg, const char* override_name,
+                             int default_to_native, int os_prefers_dark,
+                             OykThemeConfig* out) {
     if (!out) return;
-    const char* name = (cfg && cfg->theme_name[0]) ? cfg->theme_name : "";
+    const char* name = (override_name && override_name[0])
+                           ? override_name
+                           : ((cfg && cfg->theme_name[0]) ? cfg->theme_name : "");
     if (!name[0] || stricmp_ascii(name, "auto") == 0) {
         name = default_to_native ? "native" : "dark";
     }
@@ -1263,6 +1266,12 @@ void oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
         }
     }
     oyk_theme_init_builtin(out, os_prefers_dark ? 0 : 1);
+}
+
+void oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
+                                 int os_prefers_dark, OykThemeConfig* out) {
+    oyk_theme_resolve_named(cfg, cfg ? cfg->theme_name : "",
+                            default_to_native, os_prefers_dark, out);
 }
 
 static int nearest_rgb_table_idx(oyk_u32 rgb, const oyk_u32* tbl, int count) {
@@ -3619,6 +3628,40 @@ int oyk_bbs_list_incoming(const char* incoming_root,
     return total;
 }
 
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__WATCOMC__)
+__attribute__((noinline))
+#endif
+static int bbs_copy_file_fallback(const char* src_path,
+                                  const char* dst_path,
+                                  char* err_out, size_t err_sz) {
+    FILE* in_fp = fopen(src_path, "rb");
+    if (!in_fp) {
+        safe_copy(err_out, err_sz, "Failed to open incoming file.");
+        return 0;
+    }
+    FILE* out_fp = fopen(dst_path, "wb");
+    if (!out_fp) {
+        fclose(in_fp);
+        safe_copy(err_out, err_sz, "Failed to create destination file.");
+        return 0;
+    }
+    char buf[256];
+    size_t n = 0;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), in_fp)) > 0) {
+        if (fwrite(buf, 1, n, out_fp) != n) { ok = 0; break; }
+    }
+    fclose(out_fp);
+    fclose(in_fp);
+    if (!ok) {
+        remove(dst_path);
+        safe_copy(err_out, err_sz, "Disk write error while moving file.");
+        return 0;
+    }
+    remove(src_path);
+    return 1;
+}
+
 int oyk_bbs_approve_incoming_file(const char* incoming_root,
                                   const char* files_root,
                                   const char* uploader,
@@ -3639,17 +3682,17 @@ int oyk_bbs_approve_incoming_file(const char* incoming_root,
     const char* inc = (incoming_root && incoming_root[0]) ? incoming_root : "incoming";
     const char* froot = (files_root && files_root[0]) ? files_root : "files";
 
-    char src_dir[160], src_path[192];
-    join_path(inc, uploader, src_dir, sizeof(src_dir));
-    join_path(src_dir, filename, src_path, sizeof(src_path));
+    char scratch_dir[160], src_path[192];
+    join_path(inc, uploader, scratch_dir, sizeof(scratch_dir));
+    join_path(scratch_dir, filename, src_path, sizeof(src_path));
     if (!oyk_is_regular_file(src_path)) {
         safe_copy(err_out, err_sz, "Incoming file not found.");
         return 0;
     }
 
-    char dst_dir[192], rel_dir[96];
+    char dst_dir[192];
     if (!oyk_bbs_resolve_safe_path(froot, "", dest_subdir ? dest_subdir : "", 0,
-                                   dst_dir, sizeof(dst_dir), rel_dir, sizeof(rel_dir),
+                                   dst_dir, sizeof(dst_dir), scratch_dir, 96U,
                                    err_out, err_sz)) {
         return 0;
     }
@@ -3668,31 +3711,9 @@ int oyk_bbs_approve_incoming_file(const char* incoming_root,
     }
 
     if (rename(src_path, dst_path) != 0) {
-        FILE* in_fp = fopen(src_path, "rb");
-        if (!in_fp) {
-            safe_copy(err_out, err_sz, "Failed to open incoming file.");
+        if (!bbs_copy_file_fallback(src_path, dst_path, err_out, err_sz)) {
             return 0;
         }
-        FILE* out_fp = fopen(dst_path, "wb");
-        if (!out_fp) {
-            fclose(in_fp);
-            safe_copy(err_out, err_sz, "Failed to create destination file.");
-            return 0;
-        }
-        char buf[512];
-        size_t n = 0;
-        int ok = 1;
-        while ((n = fread(buf, 1, sizeof(buf), in_fp)) > 0) {
-            if (fwrite(buf, 1, n, out_fp) != n) { ok = 0; break; }
-        }
-        fclose(out_fp);
-        fclose(in_fp);
-        if (!ok) {
-            remove(dst_path);
-            safe_copy(err_out, err_sz, "Disk write error while moving file.");
-            return 0;
-        }
-        remove(src_path);
     }
 
     if (dest_out) safe_copy(dest_out, dest_sz, dst_path);

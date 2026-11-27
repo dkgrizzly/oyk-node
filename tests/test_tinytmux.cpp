@@ -51,10 +51,23 @@ static void test_board_pinout_and_mac() {
     /* Load TinyTMUX example config */
     OykConfig* cfg = new OykConfig();
     char err[96];
-    const char* cfg_path = "ports/tinytmux/node_tinytmux.cfg";
-    FILE* probe = fopen(cfg_path, "rb");
-    if (!probe) cfg_path = "../ports/tinytmux/node_tinytmux.cfg";
-    else fclose(probe);
+    const char* cfg_cands[] = {
+#ifdef OYK_SOURCE_DIR
+        OYK_SOURCE_DIR "/ports/tinytmux/node_tinytmux.cfg",
+#endif
+        "ports/tinytmux/node_tinytmux.cfg",
+        "../ports/tinytmux/node_tinytmux.cfg",
+        NULL
+    };
+    const char* cfg_path = cfg_cands[0];
+    for (int ci = 0; cfg_cands[ci] != NULL; ++ci) {
+        FILE* probe = fopen(cfg_cands[ci], "rb");
+        if (probe) {
+            fclose(probe);
+            cfg_path = cfg_cands[ci];
+            break;
+        }
+    }
     assert(oyk_config_load(cfg_path, cfg, err, sizeof(err)) == 1);
     assert(cfg->bbs_enabled == 1 && cfg->bbs_ssid == 11);
     assert(cfg->chat_enabled == 1 && cfg->chat_ssid == 12);
@@ -1264,7 +1277,8 @@ static void test_terminal_inquiry_and_ui_modals() {
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("a"), 1);
     assert(strstr(cap->buf, "Add Peer") != NULL);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("W1AW-2\tDesc\t\t10.0.0.5\t10095\r\x1bOQ"), 33);
+    const char peer_input[] = "W1AW-2\tDesc\t\t10.0.0.5\t10095\r\x1bOQ";
+    con->feed_input(reinterpret_cast<const oyk_u8*>(peer_input), sizeof(peer_input) - 1U);
     assert(node->config().peer_count >= 1);
     assert(strcmp(node->config().peers[node->config().peer_count - 1].callsign, "W1AW-2") == 0);
 

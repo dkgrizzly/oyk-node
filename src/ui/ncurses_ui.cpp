@@ -1288,9 +1288,12 @@ void NcursesUI::modal_local_terminal() {
     if (!term_state_) {
         term_state_ = std::make_shared<TermState>();
         auto ts_init = term_state_;
-        ts_init->yapp.set_send_callback([this, ts_init](const std::vector<uint8_t>& pkt) {
-            if (ts_init->sid != 0) {
-                engine_.send_local_terminal_bytes(ts_init->sid, pkt);
+        std::weak_ptr<TermState> wp(ts_init);
+        ts_init->yapp.set_send_callback([this, wp](const std::vector<uint8_t>& pkt) {
+            if (auto ts_locked = wp.lock()) {
+                if (ts_locked->sid != 0) {
+                    engine_.send_local_terminal_bytes(ts_locked->sid, pkt);
+                }
             }
         });
         std::lock_guard<std::mutex> lk(ts_init->mtx);

@@ -552,7 +552,7 @@ def main() -> int:
                     break
             rc = proc.wait(timeout=3)
             tail_txt = tail.decode("utf-8", errors="replace")
-            assert rc == 0, f"Unexpected ncurses exit code: {rc}"
+            assert rc == 0, f"Unexpected ncurses exit code: {rc}\nOutput tail:\n{tail_txt[-4000:]}"
             assert "73 de KR4OYK-7" in tail_txt, f"Missing sign-off in stdout: {tail_txt!r}"
         finally:
             os.close(master_fd)

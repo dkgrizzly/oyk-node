@@ -66,6 +66,17 @@ bool parse_bool(const std::string& v, bool fallback) {
     return fallback;
 }
 
+int parse_int_safe(const std::string& v, int fallback) {
+    try {
+        std::size_t pos = 0;
+        int parsed = std::stoi(v, &pos, 10);
+        while (pos < v.size() && std::isspace(static_cast<unsigned char>(v[pos]))) ++pos;
+        return (pos == v.size()) ? parsed : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
 std::string resolve_cfg_subpath(const std::string& base_cfg_path, const std::string& raw) {
     namespace fs = std::filesystem;
     if (raw.empty()) return {};
@@ -510,7 +521,7 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
                 cfg.callsign = *parsed;
                 node_call_explicit_ssid = (val.find('-') != std::string::npos);
             } else if (key == "ssid") {
-                node_ssid_val = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                node_ssid_val = static_cast<uint8_t>(std::clamp(parse_int_safe(val, node_ssid_val), 0, 15));
                 node_ssid_set = true;
                 if (!node_call_explicit_ssid) {
                     cfg.callsign = ax25::Callsign(cfg.callsign.base(), node_ssid_val);
@@ -562,17 +573,17 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "allow_flash_logging" || key == "allow_logging_to_flash") {
                 cfg.allow_flash_logging = parse_bool(val, false);
             } else if (key == "paclen") {
-                cfg.paclen = static_cast<std::size_t>(std::clamp(std::stoi(val), 32, 256));
+                cfg.paclen = static_cast<std::size_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.paclen)), 32, 256));
             } else if (key == "maxframe") {
-                cfg.maxframe = static_cast<uint8_t>(std::clamp(std::stoi(val), 1, 7));
+                cfg.maxframe = static_cast<uint8_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.maxframe)), 1, 7));
             } else if (key == "t1_ms") {
-                cfg.t1_ms = static_cast<uint32_t>(std::max(250, std::stoi(val)));
+                cfg.t1_ms = static_cast<uint32_t>(std::max(250, parse_int_safe(val, static_cast<int>(cfg.t1_ms))));
             } else if (key == "n2_retries") {
-                cfg.n2_retries = static_cast<uint8_t>(std::clamp(std::stoi(val), 1, 20));
+                cfg.n2_retries = static_cast<uint8_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.n2_retries)), 1, 20));
             } else if (key == "idle_timeout_sec") {
-                cfg.idle_timeout_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+                cfg.idle_timeout_sec = static_cast<uint32_t>(std::max(0, parse_int_safe(val, static_cast<int>(cfg.idle_timeout_sec))));
             } else if (key == "beacon_interval_sec") {
-                cfg.beacon_interval_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+                cfg.beacon_interval_sec = static_cast<uint32_t>(std::max(0, parse_int_safe(val, static_cast<int>(cfg.beacon_interval_sec))));
             } else if (key == "ban") {
                 if (!val.empty()) {
                     cfg.banned_callsigns.push_back(val);
@@ -590,7 +601,7 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             if (key == "enabled") {
                 cfg.bbs.enabled = parse_bool(val, true);
             } else if (key == "ssid") {
-                cfg.bbs.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                cfg.bbs.ssid = static_cast<uint8_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.bbs.ssid)), 0, 15));
                 if (cfg.bbs.callsign.valid() && !bbs_call_explicit_ssid) {
                     cfg.bbs.callsign = ax25::Callsign(cfg.bbs.callsign.base(), cfg.bbs.ssid);
                 }
@@ -631,13 +642,13 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "welcome") {
                 cfg.bbs.welcome = val;
             } else if (key == "max_msg_bytes") {
-                cfg.bbs.max_msg_bytes = static_cast<std::size_t>(std::clamp(std::stoi(val), 256, 65536));
+                cfg.bbs.max_msg_bytes = static_cast<std::size_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.bbs.max_msg_bytes)), 256, 65536));
             }
         } else if (current_section == "chat") {
             if (key == "enabled") {
                 cfg.chat.enabled = parse_bool(val, true);
             } else if (key == "ssid") {
-                cfg.chat.ssid = static_cast<uint8_t>(std::clamp(std::stoi(val), 0, 15));
+                cfg.chat.ssid = static_cast<uint8_t>(std::clamp(parse_int_safe(val, static_cast<int>(cfg.chat.ssid)), 0, 15));
                 if (cfg.chat.callsign.valid() && !chat_call_explicit_ssid) {
                     cfg.chat.callsign = ax25::Callsign(cfg.chat.callsign.base(), cfg.chat.ssid);
                 }
@@ -680,10 +691,10 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "host" || key == "address") {
                 if (!val.empty()) cfg.rig.host = val;
             } else if (key == "port") {
-                int pv = std::clamp(std::stoi(val), 0, 65535);
+                int pv = std::clamp(parse_int_safe(val, static_cast<int>(cfg.rig.port)), 0, 65535);
                 cfg.rig.port = static_cast<uint16_t>(pv);
             } else if (key == "poll_interval_sec" || key == "keepalive_sec") {
-                cfg.rig.poll_interval_sec = static_cast<uint32_t>(std::max(0, std::stoi(val)));
+                cfg.rig.poll_interval_sec = static_cast<uint32_t>(std::max(0, parse_int_safe(val, static_cast<int>(cfg.rig.poll_interval_sec))));
             } else if (key == "notify") {
                 cfg.rig.notify = parse_bool(val, true);
             }
@@ -695,7 +706,7 @@ bool NodeConfig::load_from_file(const std::string& path, NodeConfig& out, std::s
             } else if (key == "protocol" || key == "type") {
                 cfg.logging.printer.protocol = val.empty() ? "generic" : to_lower(val);
             } else if (key == "baud") {
-                cfg.logging.printer.baud = static_cast<uint32_t>(std::max(300, std::stoi(val)));
+                cfg.logging.printer.baud = static_cast<uint32_t>(std::max(300, parse_int_safe(val, static_cast<int>(cfg.logging.printer.baud))));
             } else if (key == "level" || key == "mask") {
                 uint32_t mask = 0;
                 if (!parse_log_mask(val, mask)) {

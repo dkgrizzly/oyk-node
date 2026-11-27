@@ -509,6 +509,9 @@ void        oyk_theme_init_builtin(OykThemeConfig* out, int light_mode);
 void        oyk_theme_init_dos_native(OykThemeConfig* out);
 void        oyk_theme_make_clone_name(const OykConfig* cfg, int is_dark_base,
                                       char* out, size_t out_sz);
+void        oyk_theme_resolve_named(const OykConfig* cfg, const char* override_name,
+                                    int default_to_native, int os_prefers_dark,
+                                    OykThemeConfig* out);
 void        oyk_theme_resolve_effective(const OykConfig* cfg, int default_to_native,
                                         int os_prefers_dark, OykThemeConfig* out);
 oyk_u8      oyk_rgb_to_vga16(oyk_u32 rgb);
