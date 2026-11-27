@@ -31,6 +31,7 @@ option(BUILD_WIN16_PORT    "Add target to build 16-bit Windows 3.1 (OpenWatcom) 
 option(BUILD_WINDOWS_PORT  "Build 32/64-bit Windows native GUI executable (Win95..ME, NT 3.51..Win11)" OFF)
 option(BUILD_TINYTMUX_PORT   "Add target to build Teensy 4.1 / IMXRT1060 (TinyTMUX) firmware" OFF)
 option(BUILD_PICO_PORT       "Add targets to build Raspberry Pi Pico (RP2040/RP2350) firmware UF2s" OFF)
+option(BUILD_LYRA_PORT       "Add targets to build/verify Luckfox Lyra (RK3506 RT-Thread SMP + PicoCalc) firmware" OFF)
 option(BUILD_ESP32C6_PORT    "Add target to build ESP32-C6 (M5Stack Unit C6L) firmware via ESP-IDF" OFF)
 option(BUILD_MACCLASSIC_PORT "Add targets to build Classic Macintosh (68k + PPC Fat) via Retro68" OFF)
 option(BUILD_GSOS_PORT       "Add targets to build Apple IIGS GS/OS (65C816 S16) via vbcc" OFF)
@@ -43,6 +44,8 @@ else()
 endif()
 set(MTCP_DIR "$ENV{HOME}/mTCP" CACHE PATH "Path to Michael Brutman's mTCP source tree (for BUILD_MSDOS_PORT)")
 set(FREEDOS_BOOT_IMG "" CACHE FILEPATH "Path to FreeDOS/MS-DOS boot floppy/disk image for QEMU DOS unit tests")
+set(RTTHREAD_ROOT "$ENV{RTTHREAD_ROOT}" CACHE PATH "Path to RT-Thread source tree (for BUILD_LYRA_PORT)")
+set(RK3506_BSP_ROOT "$ENV{RK3506_BSP_ROOT}" CACHE PATH "Path to Rockchip RK3506 RT-Thread BSP (for BUILD_LYRA_PORT)")
 
 if(NOT WIN32)
     find_package(Threads REQUIRED)
@@ -459,6 +462,11 @@ if(BUILD_ESP32C6_PORT)
     )
 endif()
 
+# Optional Luckfox Lyra (Rockchip RK3506 RT-Thread SMP + PicoCalc) targets - built only if requested
+if(BUILD_LYRA_PORT)
+    add_subdirectory(ports/lyra)
+endif()
+
 if(BUILD_MACCLASSIC_PORT)
     add_subdirectory(ports/macclassic)
 endif()
@@ -797,6 +805,77 @@ if(BUILD_TESTS AND NOT WIN32)
     target_compile_options(oyk_esp32c6_tests PRIVATE -Wall -Wextra -Wpedantic)
     oyk_apply_host_hardening(oyk_esp32c6_tests)
     add_test(NAME oyk_esp32c6_tests COMMAND oyk_esp32c6_tests)
+
+    # Strict C++98 + C99 host verification of Luckfox Lyra (RK3506 RT-Thread SMP & ClockworkPi PicoCalc)
+    add_executable(oyk_lyra_tests
+        tests/test_lyra.cpp
+        ports/lyra/board_lyra.cpp
+        ports/lyra/lyra_fs.cpp
+        ports/lyra/lyra_radio.cpp
+        ports/lyra/lyra_net_bridge.cpp
+        ports/lyra/lyra_console.cpp
+        ports/lyra/lyra_picocalc_lcd.cpp
+        ports/lyra/lyra_picocalc_kbd.cpp
+        ports/lyra/lyra_picocalc_audio.cpp
+        ports/lyra/lyra_picocalc_console.cpp
+        ports/pico/board_pico.cpp
+        ports/pico/pico_psram.cpp
+        ports/pico/pico_fs.cpp
+        ports/pico/pico_radio.cpp
+        ports/pico/pico_net_bridge.cpp
+        ports/pico/pico_console.cpp
+        ports/pico/pico_picocalc_lcd.cpp
+        ports/pico/pico_picocalc_kbd.cpp
+        ports/pico/pico_picocalc_audio.cpp
+        ports/pico/pico_picocalc_console.cpp
+        third_party/oyk-vt100/src/oyk_vt100.c
+        third_party/oyk-vt100/src/oyk_vt_font.c
+        third_party/oyk-vt100/src/vt_font_4x8.c
+        third_party/oyk-vt100/src/vt_font_6x10.c
+        third_party/oyk-vt100/src/oyk_vt_fb.c
+        ports/tinytmux/oyk_tinytmux/oyk_ppp.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_tui.cpp
+        ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
+    )
+    target_include_directories(oyk_lyra_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/tinytmux/oyk_tinytmux
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/lyra
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/pico
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/oyk-vt100/include
+    )
+    set_target_properties(oyk_lyra_tests PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_definitions(oyk_lyra_tests PRIVATE
+        OYK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        OYK_VT_ENABLE_256COLOR=1
+        OYK_VT_ENABLE_TRUECOLOR=0
+        OYK_VT_MAX_COLS=80
+        OYK_VT_MAX_ROWS=48
+    )
+    target_compile_options(oyk_lyra_tests PRIVATE -Wall -Wextra -Wpedantic)
+    oyk_apply_host_hardening(oyk_lyra_tests)
+    add_test(NAME oyk_lyra_tests COMMAND oyk_lyra_tests)
+
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_test(NAME oyk_lyra_tui_parity_test
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_lyra_tui_parity.py
+                    $<TARGET_FILE:oyk_lyra_tests>
+        )
+    endif()
 
     # Seeded mutation fuzz harness across AX.25, KISS, config, banlist, YAPP, terminal, and PPP parsers
     add_executable(oyk_fuzz_tests

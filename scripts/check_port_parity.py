@@ -194,11 +194,17 @@ def check_unit_test_parity(errors):
         "tests/test_amiga_policy.cpp",
         "tests/test_atarist_policy.cpp",
         "tests/test_esp32c6.cpp",
+        "tests/test_lyra.cpp",
     )
     for rel_path in cpp_test_files:
         src = read_text(rel_path)
         if "oyk_run_shared_port_parity_tests" not in src:
             errors.append(f"{rel_path}: missing call to oyk_run_shared_port_parity_tests")
+
+    lyra_src = read_text("tests/test_lyra.cpp")
+    for req in ("test_picocalc_cross_port_ui_parity", "test_lyra_standalone_ui_parity"):
+        if req not in lyra_src:
+            errors.append(f"tests/test_lyra.cpp: missing parity suite '{req}'")
 
     gsos_native = read_text("ports/gsos/test_gsos.c")
     for req in (

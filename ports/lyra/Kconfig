@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
+menuconfig PKG_USING_OYK_NODE_LYRA
+    bool "OYK Amateur Radio Packet Node (Luckfox Lyra / PicoCalc)"
+    default n
+
+if PKG_USING_OYK_NODE_LYRA
+
+    choice
+        prompt "Target Luckfox Lyra Board Profile"
+        default PKG_OYK_NODE_LYRA_BOARD_PICOCALC_LYRA
+
+        config PKG_OYK_NODE_LYRA_BOARD_LYRA
+            bool "Luckfox Lyra (RK3506G2 128MB DDR3L, USB RNDIS/PPP, UART console)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_LYRA_B
+            bool "Luckfox Lyra B (RK3506G2 128MB, 256MB SPI NAND, USB RNDIS/PPP)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_LYRA_PLUS
+            bool "Luckfox Lyra Plus (RK3506G2 128MB, 256MB SPI NAND, RMII Ethernet)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_LYRA_ZERO_W
+            bool "Luckfox Lyra Zero W (RK3506B 512MB, 256MB SPI NAND, Wi-Fi 6 + BLE 5.2)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_PICOCALC_LYRA
+            bool "ClockworkPi PicoCalc + Luckfox Lyra (320x320 LCD + I2C KBD)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_PICOCALC_LYRA_B
+            bool "ClockworkPi PicoCalc + Luckfox Lyra B (256MB SPI NAND)"
+
+        config PKG_OYK_NODE_LYRA_BOARD_PICOCALC_LYRA_PLUS
+            bool "ClockworkPi PicoCalc + Luckfox Lyra Plus (RMII Ethernet)"
+    endchoice
+
+    config PKG_OYK_NODE_PICOCALC_AUDIO
+        bool "Enable RM_IO12 hardware PWM BEL audio (unmodified boards may crackle)"
+        default n
+
+    config PKG_OYK_NODE_VT_256COLOR
+        bool "Enable xterm-256 palette in oyk-vt100"
+        default y
+
+    config PKG_OYK_NODE_VT_TRUECOLOR
+        bool "Enable 24-bit TrueColor SGR in oyk-vt100"
+        default n
+
+endif

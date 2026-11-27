@@ -1,0 +1,138 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 KR4OYK - David Kuder */
+
+#include "lyra_picocalc_console.hpp"
+
+#include <stdio.h>
+#include <string.h>
+
+LyraPicoCalcConsole::LyraPicoCalcConsole()
+    : console_(NULL), zoomed_6x10_(0), pan_col_(0), last_bat_pct_(-1), last_ms_(0UL) {}
+
+void LyraPicoCalcConsole::init(LyraConsole* console) {
+    console_ = console;
+    zoomed_6x10_ = 0;
+    pan_col_ = 0;
+    last_ms_ = 0UL;
+
+    lcd_.init();
+    kbd_.init();
+    audio_.init();
+    last_bat_pct_ = kbd_.battery_percent();
+
+    OykVtRenderer r;
+    lcd_.fill_renderer(&r);
+    OykVtCallbacks cbs;
+    memset(&cbs, 0, sizeof(cbs));
+    cbs.ctx = this;
+    cbs.on_reply = LyraPicoCalcConsole::vt_reply_trampoline;
+    cbs.on_bel = LyraPicoCalcConsole::vt_bel_trampoline;
+
+    oyk_vt100_init(&vt_, oyk_vt_font_4x8(), 80, 40, &r, &cbs);
+    if (console_) {
+        console_->set_battery_percent(last_bat_pct_);
+    }
+}
+
+void LyraPicoCalcConsole::connect_and_probe() {
+    if (!console_) return;
+    console_->on_usb_connect();
+#if OYK_VT_ENABLE_256COLOR
+    static const oyk_u8 kInitReplies[] = "\033[?62;22c\033[>0;1;0c\033[40;80R";
+#else
+    static const oyk_u8 kInitReplies[] = "\033[?62;22c\033[40;80R";
+#endif
+    console_->feed_input(kInitReplies, sizeof(kInitReplies) - 1U);
+    oyk_vt100_flush(&vt_);
+}
+
+void LyraPicoCalcConsole::vt_reply_trampoline(void* ctx, const char* data, size_t len) {
+    LyraPicoCalcConsole* self = static_cast<LyraPicoCalcConsole*>(ctx);
+    if (self && self->console_ && data && len > 0) {
+        self->console_->feed_input(reinterpret_cast<const oyk_u8*>(data), len);
+    }
+}
+
+void LyraPicoCalcConsole::vt_bel_trampoline(void* ctx) {
+    LyraPicoCalcConsole* self = static_cast<LyraPicoCalcConsole*>(ctx);
+    if (self) {
+        self->audio_.trigger_bel(self->last_ms_);
+    }
+}
+
+size_t LyraPicoCalcConsole::tx_trampoline(const char* data, size_t len, void* ctx) {
+    LyraPicoCalcConsole* self = static_cast<LyraPicoCalcConsole*>(ctx);
+    if (!self || !data || len == 0) return 0;
+    oyk_vt100_write(&self->vt_, data, len);
+    return len;
+}
+
+void LyraPicoCalcConsole::flush() {
+    oyk_vt100_flush(&vt_);
+}
+
+void LyraPicoCalcConsole::toggle_font() {
+    zoomed_6x10_ = !zoomed_6x10_;
+    if (zoomed_6x10_) {
+        pan_col_ = 0;
+        oyk_vt100_set_font(&vt_, oyk_vt_font_6x10());
+        oyk_vt100_resize(&vt_, 80, 32);
+        oyk_vt100_set_viewport(&vt_, 53, 32, pan_col_);
+        if (console_) {
+            static const oyk_u8 kCpr32[] = "\033[32;80R";
+            console_->feed_input(kCpr32, sizeof(kCpr32) - 1U);
+        }
+    } else {
+        pan_col_ = 0;
+        oyk_vt100_set_font(&vt_, oyk_vt_font_4x8());
+        oyk_vt100_resize(&vt_, 80, 40);
+        oyk_vt100_set_viewport(&vt_, 80, 40, 0);
+        if (console_) {
+            static const oyk_u8 kCpr40[] = "\033[40;80R";
+            console_->feed_input(kCpr40, sizeof(kCpr40) - 1U);
+        }
+    }
+    if (console_) console_->render();
+    oyk_vt100_flush(&vt_);
+}
+
+void LyraPicoCalcConsole::pan_horizontal(int delta_cols) {
+    if (!zoomed_6x10_) return;
+    int np = pan_col_ + delta_cols;
+    if (np < 0) np = 0;
+    if (np > 27) np = 27;
+    if (np != pan_col_) {
+        pan_col_ = np;
+        oyk_vt100_set_viewport(&vt_, 53, 32, static_cast<int16_t>(pan_col_));
+        oyk_vt100_flush(&vt_);
+    }
+}
+
+void LyraPicoCalcConsole::poll_tick(oyk_u32 now_ms) {
+    last_ms_ = now_ms;
+    audio_.tick(now_ms);
+
+    oyk_u8 in_buf[64];
+    int act = LYRA_PICOCALC_ACT_NONE;
+    size_t got = kbd_.poll_vt100(now_ms, in_buf, sizeof(in_buf), &act);
+    if (act == LYRA_PICOCALC_ACT_TOGGLE_FONT) {
+        toggle_font();
+    } else if (act == LYRA_PICOCALC_ACT_PAN_LEFT) {
+        pan_horizontal(-8);
+    } else if (act == LYRA_PICOCALC_ACT_PAN_RIGHT) {
+        pan_horizontal(8);
+    }
+    if (got > 0 && console_) {
+        console_->feed_input(in_buf, got);
+    }
+
+    int bat = kbd_.battery_percent();
+    if (bat != last_bat_pct_ && console_) {
+        last_bat_pct_ = bat;
+        console_->set_battery_percent(bat);
+        if (console_->view_mode() == LYRA_VIEW_CONSOLE) {
+            console_->render();
+        }
+    }
+    oyk_vt100_flush(&vt_);
+}

@@ -3,7 +3,7 @@
 
 # Port Feature Matrix
 
-Comparison of features, transports, operator UI workflows, and verification coverage across all **14 `oyk-node` build targets** (12 port families).
+Comparison of features, transports, operator UI workflows, and verification coverage across all **15 `oyk-node` build targets** (13 port families).
 
 ## Legend
 
@@ -39,21 +39,21 @@ Comparison of features, transports, operator UI workflows, and verification cove
 
 ## 2. Embedded & Mobile Ports
 
-| Feature / Subsystem | [Teensy 4.1 TinyTMUX](../../ports/tinytmux/README.md) | [Raspberry Pi Pico](../../ports/pico/README.md) | [ESP32-C6 Unit C6L](../../ports/esp32c6/README.md) | [Android Jetpack Compose](../../ports/android/) |
-| --- | --- | --- | --- | --- |
-| **Target Hardware** | IMXRT1062 (600 MHz, 8 UART) | RP2040 / RP2350 (`pico_w`, `pico2_w`, `2350B`, `PicoCalc`) | ESP32-C6 + SX1262 + 64x48 OLED | Android NDK + Compose |
-| **Core Engine** | C++98 cooperative | C++98 cooperative | C++98 cooperative (`ESP-IDF 5.4`) | C++20 `NodeEngine` + JNI |
-| **AX.25 L2 / BBS / CHAT / Bans** | ● | ● | ● | ● |
-| **`axudp` / `axip` / `kiss-tcp` / `telnet`** | ● (`QNEthernet`/lwIP + `raw_new(93)`) | ● (lwIP `CYW43439` / optional `RM2`) [3] | ● (Wi-Fi 6 lwIP) | ● (POSIX NDK sockets) |
-| **`kiss-serial` / UARTs** | ● (`ser0`–`ser7` + RTS/CTS) | ● (`ser0`–`ser1`) | ● (SX1262 `lora0` + Grove `ser0`) | ◐ USB/BLE KISS roadmap [4] |
-| **PPP & USB Host (RadioFoundry UDP 4191)** | ● (`PPP` + `USBHost_t36` ECM/NCM/ACM) | ● (`PPP` + `BTstack` SPP/BLE) | ● (Grove `ser0` PPP + BLE 5 KISS) | — |
-| **Console / UI Model** | VT100/VT220 USB Serial | VT100/VT220 USB CDC + PicoCalc 320x320 LCD/KBD (`oyk-vt100`) | VT340 USB Serial/JTAG + 4-Page OLED | Material 3 Compose + Drawer |
-| **`oyk_gui` + `oyk_term` (`Ctrl+A` / YAPP)** | ● | ● | ● | ● (Material mobile layout) [5] |
-| **Themes + Whole-Screen Live Preview** | ● | ● | ● | ● |
-| **Storage / Memory Extensions** | microSD + QSPI CS1 + 4 MB LittleFS + PSRAM | microSD + LittleFS + QMI PSRAM (`2350B`) | 16 MB Flash LittleFS + `FORMAT` guard | App-scoped storage |
-| **Hardware Diagnostics & Bootloader UI** | ● (March C- PSRAM, Format, HalfKay) | ● (PSRAM test, Format, `BOOTSEL`) | ● (`PI4IO` RF, WS2812C, Buzzer, Format) | — |
-| **Hamlib `rigctld` / Direct Printer Log** | ● (TCP + USB Printer / Serial) | ● (TCP + Serial Printer) | ● (TCP `rigctld` + `ser0` Printer) | ● (TCP `rigctld`) |
-| **Host Tests & UI Gallery Capture** | ● (`oyk_tinytmux_tests`, `tinytmux`) | ● (`oyk_pico_tests`, `pico`, `picocalc`) | ● (`oyk_esp32c6_tests`, `esp32c6`) | ● (Robolectric `android`) |
+| Feature / Subsystem | [Teensy 4.1 TinyTMUX](../../ports/tinytmux/README.md) | [Raspberry Pi Pico](../../ports/pico/README.md) | [Luckfox Lyra](../../ports/lyra/README.md) | [ESP32-C6 Unit C6L](../../ports/esp32c6/README.md) | [Android Jetpack Compose](../../ports/android/) |
+| --- | --- | --- | --- | --- | --- |
+| **Target Hardware** | IMXRT1062 (600 MHz, 8 UART) | RP2040 / RP2350 (`pico_w`, `pico2_w`, `2350B`, `PicoCalc`) | RK3506G2/B (`lyra*`, `lyra_zero_w`, `picocalc_lyra*`) | ESP32-C6 + SX1262 + 64x48 OLED | Android NDK + Compose |
+| **Core Engine** | C++98 cooperative | C++98 cooperative | C++98 (`RT-Thread SMP + rk-hal`) | C++98 cooperative (`ESP-IDF 5.4`) | C++20 `NodeEngine` + JNI |
+| **AX.25 L2 / BBS / CHAT / Bans** | ● | ● | ● | ● | ● |
+| **`axudp` / `axip` / `kiss-tcp` / `telnet`** | ● (`QNEthernet`/lwIP + `raw_new(93)`) | ● (lwIP `CYW43439` / optional `RM2`) [3] | ● (`SAL`/`lwIP`: RMII Eth, Wi-Fi 6, USB RNDIS) | ● (Wi-Fi 6 lwIP) | ● (POSIX NDK sockets) |
+| **`kiss-serial` / UARTs** | ● (`ser0`–`ser7` + RTS/CTS) | ● (`ser0`–`ser1`) | ● (`ser0`–`ser1` standalone; `ser0` PicoCalc) | ● (SX1262 `lora0` + Grove `ser0`) | ◐ USB/BLE KISS roadmap [4] |
+| **PPP & USB Host (RadioFoundry UDP 4191)** | ● (`PPP` + `USBHost_t36` ECM/NCM/ACM) | ● (`PPP` + `BTstack` SPP/BLE) | ● (`PPP` + BLE 5.2 + USB OTG RNDIS) | ● (Grove `ser0` PPP + BLE 5 KISS) | — |
+| **Console / UI Model** | VT100/VT220 USB Serial | VT100/VT220 USB CDC + PicoCalc 320x320 LCD/KBD (`oyk-vt100`) | VT100/xterm256 `uart0` + PicoCalc 320x320 LCD/KBD (`oyk-vt100`) | VT340 USB Serial/JTAG + 4-Page OLED | Material 3 Compose + Drawer |
+| **`oyk_gui` + `oyk_term` (`Ctrl+A` / YAPP)** | ● | ● | ● | ● | ● (Material mobile layout) [5] |
+| **Themes + Whole-Screen Live Preview** | ● | ● | ● | ● | ● |
+| **Storage / Memory Extensions** | microSD + QSPI CS1 + 4 MB LittleFS + PSRAM | microSD + LittleFS + QMI PSRAM (`2350B`) | DFS microSD FatFS + 256 MB SPI NAND LittleFS | 16 MB Flash LittleFS + `FORMAT` guard | App-scoped storage |
+| **Hardware Diagnostics & Bootloader UI** | ● (March C- PSRAM, Format, HalfKay) | ● (PSRAM test, Format, `BOOTSEL`) | ● (RK3506 SoC diag, Format, Reboot/STM32 Power-Off) | ● (`PI4IO` RF, WS2812C, Buzzer, Format) | — |
+| **Hamlib `rigctld` / Direct Printer Log** | ● (TCP + USB Printer / Serial) | ● (TCP + Serial Printer) | ● (TCP + Serial Printer) | ● (TCP `rigctld` + `ser0` Printer) | ● (TCP `rigctld`) |
+| **Host Tests & UI Gallery Capture** | ● (`oyk_tinytmux_tests`, `tinytmux`) | ● (`oyk_pico_tests`, `pico`, `picocalc`) | ● (`oyk_lyra_tests`, `oyk_lyra_tui_parity_test`, ARMv7 verify) | ● (`oyk_esp32c6_tests`, `esp32c6`) | ● (Robolectric `android`) |
 
 ---
 

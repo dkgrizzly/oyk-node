@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+
+import os
+from building import *
+
+cwd = GetCurrentDir()
+root_dir = os.path.abspath(os.path.join(cwd, '..', '..'))
+compat_dir = os.path.join(root_dir, 'ports', 'compat')
+ppp_dir = os.path.join(root_dir, 'ports', 'tinytmux', 'oyk_tinytmux')
+vt_dir = os.path.join(root_dir, 'third_party', 'oyk-vt100')
+
+src = [
+    os.path.join(cwd, 'board_lyra.cpp'),
+    os.path.join(cwd, 'lyra_fs.cpp'),
+    os.path.join(cwd, 'lyra_radio.cpp'),
+    os.path.join(cwd, 'lyra_net_bridge.cpp'),
+    os.path.join(cwd, 'lyra_console.cpp'),
+    os.path.join(cwd, 'lyra_picocalc_lcd.cpp'),
+    os.path.join(cwd, 'lyra_picocalc_kbd.cpp'),
+    os.path.join(cwd, 'lyra_picocalc_audio.cpp'),
+    os.path.join(cwd, 'lyra_picocalc_console.cpp'),
+    os.path.join(cwd, 'main_lyra.cpp'),
+    os.path.join(compat_dir, 'oyk_portable.cpp'),
+    os.path.join(compat_dir, 'oyk_yapp.cpp'),
+    os.path.join(compat_dir, 'oyk_rig.cpp'),
+    os.path.join(compat_dir, 'oyk_printer.cpp'),
+    os.path.join(compat_dir, 'oyk_tui.cpp'),
+    os.path.join(compat_dir, 'oyk_term.cpp'),
+    os.path.join(compat_dir, 'oyk_gui.cpp'),
+    os.path.join(compat_dir, 'oyk_gui_theme.cpp'),
+    os.path.join(ppp_dir, 'oyk_ppp.cpp'),
+    os.path.join(vt_dir, 'src', 'oyk_vt100.c'),
+    os.path.join(vt_dir, 'src', 'oyk_vt_font.c'),
+    os.path.join(vt_dir, 'src', 'vt_font_4x8.c'),
+    os.path.join(vt_dir, 'src', 'vt_font_6x10.c'),
+    os.path.join(vt_dir, 'src', 'oyk_vt_fb.c'),
+]
+
+CPPPATH = [
+    cwd,
+    compat_dir,
+    ppp_dir,
+    os.path.join(vt_dir, 'include'),
+]
+
+CPPDEFINES = [
+    'OYK_PORTABLE_NODE=1',
+    'OYK_LYRA_RTTHREAD=1',
+    'OYK_VT_MAX_COLS=80',
+    'OYK_VT_MAX_ROWS=48',
+]
+
+if GetDepend(['PKG_OYK_NODE_VT_256COLOR']):
+    CPPDEFINES.append('OYK_VT_ENABLE_256COLOR=1')
+else:
+    CPPDEFINES.append('OYK_VT_ENABLE_256COLOR=0')
+
+if GetDepend(['PKG_OYK_NODE_VT_TRUECOLOR']):
+    CPPDEFINES.append('OYK_VT_ENABLE_TRUECOLOR=1')
+else:
+    CPPDEFINES.append('OYK_VT_ENABLE_TRUECOLOR=0')
+
+group = DefineGroup('oyk_node_lyra', src, depend=['PKG_USING_OYK_NODE_LYRA'],
+                    CPPPATH=CPPPATH, CPPDEFINES=CPPDEFINES)
+
+Return('group')

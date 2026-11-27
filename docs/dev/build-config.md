@@ -15,7 +15,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | --- | --- | --- | --- |
 | `BUILD_NCURSES_UI` | `ON` | Host Linux / POSIX | Build `oyk-node` with ncurses TUI (`OFF` builds `--headless`-only binary) |
 | `BUILD_GTK2_UI` | `ON` | Host Linux / X11 | Auto-build `oyk-node-gtk` when `pkg-config` finds `gtk+-2.0` |
-| `BUILD_TESTS` | `ON` | Host | Build all 11 CTest unit, UI, bridge, policy, and fuzz targets |
+| `BUILD_TESTS` | `ON` | Host | Build all 14 CTest unit, UI, bridge, parity, policy, and fuzz targets |
 | `OYK_WERROR` | `OFF` | Native host targets | Add `-Werror` (`-Wall -Wextra -Wpedantic -Werror`) to host binaries & tests |
 | `OYK_SANITIZE` | `OFF` | Native host targets | Enable `-fsanitize=address,undefined -fno-omit-frame-pointer` (ASan + UBSan + LSan) |
 | `BUILD_MSDOS_PORT` | `OFF` | MS-DOS 16-bit | Enable `oyk-node-dos`, `oyk-dos-tests-build`, and optional QEMU `oyk_dos_qemu_tests` |
@@ -24,6 +24,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | `BUILD_WINDOWS_PORT` | `OFF` | Windows 32/64-bit | Enable `oykw32.exe` / `oykw64.exe` (MinGW-w64 cross-compile or MSVC native) |
 | `BUILD_TINYTMUX_PORT` | `OFF` | Teensy 4.1 | Enable IMXRT1060 Teensyduino sketch build via `arduino-builder` |
 | `BUILD_PICO_PORT` | `OFF` | Raspberry Pi Pico | Enable `oyk-pico` UF2 builds (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_*`) |
+| `BUILD_LYRA_PORT` | `OFF` | Luckfox Lyra | Enable `oyk_lyra_arm_verify` (`arm-none-eabi` Cortex-A7) and optional `oyk_lyra_rtthread` BSP target |
 | `BUILD_ESP32C6_PORT` | `OFF` | ESP32-C6 (Unit C6L) | Enable `oyk-esp32c6` firmware build via ESP-IDF v5.x (`idf.py build`) |
 | `BUILD_MACCLASSIC_PORT` | `OFF` | Classic Macintosh | Enable 68k + PPC Fat app build via Retro68 (and Mini vMac CTest runner) |
 | `BUILD_GSOS_PORT` | `OFF` | Apple IIGS GS/OS | Enable `$B3` OMF v2 S16 build via `vbcc` `vc +iigs` (and GSplus CTest runner) |
@@ -39,6 +40,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | `FREEDOS_BOOT_IMG` | MS-DOS QEMU | Boot floppy/disk image for `oyk_dos_qemu_tests` (defaults to bundled image if present) |
 | `ARDUINO_DIR` | TinyTMUX | Arduino 1.8.19 + Teensyduino 1.62 installation directory |
 | `PICO_SDK_PATH` | Pico | Pico SDK checkout directory (auto-discovers `~/.pico-sdk` or `~/pico-sdk`) |
+| `RTTHREAD_ROOT` / `RK3506_BSP_ROOT` | Luckfox Lyra | Paths to RT-Thread source tree and Rockchip RK3506 BSP (`SConstruct`) |
 | `IDF_PATH` | ESP32-C6 | ESP-IDF v5.x checkout directory (auto-discovers `~/opt/esp-idf`) |
 | `OYK_MACOS_PORTABLE_CORE` | macOS (`ppc`) | Use `OykPortableNode` (C++98) instead of C++20 `NodeEngine` on legacy OS X 10.4–10.6 |
 
@@ -53,6 +55,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | **Windows 16/32/64** | `wmake -C ports/windows -f makefile.win16` / `.win32` | `WATCOM_DIR=...`; or MinGW-w64 via CMake ([README](../../ports/windows/README.md)) |
 | **Teensy 4.1 TinyTMUX** | `cmake -S ports/tinytmux -B build-t41 && cmake --build build-t41` | `ARDUINO_DIR=...`, `OYK_TINYTMUX_FETCH_QNETHERNET=ON\|OFF` ([README](../../ports/tinytmux/README.md)) |
 | **Raspberry Pi Pico** | `cmake -S ports/pico -B build-pico -DPICO_BOARD=<board>` | `PICO_BOARD` (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_pico2_w`, `picocalc_pico_w`, `picocalc_pico2`, `picocalc_pico`) ([README](../../ports/pico/README.md)) |
+| **Luckfox Lyra** | `cmake -S . -B build-lyra -DBUILD_LYRA_PORT=ON` | `oyk_lyra_arm_verify` (Cortex-A7) & `oyk_lyra_rtthread` (`scons`, `RK3506_BSP_ROOT`, `Kconfig` profiles `lyra*` / `picocalc_lyra*`) ([README](../../ports/lyra/README.md)) |
 | **ESP32-C6 Unit C6L** | `(cd ports/esp32c6 && idf.py set-target esp32c6 && idf.py build)` | Requires ESP-IDF v5.x (`IDF_PATH` / `IDF_TOOLS_PATH`) ([README](../../ports/esp32c6/README.md)) |
 | **Android** | `(cd ports/android && ./gradlew testDebugUnitTest)` | `ANDROID_SDK_ROOT` / `ANDROID_HOME` |
 | **Classic Macintosh** | `make -C ports/macclassic` | `RETRO68_PREFIX` (68k + PPC Fat binary + Mini vMac runner) ([README](../../ports/macclassic/README.md)) |

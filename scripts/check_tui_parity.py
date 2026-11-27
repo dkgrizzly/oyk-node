@@ -70,7 +70,7 @@ def load_port_captures(cap_dir: str) -> dict:
             loader = meta_to_lines_and_bg
         else:
             continue
-        for prefix in ("ncurses", "dos_gfx", "dos", "tinytmux", "pico", "esp32c6"):
+        for prefix in ("ncurses", "dos_gfx", "dos", "tinytmux", "pico", "esp32c6", "lyra"):
             tag = prefix + "_"
             if stem.startswith(tag):
                 flow = stem[len(tag):]

@@ -3843,6 +3843,7 @@ static int bbs_posix_within_root(const char* root, const char* cand,
 #if !defined(_WIN32) && !defined(_WIN64) && !defined(__DOS__) && !defined(__MSDOS__) && \
     !defined(_MSDOS) && !defined(__WATCOMC__) && !defined(OYK_TARGET_IMXRT1060) && \
     !defined(TEENSYDUINO) && !defined(PICO_BOARD) && !defined(ESP_PLATFORM) && \
+    !defined(__RTTHREAD__) && !defined(OYK_LYRA_RTTHREAD) && \
     !defined(OYK_TARGET_MACCLASSIC) && !defined(__AMIGA__) && !defined(__atarist__) && !defined(macintosh)
     char* rbuf = new char[4096];
     char* cbuf = new char[4096];

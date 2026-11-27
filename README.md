@@ -7,7 +7,7 @@ A modular Amateur Radio AX.25 Packet Node written in C++ with native local opera
 
 ## Supported Platforms & Ports
 
-See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○` / `—` across all **14 build targets**) and [UI Gallery](docs/user/ui-gallery.md) for side-by-side screenshots.
+See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○` / `—` across all **15 build targets**) and [UI Gallery](docs/user/ui-gallery.md) for side-by-side screenshots.
 
 | Category | Target / Port | UI / Hardware Stack | Documentation |
 | --- | --- | --- | --- |
@@ -18,6 +18,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Embedded** | Teensy 4.1 (`IMXRT1062` / TinyTMUX) | VT100/VT220 USB Serial, 8 UARTs, `QNEthernet`, USBHost RadioFoundry PPP | [ports/tinytmux/README.md](ports/tinytmux/README.md) |
 | **Embedded** | Raspberry Pi Pico (`RP2040` / `RP2350`) | VT100/VT220 USB CDC, 2 UARTs, `CYW43439`/`RM2` Wi-Fi + BTstack | [ports/pico/README.md](ports/pico/README.md) |
 | **Embedded** | ClockworkPi PicoCalc (`Pico`/`Pico 2`) | 320x320 SPI1 IPS (`oyk-vt100` 4x8 80x40 / 6x10 53x32), I2C KBD, 8 MB PSRAM, `ser0` | [ports/pico/README.md](ports/pico/README.md) |
+| **Embedded** | Luckfox Lyra (`RK3506` + `PicoCalc`) | RT-Thread SMP + `rk-hal`, 7 profiles (`lyra*` / `picocalc_lyra*`), `oyk-vt100` 320x320 LCD, RMII/Wi-Fi 6/RNDIS, DFS SD/NAND | [ports/lyra/README.md](ports/lyra/README.md) |
 | **Embedded** | ESP32-C6 (`M5Stack Unit C6L`) | SX1262 LoRa KISS, 64x48 SPI OLED, Wi-Fi 6 + BLE 5, VT340 USB JTAG | [ports/esp32c6/README.md](ports/esp32c6/README.md) |
 | **Mobile** | Android | Jetpack Compose + Material 3 + C++20 NDK `NodeEngine` | [ports/android/](ports/android/) |
 | **Retro** | MS-DOS Text (8088/V20 640 KB) | Direct MDA/CGA/EGA/VGA video RAM (`INT 33h`, optional mTCP/PPP) | [ports/dos/README.md](ports/dos/README.md) |
