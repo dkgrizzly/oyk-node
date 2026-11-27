@@ -20,7 +20,7 @@ Options:
   --targets <csv>    Comma-separated subset of targets to build:
                      linux-ncurses,linux-gtk,win64,win32,win16,dos,dos-gfx,teensy41,
                      pico_w,pico2_w,waveshare_core2350b,pimoroni_pga2350,
-                     macclassic,gsos,amiga,android-playstore,android-sideload
+                     macclassic,gsos,amiga,atarist,android-playstore,android-sideload
   --skip-src         Do not generate source release archives
   -h, --help         Show this help
 EOF
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic gsos amiga android-playstore android-sideload"
+ALL_VALID_TARGETS="linux-ncurses linux-gtk win64 win32 win16 dos dos-gfx teensy41 pico_w pico2_w waveshare_core2350b pimoroni_pga2350 macclassic gsos amiga atarist android-playstore android-sideload"
 
 target_requested() {
     local t="$1"
@@ -626,6 +626,23 @@ if target_requested "amiga"; then
         PACKAGED+=("oyknode-${VER}-amiga.zip")
     else
         SKIPPED+=("amiga (m68k-amigaos-g++ toolchain not found in ${AMIGA_GCC_DIR})")
+    fi
+fi
+
+# 4f. Atari ST / TT GEM (m68k via m68k-atari-mintelf-g++)
+MINTELF_DIR="${MINTELF_PREFIX:-${HOME}/opt/mintelf}"
+if target_requested "atarist"; then
+    if [[ -x "${MINTELF_DIR}/usr/bin/m68k-atari-mintelf-g++" ]]; then
+        echo "Building Atari ST GEM 68k binary..."
+        BUILD_AT="${TMP_WORK}/build-atarist"
+        make -C "${ROOT_DIR}/ports/atarist" MINTELF_PREFIX="${MINTELF_DIR}" BUILD_DIR="${BUILD_AT}" all >/dev/null
+        st="$(stage_binary_tree "atarist" "atarist")"
+        cp "${ROOT_DIR}/ports/atarist/README.md" "${st}/ATARIST-README.md"
+        cp "${BUILD_AT}/OYKNODE.PRG" "${BUILD_AT}/OYKTEST.PRG" "${st}/"
+        package_zip "atarist"
+        PACKAGED+=("oyknode-${VER}-atarist.zip")
+    else
+        SKIPPED+=("atarist (m68k-atari-mintelf-g++ toolchain not found in ${MINTELF_DIR})")
     fi
 fi
 

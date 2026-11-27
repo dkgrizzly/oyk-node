@@ -22,6 +22,7 @@ option(BUILD_PICO_PORT       "Add targets to build Raspberry Pi Pico (RP2040/RP2
 option(BUILD_MACCLASSIC_PORT "Add targets to build Classic Macintosh (68k + PPC Fat) via Retro68" OFF)
 option(BUILD_GSOS_PORT       "Add targets to build Apple IIGS GS/OS (65C816 S16) via vbcc" OFF)
 option(BUILD_AMIGA_PORT      "Add targets to build Amiga Workbench (m68k OS 3.1/2.04/1.3) via amiga-gcc" OFF)
+option(BUILD_ATARIST_PORT    "Add targets to build Atari ST / TT GEM (m68k PRG) via m68k-atari-mintelf-g++" OFF)
 if(APPLE)
     option(BUILD_MACOS_PORT "Build native macOS AppKit port (PowerPC, Intel, Apple Silicon)" ON)
 else()
@@ -430,6 +431,10 @@ if(BUILD_AMIGA_PORT)
     add_subdirectory(ports/amiga)
 endif()
 
+if(BUILD_ATARIST_PORT)
+    add_subdirectory(ports/atarist)
+endif()
+
 if(BUILD_MACOS_PORT)
     add_subdirectory(ports/macos)
 endif()
@@ -591,6 +596,37 @@ if(BUILD_TESTS AND NOT WIN32)
     if(BUILD_AMIGA_PORT AND EXISTS "/usr/bin/fs-uae")
         add_test(NAME oyk_amiga_emulator_tests
             COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/amiga/run_fsuae_test.sh --unit-tests
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endif()
+
+    # Host C++98 verification of Atari ST/TT display tiers, VDI RGB conversion, and 4-plane hardware-VDI color mapping
+    add_executable(oyk_atarist_tests
+        tests/test_atarist_policy.cpp
+        ports/atarist/atari_policy.cpp
+        ports/compat/oyk_portable.cpp
+        ports/compat/oyk_yapp.cpp
+        ports/compat/oyk_rig.cpp
+        ports/compat/oyk_printer.cpp
+        ports/compat/oyk_term.cpp
+        ports/compat/oyk_gui.cpp
+        ports/compat/oyk_gui_theme.cpp
+    )
+    target_include_directories(oyk_atarist_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/atarist
+        ${CMAKE_CURRENT_SOURCE_DIR}/ports/compat
+    )
+    set_target_properties(oyk_atarist_tests PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_compile_options(oyk_atarist_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME oyk_atarist_tests COMMAND oyk_atarist_tests)
+
+    if(BUILD_ATARIST_PORT AND EXISTS "/usr/bin/hatari")
+        add_test(NAME oyk_atarist_emulator_tests
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/ports/atarist/run_hatari_test.sh --unit-tests
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
     endif()

@@ -5,7 +5,7 @@
 
 Automated screenshots and per-port contact sheets generated across all operator interfaces from live UI flow tests (`./scripts/generate_ui_gallery.sh`).
 
-Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, and **Amiga Workbench**.
+Each tested operator workflow is grouped below so visual layout, tab structure, and feature parity can be compared across **POSIX ncurses**, **MS-DOS**, **MS-DOS 386+ Graphical**, **Teensy 4.1 TinyTMUX**, **Raspberry Pi Pico**, **X11 GTK+ 2.0**, **Windows**, **Android**, **Classic Macintosh**, **macOS**, **Apple IIGS GS/OS**, **Amiga Workbench**, and **Atari ST/TT GEM**.
 
 ## Port Contact Sheets
 
@@ -57,6 +57,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — Contact Sheet](images/ui-gallery/amiga_contact_sheet.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — Contact Sheet](images/ui-gallery/atarist_mono_contact_sheet.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — Contact Sheet](images/ui-gallery/atarist_color_contact_sheet.png)
+
 ## 1. Operator Console (Main View)
 
 ### POSIX ncurses
@@ -106,6 +114,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 1. Operator Console (Main View)](images/ui-gallery/amiga_main.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 1. Operator Console (Main View)](images/ui-gallery/atarist_mono_main.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 1. Operator Console (Main View)](images/ui-gallery/atarist_color_main.png)
 
 ## 2. Settings — Node Tab
 
@@ -157,6 +173,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 2. Settings — Node Tab](images/ui-gallery/amiga_settings.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 2. Settings — Node Tab](images/ui-gallery/atarist_mono_settings.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 2. Settings — Node Tab](images/ui-gallery/atarist_color_settings.png)
+
 ## 3. Add Interface Wizard
 
 ### POSIX ncurses
@@ -206,6 +230,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 3. Add Interface Wizard](images/ui-gallery/amiga_add_iface.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 3. Add Interface Wizard](images/ui-gallery/atarist_mono_add_iface.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 3. Add Interface Wizard](images/ui-gallery/atarist_color_add_iface.png)
 
 ## 4. Edit Interface (Single-View Dialog)
 
@@ -257,6 +289,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/amiga_edit_iface.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/atarist_mono_edit_iface.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 4. Edit Interface (Single-View Dialog)](images/ui-gallery/atarist_color_edit_iface.png)
+
 ## 5. Settings — Peers Tab
 
 ### POSIX ncurses
@@ -306,6 +346,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 5. Settings — Peers Tab](images/ui-gallery/amiga_peers.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 5. Settings — Peers Tab](images/ui-gallery/atarist_mono_peers.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 5. Settings — Peers Tab](images/ui-gallery/atarist_color_peers.png)
 
 ## 6. Edit / Add Peer Dialog
 
@@ -357,6 +405,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 6. Edit / Add Peer Dialog](images/ui-gallery/amiga_edit_peer.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 6. Edit / Add Peer Dialog](images/ui-gallery/atarist_mono_edit_peer.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 6. Edit / Add Peer Dialog](images/ui-gallery/atarist_color_edit_peer.png)
+
 ## 7. Terminate Connection Modal
 
 ### POSIX ncurses
@@ -406,6 +462,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 7. Terminate Connection Modal](images/ui-gallery/amiga_terminate.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 7. Terminate Connection Modal](images/ui-gallery/atarist_mono_terminate.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 7. Terminate Connection Modal](images/ui-gallery/atarist_color_terminate.png)
 
 ## 8. Ban / Unban Callsign Dialog
 
@@ -457,6 +521,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/amiga_ban.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/atarist_mono_ban.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 8. Ban / Unban Callsign Dialog](images/ui-gallery/atarist_color_ban.png)
+
 ## 9. Auto-Learned Peers Exit / Bootloader Prompt
 
 ### POSIX ncurses
@@ -506,6 +578,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/amiga_exit.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/atarist_mono_exit.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 9. Auto-Learned Peers Exit / Bootloader Prompt](images/ui-gallery/atarist_color_exit.png)
 
 ## 10. Theme Settings Dialog
 
@@ -557,6 +637,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 10. Theme Settings Dialog](images/ui-gallery/amiga_theme.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 10. Theme Settings Dialog](images/ui-gallery/atarist_mono_theme.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 10. Theme Settings Dialog](images/ui-gallery/atarist_color_theme.png)
+
 ## 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)
 
 ### POSIX ncurses
@@ -607,6 +695,14 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/amiga_terminal.png)
 
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/atarist_mono_terminal.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 11. Local Packet Terminal (Ctrl+A Hotkeys & BBS Session)](images/ui-gallery/atarist_color_terminal.png)
+
 ## 12. File Manager / Pending & Approved BBS Files
 
 ### POSIX ncurses
@@ -656,4 +752,12 @@ Each tested operator workflow is grouped below so visual layout, tab structure, 
 ### Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)
 
 ![Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/amiga_files.png)
+
+### Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)
+
+![Atari ST GEM (ST High 640x400 Monochrome + EmuTOS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/atarist_mono_files.png)
+
+### Atari TT / VDI GEM (640x480 16-Color + EmuTOS)
+
+![Atari TT / VDI GEM (640x480 16-Color + EmuTOS) — 12. File Manager / Pending & Approved BBS Files](images/ui-gallery/atarist_color_files.png)
 
