@@ -60,6 +60,7 @@ run_in_minivmac() {
     if [[ "${with_uitest}" == "1" ]]; then
         printf "UITEST\n" > "${work_dir}/uitest_flag.txt"
         hcopy -r "${work_dir}/uitest_flag.txt" ":System Folder:UITEST.FLG" >/dev/null
+        hcopy -r "${work_dir}/uitest_flag.txt" ":UITEST.FLG" >/dev/null
     fi
     humount >/dev/null
 
@@ -84,7 +85,7 @@ run_in_minivmac() {
         Xvfb ":${xdisp}" -screen 0 800x600x24 -ac >/dev/null 2>&1 &
         local xvfb_pid=$!
         sleep 0.4
-        DISPLAY=":${xdisp}" "${emu_bin}" "${boot_dsk}" "${out_dsk}" >/dev/null 2>&1 &
+        DISPLAY=":${xdisp}" "${emu_bin}" --rom "${rom_file}" "${boot_dsk}" "${out_dsk}" >/dev/null 2>&1 &
         local emu_pid=$!
         local waited=0
         while kill -0 "${emu_pid}" 2>/dev/null && [[ "${waited}" -lt 120 ]]; do

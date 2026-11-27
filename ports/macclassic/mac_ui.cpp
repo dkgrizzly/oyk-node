@@ -3,6 +3,7 @@
 
 #include "mac_ui.hpp"
 #include "mac_capture.hpp"
+#include "oyk_rig.hpp"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -371,6 +372,75 @@ static void mc_draw_button(OykMacUiState* ui, int x, int y, int w, int h,
     mc_add_hit(ui, r, hit_kind, hit_arg);
 }
 
+static void mc_draw_checkbox(OykMacUiState* ui, int x, int y, int checked,
+                             const char* label, int hit_kind, int hit_arg) {
+    int sz = oyk_gui_control_box_size(10);
+    int top = y - sz + 1;
+    Rect box;
+    SetRect(&box, static_cast<short>(x), static_cast<short>(top),
+            static_cast<short>(x + sz), static_cast<short>(top + sz));
+    mc_fill_color(ui, &box, ui->active_theme.colors[OYK_TR_INPUT_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
+    FrameRect(&box);
+    if (checked) {
+        mc_set_fg(ui, ui->has_color ? ui->active_theme.colors[OYK_TR_ACCENT] : ui->active_theme.colors[OYK_TR_FG]);
+        PenSize(1, 1);
+        MoveTo(static_cast<short>(x + 2), static_cast<short>(top + 2));
+        LineTo(static_cast<short>(x + sz - 3), static_cast<short>(top + sz - 3));
+        MoveTo(static_cast<short>(x + sz - 3), static_cast<short>(top + 2));
+        LineTo(static_cast<short>(x + 2), static_cast<short>(top + sz - 3));
+    }
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    if (label && label[0]) {
+        mc_draw_text(x + oyk_gui_control_label_offset(10), y, label);
+    }
+    Rect hit;
+    SetRect(&hit, static_cast<short>(x), static_cast<short>(top - 1),
+            static_cast<short>(x + sz + 110), static_cast<short>(top + sz + 2));
+    mc_add_hit(ui, hit, hit_kind, hit_arg);
+}
+
+static void mc_draw_radio(OykMacUiState* ui, int x, int y, int selected,
+                          const char* label, int hit_kind, int hit_arg) {
+    int sz = oyk_gui_control_box_size(10);
+    int top = y - sz + 1;
+    Rect oval;
+    SetRect(&oval, static_cast<short>(x), static_cast<short>(top),
+            static_cast<short>(x + sz), static_cast<short>(top + sz));
+    mc_fill_color(ui, &oval, ui->active_theme.colors[OYK_TR_INPUT_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
+    FrameOval(&oval);
+    if (selected) {
+        Rect dot = oval;
+        InsetRect(&dot, 3, 3);
+        mc_set_fg(ui, ui->has_color ? ui->active_theme.colors[OYK_TR_ACCENT] : ui->active_theme.colors[OYK_TR_FG]);
+        PaintOval(&dot);
+    }
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    if (label && label[0]) {
+        mc_draw_text_clip(x + oyk_gui_control_label_offset(10), y, label, 64);
+    }
+    Rect hit;
+    SetRect(&hit, static_cast<short>(x), static_cast<short>(top - 1),
+            static_cast<short>(x + sz + 160), static_cast<short>(top + sz + 2));
+    mc_add_hit(ui, hit, hit_kind, hit_arg);
+}
+
+static void mc_draw_field_row(OykMacUiState* ui, int x, int y,
+                              const char* label, const char* value, int box_w) {
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+    mc_draw_text(x, y, label);
+    Rect fr;
+    SetRect(&fr, static_cast<short>(x + 118), static_cast<short>(y - 10),
+            static_cast<short>(x + 118 + box_w), static_cast<short>(y + 3));
+    mc_fill_color(ui, &fr, ui->active_theme.colors[OYK_TR_INPUT_BG], &qd.white);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
+    FrameRect(&fr);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_INPUT_FG]);
+    mc_draw_text_clip(x + 122, y, value ? value : "", (box_w - 8) / 6);
+    mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+}
+
 static void mc_draw_box(OykMacUiState* ui, int x, int y, int w, int h, const char* title) {
     Rect r;
     SetRect(&r, static_cast<short>(x), static_cast<short>(y),
@@ -718,22 +788,89 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             }
             mc_draw_button(ui, lx, by, 72, 20, "Edit Peer", 0, MC_HIT_SET_SCREEN, OYK_SCR_EDIT_PEER);
             mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
+        } else if (active_tab == 1) {
+            char bbs_cs[16], ssid_s[16], max_s[24];
+            OykCallsign bcall;
+            oyk_config_resolved_bbs_callsign(&ui->draft_cfg, &bcall);
+            oyk_format_callsign(&bcall, bbs_cs, sizeof(bbs_cs));
+            sprintf(ssid_s, "%u", static_cast<unsigned int>(ui->draft_cfg.bbs_ssid));
+            sprintf(max_s, "%lu", static_cast<unsigned long>(ui->draft_cfg.bbs_max_msg_bytes));
+            mc_draw_checkbox(ui, lx, ty + 24, ui->draft_cfg.bbs_enabled,
+                             "Enable Packet BBS", MC_HIT_NONE, 0);
+            mc_draw_field_row(ui, lx, ty + 42, "BBS Callsign:", bbs_cs, 180);
+            mc_draw_field_row(ui, lx, ty + 60, "BBS SSID:", ssid_s, 80);
+            mc_draw_field_row(ui, lx, ty + 78, "Mail Path:", ui->draft_cfg.bbs_mail_path[0] ? ui->draft_cfg.bbs_mail_path : "mail/", 180);
+            mc_draw_field_row(ui, lx, ty + 96, "Files Path:", ui->draft_cfg.bbs_files_path[0] ? ui->draft_cfg.bbs_files_path : "files/", 180);
+            mc_draw_checkbox(ui, lx, ty + 114, ui->draft_cfg.bbs_files_enabled,
+                             "Enable BBS Files Area", MC_HIT_NONE, 0);
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
+        } else if (active_tab == 2) {
+            char chat_cs[16], cssid[16];
+            OykCallsign ccall;
+            oyk_config_resolved_chat_callsign(&ui->draft_cfg, &ccall);
+            oyk_format_callsign(&ccall, chat_cs, sizeof(chat_cs));
+            sprintf(cssid, "%u", static_cast<unsigned int>(ui->draft_cfg.chat_ssid));
+            mc_draw_checkbox(ui, lx, ty + 24, ui->draft_cfg.chat_enabled,
+                             "Enable Multi-User CHAT", MC_HIT_NONE, 0);
+            mc_draw_field_row(ui, lx, ty + 44, "CHAT Callsign:", chat_cs, 180);
+            mc_draw_field_row(ui, lx, ty + 62, "CHAT SSID:", cssid, 80);
+            mc_draw_field_row(ui, lx, ty + 80, "Default Topic:", ui->draft_cfg.chat_topic[0] ? ui->draft_cfg.chat_topic : "Lobby", 180);
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
+        } else if (active_tab == 3) {
+            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
+            mc_draw_text(lx, ty + 24, "ID       Driver       Endpoint              State");
+            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+            for (int i = 0; i < ui->draft_cfg.iface_count && i < 6; ++i) {
+                const OykIfaceConfig& ic = ui->draft_cfg.ifaces[i];
+                char ep[40], row[96];
+                if (ic.device[0]) sprintf(ep, "%s @ %lu", ic.device, static_cast<unsigned long>(ic.baud));
+                else sprintf(ep, "%s:%u", ic.host, static_cast<unsigned int>(ic.port));
+                sprintf(row, "%-8s %-12s %-21s %s", ic.id, ic.type, ep, "UP");
+                mc_draw_text_clip(lx, ty + 40 + i * 14, row, bw / 6);
+            }
+            mc_draw_button(ui, lx, by, 84, 20, "Add Iface...", 0, MC_HIT_SET_SCREEN, OYK_SCR_ADD_IFACE);
+            mc_draw_button(ui, lx + 92, by, 84, 20, "Edit...", 0, MC_HIT_SET_SCREEN, OYK_SCR_EDIT_IFACE);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
+        } else if (active_tab == 5) {
+            char rp[16], rint[16];
+            sprintf(rp, "%u", static_cast<unsigned int>(ui->draft_cfg.rig_port));
+            sprintf(rint, "%u s", static_cast<unsigned int>(ui->draft_cfg.rig_poll_sec));
+            mc_draw_checkbox(ui, lx, ty + 24, ui->draft_cfg.rig_enabled,
+                             "Enable Radio / Rig Control", MC_HIT_NONE, 0);
+            mc_draw_field_row(ui, lx, ty + 44, "Protocol:", ui->draft_cfg.rig_protocol[0] ? ui->draft_cfg.rig_protocol : "rigctld", 180);
+            mc_draw_field_row(ui, lx, ty + 62, "Host / Addr:", ui->draft_cfg.rig_host[0] ? ui->draft_cfg.rig_host : "127.0.0.1", 180);
+            mc_draw_field_row(ui, lx, ty + 80, "Port:", rp, 80);
+            mc_draw_field_row(ui, lx, ty + 98, "Poll Interval:", rint, 80);
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
+        } else if (active_tab == 6) {
+            char pbaud[16];
+            sprintf(pbaud, "%lu", static_cast<unsigned long>(ui->draft_cfg.printer_baud));
+            mc_draw_checkbox(ui, lx, ty + 24, ui->draft_cfg.printer_enabled,
+                             "Enable Direct Line-by-Line Printer Logging", MC_HIT_NONE, 0);
+            mc_draw_field_row(ui, lx, ty + 44, "Device / Port:", ui->draft_cfg.printer_device[0] ? ui->draft_cfg.printer_device : ".BOut", 180);
+            mc_draw_field_row(ui, lx, ty + 62, "Protocol:", ui->draft_cfg.printer_protocol[0] ? ui->draft_cfg.printer_protocol : "generic", 140);
+            mc_draw_field_row(ui, lx, ty + 80, "Baud Rate:", pbaud, 80);
+            mc_draw_checkbox(ui, lx, ty + 100, ui->draft_cfg.printer_condensed,
+                             "132-Column Condensed Mode", MC_HIT_NONE, 0);
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
         } else {
             char cs[16];
             char al[16];
             oyk_format_callsign(&ui->draft_cfg.callsign, cs, sizeof(cs));
             oyk_format_callsign(&ui->draft_cfg.alias, al, sizeof(al));
-            char ln[160];
-            sprintf(ln, "Node Callsign:  [%s]", cs);
-            mc_draw_text(lx, ty + 28, ln);
-            sprintf(ln, "Node Alias:     [%s]", al);
-            mc_draw_text(lx, ty + 46, ln);
+            mc_draw_field_row(ui, lx, ty + 28, "Node Callsign:", cs, 140);
+            mc_draw_field_row(ui, lx, ty + 46, "Node Alias:", al, 140);
+            char ln[128];
             sprintf(ln, "Net Backend:    %s", ui->net->caps.backend_summary);
             mc_draw_text_clip(lx, ty + 64, ln, bw / 6);
-            sprintf(ln, "Accept Incoming:[%s]", ui->draft_cfg.accept_incoming ? "x" : " ");
-            mc_draw_text(lx, ty + 82, ln);
-            sprintf(ln, "BBS Services:   [%s]", ui->draft_cfg.bbs_enabled ? "x" : " ");
-            mc_draw_text(lx, ty + 100, ln);
+            mc_draw_checkbox(ui, lx, ty + 84, ui->draft_cfg.accept_incoming,
+                             "Accept Incoming Connections", MC_HIT_TOGGLE_INCOMING, 0);
+            mc_draw_checkbox(ui, lx, ty + 102, ui->draft_cfg.bbs_enabled,
+                             "Enable Packet BBS & CHAT", MC_HIT_NONE, 0);
             mc_draw_text(lx, ty + 122, ui->status_msg);
             mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
             mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
@@ -747,15 +884,12 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             int cnt = oyk_gui_wiz_driver_count(ui->wiz.driver_mask);
             for (int i = 0; i < cnt; ++i) {
                 char row[96];
-                sprintf(row, "(%c) %-12s %s",
-                        (i == ui->wiz.selected_driver_idx) ? '*' : ' ',
+                sprintf(row, "%-12s %s",
                         oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i),
                         oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, i));
-                Rect rr;
-                SetRect(&rr, static_cast<short>(lx), static_cast<short>(ty + 24 + i * 16),
-                        static_cast<short>(lx + bw), static_cast<short>(ty + 39 + i * 16));
-                mc_draw_text_clip(lx + 4, ty + 35 + i * 16, row, bw / 6);
-                mc_add_hit(ui, rr, MC_HIT_WIZ_DRIVER, i);
+                mc_draw_radio(ui, lx + 4, ty + 35 + i * 16,
+                              i == ui->wiz.selected_driver_idx, row,
+                              MC_HIT_WIZ_DRIVER, i);
             }
         } else if (ui->wiz.step == 1) {
             char ln[96];
@@ -806,8 +940,10 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_text(lx, ty + 68, ln);
         sprintf(ln, "Netmask:        [%s]", (ic && ic->netmask[0]) ? ic->netmask : "255.0.0.0");
         mc_draw_text(lx, ty + 88, ln);
-        sprintf(ln, "Policy:         [x] Inbound  [x] Outbound");
-        mc_draw_text(lx, ty + 108, ln);
+        mc_draw_checkbox(ui, lx, ty + 108, ic ? !ic->block_inbound : 1,
+                         "Allow Inbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 140, ty + 108, ic ? !ic->block_outbound : 1,
+                         "Allow Outbound", MC_HIT_NONE, 0);
         mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_EDIT_PEER) {
@@ -823,6 +959,10 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_text(lx, ty + 68, ln);
         sprintf(ln, "UDP Port:       [%u]", pc ? static_cast<unsigned int>(pc->port) : 10093U);
         mc_draw_text(lx, ty + 88, ln);
+        mc_draw_checkbox(ui, lx, ty + 108, pc ? pc->allow_inbound : 1,
+                         "Allow Inbound", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 140, ty + 108, pc ? pc->allow_outbound : 1,
+                         "Allow Outbound", MC_HIT_NONE, 0);
         mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Save", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_TERMINATE) {
@@ -853,6 +993,8 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Cancel", 1, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_BAN) {
         mc_draw_text(lx, ty, "Callsign: [W9SPAM-9]   Lift: [7d]   Reason: [Flooding]");
+        mc_draw_checkbox(ui, lx, ty + 16, 1, "Hard Ban", MC_HIT_NONE, 0);
+        mc_draw_checkbox(ui, lx + 130, ty + 16, 1, "Appeal Allowed", MC_HIT_NONE, 0);
         char bhdr[80];
         sprintf(bhdr, "%-10s %-11s %-11s %-14s",
                 oyk_gui_table_column(OYK_TBL_BANS, 0),
@@ -860,13 +1002,13 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
                 oyk_gui_table_column(OYK_TBL_BANS, 2),
                 oyk_gui_table_column(OYK_TBL_BANS, 4));
         mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-        mc_draw_text(lx, ty + 26, bhdr);
+        mc_draw_text(lx, ty + 32, bhdr);
         mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-        for (int b = 0; b < ui->node->ban_count() && b < 5; ++b) {
+        for (int b = 0; b < ui->node->ban_count() && b < 4; ++b) {
             const OykBanEntry& be = ui->node->ban_entry(b);
             char row[80];
             sprintf(row, "%-10s %-11s %-11s %-14s", be.key, be.banned_at, be.lift_at, be.reason);
-            mc_draw_text_clip(lx, ty + 42 + b * 14, row, bw / 6);
+            mc_draw_text_clip(lx, ty + 48 + b * 14, row, bw / 6);
         }
         mc_draw_button(ui, lx, by, 72, 20, "Ban Call", 0, MC_HIT_CLOSE_MODAL, 0);
         mc_draw_button(ui, box.right - 92, by, 78, 20, "Close", 1, MC_HIT_CLOSE_MODAL, 0);
@@ -886,9 +1028,9 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             y += 16;
             p = nl ? (nl + 1) : "";
         }
-        mc_draw_button(ui, lx, by, 98, 20, "Save & Quit", 1, MC_HIT_QUIT_NOW, 0);
-        mc_draw_button(ui, lx + 106, by, 86, 20, "Discard", 0, MC_HIT_QUIT_NOW, 0);
-        mc_draw_button(ui, lx + 198, by, 72, 20, "Peers...", 0, MC_HIT_SET_SCREEN, OYK_SCR_PEERS);
+        mc_draw_button(ui, lx, by, 92, 20, "Save & Quit", 1, MC_HIT_QUIT_NOW, 0);
+        mc_draw_button(ui, lx + 98, by, 68, 20, "Discard", 0, MC_HIT_QUIT_NOW, 0);
+        mc_draw_button(ui, lx + 172, by, 92, 20, "Review Peers", 0, MC_HIT_SET_SCREEN, OYK_SCR_PEERS);
         mc_draw_button(ui, box.right - 84, by, 70, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
     } else if (scr == OYK_SCR_THEME) {
         char tsel[96];

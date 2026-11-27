@@ -78,6 +78,7 @@ fun OnboardingPermissionScreen(
 fun ConsoleScreen(
     cfg: NodeConfigState,
     sessions: List<SessionState>,
+    newHeard: List<HeardStationState> = emptyList(),
     bans: List<BanEntryState>,
     usbStatus: String,
     nodeRunning: Boolean,
@@ -164,6 +165,29 @@ fun ConsoleScreen(
                             ) {
                                 Text("${ic.id} (${ic.type})", fontFamily = FontFamily.Monospace)
                                 Text("C:${ic.activeConnections} ${ic.status}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Last 5 New Callsigns Heard (MHEARD)", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(6.dp))
+                        if (newHeard.isEmpty()) {
+                            Text("No stations heard yet.", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            newHeard.take(5).forEachIndexed { idx, h ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("${idx + 1}. ${h.callsign} (${h.ifaceId})",
+                                        fontFamily = FontFamily.Monospace)
+                                    Text(h.heardHms, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                     }

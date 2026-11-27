@@ -17,7 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static char            g_log_buf[2048];
+static char            g_log_buf[4096];
 static size_t          g_log_len = 0U;
 static int             g_failures = 0;
 static OykGsosNode     g_test_node;
@@ -47,14 +47,17 @@ static void gs_log_line(const char *line) {
     } while (0)
 
 int main(void) {
-    OykGsosCallsign cs;
+    OykGsosCallsign cs, cs_bad;
     OykGsosThemeConfig nat;
+    OykGsosThemeCtrl tctrl;
     OykGsosAddIfaceWiz wiz;
     OykGsosTermSpan spans[4];
     OykGsosTermEolParser eolp;
-    char out_eol[64], rig_buf[32], info_buf[128];
+    char out_eol[64], rig_buf[32], info_buf[128], hdr_buf[128], cfg_ser[512];
     unsigned char prn_buf[64];
-    int bg_ch = 0, fg_ch = 0, sc, en;
+    int bg_ch = 0, fg_ch = 0, sc, en, di;
+    size_t ser_n;
+    const char *cr_sample;
 
     /* 1. Network / Serial runtime detection */
     oyk_gsos_detect_caps(&g_test_net.caps);
@@ -71,6 +74,25 @@ int main(void) {
     oyk_gsos_node_init(&g_test_node, &g_test_cfg);
     GS_CHECK(g_test_node.cfg.accept_incoming == 1, "default_accept_incoming");
     GS_CHECK(oyk_gsos_parse_callsign("KR4OYK-7", &cs) == 1 && cs.ssid == 7, "parse_callsign");
+    GS_CHECK(oyk_gsos_parse_callsign("TOO_LONG-99", &cs_bad) == 0 &&
+             oyk_gsos_parse_callsign("", &cs_bad) == 0, "parity_parse_callsign_invalid");
+
+    cr_sample = "[node]\rcallsign = W4ABC-7\raccept_incoming = false\rtheme = dark\r";
+    GS_CHECK(oyk_gsos_config_parse(cr_sample, strlen(cr_sample), &g_test_cfg) == 1 &&
+             g_test_cfg.line_ending == OYK_GSOS_EOL_CR && g_test_cfg.accept_incoming == 0,
+             "parity_config_eol_parse");
+    ser_n = oyk_gsos_config_serialize(&g_test_cfg, cfg_ser, sizeof(cfg_ser));
+    GS_CHECK(ser_n > 0U && strchr(cfg_ser, '\r') != NULL && strchr(cfg_ser, '\n') == NULL,
+             "parity_config_eol_preserve");
+
+    oyk_gsos_node_seed_demo(&g_test_node);
+    GS_CHECK(oyk_gsos_node_auto_peer_count(&g_test_node) == 1, "parity_auto_peer_count");
+    GS_CHECK(oyk_gsos_node_ban_callsign(&g_test_node, "K1XYZ", "Test ban") == 1,
+             "parity_ban_callsign");
+    GS_CHECK(oyk_gsos_node_terminate_session(&g_test_node, 1UL) == 1,
+             "parity_terminate_session");
+    oyk_gsos_config_init_default(&g_test_cfg);
+    oyk_gsos_node_init(&g_test_node, &g_test_cfg);
 
     /* 3. OS-sourced native theme & whole-screen live preview */
     oyk_gsos_query_os_native_theme(&nat);
@@ -90,6 +112,21 @@ int main(void) {
              "gui_terminate_cols");
     oyk_gsos_wiz_init(&wiz, &g_test_cfg);
     GS_CHECK(oyk_gsos_wiz_driver_count() == 5, "gui_wiz_5_drivers");
+    for (di = 0; di < 5; ++di) {
+        oyk_gsos_wiz_select_driver(&wiz, &g_test_cfg, di);
+    }
+    GS_CHECK(strcmp(oyk_gsos_wiz_driver_name(2), "kiss-serial") == 0 &&
+             oyk_gsos_wiz_driver_desc(2)[0] != '\0', "parity_wiz_5_drivers_and_descs");
+    oyk_gsos_format_console_header("KR4OYK-7", "OYKNOD", 1, hdr_buf, sizeof(hdr_buf));
+    GS_CHECK(strstr(hdr_buf, "OYK PACKET NODE:") != NULL &&
+             strcmp(oyk_gsos_format_incoming_pill(1), "[INCOMING: ALLOW]") == 0 &&
+             strcmp(oyk_gsos_format_incoming_pill(0), "[INCOMING: DENY]") == 0,
+             "parity_console_header_and_pill");
+    oyk_gsos_theme_init(&tctrl, &g_test_cfg, 1, 0);
+    oyk_gsos_theme_cycle(&tctrl, 1);
+    GS_CHECK(strcmp(tctrl.active_name, "native") != 0, "parity_theme_cycle");
+    oyk_gsos_theme_revert(&tctrl);
+    GS_CHECK(strcmp(tctrl.active_name, "native") == 0, "parity_theme_revert");
     oyk_gsos_wiz_select_driver(&wiz, &g_test_cfg, 2);
     GS_CHECK(strcmp(wiz.draft.type, "kiss-serial") == 0, "gui_wiz_kiss_serial");
 

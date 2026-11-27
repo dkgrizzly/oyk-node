@@ -66,11 +66,25 @@ int main() {
     CHECK(oyk_gsos_ui_run_theme_preview_self_test(&node, &net, &bg_ch, &fg_ch) == 1);
     CHECK(bg_ch >= 4 && fg_ch >= 4);
 
-    /* Wizard + terminal helpers */
+    /* Wizard + console header + theme cycle + terminal helpers */
     oyk_gsos_wiz_init(&wiz, &cfg);
     CHECK(oyk_gsos_wiz_driver_count() == 5);
+    for (int di = 0; di < 5; ++di) {
+        CHECK(oyk_gsos_wiz_driver_name(di)[0] != '\0');
+        CHECK(oyk_gsos_wiz_driver_desc(di)[0] != '\0');
+    }
     oyk_gsos_wiz_select_driver(&wiz, &cfg, 2);
     CHECK(strcmp(wiz.draft.type, "kiss-serial") == 0);
+    oyk_gsos_format_console_header("KR4OYK-7", "OYKNOD", 1, buf, sizeof(buf));
+    CHECK(strstr(buf, "OYK PACKET NODE:") != NULL);
+    CHECK(strcmp(oyk_gsos_format_incoming_pill(1), "[INCOMING: ALLOW]") == 0);
+    CHECK(strcmp(oyk_gsos_format_incoming_pill(0), "[INCOMING: DENY]") == 0);
+    OykGsosThemeCtrl tctrl;
+    oyk_gsos_theme_init(&tctrl, &cfg, 1, 0);
+    oyk_gsos_theme_cycle(&tctrl, 1);
+    CHECK(strcmp(tctrl.active_name, "native") != 0);
+    oyk_gsos_theme_revert(&tctrl);
+    CHECK(strcmp(tctrl.active_name, "native") == 0);
 
     CHECK(oyk_gsos_term_decode_ctrl_a('?') == OYK_GSOS_TCMD_HELP);
     CHECK(oyk_gsos_term_decode_ctrl_a('s') == OYK_GSOS_TCMD_UPLOAD);

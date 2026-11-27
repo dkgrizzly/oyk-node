@@ -161,15 +161,22 @@ typedef struct {
     int             has_detected_eol;
     int             bbs_enabled;
     gsos_u8         bbs_ssid;
+    int             bbs_files_enabled;
+    char            bbs_mail_path[48];
+    char            bbs_files_path[48];
     int             chat_enabled;
     gsos_u8         chat_ssid;
+    char            chat_topic[32];
     int             rig_enabled;
     char            rig_protocol[16];
+    char            rig_host[32];
     gsos_u16        rig_port;
+    int             rig_poll_sec;
     int             printer_enabled;
     char            printer_device[32];
     char            printer_protocol[16];
     gsos_u32        printer_baud;
+    int             printer_condensed;
     int             iface_count;
     OykGsosIfaceConfig ifaces[OYK_GSOS_MAX_IFACES];
     int             peer_count;
@@ -274,6 +281,9 @@ void oyk_gsos_format_callsign(const OykGsosCallsign *cs, char *dst, size_t cap);
 void oyk_gsos_format_console_banner(const char *callsign, const char *alias,
                                     int accept_in, int conn_count, int iface_count,
                                     char *dst, size_t cap);
+void oyk_gsos_format_console_header(const char *callsign, const char *alias,
+                                    int conn_count, char *dst, size_t cap);
+const char *oyk_gsos_format_incoming_pill(int accept_in);
 
 /* Config & EOL handling */
 void              oyk_gsos_config_init_default(OykGsosConfig *cfg);
@@ -294,6 +304,7 @@ int  oyk_gsos_node_ban_callsign(OykGsosNode *node, const char *call, const char 
 void oyk_gsos_wiz_init(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cfg);
 int  oyk_gsos_wiz_driver_count(void);
 const char *oyk_gsos_wiz_driver_name(int idx);
+const char *oyk_gsos_wiz_driver_desc(int idx);
 void oyk_gsos_wiz_select_driver(OykGsosAddIfaceWiz *wiz, const OykGsosConfig *cfg, int idx);
 
 /* Theme controller */
@@ -305,6 +316,7 @@ void oyk_gsos_theme_set_os_native(OykGsosThemeCtrl *tc, const OykGsosThemeConfig
 void oyk_gsos_theme_set_preview_cb(OykGsosThemeCtrl *tc, OykGsosThemePreviewFn cb, void *ctx);
 void oyk_gsos_theme_resolve(const OykGsosThemeCtrl *tc, OykGsosThemeConfig *out);
 void oyk_gsos_theme_select(OykGsosThemeCtrl *tc, const char *name);
+void oyk_gsos_theme_cycle(OykGsosThemeCtrl *tc, int delta);
 int  oyk_gsos_theme_set_role_rgb(OykGsosThemeCtrl *tc, int role, gsos_u32 rgb);
 void oyk_gsos_theme_revert(OykGsosThemeCtrl *tc);
 

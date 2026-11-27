@@ -16,6 +16,7 @@
 #include "oyk_rig.hpp"
 #include "oyk_printer.hpp"
 #include "oyk_yapp.hpp"
+#include "oyk_port_parity_tests.hpp"
 #include "mac_net.hpp"
 #include "mac_ui.hpp"
 #include "mac_capture.hpp"
@@ -105,6 +106,7 @@ int main() {
             fprintf(logf, "INFO: ThemePreview bg_changes=%d fg_changes=%d\n", bg_changes, fg_changes);
         }
 
+        oyk_run_shared_port_parity_tests(node, logf, &g_failures);
         node->shutdown();
     }
     if (cfg) delete cfg;

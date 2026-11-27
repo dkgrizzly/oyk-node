@@ -36,6 +36,7 @@ static void mc_init_toolbox() {
 
 int main() {
     mc_init_toolbox();
+    int test_mode = oyk_mac_is_ui_test_mode();
 
     /* Heap-allocate heavy engine & driver structs (68k stack is limited!). */
     OykPortableNode* node = new OykPortableNode();
@@ -49,11 +50,12 @@ int main() {
         return 1;
     }
 
-    int test_mode = oyk_mac_is_ui_test_mode();
     char err_buf[128];
     err_buf[0] = '\0';
     oyk_config_init_default(init_cfg);
-    (void)oyk_config_load("NODE.CFG", init_cfg, err_buf, sizeof(err_buf));
+    if (!test_mode) {
+        (void)oyk_config_load("NODE.CFG", init_cfg, err_buf, sizeof(err_buf));
+    }
 
     /* If UI test fixture mode, seed deterministic KR4OYK-7 interfaces & peers. */
     if (test_mode) {

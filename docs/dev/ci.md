@@ -13,7 +13,7 @@
 ./scripts/ci.sh --quick
 ```
 
-Runs all six mandatory host verification stages cleanly in isolated temporary build directories:
+Runs all seven mandatory host verification stages cleanly in isolated temporary build directories:
 
 | Step | Command / Mechanism | What It Verifies |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ Runs all six mandatory host verification stages cleanly in isolated temporary bu
 | `docs` | `python3 scripts/check_docs.py` | All relative Markdown links resolve cleanly and every port in `ports/` is documented in `README.md` and `feature-matrix.md` |
 | `secrets` | `python3 scripts/check_secrets.py` | Zero API keys, tokens, private keys, or personal home paths (`--all` when `CI=true`, pending changes locally, `--staged` pre-commit, `--unpushed` pre-push) |
 | `stack` | `python3 scripts/check_stack.py --limit 1024` | Compiles `ports/compat/*.cpp` with `-std=c++98 -Os -fstack-usage` and fails if any function exceeds **1,024 bytes** of stack |
+| `parity` | `python3 scripts/check_port_parity.py` | Verifies UI gallery PNG completeness across all 14 capture sets, graphical checkbox/radio controls and 7-tab modal parity across GUI ports, Android MHEARD card/tests, and shared cross-port unit-test parity |
 | `host` | `cmake ... -DOYK_WERROR=ON && ctest` | Enforces zero warnings (`-Wall -Wextra -Wpedantic -Werror`) across all host binaries & passes all **11 CTest suites** |
 | `sanitizers` | `cmake ... -DOYK_SANITIZE=ON -DOYK_WERROR=ON` | Runs all **11 CTest suites** under **ASan + UBSan + LSan** (using [tests/lsan_suppressions.txt](../../tests/lsan_suppressions.txt) only for system `libncurses`) |
 

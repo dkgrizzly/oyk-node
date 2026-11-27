@@ -129,6 +129,14 @@ int                  oyk_gui_table_column_count(int table_id);
 const char*          oyk_gui_table_column(int table_id, int col_idx);
 int                  oyk_gui_terminate_columns(const char** out_cols, int max_cols);
 
+enum OykGuiControlKind {
+    OYK_CTRL_CHECKBOX = 0,
+    OYK_CTRL_RADIO    = 1
+};
+
+int         oyk_gui_control_box_size(int char_h);
+int         oyk_gui_control_label_offset(int char_h);
+
 /* Formatting & validation helpers */
 void        oyk_gui_format_duration(oyk_u32 secs, char* dst, size_t cap);
 void        oyk_gui_format_console_banner(const char* callsign, const char* alias,

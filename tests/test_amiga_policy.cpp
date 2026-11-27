@@ -6,6 +6,7 @@
 
 #include "oyk_portable.hpp"
 #include "oyk_gui.hpp"
+#include "oyk_port_parity_tests.hpp"
 #include "amiga_policy.hpp"
 
 static int g_fail = 0;
@@ -100,6 +101,7 @@ int main() {
     oyk_amiga_resolve_effective_theme(64, &os_nat, &dark_pal, &eff, &locked);
     CHECK(locked == 0 && strcmp(eff.name, "dark") == 0);
 
+    oyk_run_shared_port_parity_tests(NULL, stdout, &g_fail);
     printf("oyk_amiga_tests: failures=%d\n", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

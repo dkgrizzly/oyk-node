@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
             var showExit by remember { mutableStateOf(false) }
             var acceptIncoming by remember { mutableStateOf(true) }
             var sessions by remember { mutableStateOf<List<SessionState>>(emptyList()) }
+            var newHeard by remember { mutableStateOf<List<HeardStationState>>(emptyList()) }
             var bans by remember { mutableStateOf<List<BanEntryState>>(emptyList()) }
             var permState by remember { mutableStateOf(repo.storagePermissionState()) }
             var pendingSdAction by remember { mutableStateOf<String?>(null) }
@@ -200,6 +201,7 @@ class MainActivity : ComponentActivity() {
                     else -> ConsoleScreen(
                         cfg = cfg,
                         sessions = sessions,
+                        newHeard = newHeard,
                         bans = bans,
                         usbStatus = usbStatus,
                         nodeRunning = OykNodeService.running,

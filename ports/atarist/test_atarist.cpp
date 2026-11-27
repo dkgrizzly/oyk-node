@@ -18,6 +18,7 @@
 #include "atari_policy.hpp"
 #include "atari_net.hpp"
 #include "atari_ui.hpp"
+#include "oyk_port_parity_tests.hpp"
 #include "atari_capture.hpp"
 
 #include <stdio.h>
@@ -98,6 +99,7 @@ int main() {
             fprintf(logf, "INFO: ThemePreview bg_changes=%d fg_changes=%d\n", bg_ch, fg_ch);
         }
 
+        oyk_run_shared_port_parity_tests(node, logf, &g_failures);
         oyk_atari_net_shutdown(&net);
         node->shutdown();
     }

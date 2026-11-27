@@ -113,13 +113,21 @@ void oyk_mac_mount_all_drives(unsigned long max_wait_ticks) {
 }
 
 int oyk_mac_is_ui_test_mode() {
-    g_out_vref = mc_find_volume("OYKOUT");
-    if (g_out_vref != 0 && mc_hfs_file_exists(g_out_vref, "UITEST.FLG")) {
-        return 1;
-    }
-    if (mc_hfs_file_exists(0, "UITEST.FLG") || mc_hfs_file_exists(0, ":UITEST.FLG")) {
+    if (mc_hfs_file_exists(0, "UITEST.FLG") ||
+        mc_hfs_file_exists(0, ":UITEST.FLG") ||
+        mc_hfs_file_exists(0, ":System Folder:UITEST.FLG")) {
         /* Wait up to 480 ticks (Mini vMac 240-tick Sony insert delay) for OYKOUT volume. */
         oyk_mac_mount_all_drives(480UL);
+        return 1;
+    }
+    g_out_vref = mc_find_volume("OYKOUT");
+    if (g_out_vref == 0) {
+        oyk_mac_mount_all_drives(180UL);
+        g_out_vref = mc_find_volume("OYKOUT");
+    }
+    if (g_out_vref != 0 &&
+        (mc_hfs_file_exists(g_out_vref, "UITEST.FLG") ||
+         mc_hfs_file_exists(g_out_vref, ":UITEST.FLG"))) {
         return 1;
     }
     return 0;

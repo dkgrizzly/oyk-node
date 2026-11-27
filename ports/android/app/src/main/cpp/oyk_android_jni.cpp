@@ -126,7 +126,21 @@ Java_com_kr4oyk_oyknode_NativeNodeBridge_nativeGetStatusJson(JNIEnv* env, jclass
         << ",\"connections\":" << snap.total_active_connections
         << ",\"auto_learned_peers\":" << g_engine->auto_learned_peer_count()
         << ",\"accept_incoming\":" << (snap.accept_incoming ? "true" : "false")
-        << "}";
+        << ",\"new_heard\":[";
+    for (std::size_t hi = 0; hi < snap.last_new_callsigns.size(); ++hi) {
+        const auto& nh = snap.last_new_callsigns[hi];
+        std::time_t tt = std::chrono::system_clock::to_time_t(nh.first_heard);
+        std::tm tm_val{};
+        localtime_r(&tt, &tm_val);
+        char hbuf[16];
+        std::snprintf(hbuf, sizeof(hbuf), "%02d:%02d:%02d",
+                      tm_val.tm_hour, tm_val.tm_min, tm_val.tm_sec);
+        if (hi > 0) oss << ",";
+        oss << "{\"callsign\":\"" << json_escape(nh.callsign) << "\""
+            << ",\"iface\":\"" << json_escape(nh.interface_id) << "\""
+            << ",\"heard_hms\":\"" << hbuf << "\"}";
+    }
+    oss << "]}";
     const std::string json = oss.str();
     return env->NewStringUTF(json.c_str());
 }

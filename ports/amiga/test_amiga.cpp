@@ -13,6 +13,7 @@
 #include "oyk_portable.hpp"
 #include "oyk_gui.hpp"
 #include "oyk_term.hpp"
+#include "oyk_port_parity_tests.hpp"
 #include "oyk_rig.hpp"
 #include "oyk_printer.hpp"
 #include "amiga_policy.hpp"
@@ -88,7 +89,8 @@ int main() {
                     locked_hi, bg_ch, fg_ch);
         }
 
-        oyk_amiga_net_shutdown(&net);
+        oyk_run_shared_port_parity_tests(node, logf, &g_failures);
+    oyk_amiga_net_shutdown(&net);
         node->shutdown();
     }
     if (cfg) delete cfg;

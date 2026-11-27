@@ -9,16 +9,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 JOBS="$(nproc 2>/dev/null || echo 4)"
-STEPS="spdx,docs,secrets,stack,host,sanitizers"
+STEPS="spdx,docs,secrets,stack,parity,host,sanitizers"
 
 usage() {
     cat <<'EOF'
 Usage: scripts/ci.sh [options]
 
 Options:
-  --quick              Run standard CI gate (spdx,docs,secrets,stack,host,sanitizers)
+  --quick              Run standard CI gate (spdx,docs,secrets,stack,parity,host,sanitizers)
   --steps <list>       Comma-separated subset of:
-                         spdx,docs,secrets,stack,host,sanitizers,emulators
+                         spdx,docs,secrets,stack,parity,host,sanitizers,emulators
   --jobs <N>           Parallel build jobs (default: nproc)
   -h, --help           Show this help text
 EOF
@@ -27,7 +27,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --quick)
-            STEPS="spdx,docs,secrets,stack,host,sanitizers"
+            STEPS="spdx,docs,secrets,stack,parity,host,sanitizers"
             shift
             ;;
         --steps)
@@ -74,6 +74,9 @@ run_step() {
             ;;
         stack)
             python3 scripts/check_stack.py --limit 1024
+            ;;
+        parity)
+            python3 scripts/check_port_parity.py
             ;;
         host)
             local bdir="${TMP_BASE}/host"

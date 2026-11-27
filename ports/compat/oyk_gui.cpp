@@ -258,6 +258,16 @@ int oyk_gui_terminate_columns(const char** out_cols, int max_cols) {
     return c;
 }
 
+int oyk_gui_control_box_size(int char_h) {
+    if (char_h <= 10) return 10;
+    if (char_h <= 14) return 12;
+    return 13;
+}
+
+int oyk_gui_control_label_offset(int char_h) {
+    return oyk_gui_control_box_size(char_h) + 6;
+}
+
 void oyk_gui_format_duration(oyk_u32 secs, char* dst, size_t cap) {
     if (!dst || cap == 0) return;
     oyk_u32 h = secs / 3600UL;

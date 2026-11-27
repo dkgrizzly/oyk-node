@@ -47,6 +47,10 @@ class OykUiGalleryTest {
     private val sampleSessions = listOf(
         SessionState(1L, "W3TRM-1", "axudp0", "00:05:12", "NODE SHELL")
     )
+    private val sampleNewHeard = listOf(
+        HeardStationState("W3TRM-1", "axudp0", "18:31:25"),
+        HeardStationState("R3MOT-7", "axudp0", "18:29:04")
+    )
     private val sampleBans = listOf(
         BanEntryState("B4NTST", hardBan = false, appealAllowed = true, liftAt = "permanent", reason = "Banned by sysop.")
     )
@@ -110,6 +114,7 @@ class OykUiGalleryTest {
             ConsoleScreen(
                 cfg = sampleCfg,
                 sessions = sampleSessions,
+                newHeard = sampleNewHeard,
                 bans = sampleBans,
                 usbStatus = "USB PPP ready",
                 nodeRunning = true,
@@ -171,11 +176,38 @@ class OykUiGalleryTest {
     }
 
     @Test
+    fun consoleDisplaysLastFiveNewCallsignsHeardCard() {
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                ConsoleScreen(
+                    cfg = sampleCfg,
+                    sessions = sampleSessions,
+                    newHeard = sampleNewHeard,
+                    bans = sampleBans,
+                    usbStatus = "USB PPP ready",
+                    nodeRunning = true,
+                    acceptIncoming = true,
+                    onToggleIncoming = {},
+                    onOpenSettings = {},
+                    onOpenTerminate = {},
+                    onOpenBan = {},
+                    onOpenTheme = {},
+                    onOpenExit = {},
+                    onQuickUsbConnect = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText("Last 5 New Callsigns Heard (MHEARD)").assertIsDisplayed()
+        composeRule.onNodeWithText("1. W3TRM-1 (axudp0)").assertIsDisplayed()
+    }
+
+    @Test
     fun captureAllAndroidGalleryScreens() {
         captureComposableToPng("main") {
             ConsoleScreen(
                 cfg = sampleCfg,
                 sessions = sampleSessions,
+                newHeard = sampleNewHeard,
                 bans = sampleBans,
                 usbStatus = "USB PPP ready",
                 nodeRunning = true,

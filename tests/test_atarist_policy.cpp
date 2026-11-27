@@ -6,6 +6,7 @@
 
 #include "oyk_portable.hpp"
 #include "oyk_gui.hpp"
+#include "oyk_port_parity_tests.hpp"
 #include "atari_policy.hpp"
 
 static int g_fail = 0;
@@ -49,6 +50,7 @@ int main() {
     oyk_atari_resolve_theme(16, &nat, &dark, &eff);
     CHECK(strcmp(eff.name, "dark") == 0);
 
+    oyk_run_shared_port_parity_tests(NULL, stdout, &g_fail);
     printf("oyk_atarist_tests: failures=%d\n", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

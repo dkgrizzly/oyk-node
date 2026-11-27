@@ -151,6 +151,12 @@ data class SessionState(
     val role: String
 )
 
+data class HeardStationState(
+    val callsign: String,
+    val ifaceId: String,
+    val heardHms: String
+)
+
 data class BanEntryState(
     val callsign: String,
     val hardBan: Boolean,

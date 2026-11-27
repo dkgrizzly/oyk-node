@@ -22,6 +22,14 @@ static void at_copy(char* dst, size_t cap, const char* src) {
     dst[n] = '\0';
 }
 
+struct AtHitZone {
+    int x;
+    int y;
+    int w;
+    int h;
+    int action;
+};
+
 struct OykAtariUiState {
     OykPortableNode*    node;
     OykAtariNetState*   net;
@@ -36,6 +44,8 @@ struct OykAtariUiState {
     int                 settings_tab;
     int                 sel_peer;
     int                 running;
+    int                 hit_count;
+    AtHitZone           hits[32];
     OykConfig           draft_cfg;
     OykGuiAddIfaceWizard wiz;
     OykGuiThemeCtrl     theme_ctrl;
@@ -262,6 +272,90 @@ static void at_draw_text(const OykAtariUiState* ui, int x, int y, const char* s,
 #endif
 }
 
+static void at_reset_hits(OykAtariUiState* ui) {
+    if (ui) ui->hit_count = 0;
+}
+
+static void at_add_hit(OykAtariUiState* ui, int x, int y, int w, int h, int action) {
+    if (!ui || ui->hit_count >= 32 || w <= 0 || h <= 0) return;
+    AtHitZone& z = ui->hits[ui->hit_count++];
+    z.x = x;
+    z.y = y;
+    z.w = w;
+    z.h = h;
+    z.action = action;
+}
+
+static void at_draw_checkbox(const OykAtariUiState* ui, int x, int y, int checked,
+                             const char* label, int label_pen, int max_chars) {
+    int sz = oyk_gui_control_box_size(ui ? ui->char_h : 16);
+    if (sz < 11) sz = 11;
+    at_fill_rect(ui, x, y, sz, sz, ui->pen_bg);
+    at_frame_rect(ui, x, y, sz, sz, ui->pen_fg);
+#ifdef __ATARI__
+    if (checked && ui && ui->vdi > 0) {
+        short pts[6];
+        pts[0] = static_cast<short>(x + 2);
+        pts[1] = static_cast<short>(y + sz / 2);
+        pts[2] = static_cast<short>(x + sz / 2 - 1);
+        pts[3] = static_cast<short>(y + sz - 3);
+        pts[4] = static_cast<short>(x + sz - 2);
+        pts[5] = static_cast<short>(y + 2);
+        vsl_color(ui->vdi, static_cast<short>(ui->pen_accent));
+        v_pline(ui->vdi, 3, pts);
+        pts[1] += 1;
+        pts[3] += 1;
+        pts[5] += 1;
+        v_pline(ui->vdi, 3, pts);
+    }
+#else
+    (void)checked;
+#endif
+    if (label && label[0]) {
+        at_draw_text(ui, x + sz + 6, y, label, label_pen, max_chars);
+    }
+}
+
+static void at_draw_radio(const OykAtariUiState* ui, int x, int y, int selected,
+                          const char* label, int label_pen, int max_chars) {
+    int sz = oyk_gui_control_box_size(ui ? ui->char_h : 16);
+    if (sz < 11) sz = 11;
+#ifdef __ATARI__
+    if (ui && ui->vdi > 0) {
+        short r = static_cast<short>(sz / 2);
+        short cx = static_cast<short>(x + r);
+        short cy = static_cast<short>(y + r + 1);
+        vsf_interior(ui->vdi, FIS_SOLID);
+        vsf_color(ui->vdi, static_cast<short>(ui->pen_fg));
+        v_circle(ui->vdi, cx, cy, r);
+        vsf_color(ui->vdi, static_cast<short>(ui->pen_bg));
+        v_circle(ui->vdi, cx, cy, static_cast<short>(r > 2 ? r - 1 : 1));
+        if (selected) {
+            vsf_color(ui->vdi, static_cast<short>(ui->pen_accent));
+            v_circle(ui->vdi, cx, cy, static_cast<short>(r > 3 ? r - 3 : 2));
+        }
+    }
+#else
+    (void)selected;
+#endif
+    if (label && label[0]) {
+        at_draw_text(ui, x + sz + 6, y, label, label_pen, max_chars);
+    }
+}
+
+static void at_draw_field_row(const OykAtariUiState* ui, int x, int y, const char* label,
+                              const char* value, int label_w, int box_w) {
+    if (label && label[0]) {
+        at_draw_text(ui, x, y + 1, label, ui->pen_fg, label_w / 8);
+    }
+    int bx = x + label_w;
+    at_fill_rect(ui, bx, y, box_w, 18, ui->pen_bg);
+    at_frame_rect(ui, bx, y, box_w, 18, ui->pen_fg);
+    if (value && value[0]) {
+        at_draw_text(ui, bx + 5, y + 1, value, ui->pen_fg, (box_w - 10) / 8);
+    }
+}
+
 static void at_draw_box(const OykAtariUiState* ui, int x, int y, int w, int h, const char* title) {
     at_fill_rect(ui, x, y, w, h, ui->pen_panel);
     at_frame_rect(ui, x, y, w, h, ui->pen_fg);
@@ -291,6 +385,7 @@ static void at_draw_console(OykAtariUiState* ui) {
 
     ++ui->console_draw_count;
     ui->last_console_bg = ui->active_theme.colors[OYK_TR_BG];
+    at_reset_hits(ui);
 
     /* Repaint entire GEM screen workspace + top menu bar */
     at_fill_rect(ui, 0, 0, w, h, ui->pen_bg);
@@ -300,22 +395,24 @@ static void at_draw_console(OykAtariUiState* ui) {
                  ui->pen_menu_fg, 46);
     {
         char rstat[32];
-        sprintf(rstat, "%s  %s",
-                node->accept_incoming() ? "IN:ALLOW" : "IN:DENY",
-                (ui->tier == OYK_ATARI_MONO) ? "ST-HIGH" : "VDI-16");
-        at_draw_text(ui, w - 148, 2, rstat, ui->pen_menu_fg, 18);
+        sprintf(rstat, "%s", (ui->tier == OYK_ATARI_MONO) ? "ST-HIGH (Mono)" : "VDI-16 Color");
+        at_draw_text(ui, w - 124, 2, rstat, ui->pen_menu_fg, 14);
     }
 
-    /* Status banner */
-    char cs[16], al[16], banner[128];
+    /* Status banner with canonical header + right incoming badge */
+    char cs[16], al[16], hdr[128];
     oyk_format_callsign(&cfg.callsign, cs, sizeof(cs));
     oyk_format_callsign(&cfg.alias, al, sizeof(al));
-    oyk_gui_format_console_banner(cs, al, node->accept_incoming(),
-                                  node->total_active_connections(), cfg.iface_count,
-                                  banner, sizeof(banner));
-    at_fill_rect(ui, 8, 24, w - 16, 20, ui->pen_status_bg);
-    at_frame_rect(ui, 8, 24, w - 16, 20, ui->pen_fg);
-    at_draw_text(ui, 14, 26, banner, ui->pen_status_fg, (w - 32) / 8);
+    sprintf(hdr, "OYK PACKET NODE: %s (%s) | Up: 0s | Conns: %d",
+            cs, al, node->total_active_connections());
+    const char* pill = oyk_gui_format_incoming_pill(node->accept_incoming(), 0);
+    int pill_w = static_cast<int>(strlen(pill)) * 8 + 10;
+    at_fill_rect(ui, 8, 23, w - 16, 22, ui->pen_status_bg);
+    at_frame_rect(ui, 8, 23, w - 16, 22, ui->pen_fg);
+    at_draw_text(ui, 14, 26, hdr, ui->pen_status_fg, (w - pill_w - 36) / 8);
+    at_fill_rect(ui, w - 12 - pill_w, 25, pill_w, 18, ui->pen_panel);
+    at_frame_rect(ui, w - 12 - pill_w, 25, pill_w, 18, ui->pen_fg);
+    at_draw_text(ui, w - 7 - pill_w, 26, pill, ui->pen_fg, static_cast<int>(strlen(pill)));
 
     /* Side-by-side Interfaces & Last 5 Heard */
     int half = (w - 22) / 2;
@@ -382,11 +479,11 @@ static void at_draw_console(OykAtariUiState* ui) {
         }
     }
 
-    at_draw_button(ui, 8,   bar_y, 88, 22, "Terminal", 1);
-    at_draw_button(ui, 102, bar_y, 68, 22, "Files", 0);
-    at_draw_button(ui, 176, bar_y, 88, 22, "Settings", 0);
-    at_draw_button(ui, 270, bar_y, 68, 22, "Theme", 0);
-    at_draw_button(ui, 344, bar_y, 68, 22, "Peers", 0);
+    at_draw_button(ui, 8,   bar_y, 88, 22, "Terminal", 1); at_add_hit(ui, 8,   bar_y, 88, 22, OYK_SCR_TERMINAL);
+    at_draw_button(ui, 102, bar_y, 68, 22, "Files",    0); at_add_hit(ui, 102, bar_y, 68, 22, OYK_SCR_FILES);
+    at_draw_button(ui, 176, bar_y, 88, 22, "Settings", 0); at_add_hit(ui, 176, bar_y, 88, 22, OYK_SCR_SETTINGS);
+    at_draw_button(ui, 270, bar_y, 68, 22, "Theme",    0); at_add_hit(ui, 270, bar_y, 68, 22, OYK_SCR_THEME);
+    at_draw_button(ui, 344, bar_y, 68, 22, "Peers",    0); at_add_hit(ui, 344, bar_y, 68, 22, OYK_SCR_PEERS);
     at_draw_text(ui, 424, bar_y + 3,
                  ui->net ? ui->net->caps.backend_summary : "ATARI GEM",
                  ui->pen_fg, 25);
@@ -431,13 +528,14 @@ static void at_draw_modal(OykAtariUiState* ui) {
     at_fill_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_panel);
     at_frame_rect(ui, mx + mw - 32, my + 2, 29, 17, ui->pen_fg);
     at_draw_text(ui, mx + mw - 29, my + 2, "[X]", ui->pen_fg, 3);
+    at_add_hit(ui, mx + mw - 32, my + 2, 29, 17, 999);
 
     int lx = mx + 12;
     int ty = my + 28;
     int bw = mw - 24;
     int by = my + mh - 30;
     const OykConfig& cfg = ui->node->config();
-    char cs[16], al[16], buf[128];
+    char cs[16], al[16], buf[128], nbuf[32];
 
     if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS) {
         int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ui->settings_tab;
@@ -453,11 +551,61 @@ static void at_draw_modal(OykAtariUiState* ui) {
             at_frame_rect(ui, tx, ty, tw - 3, 20, ui->pen_fg);
             at_draw_text(ui, tx + 4, ty + 2, buf,
                          sel ? ui->pen_accent_fg : ui->pen_fg, (tw - 8) / 8);
+            at_add_hit(ui, tx, ty, tw - 3, 20, 100 + t);
             tx += tw;
         }
         at_hline(ui, lx, mx + mw - 12, ty + 24, ui->pen_fg);
 
-        if (active_tab == 4) {
+        if (active_tab == 0) {
+            oyk_format_callsign(&cfg.callsign, cs, sizeof(cs));
+            oyk_format_callsign(&cfg.alias, al, sizeof(al));
+            at_draw_field_row(ui, lx, ty + 32, "Callsign:", cs, 96, 130);
+            at_draw_field_row(ui, lx + 248, ty + 32, "Alias:", al, 64, 130);
+            at_draw_checkbox(ui, lx, ty + 60, cfg.accept_incoming,
+                             "Accept Incoming Connections", ui->pen_fg, 36);
+            sprintf(buf, "Display: %dx%d (%d colors)   Theme: %s",
+                    ui->scr_w, ui->scr_h, ui->colors, ui->theme_ctrl.active_name);
+            at_draw_text(ui, lx, ty + 88, buf, ui->pen_fg, bw / 8);
+            sprintf(buf, "Hardware: %s", ui->net ? ui->net->caps.backend_summary : "RS-232");
+            at_draw_text(ui, lx, ty + 110, buf, ui->pen_fg, bw / 8);
+        } else if (active_tab == 1) {
+            at_draw_checkbox(ui, lx, ty + 32, cfg.bbs_enabled,
+                             "Enable Packet BBS Store & Forward", ui->pen_fg, 36);
+            sprintf(nbuf, "-%u", static_cast<unsigned int>(cfg.bbs_ssid));
+            at_draw_field_row(ui, lx + 340, ty + 30, "SSID:", nbuf, 52, 60);
+            at_draw_checkbox(ui, lx, ty + 58, cfg.bbs_files_enabled,
+                             "Enable BBS Shared Files Area", ui->pen_fg, 36);
+            at_draw_field_row(ui, lx, ty + 84, "Mail Dir:", cfg.bbs_mail_path, 96, 360);
+            at_draw_field_row(ui, lx, ty + 110, "Files Dir:", cfg.bbs_files_path, 96, 360);
+        } else if (active_tab == 2) {
+            at_draw_checkbox(ui, lx, ty + 32, cfg.chat_enabled,
+                             "Enable Real-Time CHAT Conference Bridge", ui->pen_fg, 44);
+            sprintf(nbuf, "-%u", static_cast<unsigned int>(cfg.chat_ssid));
+            at_draw_field_row(ui, lx, ty + 58, "CHAT SSID:", nbuf, 96, 80);
+            at_draw_field_row(ui, lx, ty + 84, "Default Topic:", cfg.chat_topic, 120, 320);
+        } else if (active_tab == 3) {
+            at_draw_text(ui, lx, ty + 30, "ID       Driver      Endpoint / Device         Policy",
+                         ui->pen_fg, bw / 8);
+            for (int i = 0; i < cfg.iface_count && i < 6; ++i) {
+                if (cfg.ifaces[i].device[0]) {
+                    sprintf(nbuf, "%s @ %lu", cfg.ifaces[i].device,
+                            static_cast<unsigned long>(cfg.ifaces[i].baud));
+                } else {
+                    sprintf(nbuf, "%s:%u", cfg.ifaces[i].host,
+                            static_cast<unsigned int>(cfg.ifaces[i].port));
+                }
+                sprintf(buf, "%s %-8s %-10s %-24s IN:%s OUT:%s",
+                        (i == 0) ? ">" : " ",
+                        cfg.ifaces[i].id, cfg.ifaces[i].type, nbuf,
+                        cfg.ifaces[i].block_inbound ? "NO" : "YES",
+                        cfg.ifaces[i].block_outbound ? "NO" : "YES");
+                at_draw_text(ui, lx, ty + 50 + i * 18, buf, ui->pen_fg, bw / 8);
+            }
+            at_draw_button(ui, lx, by, 96, 22, "Add Iface", 0);
+            at_add_hit(ui, lx, by, 96, 22, OYK_SCR_ADD_IFACE);
+            at_draw_button(ui, lx + 104, by, 96, 22, "Edit Iface", 0);
+            at_add_hit(ui, lx + 104, by, 96, 22, OYK_SCR_EDIT_IFACE);
+        } else if (active_tab == 4) {
             at_draw_text(ui, lx, ty + 30, "ID       Callsign  Interface Endpoint          Policy",
                          ui->pen_fg, bw / 8);
             for (int p = 0; p < cfg.peer_count && p < 7; ++p) {
@@ -469,62 +617,91 @@ static void at_draw_modal(OykAtariUiState* ui) {
                 at_draw_text(ui, lx, ty + 50 + p * 18, buf, ui->pen_fg, bw / 8);
             }
             at_draw_button(ui, lx, by, 92, 22, "Edit Peer", 0);
+            at_add_hit(ui, lx, by, 92, 22, OYK_SCR_EDIT_PEER);
+        } else if (active_tab == 5) {
+            at_draw_checkbox(ui, lx, ty + 32, cfg.rig_enabled,
+                             "Enable Rig CAT Transceiver Control", ui->pen_fg, 40);
+            at_draw_field_row(ui, lx, ty + 58, "Protocol:",
+                              cfg.rig_protocol[0] ? cfg.rig_protocol : "rigctld", 96, 130);
+            at_draw_field_row(ui, lx + 246, ty + 58, "Host:", cfg.rig_host, 56, 150);
+            sprintf(nbuf, "%u", static_cast<unsigned int>(cfg.rig_port));
+            at_draw_field_row(ui, lx, ty + 84, "CAT Port:", nbuf, 96, 90);
+            sprintf(nbuf, "%d s", cfg.rig_poll_sec);
+            at_draw_field_row(ui, lx + 246, ty + 84, "Poll:", nbuf, 56, 90);
         } else {
-            oyk_format_callsign(&cfg.callsign, cs, sizeof(cs));
-            oyk_format_callsign(&cfg.alias, al, sizeof(al));
-            sprintf(buf, "Callsign: %s   Alias: %s   Accept Incoming: %s",
-                    cs, al, cfg.accept_incoming ? "YES" : "NO");
-            at_draw_text(ui, lx, ty + 34, buf, ui->pen_fg, bw / 8);
-            sprintf(buf, "BBS (-%u): %s   CHAT (-%u): %s   Interfaces: %d",
-                    static_cast<unsigned int>(cfg.bbs_ssid), cfg.bbs_enabled ? "ON" : "OFF",
-                    static_cast<unsigned int>(cfg.chat_ssid), cfg.chat_enabled ? "ON" : "OFF",
-                    cfg.iface_count);
-            at_draw_text(ui, lx, ty + 54, buf, ui->pen_fg, bw / 8);
-            sprintf(buf, "Display: %dx%d (%d colors)   Theme: %s",
-                    ui->scr_w, ui->scr_h, ui->colors, ui->theme_ctrl.active_name);
-            at_draw_text(ui, lx, ty + 74, buf, ui->pen_fg, bw / 8);
-            sprintf(buf, "Hardware: %s", ui->net ? ui->net->caps.backend_summary : "RS-232");
-            at_draw_text(ui, lx, ty + 94, buf, ui->pen_fg, bw / 8);
-            at_draw_button(ui, lx, by, 76, 22, "Save", 1);
+            at_draw_checkbox(ui, lx, ty + 32, cfg.printer_enabled,
+                             "Enable Line Printer Packet Log", ui->pen_fg, 40);
+            at_draw_field_row(ui, lx, ty + 58, "Device:",
+                              cfg.printer_device[0] ? cfg.printer_device : "PRN:", 96, 150);
+            at_draw_field_row(ui, lx + 266, ty + 58, "Proto:",
+                              cfg.printer_protocol[0] ? cfg.printer_protocol : "epson", 64, 110);
+            sprintf(nbuf, "%lu", static_cast<unsigned long>(cfg.printer_baud));
+            at_draw_field_row(ui, lx, ty + 84, "Baud Rate:", nbuf, 96, 110);
+            at_draw_checkbox(ui, lx + 246, ty + 85, cfg.printer_condensed,
+                             "Condensed 132-col Print", ui->pen_fg, 24);
         }
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_ADD_IFACE) {
-        at_draw_text(ui, lx, ty + 4, "Step 1 of 4: Select Driver & Review", ui->pen_fg, bw / 8);
+        at_draw_text(ui, lx, ty + 4, "Step 1 of 4: Select Driver & Configure Endpoint",
+                     ui->pen_fg, bw / 8);
         for (int i = 0; i < 5; ++i) {
-            sprintf(buf, "%s %s", (i == ui->wiz.selected_driver_idx) ? "[*]" : "[ ]",
-                    oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i));
-            at_draw_text(ui, lx + 4, ty + 28 + i * 18, buf, ui->pen_fg, 28);
+            int ry = ty + 28 + i * 20;
+            at_draw_radio(ui, lx + 4, ry, i == ui->wiz.selected_driver_idx,
+                          oyk_gui_wiz_driver_type(ui->wiz.driver_mask, i), ui->pen_fg, 16);
+            at_add_hit(ui, lx + 4, ry, 164, 18, 200 + i);
         }
-        sprintf(buf, "ID: %s   Type: %s   Host: %s:%u",
-                ui->wiz.draft.id, ui->wiz.draft.type,
-                ui->wiz.draft.host, static_cast<unsigned int>(ui->wiz.draft.port));
-        at_draw_text(ui, lx + 190, ty + 34, buf, ui->pen_fg, 44);
-        at_draw_text(ui, lx + 190, ty + 54, "Same-Iface: NO   Inbound/Outbound: YES",
+        at_draw_text(ui, lx + 186, ty + 28,
+                     oyk_gui_wiz_driver_desc(ui->wiz.driver_mask, ui->wiz.selected_driver_idx),
                      ui->pen_fg, 44);
-        at_draw_button(ui, lx, by, 84, 22, "Create", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_draw_field_row(ui, lx + 186, ty + 52, "Iface ID:", ui->wiz.draft.id, 84, 120);
+        if (ui->wiz.draft.device[0] || strcmp(ui->wiz.draft.type, "kiss-serial") == 0) {
+            at_draw_field_row(ui, lx + 186, ty + 76, "Device:",
+                              ui->wiz.draft.device[0] ? ui->wiz.draft.device : "AUX:", 84, 140);
+            sprintf(nbuf, "%lu", static_cast<unsigned long>(ui->wiz.draft.baud ? ui->wiz.draft.baud : 9600UL));
+            at_draw_field_row(ui, lx + 186, ty + 100, "Baud:", nbuf, 84, 100);
+        } else {
+            at_draw_field_row(ui, lx + 186, ty + 76, "Bind Host:", ui->wiz.draft.host, 84, 140);
+            sprintf(nbuf, "%u", static_cast<unsigned int>(ui->wiz.draft.port));
+            at_draw_field_row(ui, lx + 186, ty + 100, "Port:", nbuf, 84, 90);
+        }
+        at_draw_checkbox(ui, lx + 186, ty + 126, !ui->wiz.draft.allow_same_interface,
+                         "Isolate Same-Interface Bridges", ui->pen_fg, 34);
+        at_draw_button(ui, lx, by, 76, 22, "< Back", 0);
+        at_draw_button(ui, mx + mw - 174, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 174, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 90, by, 78, 22, "Next >", 1);
     } else if (scr == OYK_SCR_EDIT_IFACE) {
         const OykIfaceConfig& ifc = cfg.ifaces[0];
-        sprintf(buf, "Interface ID: %s   Type: %s", ifc.id, ifc.type);
-        at_draw_text(ui, lx, ty + 14, buf, ui->pen_fg, bw / 8);
-        sprintf(buf, "Bind Host: %s   Port: %u   Netmask: %s",
-                ifc.host, static_cast<unsigned int>(ifc.port), ifc.netmask);
-        at_draw_text(ui, lx, ty + 36, buf, ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 58, "Allow Inbound: [X]   Allow Outbound: [X]   Same-Iface: [ ]",
-                     ui->pen_fg, bw / 8);
-        at_draw_button(ui, lx, by, 76, 22, "Save", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_draw_field_row(ui, lx, ty + 12, "Interface ID:", ifc.id, 112, 120);
+        at_draw_field_row(ui, lx + 250, ty + 12, "Driver:", ifc.type, 64, 120);
+        at_draw_field_row(ui, lx, ty + 38, "Bind Host:", ifc.host, 112, 150);
+        sprintf(nbuf, "%u", static_cast<unsigned int>(ifc.port));
+        at_draw_field_row(ui, lx + 280, ty + 38, "Port:", nbuf, 48, 80);
+        at_draw_field_row(ui, lx, ty + 64, "Netmask:", ifc.netmask, 112, 150);
+        at_draw_checkbox(ui, lx, ty + 94, !ifc.block_inbound, "Allow Inbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 152, ty + 94, !ifc.block_outbound, "Allow Outbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 312, ty + 94, ifc.allow_same_interface, "Same-Interface", ui->pen_fg, 16);
+        at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_EDIT_PEER) {
         const OykPeerConfig& pr = cfg.peers[0];
-        sprintf(buf, "Peer ID: %s   Callsign: %s", pr.id, pr.callsign);
-        at_draw_text(ui, lx, ty + 14, buf, ui->pen_fg, bw / 8);
-        sprintf(buf, "Interface: %s   Endpoint: %s:%u",
-                pr.interface_id, pr.host, static_cast<unsigned int>(pr.port));
-        at_draw_text(ui, lx, ty + 36, buf, ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 58, "Policy: STATIC   Inbound: YES   Outbound: YES",
-                     ui->pen_fg, bw / 8);
-        at_draw_button(ui, lx, by, 76, 22, "Save", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_draw_field_row(ui, lx, ty + 12, "Peer ID:", pr.id, 96, 120);
+        at_draw_field_row(ui, lx + 236, ty + 12, "Callsign:", pr.callsign, 80, 120);
+        at_draw_field_row(ui, lx, ty + 38, "Interface:", pr.interface_id, 96, 120);
+        sprintf(buf, "%s:%u", pr.host, static_cast<unsigned int>(pr.port));
+        at_draw_field_row(ui, lx + 236, ty + 38, "Endpoint:", buf, 80, 170);
+        at_draw_checkbox(ui, lx, ty + 70, pr.allow_inbound, "Allow Inbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 152, ty + 70, pr.allow_outbound, "Allow Outbound", ui->pen_fg, 16);
+        at_draw_checkbox(ui, lx + 312, ty + 70, pr.auto_learned, "Auto-Learned", ui->pen_fg, 16);
+        at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Save", 1);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_TERMINATE) {
         sprintf(buf, "%-4s %-10s %-8s %-10s",
                 oyk_gui_table_column(OYK_TBL_TERMINATE, 0),
@@ -546,34 +723,48 @@ static void at_draw_modal(OykAtariUiState* ui) {
             ++row_idx;
         }
         at_hline(ui, lx, mx + mw - 12, by - 8, ui->pen_fg);
-        at_draw_button(ui, lx, by, 102, 22, "Terminate", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_draw_button(ui, mx + mw - 196, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 196, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 114, by, 102, 22, "Terminate", 1);
     } else if (scr == OYK_SCR_BAN) {
-        at_draw_text(ui, lx, ty + 8, "Callsign  Banned At        Lift At     Flags  Reason",
+        at_draw_field_row(ui, lx, ty + 4, "Callsign:", "N0BAD", 80, 100);
+        at_draw_field_row(ui, lx + 190, ty + 4, "Reason:", "Beacon flood", 64, 150);
+        at_draw_field_row(ui, lx + 414, ty + 4, "Dur:", "7d", 40, 56);
+        at_draw_checkbox(ui, lx, ty + 28, 1, "Hard Ban (Drop AX.25)", ui->pen_fg, 24);
+        at_draw_checkbox(ui, lx + 230, ty + 28, 0, "Allow Appeal", ui->pen_fg, 16);
+        at_draw_text(ui, lx, ty + 52, "Callsign  Banned At        Lift At     Flags  Reason",
                      ui->pen_fg, bw / 8);
-        for (int i = 0; i < ui->node->ban_count() && i < 6; ++i) {
+        for (int i = 0; i < ui->node->ban_count() && i < 4; ++i) {
             const OykBanEntry& be = ui->node->ban_entry(i);
             sprintf(buf, "%-9s %-16s %-10s  0x%02lX   %s",
                     be.key, be.banned_at, be.lift_at,
                     static_cast<unsigned long>(be.flags), be.reason);
-            at_draw_text(ui, lx, ty + 32 + i * 18, buf, ui->pen_fg, bw / 8);
+            at_draw_text(ui, lx, ty + 72 + i * 18, buf, ui->pen_fg, bw / 8);
         }
-        at_draw_button(ui, lx, by, 92, 22, "Add Ban", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_draw_button(ui, mx + mw - 188, by, 76, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 188, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 104, by, 92, 22, "Add Ban", 1);
     } else if (scr == OYK_SCR_EXIT_PEERS) {
         sprintf(buf, "%d auto-learned peer(s) found during session.",
                 ui->node->auto_learned_peer_count());
         at_draw_text(ui, lx, ty + 18, buf, ui->pen_fg, bw / 8);
         at_draw_text(ui, lx, ty + 42, "Keep learned peers in node configuration before exit?",
                      ui->pen_fg, bw / 8);
-        at_draw_button(ui, lx, by, 112, 22, "Save & Exit", 1);
-        at_draw_button(ui, lx + 120, by, 134, 22, "Discard & Exit", 0);
+        at_draw_button(ui, lx, by, 108, 22, "Save & Exit", 1);
+        at_draw_button(ui, lx + 114, by, 78, 22, "Discard", 0);
+        at_draw_button(ui, lx + 198, by, 118, 22, "Review Peers", 0);
+        at_add_hit(ui, lx + 198, by, 118, 22, OYK_SCR_PEERS);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_THEME) {
-        sprintf(buf, "Theme: < %s >  (Whole-Screen Live Preview, %d colors)",
+        at_draw_button(ui, lx, ty + 2, 26, 20, "<", 0);
+        at_add_hit(ui, lx, ty + 2, 26, 20, 401);
+        at_draw_button(ui, lx + 30, ty + 2, 26, 20, ">", 0);
+        at_add_hit(ui, lx + 30, ty + 2, 26, 20, 402);
+        sprintf(buf, "Theme: %s  (Whole-Screen Live Preview, %d colors)",
                 ui->theme_ctrl.active_name, ui->colors);
-        at_draw_text(ui, lx, ty + 4, buf, ui->pen_fg, bw / 8);
-        at_draw_text(ui, lx, ty + 26, "Role             Key         Color    Preview",
+        at_draw_text(ui, lx + 64, ty + 4, buf, ui->pen_fg, (bw - 68) / 8);
+        at_draw_text(ui, lx, ty + 28, "Role             Key         Color    Preview",
                      ui->pen_fg, bw / 8);
         int max_rows = (ui->scr_h >= 460) ? 10 : 8;
         for (int i = 0; i < max_rows; ++i) {
@@ -587,42 +778,50 @@ static void at_draw_modal(OykAtariUiState* ui) {
             at_fill_rect(ui, lx + 350, ry + 2, 72, 13, sw_pen);
             at_frame_rect(ui, lx + 350, ry + 2, 72, 13, ui->pen_fg);
         }
-        at_draw_button(ui, lx, by, 108, 22, "Next Theme", 0);
-        at_draw_button(ui, lx + 116, by, 76, 22, "Apply", 1);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
+        at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
+        at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Apply", 1);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_TERMINAL) {
-        at_draw_text(ui, lx, ty + 4, "Connected to KR4OYK-11 BBS  (Ctrl+A ? = Hotkey Help)",
+        at_draw_text(ui, lx, ty + 4, "KR4OYK-11 BBS | Ctrl+A H Help | S YAPP | W Wrap",
                      ui->pen_fg, bw / 8);
-        at_fill_rect(ui, lx, ty + 26, bw, mh - 92, ui->pen_bg);
-        at_frame_rect(ui, lx, ty + 26, bw, mh - 92, ui->pen_fg);
-        at_draw_text(ui, lx + 8, ty + 34, "Welcome to KR4OYK-7 BBS on Atari ST GEM",
+        at_fill_rect(ui, lx, ty + 24, bw, mh - 116, ui->pen_bg);
+        at_frame_rect(ui, lx, ty + 24, bw, mh - 116, ui->pen_fg);
+        at_draw_text(ui, lx + 8, ty + 32, "Welcome to KR4OYK-7 BBS on Atari ST GEM",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 54, "Ctrl+A H Help | Ctrl+A S YAPP Send | Ctrl+A W Wrap",
+        at_draw_text(ui, lx + 8, ty + 52, "EOL: Auto-Detected CRLF | Word-Wrap: ON (72 cols)",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 74, "EOL: Auto-Detected CRLF | Word-Wrap: ON (72 cols)",
+        at_draw_text(ui, lx + 8, ty + 72, "Type 'LIST' or 'B' to disconnect from BBS.",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 94, "Type 'LIST' or 'B' to disconnect from BBS.",
+        at_draw_text(ui, lx + 8, ty + 92, "14:21:08  Msg #42  ALL  de W4ABC-7: Net tonight",
                      ui->pen_fg, (bw - 16) / 8);
-        at_draw_text(ui, lx + 8, ty + 160, "> LIST_", ui->pen_fg, (bw - 16) / 8);
+        at_draw_field_row(ui, lx, by - 26, "Input:", "LIST_", 56, bw - 140);
+        at_draw_button(ui, lx + bw - 76, by - 28, 76, 22, "Send", 1);
         at_draw_button(ui, lx, by, 112, 22, "Ctrl+A Help", 0);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 1);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_FILES) {
         int pw = (bw - 12) / 2;
         at_draw_text(ui, lx, ty + 4, "Pending Uploads", ui->pen_fg, pw / 8);
         at_draw_text(ui, lx + pw + 12, ty + 4, "Approved BBS Files", ui->pen_fg, pw / 8);
-        at_fill_rect(ui, lx, ty + 26, pw, mh - 92, ui->pen_bg);
-        at_frame_rect(ui, lx, ty + 26, pw, mh - 92, ui->pen_fg);
-        at_fill_rect(ui, lx + pw + 12, ty + 26, pw, mh - 92, ui->pen_bg);
-        at_frame_rect(ui, lx + pw + 12, ty + 26, pw, mh - 92, ui->pen_fg);
-        at_draw_text(ui, lx + 8, ty + 34, "W4ABC-7 PACKETS.TXT 2048", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + pw + 20, ty + 34, "README.TXT         1420", ui->pen_fg, (pw - 16) / 8);
-        at_draw_text(ui, lx + pw + 20, ty + 54, "NETLIST.CFG         618", ui->pen_fg, (pw - 16) / 8);
+        at_fill_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_bg);
+        at_frame_rect(ui, lx, ty + 24, pw, mh - 90, ui->pen_fg);
+        at_fill_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_bg);
+        at_frame_rect(ui, lx + pw + 12, ty + 24, pw, mh - 90, ui->pen_fg);
+        at_draw_text(ui, lx + 8, ty + 30, "From     File         Size", ui->pen_fg, (pw - 16) / 8);
+        at_draw_text(ui, lx + 8, ty + 50, "W4ABC-7  PACKETS.TXT  2048", ui->pen_fg, (pw - 16) / 8);
+        at_draw_text(ui, lx + pw + 20, ty + 30, "Filename            Size", ui->pen_fg, (pw - 16) / 8);
+        at_draw_text(ui, lx + pw + 20, ty + 50, "README.TXT          1420", ui->pen_fg, (pw - 16) / 8);
+        at_draw_text(ui, lx + pw + 20, ty + 70, "NETLIST.CFG          618", ui->pen_fg, (pw - 16) / 8);
         at_draw_button(ui, lx, by, 92, 22, "Upload...", 0);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 1);
+        at_draw_button(ui, lx + 98, by, 92, 22, "Approve", 1);
+        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 0);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else {
         at_draw_text(ui, lx, ty + 18, "Hamlib rigctld CAT: Port 4532 / RS-232 AUX @ 9600",
                      ui->pen_fg, bw / 8);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Close", 1);
+        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     }
 }
 
@@ -817,7 +1016,7 @@ int oyk_atari_ui_run(OykPortableNode* node,
     short msg[8];
     while (ui->running) {
         short key = 0, mx = 0, my = 0, mb = 0, ks = 0, br = 0;
-        short ev = evnt_multi(MU_KEYBD | MU_MESAG | MU_TIMER,
+        short ev = evnt_multi(MU_KEYBD | MU_BUTTON | MU_MESAG | MU_TIMER,
                               1, 1, 1,
                               0, 0, 0, 0, 0,
                               0, 0, 0, 0, 0,
@@ -830,6 +1029,35 @@ int oyk_atari_ui_run(OykPortableNode* node,
                 ui->running = 0;
             }
         }
+        if (ev & MU_BUTTON) {
+            int act = -1;
+            for (int hi = ui->hit_count - 1; hi >= 0; --hi) {
+                const AtHitZone& z = ui->hits[hi];
+                if (mx >= z.x && mx < z.x + z.w && my >= z.y && my < z.y + z.h) {
+                    act = z.action;
+                    break;
+                }
+            }
+            if (act == 999) {
+                ui->active_screen = OYK_SCR_MAIN;
+                at_redraw(ui);
+            } else if (act >= 100 && act < 107) {
+                ui->active_screen = OYK_SCR_SETTINGS;
+                ui->settings_tab = act - 100;
+                at_redraw(ui);
+            } else if (act >= 200 && act < 205) {
+                oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), act - 200);
+                at_redraw(ui);
+            } else if (act == 401) {
+                oyk_gui_theme_cycle(&ui->theme_ctrl, -1);
+            } else if (act == 402) {
+                oyk_gui_theme_cycle(&ui->theme_ctrl, 1);
+            } else if (act >= 0 && act < 100) {
+                ui->active_screen = act;
+                if (act == OYK_SCR_PEERS) ui->settings_tab = 4;
+                at_redraw(ui);
+            }
+        }
         if (ev & MU_KEYBD) {
             int ch = key & 0xFF;
             if (ch == 'q' || ch == 'Q' || ch == 27) {
@@ -839,6 +1067,11 @@ int oyk_atari_ui_run(OykPortableNode* node,
                 } else {
                     ui->running = 0;
                 }
+            } else if ((ui->active_screen == OYK_SCR_SETTINGS || ui->active_screen == OYK_SCR_PEERS) &&
+                       ch >= '1' && ch <= '7') {
+                ui->active_screen = OYK_SCR_SETTINGS;
+                ui->settings_tab = ch - '1';
+                at_redraw(ui);
             }
         }
         oyk_atari_net_poll(net);

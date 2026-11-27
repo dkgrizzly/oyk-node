@@ -224,6 +224,21 @@ void oyk_gsos_format_console_banner(const char *callsign, const char *alias,
     g_copy(dst, cap, buf);
 }
 
+void oyk_gsos_format_console_header(const char *callsign, const char *alias,
+                                    int conn_count, char *dst, size_t cap) {
+    char buf[128];
+    if (!dst || cap == 0U) return;
+    sprintf(buf, "OYK PACKET NODE: %s (%s) | Up: 0s | Conns: %d",
+            callsign ? callsign : "N0CALL",
+            alias ? alias : "OYKNOD",
+            conn_count);
+    g_copy(dst, cap, buf);
+}
+
+const char *oyk_gsos_format_incoming_pill(int accept_in) {
+    return accept_in ? "[INCOMING: ALLOW]" : "[INCOMING: DENY]";
+}
+
 void oyk_gsos_theme_preset(const char *name, OykGsosThemeConfig *out) {
     if (!out) return;
     memset(out, 0, sizeof(*out));
@@ -379,15 +394,22 @@ void oyk_gsos_config_init_default(OykGsosConfig *cfg) {
     cfg->has_detected_eol = 0;
     cfg->bbs_enabled = 1;
     cfg->bbs_ssid = 11;
+    cfg->bbs_files_enabled = 1;
+    g_copy(cfg->bbs_mail_path, sizeof(cfg->bbs_mail_path), "/OYK/MAIL");
+    g_copy(cfg->bbs_files_path, sizeof(cfg->bbs_files_path), "/OYK/FILES");
     cfg->chat_enabled = 1;
     cfg->chat_ssid = 12;
+    g_copy(cfg->chat_topic, sizeof(cfg->chat_topic), "General Ragchew");
     cfg->rig_enabled = 1;
     g_copy(cfg->rig_protocol, sizeof(cfg->rig_protocol), "rigctl");
+    g_copy(cfg->rig_host, sizeof(cfg->rig_host), "127.0.0.1");
     cfg->rig_port = 4532U;
+    cfg->rig_poll_sec = 2;
     cfg->printer_enabled = 0;
     g_copy(cfg->printer_device, sizeof(cfg->printer_device), ".B");
     g_copy(cfg->printer_protocol, sizeof(cfg->printer_protocol), "generic");
     cfg->printer_baud = 9600UL;
+    cfg->printer_condensed = 0;
     cfg->theme_count = 3;
     oyk_gsos_theme_preset("native", &cfg->themes[0]);
     oyk_gsos_theme_preset("dark", &cfg->themes[1]);
@@ -607,9 +629,9 @@ void oyk_gsos_node_seed_demo(OykGsosNode *node) {
     g_copy(node->bans[0].reason, 48U, "Beacon flood");
 
     node->log_count = 0;
-    oyk_gsos_node_log(node, "12:02:00 [axudp0] Connected R3MOT-7");
-    oyk_gsos_node_log(node, "12:04:11 [kiss0] Heard W4ABC-7 via SCC .A");
-    oyk_gsos_node_log(node, "12:04:15 [bbs] W4ABC-7 checked pending files");
+    oyk_gsos_node_log(node, "[12:02:00] [INFO] [axudp0] Connected R3MOT-7");
+    oyk_gsos_node_log(node, "[12:04:11] [INFO] [kiss0] Heard W4ABC-7 via SCC .A");
+    oyk_gsos_node_log(node, "[12:04:15] [INFO] [bbs] W4ABC-7 checked pending files");
 }
 
 void oyk_gsos_node_log(OykGsosNode *node, const char *line) {
@@ -681,6 +703,17 @@ const char *oyk_gsos_wiz_driver_name(int idx) {
         case 2: return "kiss-serial";
         case 3: return "kiss-tcp";
         case 4: return "telnet";
+        default: return "";
+    }
+}
+
+const char *oyk_gsos_wiz_driver_desc(int idx) {
+    switch (idx) {
+        case 0: return "AX.25 frames over UDP/IP";
+        case 1: return "AX.25 directly over IP proto 93";
+        case 2: return "KISS frames over serial / TNC";
+        case 3: return "KISS frames over TCP/IP (DireWolf)";
+        case 4: return "Inbound/Outbound Telnet gateway";
         default: return "";
     }
 }
@@ -767,6 +800,19 @@ void oyk_gsos_theme_select(OykGsosThemeCtrl *tc, const char *name) {
     g_copy(tc->active_name, sizeof(tc->active_name), name);
     tc->dirty = 1;
     g_emit_preview(tc);
+}
+
+void oyk_gsos_theme_cycle(OykGsosThemeCtrl *tc, int delta) {
+    int idx = 0, i;
+    const char *cur;
+    if (!tc) return;
+    cur = tc->active_name;
+    for (i = 0; i < 4; ++i) {
+        const char *cand = (i == 0) ? "native" : (i == 1) ? "dark" : (i == 2) ? "green" : "light";
+        if (g_strieq(cur, cand)) { idx = i; break; }
+    }
+    idx = (idx + ((delta < 0) ? -1 : 1) + 4) % 4;
+    oyk_gsos_theme_select(tc, (idx == 0) ? "native" : (idx == 1) ? "dark" : (idx == 2) ? "green" : "light");
 }
 
 int oyk_gsos_theme_set_role_rgb(OykGsosThemeCtrl *tc, int role, gsos_u32 rgb) {
