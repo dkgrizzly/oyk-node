@@ -23,7 +23,15 @@
 #include <netdb.h>
 #include <termio.h>
 #include <poll.h>
-#include <unistd.h>
+extern int read();
+extern int write();
+extern int close();
+#ifndef O_NONBLOCK
+#define O_NONBLOCK O_NDELAY
+#endif
+#ifndef O_NOCTTY
+#define O_NOCTTY 0
+#endif
 #else
 #include <sys/types.h>
 #include <sys/socket.h>

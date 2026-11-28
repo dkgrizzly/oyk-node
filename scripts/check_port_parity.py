@@ -196,6 +196,7 @@ def check_unit_test_parity(errors):
         "tests/test_esp32c6.cpp",
         "tests/test_lyra.cpp",
         "tests/test_sysv.cpp",
+        "tests/test_att3b2.cpp",
     )
     for rel_path in cpp_test_files:
         src = read_text(rel_path)

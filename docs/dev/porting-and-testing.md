@@ -43,6 +43,7 @@ ctest --test-dir build --output-on-failure -V
 | `oyk_gsos_tests` | Apple IIGS `65C816` `gsos_core` / QuickDraw II theme & terminal host verification |
 | `oyk_amiga_tests` | Amiga Kickstart `1.3`/`2.04`/`3.1` policy, `< 32`-color native lock, `amiga_private_screen` default off |
 | `oyk_atarist_tests` | Atari ST/TT display tiers, VDI RGB conversion, 4-plane hardware-VDI color mapping |
+| `oyk_att3b2_tests` | AT&T 3B2 SVR3.2 C89 `sysv` core parity, VT100 23-screen check, `OYK_NO_MOTIF` verification |
 | `oyk_tinytmux_tests` | Teensy 4.1 8-UART carrier, PSRAM, FS hooks, USB Host RadioFoundry, PPP, Ethernet bridge, VT100 console |
 | `oyk_pico_tests` | RP2040/RP2350 profiles, PSRAM/Flash fallback, RM2 optional radio, 2-UART console |
 | `oyk_esp32c6_tests` | M5Stack Unit C6L pinout, `PI4IO` RF/button, SX1262 LoRa KISS, 64x48 OLED 4 pages, LittleFS, VT340 TUI |
@@ -56,5 +57,6 @@ ctest --test-dir build --output-on-failure -V
 - **Apple IIGS GS/OS (GSplus + ProDOS)**: `./ports/gsos/run_gsplus_test.sh --unit-tests`
 - **Amiga Workbench (FS-UAE + AROS m68k)**: `./ports/amiga/run_fsuae_test.sh --unit-tests`
 - **Atari ST / TT GEM (Hatari + EmuTOS)**: `./ports/atarist/run_hatari_test.sh --unit-tests`
+- **AT&T 3B2 SVR3.2 (Telnet + Local FTP)**: `OYK_3B2_HOST=... OYK_3B2_PORT=... OYK_3B2_USER=... ./ports/att3b2/run_3b2_remote.sh --build --unit-tests`
 - **Android (Robolectric)**: `(cd ports/android && ./gradlew testDebugUnitTest)`
 - **UI Gallery & Cross-TUI Parity**: `./scripts/generate_ui_gallery.sh`

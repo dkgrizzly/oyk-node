@@ -4,7 +4,13 @@
 #include "sysv_core.h"
 
 #include <stdio.h>
+#ifdef OYK_SYSV_SVR32
+extern void *malloc(size_t);
+extern void  free(void *);
+extern int   atoi(const char *);
+#else
 #include <stdlib.h>
+#endif
 #include <string.h>
 
 static int s_tolower(int ch) {
