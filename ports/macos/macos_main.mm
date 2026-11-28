@@ -486,11 +486,33 @@ static NSImage* oykCreateLogoImage(void) {
 
     NSButton* closeBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(556, 12, 88, 28)] autorelease];
     [closeBtn setTitle:@"Close"];
-    [closeBtn setTarget:w];
-    [closeBtn setAction:@selector(performClose:)];
+    [closeBtn setKeyEquivalent:@"\033"];
+    [closeBtn setTarget:self];
+    [closeBtn setAction:@selector(onModalClose:)];
     [[w contentView] addSubview:closeBtn];
+    modalWindow_ = w;
+    [w setDelegate:(id)self];
     [w makeKeyAndOrderFront:nil];
     return w;
+}
+
+- (void)onModalClose:(id)sender {
+    (void)sender;
+    if (modalWindow_) {
+        [modalWindow_ close];
+        [modalWindow_ release];
+        modalWindow_ = nil;
+    }
+}
+
+- (void)windowWillClose:(NSNotification*)note {
+    NSWindow* closing = [note object];
+    if (closing == modalWindow_) {
+        modalWindow_ = nil;
+    } else if (closing == themeWindow_) {
+        oyk_gui_theme_revert(&themeCtrl_);
+        themeWindow_ = nil;
+    }
 }
 
 - (NSString*)buildScreenText:(int)scr {
@@ -838,6 +860,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 
     NSButton* cancelBtn = [[[NSButton alloc] initWithFrame:NSMakeRect(w - 220, 14, 92, 28)] autorelease];
     [cancelBtn setTitle:@"Cancel"];
+    [cancelBtn setKeyEquivalent:@"\033"];
     [cancelBtn setTarget:self];
     [cancelBtn setAction:@selector(onThemeCancel:)];
     [cv addSubview:cancelBtn];
@@ -852,13 +875,14 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
     themeSelectedRole_ = 0;
     [self rebuildThemePopup];
     [self applyThemeToAllWindows];
+    [win setDelegate:(id)self];
     [win makeKeyAndOrderFront:nil];
     return win;
 }
 
 - (void)runUiCaptureTour {
     struct CapItem { int scr; int wiz_step; const char* flow; };
-    static const CapItem kFlows[22] = {
+    static const CapItem kFlows[23] = {
         { OYK_SCR_MAIN,       0, "main"             },
         { OYK_SCR_MENU,       0, "menu"             },
         { OYK_SCR_SETTINGS,   0, "settings"         },
@@ -877,7 +901,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
         { OYK_SCR_TERMINATE,  0, "terminate"        },
         { OYK_SCR_BAN,        0, "ban"              },
         { OYK_SCR_EXIT_PEERS, 0, "exit"             },
-        { OYK_SCR_THEME,      0, "theme"            },
+        { OYK_SCR_THEME,      0, "settings_theme"   },
         { OYK_SCR_TERMINAL,   0, "terminal"         },
         { OYK_SCR_TERM_HELP,  0, "terminal_help"    },
         { OYK_SCR_FILES,      0, "files"            },
@@ -907,7 +931,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
             [darkMainBg release]; [darkDlgBg release];
             [lightMainBg release]; [lightDlgBg release];
             [self rebuildThemePopup];
-            [self captureWindow:tw asFlow:@"theme"];
+            [self captureWindow:tw asFlow:@"settings_theme"];
             [tw close];
             [tw release];
             themeWindow_ = nil;
@@ -917,8 +941,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
                                            bodyText:[self buildScreenText:kFlows[i].scr]
                                              height:380.0];
             [self captureWindow:w asFlow:[NSString stringWithUTF8String:kFlows[i].flow]];
-            [w close];
-            [w release];
+            [self onModalClose:nil];
         }
     }
     engine_->stop();
@@ -926,15 +949,17 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 }
 
 - (void)dispatchGuiAction:(int)act {
+    if (modalWindow_ != nil || themeWindow_ != nil) {
+        NSBeep();
+        return;
+    }
     if (act == OYK_ACT_ALLOW_INCOMING) { engine_->set_accept_incoming(1); [self refreshConsole]; }
     else if (act == OYK_ACT_DENY_INCOMING) { engine_->set_accept_incoming(0); [self refreshConsole]; }
     else if (act == OYK_ACT_EXIT) [self requestExit:nil];
-    else if (act == OYK_ACT_THEME) { [self presentThemeSettingsWindow]; }
     else {
         int scr = OYK_SCR_SETTINGS;
         if (act == OYK_ACT_LOCAL_TERM) scr = OYK_SCR_TERMINAL;
         else if (act == OYK_ACT_FILES) scr = OYK_SCR_FILES;
-        else if (act == OYK_ACT_PEERS) scr = OYK_SCR_PEERS;
         else if (act == OYK_ACT_TERMINATE) scr = OYK_SCR_TERMINATE;
         else if (act == OYK_ACT_BAN) scr = OYK_SCR_BAN;
         else if (act == OYK_ACT_RIG) scr = OYK_SCR_RIG;
@@ -949,6 +974,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 - (void)focusConsole:(id)sender { (void)sender; [mainWindow_ makeKeyAndOrderFront:nil]; }
 - (void)showAbout:(id)sender {
     (void)sender;
+    if (modalWindow_ != nil || themeWindow_ != nil) { NSBeep(); return; }
     NSWindow* w = [self presentDialogScreen:OYK_SCR_ABOUT
                                    bodyText:[self buildScreenText:OYK_SCR_ABOUT]
                                      height:260.0];
@@ -956,6 +982,7 @@ static void macos_theme_preview_trampoline(const OykThemeConfig* pal,
 }
 - (void)showHotkeys:(id)sender {
     (void)sender;
+    if (modalWindow_ != nil || themeWindow_ != nil) { NSBeep(); return; }
     NSMutableString* s = [NSMutableString string];
     for (int i = 0; i < oyk_term_help_count(); ++i) {
         const OykTermHelpEntry* e = oyk_term_help_entry(i);

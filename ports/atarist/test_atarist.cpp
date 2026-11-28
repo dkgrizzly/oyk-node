@@ -106,9 +106,17 @@ int main() {
     if (cfg) delete cfg;
     if (node) delete node;
 
-    /* 3. Shared GUI / Term / Rig / Printer */
-    AT_CHECK(oyk_gui_settings_tab_count() == 7, "gui_tabs_7");
-    AT_CHECK(oyk_gui_node_menu_count() == 13, "gui_menu_13");
+    /* 3. Shared GUI / Term / Rig / Printer / Modal Preemption */
+    AT_CHECK(oyk_gui_settings_tab_count() == 8, "gui_tabs_8");
+    AT_CHECK(oyk_gui_node_menu_count() == 11, "gui_menu_11");
+    AT_CHECK(oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) == 1 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1, "atari_modal_preemption");
+    for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+        const OykGuiMenuItem* mitem = oyk_gui_node_menu_item(mi);
+        AT_CHECK(!mitem || (mitem->action != OYK_ACT_PEERS && mitem->action != OYK_ACT_THEME),
+                 "atari_menu_no_dup_peers_theme");
+    }
     AT_CHECK(oyk_term_decode_ctrl_a_cmd('?') == OYK_TCMD_HELP, "term_ctrl_a_help");
     OykTermWrapSpan spans[4];
     AT_CHECK(oyk_term_wrap_line("HELLO ATARI ST GEM DESKTOP", 25, 14, spans, 4) >= 2, "term_word_wrap");

@@ -3332,6 +3332,8 @@ OYK_DLG_RET EditIfaceDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static int        g_win_modal_depth = 0;
+
 static void switch_settings_tab(HWND hdlg, int tab) {
     static const int NODE_IDS[] = {
         IDC_SET_L_CALL, IDC_SET_CALL, IDC_SET_L_ALIAS, IDC_SET_ALIAS,
@@ -3363,6 +3365,15 @@ static void switch_settings_tab(HWND hdlg, int tab) {
         IDC_SET_L_RHOST, IDC_SET_RIG_HOST, IDC_SET_L_RPORT, IDC_SET_RIG_PORT,
         IDC_SET_L_RPOLL, IDC_SET_RIG_POLL, IDC_SET_RIG_NOTIFY
     };
+    static const int PRN_IDS[] = {
+        IDC_SET_PRN_EN, IDC_SET_L_PDEV, IDC_SET_PRN_DEV,
+        IDC_SET_L_PPROTO, IDC_SET_PRN_PROTO, IDC_SET_L_PBAUD, IDC_SET_PRN_BAUD,
+        IDC_SET_L_PLVL, IDC_SET_PRN_LVL, IDC_SET_PRN_COND
+    };
+    static const int THM_IDS[] = {
+        IDC_TH_L_COMBO, IDC_TH_COMBO, IDC_TH_DEL, IDC_TH_HINT, IDC_TH_LIST,
+        IDC_TH_L_HEX, IDC_TH_HEX, IDC_TH_PREVIEW, IDC_TH_PICK, IDC_TH_APPLY_COLOR
+    };
 
     int i;
     for (i = 0; i < static_cast<int>(sizeof(NODE_IDS) / sizeof(NODE_IDS[0])); ++i) {
@@ -3383,29 +3394,28 @@ static void switch_settings_tab(HWND hdlg, int tab) {
     for (i = 0; i < static_cast<int>(sizeof(RIG_IDS) / sizeof(RIG_IDS[0])); ++i) {
         ShowWindow(GetDlgItem(hdlg, RIG_IDS[i]), (tab == 5) ? SW_SHOW : SW_HIDE);
     }
-    static const int PRN_IDS[] = {
-        IDC_SET_PRN_EN, IDC_SET_L_PDEV, IDC_SET_PRN_DEV,
-        IDC_SET_L_PPROTO, IDC_SET_PRN_PROTO, IDC_SET_L_PBAUD, IDC_SET_PRN_BAUD,
-        IDC_SET_L_PLVL, IDC_SET_PRN_LVL, IDC_SET_PRN_COND
-    };
     for (i = 0; i < static_cast<int>(sizeof(PRN_IDS) / sizeof(PRN_IDS[0])); ++i) {
         ShowWindow(GetDlgItem(hdlg, PRN_IDS[i]), (tab == 6) ? SW_SHOW : SW_HIDE);
+    }
+    for (i = 0; i < static_cast<int>(sizeof(THM_IDS) / sizeof(THM_IDS[0])); ++i) {
+        ShowWindow(GetDlgItem(hdlg, THM_IDS[i]), (tab == 7) ? SW_SHOW : SW_HIDE);
     }
 
     SetDlgItemText(hdlg, IDC_SET_TAB_NODE,  (tab == 0) ? "[ Node ]" : "Node");
     SetDlgItemText(hdlg, IDC_SET_TAB_BBS,   (tab == 1) ? "[ BBS ]" : "BBS");
     SetDlgItemText(hdlg, IDC_SET_TAB_CHAT,  (tab == 2) ? "[ CHAT ]" : "CHAT");
-    SetDlgItemText(hdlg, IDC_SET_TAB_IF,    (tab == 3) ? "[ Interfaces ]" : "Interfaces");
+    SetDlgItemText(hdlg, IDC_SET_TAB_IF,    (tab == 3) ? "[ Ifaces ]" : "Ifaces");
     SetDlgItemText(hdlg, IDC_SET_TAB_PEERS, (tab == 4) ? "[ Peers ]" : "Peers");
     SetDlgItemText(hdlg, IDC_SET_TAB_RIG,   (tab == 5) ? "[ Rig ]" : "Rig");
     SetDlgItemText(hdlg, IDC_SET_TAB_PRN,   (tab == 6) ? "[ Printer ]" : "Printer");
+    SetDlgItemText(hdlg, IDC_SET_TAB_THEME, (tab == 7) ? "[ Theme ]" : "Theme");
 
-    static const char* BOX_TITLES[7] = {
+    static const char* BOX_TITLES[8] = {
         "Node Settings", "Packet BBS Settings", "Multi-User CHAT Settings",
         "Interface Mappings", "Peer Routes & Policies", "Radio / Rig Control Settings",
-        "Line Printer Logging Settings"
+        "Line Printer Logging Settings", "Theme & Color Palette"
     };
-    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 7) ? tab : 0]);
+    SetDlgItemText(hdlg, IDC_SET_TAB_BOX, BOX_TITLES[(tab >= 0 && tab < 8) ? tab : 0]);
 }
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -3530,8 +3540,24 @@ static void win_printer_callback(oyk_u32 level, const char* formatted_line, void
     }
 }
 
+static int win_run_modal_dlg(WORD idd, HWND owner, DLGPROC proc) {
+    ++g_win_modal_depth;
+    int rc = static_cast<int>(DialogBox(g_hinst, MAKEINTRESOURCE(idd), owner, proc));
+    if (g_win_modal_depth > 0) --g_win_modal_depth;
+    return rc;
+}
+
+static void populate_theme_dialog_list(HWND hdlg, const OykGuiThemeCtrl* ctrl);
+static void populate_theme_dialog_combo(HWND hdlg, const OykConfig* draft, const char* active,
+                                        char names_out[][24], int* n_names_out);
+
 OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
+    static OykGuiThemeCtrl s_set_th_ctrl;
+    static char s_set_names[OYK_MAX_THEMES + 3][24];
+    static int s_set_n_names = 0;
+    static COLORREF s_set_cust_colors[16];
+    static HBRUSH s_set_prev_br = NULL;
     switch (msg) {
         case WM_INITDIALOG: {
             g_set_draft = g_node.config();
@@ -3630,7 +3656,16 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
 
             populate_settings_ifaces(hdlg);
             populate_settings_peers(hdlg);
-            switch_settings_tab(hdlg, (g_settings_initial_tab >= 0 && g_settings_initial_tab < 7)
+            oyk_gui_theme_init(&s_set_th_ctrl, &g_set_draft, 1, win_os_prefers_dark());
+            {
+                OykThemeConfig os_pal;
+                win_query_os_native_theme(&os_pal);
+                oyk_gui_theme_set_os_native(&s_set_th_ctrl, &os_pal);
+            }
+            SendDlgItemMessage(hdlg, IDC_TH_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
+            populate_theme_dialog_combo(hdlg, &g_set_draft, s_set_th_ctrl.active_name, s_set_names, &s_set_n_names);
+            populate_theme_dialog_list(hdlg, &s_set_th_ctrl);
+            switch_settings_tab(hdlg, (g_settings_initial_tab >= 0 && g_settings_initial_tab < 8)
                                           ? g_settings_initial_tab : 0);
 #if defined(_WIN32) && !defined(OYK_WIN16)
             if (g_win_ui_test) {
@@ -3662,17 +3697,145 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 win_capture_hwnd_bmp(hdlg, "settings_rig");
                 switch_settings_tab(hdlg, 6);
                 win_capture_hwnd_bmp(hdlg, "settings_printer");
+                switch_settings_tab(hdlg, 7);
+                win_capture_hwnd_bmp(hdlg, "settings_theme");
+                apply_win_theme();
                 EndDialog(hdlg, IDCANCEL);
                 return TRUE;
             }
             break;
 #endif
+#ifdef WM_CTLCOLORDLG
+        case WM_CTLCOLORDLG:
+            if (g_th_custom_active && g_th_bg_br) {
+                return OYK_RET_BRUSH_DLG(g_th_bg_br);
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORLISTBOX
+        case WM_CTLCOLORLISTBOX:
+            if (g_th_custom_active && g_th_panel_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_panel_fg_c);
+                SetBkColor(hdc, g_th_panel_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_panel_br);
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLOREDIT
+        case WM_CTLCOLOREDIT:
+            if (g_th_custom_active && g_th_inp_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_inp_fg_c);
+                SetBkColor(hdc, g_th_inp_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_inp_br);
+            }
+            break;
+#endif
+#ifdef WM_CTLCOLORSTATIC
+        case WM_CTLCOLORSTATIC: {
+            if (OYK_CAST_HWND(lp) == GetDlgItem(hdlg, IDC_TH_PREVIEW)) {
+                char hx[16];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                oyk_u32 rgb = 0;
+                if (oyk_theme_parse_hex(hx, &rgb)) {
+                    if (s_set_prev_br) DeleteObject(s_set_prev_br);
+                    s_set_prev_br = CreateSolidBrush(oyk_rgb_to_colorref(rgb));
+                    return OYK_RET_BRUSH_DLG(s_set_prev_br);
+                }
+            }
+            if (g_th_custom_active && g_th_bg_br) {
+                HDC hdc = OYK_CAST_HDC(wp);
+                SetTextColor(hdc, g_th_fg_c);
+                SetBkColor(hdc, g_th_bg_c);
+                return OYK_RET_BRUSH_DLG(g_th_bg_br);
+            }
+            break;
+        }
+#endif
+        case WM_DESTROY:
+            if (s_set_prev_br) { DeleteObject(s_set_prev_br); s_set_prev_br = NULL; }
+            break;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
+            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
             if (id == IDC_SET_TAB_NODE)  { switch_settings_tab(hdlg, 0); return TRUE; }
             if (id == IDC_SET_TAB_BBS)   { switch_settings_tab(hdlg, 1); return TRUE; }
             if (id == IDC_SET_TAB_CHAT)  { switch_settings_tab(hdlg, 2); return TRUE; }
             if (id == IDC_SET_TAB_IF)    { switch_settings_tab(hdlg, 3); return TRUE; }
+            if (id == IDC_SET_TAB_PEERS) { switch_settings_tab(hdlg, 4); return TRUE; }
+            if (id == IDC_SET_TAB_RIG)   { switch_settings_tab(hdlg, 5); return TRUE; }
+            if (id == IDC_SET_TAB_PRN)   { switch_settings_tab(hdlg, 6); return TRUE; }
+            if (id == IDC_SET_TAB_THEME) { switch_settings_tab(hdlg, 7); return TRUE; }
+            if (id == IDC_TH_COMBO && ntf == CBN_SELCHANGE) {
+                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_COMBO, CB_GETCURSEL, 0, 0));
+                if (sel >= 0 && sel < s_set_n_names) {
+                    oyk_gui_theme_select(&s_set_th_ctrl, s_set_names[sel]);
+                    populate_theme_dialog_list(hdlg, &s_set_th_ctrl);
+                    preview_win_draft_theme(&g_set_draft, s_set_th_ctrl.active_name, hdlg);
+                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                }
+                return TRUE;
+            }
+            if (id == IDC_TH_LIST && ntf == LBN_SELCHANGE) {
+                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
+                if (r >= 0 && r < OYK_THEME_COLOR_COUNT) {
+                    OykThemeConfig pal;
+                    oyk_gui_theme_resolve(&s_set_th_ctrl, &pal);
+                    char hx[12];
+                    oyk_theme_format_hex(pal.colors[r], hx, sizeof(hx));
+                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
+                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                }
+                return TRUE;
+            }
+            if (id == IDC_TH_PICK) {
+                CHOOSECOLOR cc;
+                memset(&cc, 0, sizeof(cc));
+                cc.lStructSize = sizeof(cc);
+                cc.hwndOwner = hdlg;
+                cc.lpCustColors = s_set_cust_colors;
+                cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+                char hx[16];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                oyk_u32 cur = 0;
+                if (oyk_theme_parse_hex(hx, &cur)) cc.rgbResult = oyk_rgb_to_colorref(cur);
+                if (ChooseColor(&cc)) {
+                    oyk_u32 picked = ((static_cast<oyk_u32>(GetRValue(cc.rgbResult)) & 0xFFUL) << 16) |
+                                     ((static_cast<oyk_u32>(GetGValue(cc.rgbResult)) & 0xFFUL) << 8) |
+                                     (static_cast<oyk_u32>(GetBValue(cc.rgbResult)) & 0xFFUL);
+                    oyk_theme_format_hex(picked, hx, sizeof(hx));
+                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
+                    SendMessage(hdlg, WM_COMMAND, IDC_TH_APPLY_COLOR, 0);
+                }
+                return TRUE;
+            }
+            if (id == IDC_TH_APPLY_COLOR) {
+                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
+                if (r < 0 || r >= OYK_THEME_COLOR_COUNT) r = 0;
+                char hx[16], err[96];
+                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
+                int was_builtin = oyk_theme_is_builtin(s_set_th_ctrl.active_name);
+                if (!oyk_gui_theme_set_role_hex(&s_set_th_ctrl, r, hx, err, sizeof(err))) {
+                    MessageBox(hdlg, err, "Theme", MB_OK | MB_ICONEXCLAMATION);
+                    return TRUE;
+                }
+                if (was_builtin) {
+                    populate_theme_dialog_combo(hdlg, &g_set_draft, s_set_th_ctrl.active_name, s_set_names, &s_set_n_names);
+                }
+                populate_theme_dialog_list(hdlg, &s_set_th_ctrl);
+                preview_win_draft_theme(&g_set_draft, s_set_th_ctrl.active_name, hdlg);
+                InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
+                return TRUE;
+            }
+            if (id == IDC_TH_DEL) {
+                if (oyk_gui_theme_delete_custom(&s_set_th_ctrl)) {
+                    populate_theme_dialog_combo(hdlg, &g_set_draft, s_set_th_ctrl.active_name, s_set_names, &s_set_n_names);
+                    populate_theme_dialog_list(hdlg, &s_set_th_ctrl);
+                    preview_win_draft_theme(&g_set_draft, s_set_th_ctrl.active_name, hdlg);
+                }
+                return TRUE;
+            }
             if (id == IDC_SET_TAB_PEERS) { switch_settings_tab(hdlg, 4); return TRUE; }
             if (id == IDC_SET_TAB_RIG)   { switch_settings_tab(hdlg, 5); return TRUE; }
             if (id == IDC_SET_TAB_PRN)   { switch_settings_tab(hdlg, 6); return TRUE; }
@@ -3879,6 +4042,8 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 oyk_u32 pm = 0;
                 if (oyk_parse_log_mask(plvl_s, &pm)) g_set_draft.printer_level = pm;
                 g_set_draft.printer_condensed = (IsDlgButtonChecked(hdlg, IDC_SET_PRN_COND) != 0) ? 1 : 0;
+                strncpy(g_set_draft.theme_name, s_set_th_ctrl.active_name, sizeof(g_set_draft.theme_name) - 1);
+                g_set_draft.theme_name[sizeof(g_set_draft.theme_name) - 1] = '\0';
 
                 static OykConfigApplyResult res;
                 if (!g_node.apply_config(&g_set_draft, 1, &res)) {
@@ -3886,6 +4051,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                                "Settings Error", MB_OK | MB_ICONSTOP);
                     return TRUE;
                 }
+                apply_win_theme();
                 win_printer_init();
                 if (res.identity_restarted || res.interfaces_changed) {
                     /* Sign off any Telnet clients still sitting at the login prompt */
@@ -3923,6 +4089,7 @@ OYK_DLG_RET SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
                 EndDialog(hdlg, IDOK);
                 return TRUE;
             } else if (id == IDCANCEL) {
+                apply_win_theme();
                 EndDialog(hdlg, IDCANCEL);
                 return TRUE;
             }
@@ -3976,189 +4143,6 @@ static void populate_theme_dialog_combo(HWND hdlg, const OykConfig* draft, const
     }
     *n_names_out = n;
     SendMessage(cb, CB_SETCURSEL, sel, 0);
-}
-
-OYK_DLG_RET ThemeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp) {
-    (void)lp;
-    static OykConfig* s_draft = NULL;
-    static OykGuiThemeCtrl s_th_ctrl;
-    static char s_names[OYK_MAX_THEMES + 3][24];
-    static int s_n_names = 0;
-    static COLORREF s_cust_colors[16];
-    static HBRUSH s_prev_br = NULL;
-
-    switch (msg) {
-        case WM_INITDIALOG: {
-            SetWindowText(hdlg, oyk_gui_screen_title(OYK_SCR_THEME));
-            if (!s_draft) s_draft = new OykConfig;
-            *s_draft = g_node.config();
-            oyk_gui_theme_init(&s_th_ctrl, s_draft, 1, win_os_prefers_dark());
-            OykThemeConfig os_pal;
-            win_query_os_native_theme(&os_pal);
-            oyk_gui_theme_set_os_native(&s_th_ctrl, &os_pal);
-            SendDlgItemMessage(hdlg, IDC_TH_LIST, WM_SETFONT, OYK_WPARAM_H(g_mono_font), FALSE);
-            populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
-            populate_theme_dialog_list(hdlg, &s_th_ctrl);
-#if defined(_WIN32) && !defined(OYK_WIN16)
-            if (g_win_ui_test) {
-                SetTimer(hdlg, 99, 150, NULL);
-            }
-#endif
-            return TRUE;
-        }
-#if defined(_WIN32) && !defined(OYK_WIN16)
-        case WM_TIMER:
-            if (wp == 99 && g_win_ui_test) {
-                KillTimer(hdlg, 99);
-                win_capture_hwnd_bmp(hdlg, "theme");
-                EndDialog(hdlg, IDCANCEL);
-                return TRUE;
-            }
-            break;
-#endif
-#ifdef WM_CTLCOLORDLG
-        case WM_CTLCOLORDLG:
-            if (g_th_custom_active && g_th_bg_br) {
-                return OYK_RET_BRUSH_DLG(g_th_bg_br);
-            }
-            break;
-#endif
-#ifdef WM_CTLCOLORLISTBOX
-        case WM_CTLCOLORLISTBOX:
-            if (g_th_custom_active && g_th_panel_br) {
-                HDC hdc = OYK_CAST_HDC(wp);
-                SetTextColor(hdc, g_th_panel_fg_c);
-                SetBkColor(hdc, g_th_panel_bg_c);
-                return OYK_RET_BRUSH_DLG(g_th_panel_br);
-            }
-            break;
-#endif
-#ifdef WM_CTLCOLOREDIT
-        case WM_CTLCOLOREDIT:
-            if (g_th_custom_active && g_th_inp_br) {
-                HDC hdc = OYK_CAST_HDC(wp);
-                SetTextColor(hdc, g_th_inp_fg_c);
-                SetBkColor(hdc, g_th_inp_bg_c);
-                return OYK_RET_BRUSH_DLG(g_th_inp_br);
-            }
-            break;
-#endif
-#ifdef WM_CTLCOLORSTATIC
-        case WM_CTLCOLORSTATIC: {
-            if (OYK_CAST_HWND(lp) == GetDlgItem(hdlg, IDC_TH_PREVIEW)) {
-                char hx[16];
-                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
-                oyk_u32 rgb = 0;
-                if (oyk_theme_parse_hex(hx, &rgb)) {
-                    if (s_prev_br) DeleteObject(s_prev_br);
-                    s_prev_br = CreateSolidBrush(oyk_rgb_to_colorref(rgb));
-                    return OYK_RET_BRUSH_DLG(s_prev_br);
-                }
-            }
-            if (g_th_custom_active && g_th_bg_br) {
-                HDC hdc = OYK_CAST_HDC(wp);
-                SetTextColor(hdc, g_th_fg_c);
-                SetBkColor(hdc, g_th_bg_c);
-                return OYK_RET_BRUSH_DLG(g_th_bg_br);
-            }
-            break;
-        }
-#endif
-        case WM_DESTROY:
-            if (s_prev_br) { DeleteObject(s_prev_br); s_prev_br = NULL; }
-            break;
-        case WM_COMMAND: {
-            WORD id = OYK_CMD_ID(wp, lp);
-            WORD ntf = OYK_CMD_NOTIFY(wp, lp);
-            if (id == IDC_TH_COMBO && ntf == CBN_SELCHANGE) {
-                int sel = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_COMBO, CB_GETCURSEL, 0, 0));
-                if (sel >= 0 && sel < s_n_names) {
-                    oyk_gui_theme_select(&s_th_ctrl, s_names[sel]);
-                    populate_theme_dialog_list(hdlg, &s_th_ctrl);
-                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
-                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
-                }
-                return TRUE;
-            } else if (id == IDC_TH_LIST && ntf == LBN_SELCHANGE) {
-                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
-                if (r >= 0 && r < OYK_THEME_COLOR_COUNT) {
-                    OykThemeConfig pal;
-                    oyk_gui_theme_resolve(&s_th_ctrl, &pal);
-                    char hx[12];
-                    oyk_theme_format_hex(pal.colors[r], hx, sizeof(hx));
-                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
-                    InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
-                }
-                return TRUE;
-            } else if (id == IDC_TH_PICK) {
-                CHOOSECOLOR cc;
-                memset(&cc, 0, sizeof(cc));
-                cc.lStructSize = sizeof(cc);
-                cc.hwndOwner = hdlg;
-                cc.lpCustColors = s_cust_colors;
-                cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-                char hx[16];
-                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
-                oyk_u32 cur = 0;
-                if (oyk_theme_parse_hex(hx, &cur)) cc.rgbResult = oyk_rgb_to_colorref(cur);
-                if (ChooseColor(&cc)) {
-                    oyk_u32 picked = ((static_cast<oyk_u32>(GetRValue(cc.rgbResult)) & 0xFFUL) << 16) |
-                                     ((static_cast<oyk_u32>(GetGValue(cc.rgbResult)) & 0xFFUL) << 8) |
-                                     (static_cast<oyk_u32>(GetBValue(cc.rgbResult)) & 0xFFUL);
-                    oyk_theme_format_hex(picked, hx, sizeof(hx));
-                    SetDlgItemText(hdlg, IDC_TH_HEX, hx);
-                    SendMessage(hdlg, WM_COMMAND, IDC_TH_APPLY_COLOR, 0);
-                }
-                return TRUE;
-            } else if (id == IDC_TH_APPLY_COLOR) {
-                int r = static_cast<int>(SendDlgItemMessage(hdlg, IDC_TH_LIST, LB_GETCURSEL, 0, 0));
-                if (r < 0 || r >= OYK_THEME_COLOR_COUNT) r = 0;
-                char hx[16], err[96];
-                GetDlgItemText(hdlg, IDC_TH_HEX, hx, sizeof(hx));
-                int was_builtin = oyk_theme_is_builtin(s_th_ctrl.active_name);
-                if (!oyk_gui_theme_set_role_hex(&s_th_ctrl, r, hx, err, sizeof(err))) {
-                    MessageBox(hdlg, err, oyk_gui_screen_title(OYK_SCR_THEME), MB_OK | MB_ICONEXCLAMATION);
-                    return TRUE;
-                }
-                if (was_builtin) {
-                    populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
-                }
-                populate_theme_dialog_list(hdlg, &s_th_ctrl);
-                preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
-                InvalidateRect(GetDlgItem(hdlg, IDC_TH_PREVIEW), NULL, TRUE);
-                return TRUE;
-            } else if (id == IDC_TH_DEL) {
-                if (oyk_gui_theme_delete_custom(&s_th_ctrl)) {
-                    populate_theme_dialog_combo(hdlg, s_draft, s_th_ctrl.active_name, s_names, &s_n_names);
-                    populate_theme_dialog_list(hdlg, &s_th_ctrl);
-                    preview_win_draft_theme(s_draft, s_th_ctrl.active_name, hdlg);
-                }
-                return TRUE;
-            } else if (id == IDOK) {
-                strncpy(s_draft->theme_name, s_th_ctrl.active_name, sizeof(s_draft->theme_name) - 1);
-                s_draft->theme_name[sizeof(s_draft->theme_name) - 1] = '\0';
-                static OykConfigApplyResult tres;
-                if (g_node.apply_config(s_draft, 1, &tres)) {
-                    apply_win_theme();
-                    char st[128];
-                    sprintf(st, "Theme '%s' %s.", s_th_ctrl.active_name,
-                            tres.saved_to_disk ? "saved & applied" : "applied (memory only)");
-                    set_status(st);
-                    EndDialog(hdlg, IDOK);
-                } else {
-                    MessageBox(hdlg, tres.error[0] ? tres.error : "Failed to save theme.",
-                               oyk_gui_screen_title(OYK_SCR_THEME), MB_OK | MB_ICONSTOP);
-                }
-                return TRUE;
-            } else if (id == IDCANCEL) {
-                apply_win_theme();
-                EndDialog(hdlg, IDCANCEL);
-                return TRUE;
-            }
-            break;
-        }
-    }
-    return FALSE;
 }
 
 OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -4331,19 +4315,17 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                 }
                 g_settings_initial_tab = 0;
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                win_run_modal_dlg(IDD_SETTINGS, hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
                 if (g_node.total_active_connections() > 0) {
-                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINATE), hwnd, (DLGPROC)TerminateDlgProc);
+                    win_run_modal_dlg(IDD_TERMINATE, hwnd, (DLGPROC)TerminateDlgProc);
                     refresh_gui();
                 }
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
+                win_run_modal_dlg(IDD_BAN, hwnd, (DLGPROC)BanDlgProc);
                 refresh_gui();
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
+                win_run_modal_dlg(IDD_APPROVE, hwnd, (DLGPROC)ApproveFilesDlgProc);
                 refresh_gui();
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
-                refresh_gui();
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ABOUT), hwnd, (DLGPROC)AboutDlgProc);
+                win_run_modal_dlg(IDD_ABOUT, hwnd, (DLGPROC)AboutDlgProc);
                 refresh_gui();
                 if (!g_lterm_hwnd) {
                     g_lterm_hwnd = CreateDialog(g_hinst, MAKEINTRESOURCE(IDD_TERMINAL),
@@ -4359,6 +4341,9 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_COMMAND: {
             WORD id = OYK_CMD_ID(wp, lp);
+            if (g_win_modal_depth > 0) {
+                return 0;
+            }
             if (id == IDM_ALLOW_INCOMING) {
                 g_node.set_accept_incoming(1);
                 set_status("New incoming connections are now ALLOWED.");
@@ -4381,34 +4366,27 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 refresh_gui();
             } else if (id == IDM_APPROVE_FILES) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_APPROVE), hwnd, (DLGPROC)ApproveFilesDlgProc);
+                win_run_modal_dlg(IDD_APPROVE, hwnd, (DLGPROC)ApproveFilesDlgProc);
                 refresh_gui();
             } else if (id == IDM_RIG_CONTROL) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_RIG_CONTROL), hwnd, (DLGPROC)RigControlDlgProc);
+                win_run_modal_dlg(IDD_RIG_CONTROL, hwnd, (DLGPROC)RigControlDlgProc);
                 refresh_gui();
             } else if (id == IDM_SETTINGS) {
                 g_settings_initial_tab = 0;
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
-                refresh_gui();
-            } else if (id == IDM_PEERS) {
-                g_settings_initial_tab = 4;
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
-                refresh_gui();
-            } else if (id == IDM_THEME) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_THEME), hwnd, (DLGPROC)ThemeDlgProc);
+                win_run_modal_dlg(IDD_SETTINGS, hwnd, (DLGPROC)SettingsDlgProc);
                 refresh_gui();
             } else if (id == IDM_TERMINATE) {
                 if (g_node.total_active_connections() == 0) {
                     set_status("No active connections to terminate.");
                 } else {
-                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_TERMINATE), hwnd, (DLGPROC)TerminateDlgProc);
+                    win_run_modal_dlg(IDD_TERMINATE, hwnd, (DLGPROC)TerminateDlgProc);
                     refresh_gui();
                 }
             } else if (id == IDM_BAN) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_BAN), hwnd, (DLGPROC)BanDlgProc);
+                win_run_modal_dlg(IDD_BAN, hwnd, (DLGPROC)BanDlgProc);
                 refresh_gui();
             } else if (id == IDM_ABOUT) {
-                DialogBox(g_hinst, MAKEINTRESOURCE(IDD_ABOUT), hwnd, (DLGPROC)AboutDlgProc);
+                win_run_modal_dlg(IDD_ABOUT, hwnd, (DLGPROC)AboutDlgProc);
             } else if (id == IDM_EXIT) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
             }
@@ -4425,11 +4403,10 @@ OYK_WND_RET MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
 #endif
             if (g_node.auto_learned_peer_count() > 0) {
-                int act = static_cast<int>(DialogBox(g_hinst, MAKEINTRESOURCE(IDD_EXIT_PEERS),
-                                                     hwnd, (DLGPROC)ExitPeersDlgProc));
+                int act = win_run_modal_dlg(IDD_EXIT_PEERS, hwnd, (DLGPROC)ExitPeersDlgProc);
                 if (act == IDC_XPR_REVIEW) {
                     g_settings_initial_tab = 4;
-                    DialogBox(g_hinst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, (DLGPROC)SettingsDlgProc);
+                    win_run_modal_dlg(IDD_SETTINGS, hwnd, (DLGPROC)SettingsDlgProc);
                     refresh_gui();
                     return 0;
                 }
@@ -4731,6 +4708,31 @@ static int split_win_cmdline(const char* cmdline, char* storage, size_t storage_
     return argc;
 }
 
+#if defined(_WIN32) && !defined(OYK_WIN16)
+static int win_run_unit_tests(HINSTANCE hinst) {
+    int fail = 0;
+    HMENU hm = LoadMenu(hinst, MAKEINTRESOURCE(IDR_MAINMENU));
+    HMENU sub = hm ? GetSubMenu(hm, 0) : NULL;
+    char root_lbl[32] = "";
+    if (hm) GetMenuStringA(hm, 0, root_lbl, sizeof(root_lbl), MF_BYPOSITION);
+    if (strcmp(root_lbl, "&Node") != 0) ++fail;
+    if (!sub || GetMenuItemCount(sub) != 11) ++fail;
+    if (hm) DestroyMenu(hm);
+
+    if (oyk_gui_settings_tab_count() != 8 ||
+        oyk_gui_node_menu_count() != 11 ||
+        oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) != 0 ||
+        oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) != 1) {
+        ++fail;
+    }
+    /* Modal preemption check via MainWndProc guard */
+    g_win_modal_depth = 1;
+    if (MainWndProc(NULL, WM_COMMAND, IDM_EXIT, 0) != 0) ++fail;
+    g_win_modal_depth = 0;
+    return fail ? 1 : 0;
+}
+#endif
+
 static int parse_win_cli(const char* cmdline, WinCliOpts* opts) {
     memset(opts, 0, sizeof(*opts));
     static char arg_store[512];
@@ -4742,6 +4744,9 @@ static int parse_win_cli(const char* cmdline, WinCliOpts* opts) {
         const char* eq = strchr(a, '=');
         if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0 || strcmp(a, "/?") == 0) {
             opts->show_help = 1;
+            return 1;
+        } else if (strcmp(a, "--unit-test") == 0) {
+            opts->service_mode = 2;
             return 1;
         } else if (strcmp(a, "-c") == 0 || strcmp(a, "--config") == 0) {
             if (i + 1 >= argc) { strcpy(opts->error, "Missing path for --config"); return 0; }
@@ -4966,6 +4971,9 @@ int PASCAL WinMain(HINSTANCE hinst, HINSTANCE hprev, LPSTR cmdline, int nshow) {
     }
 
 #if defined(_WIN32) && !defined(OYK_WIN16)
+    if (cli.service_mode == 2) {
+        return win_run_unit_tests(hinst);
+    }
     if (cli.install_svc) {
         static char svc_msg[512];
         int ok = oyk_win_service_install(cli.config_path, svc_msg, sizeof(svc_msg));

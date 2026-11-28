@@ -112,9 +112,17 @@ int main() {
     if (cfg) delete cfg;
     if (node) delete node;
 
-    /* 3. Verify shared oyk_gui schemas, wizard, theme controller */
-    MC_CHECK(oyk_gui_settings_tab_count() == 7, "gui_tabs_7");
-    MC_CHECK(oyk_gui_node_menu_count() == 13, "gui_menu_13");
+    /* 3. Verify shared oyk_gui schemas, wizard, theme controller, modal preemption, Esc revert */
+    MC_CHECK(oyk_gui_settings_tab_count() == 8, "gui_tabs_8");
+    MC_CHECK(oyk_gui_node_menu_count() == 11, "gui_menu_11");
+    MC_CHECK(oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) == 1 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1, "mac_modal_preemption");
+    for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+        const OykGuiMenuItem* mitem = oyk_gui_node_menu_item(mi);
+        MC_CHECK(!mitem || (mitem->action != OYK_ACT_PEERS && mitem->action != OYK_ACT_THEME),
+                 "mac_menu_no_dup_peers_theme");
+    }
     MC_CHECK(strcmp(oyk_gui_table_column(OYK_TBL_TERMINATE, 0), "ID") == 0 &&
              strcmp(oyk_gui_table_column(OYK_TBL_TERMINATE, 1), "Callsign") == 0,
              "gui_terminate_cols");

@@ -106,8 +106,27 @@ int main(void) {
     gs_log_line(info_buf);
 
     /* 4. Canonical UI schema parity */
-    GS_CHECK(oyk_gsos_settings_tab_count() == 7, "gui_tabs_7");
-    GS_CHECK(oyk_gsos_node_menu_count() == 13, "gui_menu_13");
+    GS_CHECK(oyk_gsos_settings_tab_count() == 8, "gui_tabs_8");
+    GS_CHECK(strcmp(oyk_gsos_settings_tab_title(7), "Theme") == 0, "gui_tab_8_theme");
+    GS_CHECK(oyk_gsos_node_menu_count() == 11, "gui_menu_11");
+    {
+        int mi, dup = 0;
+        for (mi = 0; mi < oyk_gsos_node_menu_count(); ++mi) {
+            const OykGsosMenuItem *item = oyk_gsos_node_menu_item(mi);
+            if (item && (item->action == OYK_GSOS_ACT_PEERS ||
+                         item->action == OYK_GSOS_ACT_THEME)) {
+                dup = 1;
+            }
+        }
+        GS_CHECK(!dup, "gui_menu_dedup_peers_theme");
+    }
+    GS_CHECK(oyk_gsos_is_modal_screen(OYK_GSOS_SCR_MAIN) == 0 &&
+             oyk_gsos_is_modal_screen(OYK_GSOS_SCR_MENU) == 0 &&
+             oyk_gsos_is_modal_screen(OYK_GSOS_SCR_SETTINGS) == 1 &&
+             oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_MAIN, 0) == 1 &&
+             oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_SETTINGS, 0) == 0 &&
+             oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_MAIN, 1) == 0,
+             "gui_modal_preemption_rules");
     GS_CHECK(strcmp(oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 0), "ID") == 0 &&
              strcmp(oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 1), "Callsign") == 0,
              "gui_terminate_cols");

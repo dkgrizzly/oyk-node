@@ -56,9 +56,17 @@ int main() {
     eng->poll();
     MB_CHECK(eng->close_local_terminal(sid) == 1, "close_local_term");
 
-    /* Verify shared oyk_gui schema access */
+    /* Verify shared oyk_gui schema access & modal preemption */
     MB_CHECK(oyk_gui_settings_tab_count() == 8, "gui_tabs_8");
     MB_CHECK(oyk_gui_node_menu_count() == 11, "gui_menu_11");
+    MB_CHECK(oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) == 1 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1, "macos_modal_preemption");
+    for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+        const OykGuiMenuItem* mitem = oyk_gui_node_menu_item(mi);
+        MB_CHECK(!mitem || (mitem->action != OYK_ACT_PEERS && mitem->action != OYK_ACT_THEME),
+                 "macos_menu_no_dup_peers_theme");
+    }
 
     /* Verify macOS OS-native default theme + whole-screen live preview across all themes */
     OykConfig tcfg = eng->portable_config();

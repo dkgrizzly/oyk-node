@@ -18,8 +18,6 @@ BEGIN
         MENUITEM "~Radio Control...",            IDM_RIG_CONTROL
         MENUITEM "~Settings...",                 IDM_SETTINGS
         MENUITEM "~Add Interface...",            IDM_ADD_IFACE
-        MENUITEM "~Peers...",                    IDM_PEERS
-        MENUITEM "T~heme...",                    IDM_THEME
         MENUITEM "~Terminate Connection...",     IDM_TERMINATE
         MENUITEM "~Ban / Unban Callsign...",     IDM_BAN
         MENUITEM SEPARATOR
@@ -33,17 +31,20 @@ END
 
 DLGTEMPLATE IDD_SETTINGS
 BEGIN
-    DIALOG "Node Settings", IDD_SETTINGS, 20, 20, 260, 170, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    DIALOG "Node Settings", IDD_SETTINGS, 20, 20, 260, 196, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
     BEGIN
-        LTEXT "Node Callsign:", -1, 10, 140, 80, 10
-        ENTRYFIELD "", IDC_SET_CALLSIGN, 96, 140, 80, 10, ES_MARGIN
-        LTEXT "Node Alias:", -1, 10, 122, 80, 10
-        ENTRYFIELD "", IDC_SET_ALIAS, 96, 122, 80, 10, ES_MARGIN
-        AUTOCHECKBOX "Accept Incoming Connections", IDC_SET_INCOMING, 10, 102, 180, 12
-        AUTOCHECKBOX "Enable Internal BBS (-11)", IDC_SET_BBS_EN, 10, 86, 180, 12
-        AUTOCHECKBOX "Enable Multi-User CHAT (-12)", IDC_SET_CHAT_EN, 10, 70, 180, 12
-        AUTOCHECKBOX "Enable Rig Control (rigctld)", IDC_SET_RIG_EN, 10, 54, 180, 12
-        AUTOCHECKBOX "Enable Direct Printer Log", IDC_SET_PRN_EN, 10, 38, 180, 12
+        LTEXT "Node Callsign:", -1, 10, 166, 80, 10
+        ENTRYFIELD "", IDC_SET_CALLSIGN, 96, 166, 80, 10, ES_MARGIN
+        LTEXT "Node Alias:", -1, 10, 148, 80, 10
+        ENTRYFIELD "", IDC_SET_ALIAS, 96, 148, 80, 10, ES_MARGIN
+        AUTOCHECKBOX "Accept Incoming Connections", IDC_SET_INCOMING, 10, 128, 180, 12
+        AUTOCHECKBOX "Enable Internal BBS (-11)", IDC_SET_BBS_EN, 10, 112, 180, 12
+        AUTOCHECKBOX "Enable Multi-User CHAT (-12)", IDC_SET_CHAT_EN, 10, 96, 180, 12
+        AUTOCHECKBOX "Enable Rig Control (rigctld)", IDC_SET_RIG_EN, 10, 80, 180, 12
+        AUTOCHECKBOX "Enable Direct Printer Log", IDC_SET_PRN_EN, 10, 64, 180, 12
+        LTEXT "Theme:", -1, 10, 42, 42, 10
+        COMBOBOX "", IDC_THM_SELECT, 58, 22, 92, 32, CBS_DROPDOWNLIST
+        LTEXT "Preview", IDC_THM_PREVIEW, 158, 42, 86, 10
         DEFPUSHBUTTON "Save", DID_OK, 130, 10, 52, 14
         PUSHBUTTON "Cancel", DID_CANCEL, 190, 10, 52, 14
     END

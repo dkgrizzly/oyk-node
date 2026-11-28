@@ -54,7 +54,7 @@ resource 'MENU' (130) {
 resource 'MENU' (131) {
     131,
     textMenuProc,
-    0x7FFFE7FB,
+    0x7FFFFDFB,
     enabled,
     "Node",
     {
@@ -65,8 +65,6 @@ resource 'MENU' (131) {
         "Manage Files Area...",       noIcon, noKey, noMark, plain;
         "Radio Control...",           noIcon, noKey, noMark, plain;
         "Settings...",                noIcon, ",",   noMark, plain;
-        "Peers...",                   noIcon, noKey, noMark, plain;
-        "Theme...",                   noIcon, noKey, noMark, plain;
         "Terminate Connection...",    noIcon, noKey, noMark, plain;
         "Ban / Unban Callsign...",    noIcon, noKey, noMark, plain;
         "-",                          noIcon, noKey, noMark, plain;

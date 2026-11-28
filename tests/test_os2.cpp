@@ -59,16 +59,41 @@ int main() {
         oyk_os2_net_shutdown(&net);
     }
 
-    /* 3. Verify shared TUI/GUI 23-screen, 8-tab schema, and modal preemption */
+    /* 3. Verify shared TUI/GUI 23-screen, 8-tab schema, modal preemption, Esc & TUI menu rules */
     {
         if (oyk_gui_settings_tab_count() != 8 ||
             oyk_gui_node_menu_count() != 11 ||
+            std::strcmp(oyk_gui_settings_tab_title(7), "Theme") != 0 ||
             oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) != 1 ||
+            oyk_gui_is_modal_screen(OYK_SCR_BAN) != 1 ||
+            oyk_gui_is_modal_screen(OYK_SCR_TERM_HELP) != 1 ||
             oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) != 0 ||
+            oyk_gui_global_hotkey_allowed(OYK_SCR_BAN, 0) != 0 ||
             oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) != 1 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_EXIT_PEERS), "Auto-Learned Peers") != 0 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_TERM_HELP), "Terminal Hotkey Help") != 0) {
             std::printf("FAIL: OS/2 shared GUI schema/preemption check\n");
+            ++failures;
+        }
+        for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+            const OykGuiMenuItem* it = oyk_gui_node_menu_item(mi);
+            if (it && (it->action == OYK_ACT_PEERS || it->action == OYK_ACT_THEME)) {
+                std::printf("FAIL: OS/2 Node menu must not duplicate Peers/Theme\n");
+                ++failures;
+            }
+        }
+        OykThemeConfig pal_before, pal_after;
+        OykConfig cfg_t;
+        oyk_config_init_default(&cfg_t);
+        OykGuiThemeCtrl tctrl;
+        oyk_gui_theme_init(&tctrl, &cfg_t, 1, 0);
+        oyk_gui_theme_resolve(&tctrl, &pal_before);
+        oyk_gui_theme_select(&tctrl, "dark");
+        oyk_gui_theme_revert(&tctrl);
+        oyk_gui_theme_resolve(&tctrl, &pal_after);
+        if (std::strcmp(tctrl.active_name, "native") != 0 ||
+            pal_before.colors[0] != pal_after.colors[0]) {
+            std::printf("FAIL: OS/2 Theme Esc/cancel revert test\n");
             ++failures;
         }
     }

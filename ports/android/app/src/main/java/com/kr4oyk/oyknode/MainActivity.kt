@@ -48,7 +48,6 @@ class MainActivity : ComponentActivity() {
             var editingPeer by remember { mutableStateOf<PeerConfigState?>(null) }
             var showTerminate by remember { mutableStateOf(false) }
             var showBan by remember { mutableStateOf(false) }
-            var showTheme by remember { mutableStateOf(false) }
             var showAbout by remember { mutableStateOf(false) }
             var showTermHelp by remember { mutableStateOf(false) }
             var termInput by remember { mutableStateOf("") }
@@ -186,6 +185,8 @@ class MainActivity : ComponentActivity() {
             } ?: cfg
             OykAndroidTheme(cfg = activePaletteCfg) {
                 val sysDark = isSystemInDarkTheme()
+                val anyModalOpen = showAddIface || editingIface != null || editingPeer != null ||
+                    showTerminate || showBan || showExit || showAbout || showTermHelp
                 when {
                     showOnboarding -> OnboardingPermissionScreen(
                         onContinue = {
@@ -199,13 +200,13 @@ class MainActivity : ComponentActivity() {
                         storagePermissionState = permState,
                         missingPermissionHint = hintText,
                         sdStatusMessage = sdStatus,
+                        systemDark = sysDark,
                         onUpdateCfg = { updated ->
                             cfg = updated
                             repo.saveInternal(updated)
                         },
                         onImportFromSd = { triggerLazySdPermissionThen("import") },
                         onExportToSd = { triggerLazySdPermissionThen("export") },
-                        onOpenTheme = { showTheme = true },
                         onAddIface = { showAddIface = true },
                         onEditIface = { editingIface = it },
                         onAddPeer = {
@@ -217,7 +218,19 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         onEditPeer = { editingPeer = it },
-                        onBack = { activeScreen = "console" }
+                        onPreviewTheme = { chosenName, customList ->
+                            previewTheme = chosenName to customList
+                        },
+                        onSaveTheme = { chosenName, customList ->
+                            previewTheme = null
+                            cfg = cfg.copy(themeName = chosenName, customThemes = customList)
+                            repo.saveInternal(cfg)
+                        },
+                        onRevertTheme = { previewTheme = null },
+                        onBack = {
+                            previewTheme = null
+                            activeScreen = "console"
+                        }
                     )
                     activeScreen == "terminal" -> TerminalScreen(
                         remoteLabel = "${cfg.callsign} (${cfg.alias})",
@@ -251,8 +264,9 @@ class MainActivity : ComponentActivity() {
                         usbStatus = usbStatus,
                         nodeRunning = OykNodeService.running,
                         acceptIncoming = acceptIncoming,
+                        modalOpen = anyModalOpen,
                         menuOpen = menuOpen,
-                        onToggleMenu = { menuOpen = !menuOpen },
+                        onToggleMenu = { if (!anyModalOpen) menuOpen = !menuOpen },
                         onMenuAction = { label ->
                             menuOpen = false
                             when (label) {
@@ -262,8 +276,6 @@ class MainActivity : ComponentActivity() {
                                 "Manage Files Area..." -> activeScreen = "files"
                                 "Radio Control..." -> { settingsTab = SettingsTab.RIG; activeScreen = "settings" }
                                 "Settings..." -> { settingsTab = SettingsTab.NODE; activeScreen = "settings" }
-                                "Peers..." -> { settingsTab = SettingsTab.PEERS; activeScreen = "settings" }
-                                "Theme..." -> showTheme = true
                                 "Terminate Connection..." -> showTerminate = true
                                 "Ban / Unban Callsign..." -> showBan = true
                                 "About OYK-Node..." -> showAbout = true
@@ -277,7 +289,6 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenTerminate = { showTerminate = true },
                         onOpenBan = { showBan = true },
-                        onOpenTheme = { showTheme = true },
                         onOpenExit = { showExit = true },
                         onQuickUsbConnect = {
                             val devs = usbPpp.listCandidateDevices()
@@ -348,25 +359,6 @@ class MainActivity : ComponentActivity() {
                         onUnban = { call ->
                             if (NativeNodeBridge.isNativeLoaded()) NativeNodeBridge.nativeUnbanCallsign(call)
                             bans = bans.filterNot { it.callsign == call }
-                        }
-                    )
-                }
-                if (showTheme) {
-                    ThemeSettingsDialog(
-                        cfg = cfg,
-                        systemDark = sysDark,
-                        onDismiss = {
-                            previewTheme = null
-                            showTheme = false
-                        },
-                        onPreview = { chosenName, customList ->
-                            previewTheme = chosenName to customList
-                        },
-                        onSave = { chosenName, customList ->
-                            previewTheme = null
-                            cfg = cfg.copy(themeName = chosenName, customThemes = customList)
-                            repo.saveInternal(cfg)
-                            showTheme = false
                         }
                     )
                 }

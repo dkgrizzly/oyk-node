@@ -84,7 +84,86 @@ struct OykAtariUiState {
     int                 capture_mode;
     char                main_title[64];
     char                modal_title[64];
+    int                 menu_installed;
 };
+
+#ifdef __ATARI__
+static OBJECT s_at_menu_tree[24];
+static char   s_at_menu_node_lbl[12][32];
+
+static void at_init_obj(int idx, int next, int head, int tail,
+                        unsigned short type, unsigned short flags,
+                        unsigned short state, long spec,
+                        int x, int y, int w, int h) {
+    memset(&s_at_menu_tree[idx], 0, sizeof(OBJECT));
+    s_at_menu_tree[idx].ob_next   = static_cast<short>(next);
+    s_at_menu_tree[idx].ob_head   = static_cast<short>(head);
+    s_at_menu_tree[idx].ob_tail   = static_cast<short>(tail);
+    s_at_menu_tree[idx].ob_type   = type;
+    s_at_menu_tree[idx].ob_flags  = flags;
+    s_at_menu_tree[idx].ob_state  = state;
+    s_at_menu_tree[idx].ob_spec.index = spec;
+    s_at_menu_tree[idx].ob_x      = static_cast<short>(x);
+    s_at_menu_tree[idx].ob_y      = static_cast<short>(y);
+    s_at_menu_tree[idx].ob_width  = static_cast<short>(w);
+    s_at_menu_tree[idx].ob_height = static_cast<short>(h);
+}
+
+static void at_install_menus(OykAtariUiState* ui) {
+    if (!ui || ui->ap_id < 0 || ui->menu_installed) return;
+    const int cw = (ui->char_w > 0) ? ui->char_w : 8;
+    const int ch = (ui->char_h > 0) ? ui->char_h : 16;
+    const int bh = ch + 3;
+    const int rh = ch + 2;
+    const int sw = (ui->scr_w > 0) ? ui->scr_w : 640;
+    const int sh = (ui->scr_h > 0) ? ui->scr_h : 400;
+    const int n_cnt = oyk_gui_node_menu_count();
+    const int node_box_w = 29 * cw;
+    const int node_items = (n_cnt <= 11) ? n_cnt : 11;
+
+    /* GEM AES menu OBJECT tree: 0=root, 1=bar, 2=active, 3..5=titles, 6=menus, 7..8=Desk, 9..20=Node, 21..22=Help */
+    at_init_obj(0, -1,  1,  6, G_IBOX,  OF_NONE, OS_NORMAL, 0L, 0, 0, sw, sh);
+    at_init_obj(1,  6,  2,  2, G_BOX,   OF_NONE, OS_NORMAL, 0x00001100L, 0, 0, sw, bh);
+    at_init_obj(2,  1,  3,  5, G_IBOX,  OF_NONE, OS_NORMAL, 0L, 2 * cw, 0, 22 * cw, bh);
+    at_init_obj(3,  4, -1, -1, G_TITLE, OF_NONE, OS_NORMAL, reinterpret_cast<long>(" Desk "), 0, 0, 6 * cw, bh);
+    at_init_obj(4,  5, -1, -1, G_TITLE, OF_NONE, OS_NORMAL, reinterpret_cast<long>(" Node "), 6 * cw, 0, 6 * cw, bh);
+    at_init_obj(5,  2, -1, -1, G_TITLE, OF_NONE, OS_NORMAL, reinterpret_cast<long>(" Help "), 12 * cw, 0, 6 * cw, bh);
+    at_init_obj(6,  0,  7, 21, G_IBOX,  OF_NONE, OS_NORMAL, 0L, 0, bh, sw, sh - bh);
+
+    /* Desk dropdown */
+    at_init_obj(7,  9,  8,  8, G_BOX,   OF_NONE, OS_NORMAL, 0x00FF1100L, 2 * cw, 0, 22 * cw, rh);
+    at_init_obj(8,  7, -1, -1, G_STRING, OF_NONE, OS_NORMAL, reinterpret_cast<long>("  About OYK-Node...  "), 0, 0, 22 * cw, rh);
+
+    /* Node dropdown (11 items at indices 10..20) */
+    at_init_obj(9, 21, 10, 10 + node_items - 1, G_BOX, OF_NONE, OS_NORMAL, 0x00FF1100L, 8 * cw, 0, node_box_w, node_items * rh);
+    for (int i = 0; i < node_items; ++i) {
+        const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+        if (mi && !mi->is_separator) {
+            snprintf(s_at_menu_node_lbl[i], sizeof(s_at_menu_node_lbl[i]), "  %s", mi->label);
+        } else {
+            at_copy(s_at_menu_node_lbl[i], sizeof(s_at_menu_node_lbl[i]), "----------------------------");
+        }
+        int next_idx = (i + 1 < node_items) ? (10 + i + 1) : 9;
+        at_init_obj(10 + i, next_idx, -1, -1, G_STRING, OF_NONE,
+                    (mi && mi->is_separator) ? OS_DISABLED : OS_NORMAL,
+                    reinterpret_cast<long>(s_at_menu_node_lbl[i]),
+                    0, i * rh, node_box_w, rh);
+    }
+
+    /* Help dropdown */
+    at_init_obj(21, 6, 22, 22, G_BOX, OF_NONE, OS_NORMAL, 0x00FF1100L, 14 * cw, 0, 22 * cw, rh);
+    at_init_obj(22, 21, -1, -1, G_STRING, OF_LASTOB, OS_NORMAL, reinterpret_cast<long>("  About OYK-Node...  "), 0, 0, 22 * cw, rh);
+
+    menu_bar(s_at_menu_tree, MENU_INSTALL);
+    ui->menu_installed = 1;
+}
+
+static void at_remove_menus(OykAtariUiState* ui) {
+    if (!ui || !ui->menu_installed || ui->ap_id < 0) return;
+    menu_bar(s_at_menu_tree, MENU_REMOVE);
+    ui->menu_installed = 0;
+}
+#endif
 
 void oyk_atari_query_os_native_theme(short vdi_handle, int colors, OykThemeConfig* out_pal) {
     if (!out_pal) return;
@@ -595,11 +674,9 @@ static void at_draw_console_body(OykAtariUiState* ui) {
     at_draw_button(ui, bx,       bar_y, 88, 22, "Terminal", 1); at_add_hit(ui, bx,       bar_y, 88, 22, OYK_SCR_TERMINAL);
     at_draw_button(ui, bx + 94,  bar_y, 68, 22, "Files",    0); at_add_hit(ui, bx + 94,  bar_y, 68, 22, OYK_SCR_FILES);
     at_draw_button(ui, bx + 168, bar_y, 88, 22, "Settings", 0); at_add_hit(ui, bx + 168, bar_y, 88, 22, OYK_SCR_SETTINGS);
-    at_draw_button(ui, bx + 262, bar_y, 68, 22, "Theme",    0); at_add_hit(ui, bx + 262, bar_y, 68, 22, OYK_SCR_THEME);
-    at_draw_button(ui, bx + 336, bar_y, 68, 22, "Peers",    0); at_add_hit(ui, bx + 336, bar_y, 68, 22, OYK_SCR_PEERS);
-    at_draw_text(ui, bx + 416, bar_y + oyk_gui_vertical_text_offset(btn_h, ch),
+    at_draw_text(ui, bx + 268, bar_y + oyk_gui_vertical_text_offset(btn_h, ch),
                  ui->net ? ui->net->caps.backend_summary : "ATARI GEM",
-                 ui->pen_fg, (bw - 420) / 8);
+                 ui->pen_fg, (bw - 274) / 8);
 }
 
 static int at_swatch_pen_for_role(const OykAtariUiState* ui, int role_idx) {
@@ -651,7 +728,9 @@ static void at_sync_modal_window(OykAtariUiState* ui) {
     short mx = static_cast<short>(ui->desk_x + (ui->desk_w - mw) / 2);
     short my = static_cast<short>(ui->desk_y + (ui->desk_h - mh) / 2);
     const char* raw_title = oyk_gui_screen_title(scr);
-    if (scr == OYK_SCR_PEERS) raw_title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    if (scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        raw_title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    }
     sprintf(ui->modal_title, " %s ", raw_title ? raw_title : "Dialog");
     ui->modal_win_handle = wind_create(NAME | CLOSER | MOVER,
                                        ui->desk_x, ui->desk_y, ui->desk_w, ui->desk_h);
@@ -669,7 +748,9 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
     int mw = ui->scr_w - 72;
     int mh = ui->scr_h - 68;
     const char* title = oyk_gui_screen_title(scr);
-    if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    if (scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    }
 
     int lx = mx + 12;
     int ty = my + 28;
@@ -750,21 +831,22 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         return;
     }
 
-    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS) {
-        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ui->settings_tab;
+    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ((scr == OYK_SCR_THEME) ? 7 : ui->settings_tab);
         int tx = lx;
-        int tw = bw / 7;
+        int tw = bw / 8;
         for (int t = 0; t < oyk_gui_settings_tab_count(); ++t) {
             int sel = (t == active_tab);
             const char* tt = oyk_gui_settings_tab_title(t);
             if (strcmp(tt, "Interfaces") == 0) tt = "Ifaces";
             else if (strcmp(tt, "Printer") == 0) tt = "Prn";
+            else if (strcmp(tt, "Theme") == 0 && tw < 68) tt = "Thm";
             sprintf(buf, "%d:%s", t + 1, tt);
             int tbg = sel ? ((ui->colors <= 2) ? ui->pen_fg : ui->pen_accent) : ui->pen_bg;
             int tfg = sel ? ((ui->colors <= 2) ? ui->pen_bg : ui->pen_accent_fg) : ui->pen_fg;
             at_fill_rect(ui, tx, ty, tw - 3, tab_h, tbg);
             at_frame_rect(ui, tx, ty, tw - 3, tab_h, ui->pen_fg);
-            at_draw_text(ui, tx + 4, ty + tab_off, buf, tfg, (tw - 8) / 8);
+            at_draw_text(ui, tx + 3, ty + tab_off, buf, tfg, (tw - 6) / 8);
             at_add_hit(ui, tx, ty, tw - 3, tab_h, 100 + t);
             tx += tw;
         }
@@ -850,7 +932,7 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
             at_draw_field_row(ui, lx, ty + 84, "CAT Port:", nbuf, 96, 90);
             sprintf(nbuf, "%d s", cfg.rig_poll_sec);
             at_draw_field_row(ui, lx + 246, ty + 84, "Poll:", nbuf, 56, 90);
-        } else {
+        } else if (active_tab == 6) {
             at_draw_checkbox(ui, lx, ty + 32, cfg.printer_enabled,
                              "Enable Line Printer Packet Log", ui->pen_fg, 40);
             at_draw_field_row(ui, lx, ty + 58, "Device:",
@@ -861,6 +943,29 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
             at_draw_field_row(ui, lx, ty + 84, "Baud Rate:", nbuf, 96, 110);
             at_draw_checkbox(ui, lx + 246, ty + 85, cfg.printer_condensed,
                              "Condensed 132-col Print", ui->pen_fg, 24);
+        } else if (active_tab == 7) {
+            at_draw_button(ui, lx, ty + 28, 26, 20, "<", 0);
+            at_add_hit(ui, lx, ty + 28, 26, 20, 401);
+            at_draw_button(ui, lx + 30, ty + 28, 26, 20, ">", 0);
+            at_add_hit(ui, lx + 30, ty + 28, 26, 20, 402);
+            sprintf(buf, "Theme: %s  (Whole-Screen Live Preview, %d colors)",
+                    ui->theme_ctrl.active_name, ui->colors);
+            at_draw_text(ui, lx + 64, ty + 30, buf, ui->pen_fg, (bw - 68) / 8);
+            at_draw_text(ui, lx, ty + 52, "Role             Key         Color    Preview",
+                         ui->pen_fg, bw / 8);
+            int max_rows = (ui->scr_h >= 460) ? 10 : 7;
+            int step_y = (ui->scr_h >= 460) ? 18 : 16;
+            for (int i = 0; i < max_rows; ++i) {
+                int ry = ty + 70 + i * step_y;
+                sprintf(buf, "%-16s %-11s #%06lX",
+                        oyk_theme_role_label(i),
+                        oyk_theme_role_key(i),
+                        static_cast<unsigned long>(ui->active_theme.colors[i] & 0xFFFFFFUL));
+                at_draw_text(ui, lx, ry, buf, ui->pen_fg, 46);
+                int sw_pen = at_swatch_pen_for_role(ui, i);
+                at_fill_rect(ui, lx + 350, ry + 2, 72, 12, sw_pen);
+                at_frame_rect(ui, lx + 350, ry + 2, 72, 12, ui->pen_fg);
+            }
         }
         at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
         at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
@@ -1018,32 +1123,6 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
         at_add_hit(ui, lx + 198, by, 118, 22, OYK_SCR_PEERS);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "Cancel", 0);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
-    } else if (scr == OYK_SCR_THEME) {
-        at_draw_button(ui, lx, ty + 2, 26, 20, "<", 0);
-        at_add_hit(ui, lx, ty + 2, 26, 20, 401);
-        at_draw_button(ui, lx + 30, ty + 2, 26, 20, ">", 0);
-        at_add_hit(ui, lx + 30, ty + 2, 26, 20, 402);
-        sprintf(buf, "Theme: %s  (Whole-Screen Live Preview, %d colors)",
-                ui->theme_ctrl.active_name, ui->colors);
-        at_draw_text(ui, lx + 64, ty + 4, buf, ui->pen_fg, (bw - 68) / 8);
-        at_draw_text(ui, lx, ty + 28, "Role             Key         Color    Preview",
-                     ui->pen_fg, bw / 8);
-        int max_rows = (ui->scr_h >= 460) ? 10 : 8;
-        for (int i = 0; i < max_rows; ++i) {
-            int ry = ty + 48 + i * 19;
-            sprintf(buf, "%-16s %-11s #%06lX",
-                    oyk_theme_role_label(i),
-                    oyk_theme_role_key(i),
-                    static_cast<unsigned long>(ui->active_theme.colors[i] & 0xFFFFFFUL));
-            at_draw_text(ui, lx, ry, buf, ui->pen_fg, 46);
-            int sw_pen = at_swatch_pen_for_role(ui, i);
-            at_fill_rect(ui, lx + 350, ry + 2, 72, 13, sw_pen);
-            at_frame_rect(ui, lx + 350, ry + 2, 72, 13, ui->pen_fg);
-        }
-        at_draw_button(ui, mx + mw - 172, by, 76, 22, "Cancel", 0);
-        at_add_hit(ui, mx + mw - 172, by, 76, 22, 999);
-        at_draw_button(ui, mx + mw - 88, by, 76, 22, "Apply", 1);
-        at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
     } else if (scr == OYK_SCR_TERMINAL) {
         int out_h = mh - 134;
         at_draw_text(ui, lx, ty + 4, "Session: KR4OYK-1 BBS | EOL: CRLF | Wrap: ON",
@@ -1132,7 +1211,7 @@ static void at_draw_modal_body(OykAtariUiState* ui) {
                      ui->pen_fg, tc);
         at_draw_text(ui, tx, ty + 54, "Platform: Atari ST / TT GEM (VDI + AES + RS-232)",
                      ui->pen_fg, tc);
-        at_draw_text(ui, tx, ty + 76, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+        at_draw_text(ui, tx, ty + 76, "Hotkeys: 1..8 Settings Tabs | Esc Close Modal",
                      ui->pen_fg, tc);
         at_draw_button(ui, mx + mw - 88, by, 76, 22, "OK", 1);
         at_add_hit(ui, mx + mw - 88, by, 76, 22, 999);
@@ -1312,7 +1391,7 @@ static const AtGalleryStep kAtGallery[23] = {
     { OYK_SCR_TERMINATE,  0, 0, "C:\\AT_TERM.BMP" },
     { OYK_SCR_BAN,        0, 0, "C:\\AT_BAN.BMP"  },
     { OYK_SCR_EXIT_PEERS, 0, 0, "C:\\AT_EXIT.BMP" },
-    { OYK_SCR_THEME,      0, 0, "C:\\AT_THME.BMP" },
+    { OYK_SCR_SETTINGS,   7, 0, "C:\\AT_THME.BMP" },
     { OYK_SCR_TERMINAL,   0, 0, "C:\\AT_TML.BMP"  },
     { OYK_SCR_TERM_HELP,  0, 0, "C:\\AT_TMLH.BMP" },
     { OYK_SCR_FILES,      0, 0, "C:\\AT_FILE.BMP" },
@@ -1368,6 +1447,7 @@ int oyk_atari_ui_run(OykPortableNode* node,
     ui->ww = static_cast<short>(ui->scr_w);
     ui->wh = static_cast<short>(ui->scr_h);
     if (ui->ap_id >= 0) {
+        if (!ui_test_mode) at_install_menus(ui);
         wind_get(0, WF_WORKXYWH, &ui->desk_x, &ui->desk_y, &ui->desk_w, &ui->desk_h);
         if (ui->desk_w <= 0 || ui->desk_h <= 0) {
             ui->desk_x = 0;
@@ -1457,13 +1537,53 @@ int oyk_atari_ui_run(OykPortableNode* node,
                     wind_get(ui->win_handle, WF_WORKXYWH, &ui->wx, &ui->wy, &ui->ww, &ui->wh);
                 }
                 at_redraw(ui);
+            } else if (msg[0] == MN_SELECTED) {
+                menu_tnormal(s_at_menu_tree, msg[3], UNHIGHLIGHT);
+                if (ui->active_screen == OYK_SCR_MAIN) {
+                    int mitem = msg[4];
+                    int act_id = OYK_ACT_NONE;
+                    if (mitem == 8 || mitem == 22) {
+                        act_id = OYK_ACT_ABOUT;
+                    } else if (mitem >= 10 && mitem <= 20) {
+                        const OykGuiMenuItem* gi = oyk_gui_node_menu_item(mitem - 10);
+                        if (gi) act_id = gi->action;
+                    }
+                    if (act_id == OYK_ACT_ALLOW_INCOMING) {
+                        ui->node->set_accept_incoming(1);
+                    } else if (act_id == OYK_ACT_DENY_INCOMING) {
+                        ui->node->set_accept_incoming(0);
+                    } else if (act_id == OYK_ACT_LOCAL_TERM) {
+                        ui->active_screen = OYK_SCR_TERMINAL;
+                    } else if (act_id == OYK_ACT_FILES) {
+                        ui->active_screen = OYK_SCR_FILES;
+                    } else if (act_id == OYK_ACT_RIG) {
+                        ui->active_screen = OYK_SCR_RIG;
+                    } else if (act_id == OYK_ACT_SETTINGS) {
+                        ui->settings_tab = 0;
+                        ui->active_screen = OYK_SCR_SETTINGS;
+                    } else if (act_id == OYK_ACT_TERMINATE) {
+                        ui->active_screen = OYK_SCR_TERMINATE;
+                    } else if (act_id == OYK_ACT_BAN) {
+                        ui->active_screen = OYK_SCR_BAN;
+                    } else if (act_id == OYK_ACT_ABOUT) {
+                        ui->active_screen = OYK_SCR_ABOUT;
+                    } else if (act_id == OYK_ACT_EXIT) {
+                        if (ui->node->auto_learned_peer_count() > 0) {
+                            ui->active_screen = OYK_SCR_EXIT_PEERS;
+                        } else {
+                            ui->running = 0;
+                        }
+                    }
+                    at_redraw(ui);
+                }
             } else if (msg[0] == AP_TERM) {
                 ui->running = 0;
             } else if (msg[0] == WM_CLOSED) {
                 if (ui->modal_win_handle >= 0 && msg[3] == ui->modal_win_handle) {
+                    oyk_gui_theme_revert(&ui->theme_ctrl);
                     ui->active_screen = OYK_SCR_MAIN;
                     at_redraw(ui);
-                } else {
+                } else if (ui->active_screen == OYK_SCR_MAIN) {
                     ui->running = 0;
                 }
             }
@@ -1478,9 +1598,10 @@ int oyk_atari_ui_run(OykPortableNode* node,
                 }
             }
             if (act == 999) {
+                oyk_gui_theme_revert(&ui->theme_ctrl);
                 ui->active_screen = OYK_SCR_MAIN;
                 at_redraw(ui);
-            } else if (act >= 100 && act < 107) {
+            } else if (act >= 100 && act < 108) {
                 ui->active_screen = OYK_SCR_SETTINGS;
                 ui->settings_tab = act - 100;
                 at_redraw(ui);
@@ -1520,15 +1641,18 @@ int oyk_atari_ui_run(OykPortableNode* node,
         }
         if (ev & MU_KEYBD) {
             int ch = key & 0xFF;
-            if (ch == 'q' || ch == 'Q' || ch == 27) {
+            if (ch == 27) {
                 if (ui->active_screen != OYK_SCR_MAIN) {
+                    oyk_gui_theme_revert(&ui->theme_ctrl);
                     ui->active_screen = OYK_SCR_MAIN;
                     at_redraw(ui);
-                } else {
-                    ui->running = 0;
                 }
-            } else if ((ui->active_screen == OYK_SCR_SETTINGS || ui->active_screen == OYK_SCR_PEERS) &&
-                       ch >= '1' && ch <= '7') {
+            } else if ((ch == 'q' || ch == 'Q') && ui->active_screen == OYK_SCR_MAIN) {
+                ui->running = 0;
+            } else if ((ui->active_screen == OYK_SCR_SETTINGS ||
+                        ui->active_screen == OYK_SCR_PEERS ||
+                        ui->active_screen == OYK_SCR_THEME) &&
+                       ch >= '1' && ch <= '8') {
                 ui->active_screen = OYK_SCR_SETTINGS;
                 ui->settings_tab = ch - '1';
                 at_redraw(ui);
@@ -1536,6 +1660,7 @@ int oyk_atari_ui_run(OykPortableNode* node,
         }
         oyk_atari_net_poll(net);
     }
+    at_remove_menus(ui);
     if (ui->modal_win_handle >= 0) {
         wind_close(ui->modal_win_handle);
         wind_delete(ui->modal_win_handle);

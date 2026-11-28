@@ -13,8 +13,6 @@
 #define IDM_APPROVE_FILES   207
 #define IDM_RIG_CONTROL     209
 #define IDM_SETTINGS        208
-#define IDM_PEERS           210
-#define IDM_THEME           211
 #define IDM_TERMINATE       204
 #define IDM_BAN             205
 #define IDM_EXIT            206
@@ -253,8 +251,9 @@
 #define IDC_XPR_DISCARD     642
 #define IDC_XPR_REVIEW      643
 
-/* Theme Settings Dialog */
-#define IDD_THEME           650
+/* Settings Tab 8: Theme (integrated inside IDD_SETTINGS) */
+#define IDC_TH_L_COMBO      648
+#define IDC_TH_L_HEX        649
 #define IDC_TH_COMBO        651
 #define IDC_TH_DEL          652
 #define IDC_TH_HINT         653
@@ -263,6 +262,7 @@
 #define IDC_TH_PICK         656
 #define IDC_TH_APPLY_COLOR  657
 #define IDC_TH_PREVIEW      658
+#define IDC_SET_TAB_THEME   659
 
 /* About Dialog */
 #define IDD_ABOUT           660

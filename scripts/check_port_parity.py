@@ -99,10 +99,10 @@ def check_retro_gui_parity(errors):
         for token in ("_draw_checkbox", "_draw_radio", "_draw_field_row", "_draw_listview_row"):
             if token not in src:
                 errors.append(f"{rel_path}: missing graphical helper '{token}'")
-        matched_tabs = [t for t in range(7) if f"active_tab == {t}" in src]
-        if len(matched_tabs) < 6:
+        matched_tabs = [t for t in range(8) if f"active_tab == {t}" in src]
+        if len(matched_tabs) < 7:
             errors.append(
-                f"{rel_path}: expected >=6 explicit 'active_tab == k' branches (+ else) for 7 tabs, found {matched_tabs}"
+                f"{rel_path}: expected >=7 explicit 'active_tab == k' branches (+ else) for 8 tabs, found {matched_tabs}"
             )
         if "Review Peers" not in src:
             errors.append(f"{rel_path}: missing 4-button Exit action 'Review Peers'")
@@ -150,6 +150,9 @@ def check_native_and_android_parity(errors):
         errors.append("src/ui/gtk2_ui.cpp: missing Ctrl-A Z:Help terminal status bar")
     if "gtk_window_set_icon" not in gtk_src:
         errors.append("src/ui/gtk2_ui.cpp: missing GTK app/titlebar icon setup")
+    for req_gtk in ('"_Node"', "gtk_attach_esc_close", "modal_open"):
+        if req_gtk not in gtk_src:
+            errors.append(f"src/ui/gtk2_ui.cpp: missing Alt-N/Esc/modal token '{req_gtk}'")
 
     win_src = read_text("ports/windows/win_main.cpp")
     win_rc = read_text("ports/windows/oyk_win.rc")
@@ -159,6 +162,10 @@ def check_native_and_android_parity(errors):
         errors.append("ports/windows/oyk_win.rc: missing IDD_TERM_HELP modal")
     if "IDI_OYK_NODE" not in win_rc or "WM_SETICON" not in win_src:
         errors.append("ports/windows: missing native IDI_OYK_NODE / WM_SETICON icon wiring")
+    if '"&Node"' not in win_rc or "g_win_modal_depth" not in win_src:
+        errors.append("ports/windows: missing '&Node' Alt-N mnemonic or g_win_modal_depth preemption")
+    if "IDM_PEERS" in win_rc or "IDM_THEME" in win_rc:
+        errors.append("ports/windows/oyk_win.rc: duplicated IDM_PEERS/IDM_THEME menu items still present")
 
     motif_src = read_text("ports/sysv/sysv_motif_ui.c")
     for req_xm in ("XmCreateToggleButton", "XmCreatePushButton", "XmCreateMainWindow"):
@@ -167,12 +174,30 @@ def check_native_and_android_parity(errors):
 
     os2_rc = read_text("ports/os2/oyk_os2.rc")
     os2_pm = read_text("ports/os2/os2_pm_main.cpp")
-    for req_rc in ("AUTOCHECKBOX", "AUTORADIOBUTTON", "IDD_TERM_HELP", "IDI_OYK_NODE"):
+    for req_rc in ("AUTOCHECKBOX", "AUTORADIOBUTTON", "IDD_TERM_HELP", "IDI_OYK_NODE", "~Node"):
         if req_rc not in os2_rc:
             errors.append(f"ports/os2/oyk_os2.rc: missing native PM resource '{req_rc}'")
-    if "WM_SETICON" not in os2_pm or "FCF_TITLEBAR" not in os2_pm:
-        errors.append("ports/os2/os2_pm_main.cpp: missing PM WM_SETICON / FCF_TITLEBAR window wiring")
+    if "IDM_PEERS" in os2_rc or "IDM_THEME" in os2_rc:
+        errors.append("ports/os2/oyk_os2.rc: duplicated IDM_PEERS/IDM_THEME menu items still present")
+    if "WM_SETICON" not in os2_pm or "FCF_TITLEBAR" not in os2_pm or "g_pm_modal_depth" not in os2_pm:
+        errors.append("ports/os2/os2_pm_main.cpp: missing PM WM_SETICON / FCF_TITLEBAR / g_pm_modal_depth wiring")
 
+    native_bar_checks = (
+        ("ports/macclassic/mac_ui.cpp", ("MenuSelect", "ui->active_screen == OYK_SCR_MAIN")),
+        ("ports/macos/macos_main.mm", ("NSMenu", "modalWindow_")),
+        ("ports/gsos/gsos_ui.c", ("MenuSelect", "oyk_gsos_global_hotkey_allowed")),
+        ("ports/amiga/amiga_ui.cpp", ("SetMenuStrip", "IDCMP_MENUPICK")),
+        ("ports/atarist/atari_ui.cpp", ("menu_bar", "MN_SELECTED")),
+    )
+    for rel_path, req_toks in native_bar_checks:
+        src = read_text(rel_path)
+        for tok in req_toks:
+            if tok not in src:
+                errors.append(f"{rel_path}: missing native OS menu bar / preemption token '{tok}'")
+
+    android_models = read_text(
+        "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykModels.kt"
+    )
     android_screens = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykScreens.kt"
     )
@@ -188,6 +213,10 @@ def check_native_and_android_parity(errors):
         errors.append("Android UI: missing portrait/landscape adaptive File Manager layout")
     if "Ctrl-A Z:Help" not in android_combined:
         errors.append("Android UI: missing 'Ctrl-A Z:Help' terminal hotkey bar")
+    if 'THEME("Theme")' not in android_models or "SettingsTab.THEME" not in android_screens:
+        errors.append("Android UI: missing Section 8 SettingsTab.THEME in Settings")
+    if "modalOpen" not in android_screens:
+        errors.append("Android OykScreens.kt: missing modalOpen preemption guard")
     for req_tok in ("node_menu_drawer", "node_menu_toggle", "terminal_fullscreen", "files_fullscreen", "ic_oyk_logo"):
         if req_tok not in android_combined:
             errors.append(f"Android UI: missing required mobile/brand token '{req_tok}'")
@@ -197,6 +226,13 @@ def check_native_and_android_parity(errors):
     )
     if "Last 5 New Callsigns Heard" not in android_tests or "MHEARD" not in android_tests:
         errors.append("Android OykUiGalleryTest.kt: missing MHEARD unit-test coverage")
+    for req_test in (
+        "settingsHasEightTabsIncludingThemeAndNoMenuDuplicates",
+        "modalOpenPreemptsNodeMenuToggle",
+        "themeSettingsTabCancelRevertsPreview",
+    ):
+        if req_test not in android_tests:
+            errors.append(f"Android OykUiGalleryTest.kt: missing modal/menu parity test '{req_test}'")
 
 
 def check_unit_test_parity(errors):
@@ -232,6 +268,7 @@ def check_unit_test_parity(errors):
         "parity_wiz_5_drivers_and_descs",
         "parity_console_header_and_pill",
         "parity_theme_cycle",
+        "gui_modal_preemption_rules",
     ):
         if req not in gsos_native:
             errors.append(f"ports/gsos/test_gsos.c: missing C89 parity check '{req}'")
@@ -241,9 +278,18 @@ def check_unit_test_parity(errors):
         "oyk_gsos_format_console_header",
         "oyk_gsos_wiz_driver_desc",
         "oyk_gsos_theme_cycle",
+        "oyk_gsos_global_hotkey_allowed",
     ):
         if req not in gsos_host:
             errors.append(f"tests/test_gsos.cpp: missing host GS/OS parity check '{req}'")
+
+    ncurses_src = read_text("tests/test_ncurses_ui.py")
+    if "preempt" not in ncurses_src.lower():
+        errors.append("tests/test_ncurses_ui.py: missing modal preemption UI verification")
+
+    win_src = read_text("ports/windows/win_main.cpp")
+    if "g_win_modal_depth = 1" not in win_src:
+        errors.append("ports/windows/win_main.cpp: missing --unit-test modal preemption verification")
 
 
 def check_native_window_framing(errors):

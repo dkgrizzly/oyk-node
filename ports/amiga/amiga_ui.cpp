@@ -96,9 +96,129 @@ struct OykAmigaUiState {
     struct RastPort*   modal_rp;
     APTR               vi;
     struct Menu*       menu_strip;
+    int                menu_is_gadtools;
     struct Library*    gt_lib;
 #endif
 };
+
+#ifdef __AMIGA__
+static struct NewMenu s_am_newmenu[16];
+static char s_am_item_labels[12][36];
+static struct Menu s_am_ks13_menus[2];
+static struct MenuItem s_am_ks13_items[12];
+static struct IntuiText s_am_ks13_texts[12];
+
+static void am_install_menus(OykAmigaUiState* ui) {
+    if (!ui || !ui->win || ui->menu_strip) return;
+    const int n_cnt = oyk_gui_node_menu_count();
+    if (ui->has_gadtools && ui->gt_lib && ui->scr) {
+        ui->vi = GetVisualInfoA(ui->scr, NULL);
+        if (ui->vi) {
+            memset(s_am_newmenu, 0, sizeof(s_am_newmenu));
+            int idx = 0;
+            s_am_newmenu[idx].nm_Type = NM_TITLE;
+            s_am_newmenu[idx].nm_Label = const_cast<STRPTR>("Node");
+            ++idx;
+            for (int i = 0; i < n_cnt && i < 11 && idx < 13; ++i) {
+                const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+                if (!mi) continue;
+                s_am_newmenu[idx].nm_Type = NM_ITEM;
+                if (mi->is_separator) {
+                    s_am_newmenu[idx].nm_Label = NM_BARLABEL;
+                } else {
+                    am_copy(s_am_item_labels[i], sizeof(s_am_item_labels[i]), mi->label);
+                    s_am_newmenu[idx].nm_Label = reinterpret_cast<STRPTR>(s_am_item_labels[i]);
+                }
+                s_am_newmenu[idx].nm_UserData = reinterpret_cast<APTR>(static_cast<LONG>(mi->action));
+                ++idx;
+            }
+            s_am_newmenu[idx].nm_Type = NM_TITLE;
+            s_am_newmenu[idx].nm_Label = const_cast<STRPTR>("Help");
+            ++idx;
+            s_am_newmenu[idx].nm_Type = NM_ITEM;
+            s_am_newmenu[idx].nm_Label = const_cast<STRPTR>("About OYK-Node...");
+            s_am_newmenu[idx].nm_UserData = reinterpret_cast<APTR>(static_cast<LONG>(OYK_ACT_ABOUT));
+            ++idx;
+            s_am_newmenu[idx].nm_Type = NM_END;
+
+            struct Menu* m = CreateMenusA(s_am_newmenu, NULL);
+            if (m) {
+                if (LayoutMenusA(m, ui->vi, NULL)) {
+                    SetMenuStrip(ui->win, m);
+                    ui->menu_strip = m;
+                    ui->menu_is_gadtools = 1;
+                    return;
+                }
+                FreeMenus(m);
+            }
+        }
+        if (ui->vi) {
+            FreeVisualInfo(ui->vi);
+            ui->vi = NULL;
+        }
+    }
+
+    /* Kickstart 1.3 fallback native Intuition MenuStrip */
+    memset(s_am_ks13_menus, 0, sizeof(s_am_ks13_menus));
+    memset(s_am_ks13_items, 0, sizeof(s_am_ks13_items));
+    memset(s_am_ks13_texts, 0, sizeof(s_am_ks13_texts));
+    for (int i = 0; i < n_cnt && i < 11; ++i) {
+        const OykGuiMenuItem* mi = oyk_gui_node_menu_item(i);
+        am_copy(s_am_item_labels[i], sizeof(s_am_item_labels[i]),
+                (mi && !mi->is_separator) ? mi->label : "------------------------");
+        s_am_ks13_texts[i].FrontPen = 0;
+        s_am_ks13_texts[i].BackPen = 1;
+        s_am_ks13_texts[i].DrawMode = JAM1;
+        s_am_ks13_texts[i].IText = s_am_item_labels[i];
+        s_am_ks13_items[i].NextItem = (i + 1 < n_cnt && i + 1 < 11) ? &s_am_ks13_items[i + 1] : NULL;
+        s_am_ks13_items[i].TopEdge = static_cast<WORD>(i * 10);
+        s_am_ks13_items[i].Width = 224;
+        s_am_ks13_items[i].Height = 10;
+        s_am_ks13_items[i].Flags = ITEMTEXT | HIGHCOMP | ((mi && mi->is_separator) ? 0 : ITEMENABLED);
+        s_am_ks13_items[i].ItemFill = reinterpret_cast<APTR>(&s_am_ks13_texts[i]);
+    }
+    s_am_ks13_texts[11].FrontPen = 0;
+    s_am_ks13_texts[11].BackPen = 1;
+    s_am_ks13_texts[11].DrawMode = JAM1;
+    s_am_ks13_texts[11].IText = const_cast<char*>("About OYK-Node...");
+    s_am_ks13_items[11].Width = 152;
+    s_am_ks13_items[11].Height = 10;
+    s_am_ks13_items[11].Flags = ITEMTEXT | ITEMENABLED | HIGHCOMP;
+    s_am_ks13_items[11].ItemFill = reinterpret_cast<APTR>(&s_am_ks13_texts[11]);
+
+    s_am_ks13_menus[0].NextMenu = &s_am_ks13_menus[1];
+    s_am_ks13_menus[0].LeftEdge = 4;
+    s_am_ks13_menus[0].Width = 52;
+    s_am_ks13_menus[0].Height = 10;
+    s_am_ks13_menus[0].Flags = MENUENABLED;
+    s_am_ks13_menus[0].MenuName = "Node";
+    s_am_ks13_menus[0].FirstItem = &s_am_ks13_items[0];
+
+    s_am_ks13_menus[1].LeftEdge = 64;
+    s_am_ks13_menus[1].Width = 52;
+    s_am_ks13_menus[1].Height = 10;
+    s_am_ks13_menus[1].Flags = MENUENABLED;
+    s_am_ks13_menus[1].MenuName = "Help";
+    s_am_ks13_menus[1].FirstItem = &s_am_ks13_items[11];
+
+    SetMenuStrip(ui->win, &s_am_ks13_menus[0]);
+    ui->menu_strip = &s_am_ks13_menus[0];
+    ui->menu_is_gadtools = 0;
+}
+
+static void am_remove_menus(OykAmigaUiState* ui) {
+    if (!ui) return;
+    if (ui->menu_strip) {
+        if (ui->win) ClearMenuStrip(ui->win);
+        if (ui->menu_is_gadtools) FreeMenus(ui->menu_strip);
+        ui->menu_strip = NULL;
+    }
+    if (ui->vi) {
+        FreeVisualInfo(ui->vi);
+        ui->vi = NULL;
+    }
+}
+#endif
 
 #ifdef __AMIGA__
 static oyk_u32 am_query_pen_rgb(struct Screen* scr, int pen, oyk_u32 fallback) {
@@ -600,11 +720,9 @@ static void am_draw_console(OykAmigaUiState* ui) {
     am_draw_button(ui, bx,       bar_y, 78, 15, "Terminal", 1); am_add_hit(ui, bx,       bar_y, 78, 15, OYK_SCR_TERMINAL);
     am_draw_button(ui, bx + 84,  bar_y, 64, 15, "Files",    0); am_add_hit(ui, bx + 84,  bar_y, 64, 15, OYK_SCR_FILES);
     am_draw_button(ui, bx + 154, bar_y, 78, 15, "Settings", 0); am_add_hit(ui, bx + 154, bar_y, 78, 15, OYK_SCR_SETTINGS);
-    am_draw_button(ui, bx + 238, bar_y, 64, 15, "Theme",    0); am_add_hit(ui, bx + 238, bar_y, 64, 15, OYK_SCR_THEME);
-    am_draw_button(ui, bx + 308, bar_y, 64, 15, "Peers",    0); am_add_hit(ui, bx + 308, bar_y, 64, 15, OYK_SCR_PEERS);
-    am_draw_text(ui, bx + 384, bar_y + 3,
+    am_draw_text(ui, bx + 244, bar_y + 3,
                  ui->is_private_screen ? "Screen:PRIVATE" : "Screen:Workbench (Priv:OFF)",
-                 ui->pen_fg, ui->pen_bg, (bw - 386) / 8);
+                 ui->pen_fg, ui->pen_bg, (bw - 248) / 8);
 }
 
 static void am_sync_modal_window(OykAmigaUiState* ui) {
@@ -630,7 +748,9 @@ static void am_sync_modal_window(OykAmigaUiState* ui) {
         ui->modal_scr = OYK_SCR_MAIN;
     }
     const char* title = oyk_gui_screen_title(scr);
-    if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    if (scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    }
     strncpy(ui->modal_title, title ? title : "Dialog", sizeof(ui->modal_title) - 1);
     ui->modal_title[sizeof(ui->modal_title) - 1] = '\0';
 
@@ -728,21 +848,22 @@ static void am_draw_modal(OykAmigaUiState* ui) {
     const OykConfig& cfg = ui->node->config();
     char cs[16], al[16], buf[128], nbuf[32];
 
-    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS) {
-        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ui->settings_tab;
+    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ((scr == OYK_SCR_THEME) ? 7 : ui->settings_tab);
         int tx = lx;
-        int tw = bw / 7;
+        int tw = bw / 8;
         for (int t = 0; t < oyk_gui_settings_tab_count(); ++t) {
             int sel = (t == active_tab);
             const char* tt = oyk_gui_settings_tab_title(t);
             if (strcmp(tt, "Interfaces") == 0) tt = "Ifaces";
             else if (strcmp(tt, "Printer") == 0) tt = "Prn";
+            else if (strcmp(tt, "Theme") == 0 && tw < 68) tt = "Thm";
             sprintf(buf, "%d:%s", t + 1, tt);
             am_fill_rect(ui, tx, ty, tw - 2, 13, sel ? ui->pen_accent : ui->pen_panel);
             am_bevel_box(ui, tx, ty, tw - 2, 13, sel ? 1 : 0);
             am_draw_text(ui, tx + 3, ty + 2, buf,
                          sel ? ui->pen_accent_fg : ui->pen_fg,
-                         sel ? ui->pen_accent : ui->pen_panel, (tw - 6) / 8);
+                         sel ? ui->pen_accent : ui->pen_panel, (tw - 5) / 8);
             am_add_hit(ui, tx, ty, tw - 2, 13, 100 + t);
             tx += tw;
         }
@@ -831,7 +952,7 @@ static void am_draw_modal(OykAmigaUiState* ui) {
             am_draw_field_row(ui, lx, ty + 54, "CAT Port:", nbuf, 96, 90);
             sprintf(nbuf, "%d s", cfg.rig_poll_sec);
             am_draw_field_row(ui, lx + 246, ty + 54, "Poll:", nbuf, 56, 90);
-        } else {
+        } else if (active_tab == 6) {
             am_draw_checkbox(ui, lx, ty + 20, cfg.printer_enabled,
                              "Enable Line Printer Packet Log", ui->pen_fg, 40);
             am_draw_field_row(ui, lx, ty + 38, "Device:",
@@ -842,6 +963,31 @@ static void am_draw_modal(OykAmigaUiState* ui) {
             am_draw_field_row(ui, lx, ty + 54, "Baud Rate:", nbuf, 96, 110);
             am_draw_checkbox(ui, lx + 246, ty + 55, cfg.printer_condensed,
                              "Condensed 132-col Print", ui->pen_fg, 24);
+        } else if (active_tab == 7) {
+            am_draw_button(ui, lx, ty + 18, 24, 14, "<", 0);
+            am_add_hit(ui, lx, ty + 18, 24, 14, 401);
+            am_draw_button(ui, lx + 28, ty + 18, 24, 14, ">", 0);
+            am_add_hit(ui, lx + 28, ty + 18, 24, 14, 402);
+            if (ui->locked_to_native) {
+                sprintf(buf, "Theme: native (Locked: OS Native %d clr < 32)", ui->scr_colors);
+            } else {
+                sprintf(buf, "Theme: %s (Whole-Screen Live Preview, %d clr)",
+                        ui->theme_ctrl.active_name, ui->scr_colors);
+            }
+            am_draw_text(ui, lx + 60, ty + 21, buf, ui->pen_fg, ui->pen_panel, (bw - 64) / 8);
+            am_draw_text(ui, lx, ty + 36, "Role             Key         Color    Preview",
+                         ui->pen_fg, ui->pen_panel, bw / 8);
+            for (int i = 0; i < 8; ++i) {
+                int ry = ty + 48 + i * 11;
+                sprintf(buf, "%-16s %-11s #%06lX",
+                        oyk_theme_role_label(i),
+                        oyk_theme_role_key(i),
+                        static_cast<unsigned long>(ui->active_theme.colors[i] & 0xFFFFFFUL));
+                am_draw_text(ui, lx, ry, buf, ui->pen_fg, ui->pen_panel, 46);
+                int sw_pen = am_swatch_pen_for_role(ui, i);
+                am_fill_rect(ui, lx + 350, ry + 1, 68, 9, sw_pen);
+                am_bevel_box(ui, lx + 350, ry + 1, 68, 9, 0);
+            }
         }
         am_draw_button(ui, mx + mw - 164, by, 72, 15, "Cancel", 0);
         am_add_hit(ui, mx + mw - 164, by, 72, 15, 999);
@@ -997,35 +1143,6 @@ static void am_draw_modal(OykAmigaUiState* ui) {
         am_add_hit(ui, lx + 194, by, 114, 15, OYK_SCR_PEERS);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "Cancel", 0);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
-    } else if (scr == OYK_SCR_THEME) {
-        am_draw_button(ui, lx, ty, 24, 14, "<", 0);
-        am_add_hit(ui, lx, ty, 24, 14, 401);
-        am_draw_button(ui, lx + 28, ty, 24, 14, ">", 0);
-        am_add_hit(ui, lx + 28, ty, 24, 14, 402);
-        if (ui->locked_to_native) {
-            sprintf(buf, "Theme: native (Locked: OS Native %d clr < 32)", ui->scr_colors);
-        } else {
-            sprintf(buf, "Theme: %s (Whole-Screen Live Preview, %d clr)",
-                    ui->theme_ctrl.active_name, ui->scr_colors);
-        }
-        am_draw_text(ui, lx + 60, ty + 3, buf, ui->pen_fg, ui->pen_panel, (bw - 64) / 8);
-        am_draw_text(ui, lx, ty + 18, "Role             Key         Color    Preview",
-                     ui->pen_fg, ui->pen_panel, bw / 8);
-        for (int i = 0; i < 8; ++i) {
-            int ry = ty + 30 + i * 11;
-            sprintf(buf, "%-16s %-11s #%06lX",
-                    oyk_theme_role_label(i),
-                    oyk_theme_role_key(i),
-                    static_cast<unsigned long>(ui->active_theme.colors[i] & 0xFFFFFFUL));
-            am_draw_text(ui, lx, ry, buf, ui->pen_fg, ui->pen_panel, 46);
-            int sw_pen = am_swatch_pen_for_role(ui, i);
-            am_fill_rect(ui, lx + 350, ry + 1, 68, 9, sw_pen);
-            am_bevel_box(ui, lx + 350, ry + 1, 68, 9, 0);
-        }
-        am_draw_button(ui, mx + mw - 164, by, 72, 15, "Cancel", 0);
-        am_add_hit(ui, mx + mw - 164, by, 72, 15, 999);
-        am_draw_button(ui, mx + mw - 84, by, 72, 15, "Apply", 1);
-        am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
     } else if (scr == OYK_SCR_TERMINAL) {
         am_draw_text(ui, lx, ty + 2, "Session: KR4OYK-1 BBS | EOL: LF | Wrap: ON",
                      ui->pen_fg, ui->pen_panel, bw / 8);
@@ -1110,7 +1227,7 @@ static void am_draw_modal(OykAmigaUiState* ui) {
                      ui->pen_fg, ui->pen_panel, tc);
         am_draw_text(ui, tx, ty + 36, "Platform: Amiga Workbench (Intuition + serial.device)",
                      ui->pen_fg, ui->pen_panel, tc);
-        am_draw_text(ui, tx, ty + 52, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+        am_draw_text(ui, tx, ty + 52, "Hotkeys: 1..8 Settings Tabs | Esc Close Modal",
                      ui->pen_fg, ui->pen_panel, tc);
         am_draw_button(ui, mx + mw - 84, by, 72, 15, "OK", 1);
         am_add_hit(ui, mx + mw - 84, by, 72, 15, 999);
@@ -1232,10 +1349,12 @@ static int am_open_display(OykAmigaUiState* ui, int use_private, int force_depth
         ui->scr_depth = 2;
     }
     ui->scr_colors = oyk_amiga_colors_from_depth(ui->scr_depth);
+    am_install_menus(ui);
     return 1;
 }
 
 static void am_close_display(OykAmigaUiState* ui) {
+    am_remove_menus(ui);
     if (ui->modal_win) {
         CloseWindow(ui->modal_win);
         ui->modal_win = NULL;
@@ -1353,7 +1472,7 @@ static const AmGalleryStep kAmGallery[23] = {
     { OYK_SCR_TERMINATE,  0, 0, "DH0:AM_TERM.BMP" },
     { OYK_SCR_BAN,        0, 0, "DH0:AM_BAN.BMP"  },
     { OYK_SCR_EXIT_PEERS, 0, 0, "DH0:AM_EXIT.BMP" },
-    { OYK_SCR_THEME,      0, 0, "DH0:AM_THME.BMP" },
+    { OYK_SCR_SETTINGS,   7, 0, "DH0:AM_THME.BMP" },
     { OYK_SCR_TERMINAL,   0, 0, "DH0:AM_TML.BMP"  },
     { OYK_SCR_TERM_HELP,  0, 0, "DH0:AM_TMLH.BMP" },
     { OYK_SCR_FILES,      0, 0, "DH0:AM_FILE.BMP" },
@@ -1453,10 +1572,55 @@ int oyk_amiga_ui_run(OykPortableNode* node,
                 ReplyMsg(reinterpret_cast<struct Message*>(imsg));
                 if (cls == IDCMP_CLOSEWINDOW) {
                     if (from_modal && ui->active_screen != OYK_SCR_MAIN) {
+                        oyk_gui_theme_revert(&ui->theme_ctrl);
                         ui->active_screen = OYK_SCR_MAIN;
                         am_redraw(ui);
-                    } else {
+                    } else if (!from_modal && ui->active_screen == OYK_SCR_MAIN) {
                         ui->running = 0;
+                    }
+                } else if (cls == IDCMP_MENUPICK) {
+                    UWORD mcode = code;
+                    while (mcode != MENUNULL) {
+                        struct MenuItem* mitem = ui->menu_strip ? ItemAddress(ui->menu_strip, mcode) : NULL;
+                        UWORD next_sel = mitem ? mitem->NextSelect : MENUNULL;
+                        if (ui->active_screen == OYK_SCR_MAIN) {
+                            int mnum = MENUNUM(mcode);
+                            int inum = ITEMNUM(mcode);
+                            int act_id = OYK_ACT_NONE;
+                            if (mnum == 0) {
+                                const OykGuiMenuItem* gi = oyk_gui_node_menu_item(inum);
+                                if (gi) act_id = gi->action;
+                            } else if (mnum == 1 && inum == 0) {
+                                act_id = OYK_ACT_ABOUT;
+                            }
+                            if (act_id == OYK_ACT_ALLOW_INCOMING) {
+                                ui->node->set_accept_incoming(1);
+                            } else if (act_id == OYK_ACT_DENY_INCOMING) {
+                                ui->node->set_accept_incoming(0);
+                            } else if (act_id == OYK_ACT_LOCAL_TERM) {
+                                ui->active_screen = OYK_SCR_TERMINAL;
+                            } else if (act_id == OYK_ACT_FILES) {
+                                ui->active_screen = OYK_SCR_FILES;
+                            } else if (act_id == OYK_ACT_RIG) {
+                                ui->active_screen = OYK_SCR_RIG;
+                            } else if (act_id == OYK_ACT_SETTINGS) {
+                                ui->settings_tab = 0;
+                                ui->active_screen = OYK_SCR_SETTINGS;
+                            } else if (act_id == OYK_ACT_TERMINATE) {
+                                ui->active_screen = OYK_SCR_TERMINATE;
+                            } else if (act_id == OYK_ACT_BAN) {
+                                ui->active_screen = OYK_SCR_BAN;
+                            } else if (act_id == OYK_ACT_ABOUT) {
+                                ui->active_screen = OYK_SCR_ABOUT;
+                            } else if (act_id == OYK_ACT_EXIT) {
+                                ui->running = (ui->node->auto_learned_peer_count() > 0) ? 1 : 0;
+                                if (ui->node->auto_learned_peer_count() > 0) {
+                                    ui->active_screen = OYK_SCR_EXIT_PEERS;
+                                }
+                            }
+                            am_redraw(ui);
+                        }
+                        mcode = next_sel;
                     }
                 } else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
                     int act = -1;
@@ -1468,9 +1632,10 @@ int oyk_amiga_ui_run(OykPortableNode* node,
                         }
                     }
                     if (act == 999) {
+                        oyk_gui_theme_revert(&ui->theme_ctrl);
                         ui->active_screen = OYK_SCR_MAIN;
                         am_redraw(ui);
-                    } else if (act >= 100 && act < 107) {
+                    } else if (act >= 100 && act < 108) {
                         ui->active_screen = OYK_SCR_SETTINGS;
                         ui->settings_tab = act - 100;
                         am_redraw(ui);
@@ -1508,15 +1673,18 @@ int oyk_amiga_ui_run(OykPortableNode* node,
                         am_redraw(ui);
                     }
                 } else if (cls == IDCMP_VANILLAKEY) {
-                    if (code == 'q' || code == 'Q' || code == 27) {
+                    if (code == 27) {
                         if (ui->active_screen != OYK_SCR_MAIN) {
+                            oyk_gui_theme_revert(&ui->theme_ctrl);
                             ui->active_screen = OYK_SCR_MAIN;
                             am_redraw(ui);
-                        } else {
-                            ui->running = 0;
                         }
-                    } else if ((ui->active_screen == OYK_SCR_SETTINGS || ui->active_screen == OYK_SCR_PEERS) &&
-                               code >= '1' && code <= '7') {
+                    } else if ((code == 'q' || code == 'Q') && ui->active_screen == OYK_SCR_MAIN) {
+                        ui->running = 0;
+                    } else if ((ui->active_screen == OYK_SCR_SETTINGS ||
+                                ui->active_screen == OYK_SCR_PEERS ||
+                                ui->active_screen == OYK_SCR_THEME) &&
+                               code >= '1' && code <= '8') {
                         ui->active_screen = OYK_SCR_SETTINGS;
                         ui->settings_tab = static_cast<int>(code - '1');
                         am_redraw(ui);

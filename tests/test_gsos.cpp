@@ -31,8 +31,22 @@ int main() {
     char out_eol[64];
     int bg_ch = 0, fg_ch = 0;
 
-    CHECK(oyk_gsos_node_menu_count() == 13);
-    CHECK(oyk_gsos_settings_tab_count() == 7);
+    CHECK(oyk_gsos_node_menu_count() == 11);
+    for (int mi = 0; mi < oyk_gsos_node_menu_count(); ++mi) {
+        const OykGsosMenuItem* item = oyk_gsos_node_menu_item(mi);
+        CHECK(item != NULL);
+        CHECK(item->action != OYK_GSOS_ACT_PEERS);
+        CHECK(item->action != OYK_GSOS_ACT_THEME);
+    }
+    CHECK(oyk_gsos_settings_tab_count() == 8);
+    CHECK(strcmp(oyk_gsos_settings_tab_title(7), "Theme") == 0);
+    CHECK(oyk_gsos_is_modal_screen(OYK_GSOS_SCR_MAIN) == 0);
+    CHECK(oyk_gsos_is_modal_screen(OYK_GSOS_SCR_MENU) == 0);
+    CHECK(oyk_gsos_is_modal_screen(OYK_GSOS_SCR_SETTINGS) == 1);
+    CHECK(oyk_gsos_is_modal_screen(OYK_GSOS_SCR_TERMINAL) == 1);
+    CHECK(oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_MAIN, 0) == 1);
+    CHECK(oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_SETTINGS, 0) == 0);
+    CHECK(oyk_gsos_global_hotkey_allowed(OYK_GSOS_SCR_MAIN, 1) == 0);
     CHECK(strcmp(oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 0), "ID") == 0);
     CHECK(strcmp(oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 1), "Callsign") == 0);
     CHECK(strcmp(oyk_gsos_table_column(OYK_GSOS_TBL_TERMINATE, 2), "Port") == 0);

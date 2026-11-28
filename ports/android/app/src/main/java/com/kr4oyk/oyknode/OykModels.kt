@@ -241,7 +241,8 @@ enum class SettingsTab(val title: String) {
     INTERFACES("Ifaces"),
     PEERS("Peers"),
     RIG("Rig"),
-    PRINTER("Prn")
+    PRINTER("Prn"),
+    THEME("Theme")
 }
 
 object PeerValidator {

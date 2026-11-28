@@ -640,8 +640,8 @@ fun ThemeSettingsCard(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            LazyColumn(modifier = Modifier.heightIn(max = 220.dp)) {
-                items(ThemeRole.entries) { role ->
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ThemeRole.entries.forEach { role ->
                     val colHex = activePalette.colors[role] ?: "#10141A"
                     val swatch = parseComposeColor(colHex, Color.Black)
                     Row(
@@ -911,8 +911,6 @@ fun NodeMenuDrawerContent(
         "Manage Files Area...",
         "Radio Control...",
         "Settings...",
-        "Peers...",
-        "Theme...",
         "Terminate Connection...",
         "Ban / Unban Callsign...",
         "About OYK-Node...",
@@ -931,7 +929,7 @@ fun NodeMenuDrawerContent(
         )
         Spacer(Modifier.height(8.dp))
         entries.forEachIndexed { idx, label ->
-            if (idx == 2 || idx == 11) {
+            if (idx == 2 || idx == 9) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             }
             TextButton(

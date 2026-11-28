@@ -689,10 +689,6 @@ static void mc_draw_main_console(OykMacUiState* ui) {
     mc_draw_button(ui, bx, bar_y, bw, 20, "Files", 0, MC_HIT_SET_SCREEN, OYK_SCR_FILES);
     bx += bw + 6;
     mc_draw_button(ui, bx, bar_y, bw, 20, "Settings", 0, MC_HIT_SET_SCREEN, OYK_SCR_SETTINGS);
-    bx += bw + 6;
-    mc_draw_button(ui, bx, bar_y, bw, 20, "Theme", 0, MC_HIT_SET_SCREEN, OYK_SCR_THEME);
-    bx += bw + 6;
-    mc_draw_button(ui, bx, bar_y, bw, 20, "Peers", 0, MC_HIT_SET_SCREEN, OYK_SCR_PEERS);
 }
 
 static void mc_sync_modal_window(OykMacUiState* ui) {
@@ -728,7 +724,9 @@ static void mc_sync_modal_window(OykMacUiState* ui) {
     SetRect(&mrect, static_cast<short>(left), static_cast<short>(top),
             static_cast<short>(left + mw), static_cast<short>(top + mh));
     const char* title = oyk_gui_screen_title(scr);
-    if (scr == OYK_SCR_PEERS) title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    if (scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        title = oyk_gui_screen_title(OYK_SCR_SETTINGS);
+    }
     Str255 ptitle;
     mu_c2p(title ? title : "Dialog", ptitle);
     if (ui->has_color) {
@@ -760,10 +758,10 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
     TextFont(4);
     TextSize(9);
 
-    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS) {
-        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ui->settings_tab;
+    if (scr == OYK_SCR_SETTINGS || scr == OYK_SCR_PEERS || scr == OYK_SCR_THEME) {
+        int active_tab = (scr == OYK_SCR_PEERS) ? 4 : ((scr == OYK_SCR_THEME) ? 7 : ui->settings_tab);
         int tx = lx;
-        int tw = bw / 7;
+        int tw = bw / 8;
         for (int t = 0; t < oyk_gui_settings_tab_count(); ++t) {
             Rect tr;
             SetRect(&tr, static_cast<short>(tx), static_cast<short>(ty - 12),
@@ -778,9 +776,10 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
             const char* ttitle = oyk_gui_settings_tab_title(t);
             if (strcmp(ttitle, "Interfaces") == 0) ttitle = "Ifaces";
             else if (strcmp(ttitle, "Printer") == 0) ttitle = "Prn";
+            else if (strcmp(ttitle, "Theme") == 0 && tw < 58) ttitle = "Thm";
             char tl[20];
             sprintf(tl, "%d:%s", t + 1, ttitle);
-            mc_draw_text_clip(tx + 4, ty, tl, (tw - 6) / 6);
+            mc_draw_text_clip(tx + 3, ty, tl, (tw - 4) / 6);
             TextMode(srcOr);
             mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
             mc_add_hit(ui, tr, MC_HIT_TAB, t);
@@ -789,7 +788,50 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         MoveTo(lx, ty + 8);
         LineTo(lx + bw, ty + 8);
 
-        if (active_tab == 4) {
+        if (active_tab == 7) {
+            char tsel[96];
+            sprintf(tsel, "Theme: < %s >  (System %s)", ui->theme_ctrl.active_name,
+                    ui->has_color ? "Color QuickDraw" : "1-bit B&W");
+            mc_draw_text(lx, ty + 24, tsel);
+            mc_draw_button(ui, box.right - 140, ty + 12, 24, 16, "<", 0, MC_HIT_THEME_PREV, 0);
+            mc_draw_button(ui, box.right - 110, ty + 12, 24, 16, ">", 0, MC_HIT_THEME_NEXT, 0);
+
+            char hdr[64];
+            sprintf(hdr, "%-16s %-8s %-9s %s",
+                    oyk_gui_table_column(OYK_TBL_THEME, 0),
+                    oyk_gui_table_column(OYK_TBL_THEME, 1),
+                    oyk_gui_table_column(OYK_TBL_THEME, 2),
+                    oyk_gui_table_column(OYK_TBL_THEME, 3));
+            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
+            mc_draw_text(lx, ty + 40, hdr);
+            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+
+            int max_r = (mh > 300) ? OYK_THEME_COLOR_COUNT : 8;
+            int step_y = (mh > 300) ? 12 : 14;
+            for (int r = 0; r < max_r && r < OYK_THEME_COLOR_COUNT; ++r) {
+                oyk_u32 col = ui->active_theme.colors[r];
+                char hex_s[12];
+                oyk_theme_format_hex(col, hex_s, sizeof(hex_s));
+                char row[64];
+                sprintf(row, "%-16s %-8s %-9s",
+                        oyk_theme_role_label(r),
+                        oyk_theme_role_key(r),
+                        hex_s);
+                int ry = ty + 52 + r * step_y;
+                mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+                mc_draw_text_clip(lx, ry, row, (bw - 70) / 6);
+                Rect sw;
+                SetRect(&sw, static_cast<short>(lx + bw - 58), static_cast<short>(ry - 9),
+                        static_cast<short>(lx + bw - 8), static_cast<short>(ry + 1));
+                const Pattern* pats[4] = { &qd.black, &qd.dkGray, &qd.gray, &qd.ltGray };
+                mc_fill_color(ui, &sw, col, pats[r & 3]);
+                mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
+                FrameRect(&sw);
+                mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
+            }
+            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_THEME_CANCEL, 0);
+            mc_draw_button(ui, box.right - 92, by, 78, 20, "Apply", 1, MC_HIT_THEME_APPLY, 0);
+        } else if (active_tab == 4) {
             int px[5] = { lx + 2, lx + 64, lx + 138, lx + 206, lx + 344 };
             const char* ph[5] = {
                 oyk_gui_table_column(OYK_TBL_PEERS, 0),
@@ -1060,49 +1102,6 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_button(ui, lx + 98, by, 68, 20, "Discard", 0, MC_HIT_QUIT_NOW, 0);
         mc_draw_button(ui, lx + 172, by, 92, 20, "Review Peers", 0, MC_HIT_SET_SCREEN, OYK_SCR_PEERS);
         mc_draw_button(ui, box.right - 84, by, 70, 20, "Cancel", 0, MC_HIT_CLOSE_MODAL, 0);
-    } else if (scr == OYK_SCR_THEME) {
-        char tsel[96];
-        sprintf(tsel, "Theme: < %s >  (System %s)", ui->theme_ctrl.active_name,
-                ui->has_color ? "Color QuickDraw" : "1-bit B&W");
-        mc_draw_text(lx, ty, tsel);
-        mc_draw_button(ui, box.right - 140, ty - 12, 24, 16, "<", 0, MC_HIT_THEME_PREV, 0);
-        mc_draw_button(ui, box.right - 110, ty - 12, 24, 16, ">", 0, MC_HIT_THEME_NEXT, 0);
-
-        char hdr[64];
-        sprintf(hdr, "%-16s %-8s %-9s %s",
-                oyk_gui_table_column(OYK_TBL_THEME, 0),
-                oyk_gui_table_column(OYK_TBL_THEME, 1),
-                oyk_gui_table_column(OYK_TBL_THEME, 2),
-                oyk_gui_table_column(OYK_TBL_THEME, 3));
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_PANEL_FG]);
-        mc_draw_text(lx, ty + 20, hdr);
-        mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-
-        int max_r = (mh > 300) ? OYK_THEME_COLOR_COUNT : 8;
-        int step_y = (mh > 300) ? 12 : 14;
-        for (int r = 0; r < max_r && r < OYK_THEME_COLOR_COUNT; ++r) {
-            oyk_u32 col = ui->active_theme.colors[r];
-            char hex_s[12];
-            oyk_theme_format_hex(col, hex_s, sizeof(hex_s));
-            char row[64];
-            sprintf(row, "%-16s %-8s %-9s",
-                    oyk_theme_role_label(r),
-                    oyk_theme_role_key(r),
-                    hex_s);
-            int ry = ty + 32 + r * step_y;
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-            mc_draw_text_clip(lx, ry, row, (bw - 70) / 6);
-            Rect sw;
-            SetRect(&sw, static_cast<short>(lx + bw - 58), static_cast<short>(ry - 9),
-                    static_cast<short>(lx + bw - 8), static_cast<short>(ry + 1));
-            const Pattern* pats[4] = { &qd.black, &qd.dkGray, &qd.gray, &qd.ltGray };
-            mc_fill_color(ui, &sw, col, pats[r & 3]);
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_BORDER]);
-            FrameRect(&sw);
-            mc_set_fg(ui, ui->active_theme.colors[OYK_TR_FG]);
-        }
-            mc_draw_button(ui, box.right - 176, by, 78, 20, "Cancel", 0, MC_HIT_THEME_CANCEL, 0);
-            mc_draw_button(ui, box.right - 92, by, 78, 20, "Apply", 1, MC_HIT_THEME_APPLY, 0);
     } else if (scr == OYK_SCR_TERMINAL) {
         mc_draw_text_clip(lx, ty, "Session: KR4OYK-1 BBS (LOCAL) | EOL: CR", bw / 6);
         Rect term_r;
@@ -1226,7 +1225,7 @@ static void mc_draw_modal_content(OykMacUiState* ui) {
         mc_draw_text(tx, ty + 10, "OYK Amateur Radio Packet Node (GPL-3.0-or-later)");
         mc_draw_text(tx, ty + 28, "Protocols: AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP");
         mc_draw_text(tx, ty + 46, "Platform: Classic Mac 68k & PowerPC (System 6.0.8 - OS 9)");
-        mc_draw_text(tx, ty + 64, "Hotkeys: Cmd+, Settings | Cmd+T Term | 1..7 Tabs | Esc Close");
+        mc_draw_text(tx, ty + 64, "Hotkeys: Cmd+, Settings | Cmd+T Term | 1..8 Tabs | Esc Close");
         mc_draw_button(ui, box.right - 92, by, 78, 20, "OK", 1, MC_HIT_CLOSE_MODAL, 0);
     } else {
         mc_draw_text(lx, ty + 14, "Radio CAT / Hamlib Rig Control");
@@ -1376,13 +1375,8 @@ static void mc_dispatch_action(OykMacUiState* ui, int action) {
             break;
         case OYK_ACT_SETTINGS:
             ui->draft_cfg = ui->node->config();
+            ui->settings_tab = 0;
             ui->active_screen = OYK_SCR_SETTINGS;
-            break;
-        case OYK_ACT_PEERS:
-            ui->active_screen = OYK_SCR_PEERS;
-            break;
-        case OYK_ACT_THEME:
-            ui->active_screen = OYK_SCR_THEME;
             break;
         case OYK_ACT_TERMINATE:
             ui->active_screen = OYK_SCR_TERMINATE;
@@ -1507,7 +1501,7 @@ static void mc_run_capture_tour(OykMacUiState* ui) {
         { OYK_SCR_TERMINATE,  0, 0, "terminate"        },
         { OYK_SCR_BAN,        0, 0, "ban"              },
         { OYK_SCR_EXIT_PEERS, 0, 0, "exit"             },
-        { OYK_SCR_THEME,      0, 0, "theme"            },
+        { OYK_SCR_SETTINGS,   7, 0, "settings_theme"   },
         { OYK_SCR_TERMINAL,   0, 0, "terminal"         },
         { OYK_SCR_TERM_HELP,  0, 0, "terminal_help"    },
         { OYK_SCR_FILES,      0, 0, "files"            },
@@ -1619,15 +1613,17 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                 WindowPtr wp = NULL;
                 short part = FindWindow(ev.where, &wp);
                 if (part == inMenuBar) {
-                    mc_handle_menu(ui, MenuSelect(ev.where));
+                    if (ui->active_screen == OYK_SCR_MAIN) {
+                        mc_handle_menu(ui, MenuSelect(ev.where));
+                    } else {
+                        HiliteMenu(0);
+                    }
                 } else if (part == inSysWindow) {
                     SystemClick(&ev, wp);
                 } else if (part == inGoAway) {
                     if (TrackGoAway(wp, ev.where)) {
                         if (wp == ui->modal_win) {
-                            if (ui->active_screen == OYK_SCR_THEME) {
-                                oyk_gui_theme_revert(&ui->theme_ctrl);
-                            }
+                            oyk_gui_theme_revert(&ui->theme_ctrl);
                             ui->active_screen = OYK_SCR_MAIN;
                             mc_redraw(ui);
                         } else if (wp == ui->main_win) {
@@ -1649,13 +1645,11 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
                             if (hz.kind == MC_HIT_SET_SCREEN) {
                                 ui->active_screen = hz.arg;
                             } else if (hz.kind == MC_HIT_CLOSE_MODAL) {
-                                if (ui->active_screen == OYK_SCR_THEME) {
-                                    oyk_gui_theme_revert(&ui->theme_ctrl);
-                                }
+                                oyk_gui_theme_revert(&ui->theme_ctrl);
                                 ui->active_screen = OYK_SCR_MAIN;
                             } else if (hz.kind == MC_HIT_TAB) {
                                 ui->settings_tab = hz.arg;
-                                ui->active_screen = (hz.arg == 4) ? OYK_SCR_PEERS : OYK_SCR_SETTINGS;
+                                ui->active_screen = OYK_SCR_SETTINGS;
                             } else if (hz.kind == MC_HIT_WIZ_DRIVER) {
                                 oyk_gui_wiz_select_driver(&ui->wiz, &ui->node->config(), hz.arg);
                             } else if (hz.kind == MC_HIT_WIZ_NEXT) {
@@ -1695,12 +1689,21 @@ int oyk_mac_ui_run(OykPortableNode* node, OykMacNetState* net, int ui_test_mode)
             } else if (ev.what == keyDown || ev.what == autoKey) {
                 char ch = static_cast<char>(ev.message & charCodeMask);
                 if ((ev.modifiers & cmdKey) != 0) {
-                    mc_handle_menu(ui, MenuKey(ch));
-                } else if (ch == 0x1B) {
-                    if (ui->active_screen == OYK_SCR_THEME) {
-                        oyk_gui_theme_revert(&ui->theme_ctrl);
+                    if (ui->active_screen == OYK_SCR_MAIN) {
+                        mc_handle_menu(ui, MenuKey(ch));
                     }
-                    ui->active_screen = OYK_SCR_MAIN;
+                } else if (ch == 0x1B) {
+                    if (ui->active_screen != OYK_SCR_MAIN) {
+                        oyk_gui_theme_revert(&ui->theme_ctrl);
+                        ui->active_screen = OYK_SCR_MAIN;
+                        mc_redraw(ui);
+                    }
+                } else if ((ui->active_screen == OYK_SCR_SETTINGS ||
+                            ui->active_screen == OYK_SCR_PEERS ||
+                            ui->active_screen == OYK_SCR_THEME) &&
+                           ch >= '1' && ch <= '8') {
+                    ui->active_screen = OYK_SCR_SETTINGS;
+                    ui->settings_tab = static_cast<int>(ch - '1');
                     mc_redraw(ui);
                 } else if (ui->active_screen == OYK_SCR_TERMINAL) {
                     if (ui->ctrl_a_pending) {

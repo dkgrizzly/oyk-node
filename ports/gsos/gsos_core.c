@@ -44,7 +44,7 @@ static int g_strieq(const char *a, const char *b) {
 
 static OykGsosMenuItem g_menu_tmp;
 
-int oyk_gsos_node_menu_count(void) { return 13; }
+int oyk_gsos_node_menu_count(void) { return 11; }
 
 const OykGsosMenuItem *oyk_gsos_node_menu_item(int idx) {
     memset(&g_menu_tmp, 0, sizeof(g_menu_tmp));
@@ -56,12 +56,10 @@ const OykGsosMenuItem *oyk_gsos_node_menu_item(int idx) {
         case 4:  g_menu_tmp.action = OYK_GSOS_ACT_FILES;          g_menu_tmp.label = "Manage Files Area...";       g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
         case 5:  g_menu_tmp.action = OYK_GSOS_ACT_RIG;            g_menu_tmp.label = "Radio Control...";           g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
         case 6:  g_menu_tmp.action = OYK_GSOS_ACT_SETTINGS;       g_menu_tmp.label = "Settings...";                g_menu_tmp.mac_label = g_menu_tmp.label; g_menu_tmp.shortcut_key = ','; return &g_menu_tmp;
-        case 7:  g_menu_tmp.action = OYK_GSOS_ACT_PEERS;          g_menu_tmp.label = "Peers...";                   g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
-        case 8:  g_menu_tmp.action = OYK_GSOS_ACT_THEME;          g_menu_tmp.label = "Theme...";                   g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
-        case 9:  g_menu_tmp.action = OYK_GSOS_ACT_TERMINATE;      g_menu_tmp.label = "Terminate Connection...";    g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
-        case 10: g_menu_tmp.action = OYK_GSOS_ACT_BAN;            g_menu_tmp.label = "Ban / Unban Callsign...";    g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
-        case 11: g_menu_tmp.action = OYK_GSOS_ACT_NONE;           g_menu_tmp.label = "-"; g_menu_tmp.mac_label = "-"; g_menu_tmp.is_separator = 1; return &g_menu_tmp;
-        case 12: g_menu_tmp.action = OYK_GSOS_ACT_EXIT;           g_menu_tmp.label = "Exit"; g_menu_tmp.mac_label = "Quit"; g_menu_tmp.shortcut_key = 'Q'; return &g_menu_tmp;
+        case 7:  g_menu_tmp.action = OYK_GSOS_ACT_TERMINATE;      g_menu_tmp.label = "Terminate Connection...";    g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
+        case 8:  g_menu_tmp.action = OYK_GSOS_ACT_BAN;            g_menu_tmp.label = "Ban / Unban Callsign...";    g_menu_tmp.mac_label = g_menu_tmp.label; return &g_menu_tmp;
+        case 9:  g_menu_tmp.action = OYK_GSOS_ACT_NONE;           g_menu_tmp.label = "-"; g_menu_tmp.mac_label = "-"; g_menu_tmp.is_separator = 1; return &g_menu_tmp;
+        case 10: g_menu_tmp.action = OYK_GSOS_ACT_EXIT;           g_menu_tmp.label = "Exit"; g_menu_tmp.mac_label = "Quit"; g_menu_tmp.shortcut_key = 'Q'; return &g_menu_tmp;
         default: return NULL;
     }
 }
@@ -88,7 +86,7 @@ const char *oyk_gsos_screen_title(int screen_id) {
     }
 }
 
-int oyk_gsos_settings_tab_count(void) { return 7; }
+int oyk_gsos_settings_tab_count(void) { return 8; }
 
 const char *oyk_gsos_settings_tab_title(int tab_idx) {
     switch (tab_idx) {
@@ -99,8 +97,17 @@ const char *oyk_gsos_settings_tab_title(int tab_idx) {
         case 4: return "Peers";
         case 5: return "Rig";
         case 6: return "Printer";
+        case 7: return "Theme";
         default: return "";
     }
+}
+
+int oyk_gsos_is_modal_screen(int screen_id) {
+    return (screen_id != OYK_GSOS_SCR_MAIN && screen_id != OYK_GSOS_SCR_MENU) ? 1 : 0;
+}
+
+int oyk_gsos_global_hotkey_allowed(int screen_id, int menu_open) {
+    return (!oyk_gsos_is_modal_screen(screen_id) && !menu_open) ? 1 : 0;
 }
 
 int oyk_gsos_table_column_count(int table_id) {

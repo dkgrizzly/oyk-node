@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -142,7 +143,6 @@ class OykUiGalleryTest {
                 onOpenSettings = {},
                 onOpenTerminate = {},
                 onOpenBan = {},
-                onOpenTheme = {},
                 onOpenExit = {},
                 onQuickUsbConnect = {}
             )
@@ -175,7 +175,6 @@ class OykUiGalleryTest {
                         onUpdateCfg = {},
                         onImportFromSd = {},
                         onExportToSd = {},
-                        onOpenTheme = {},
                         onAddIface = {},
                         onEditIface = {},
                         onAddPeer = {},
@@ -210,7 +209,6 @@ class OykUiGalleryTest {
                     onOpenSettings = {},
                     onOpenTerminate = {},
                     onOpenBan = {},
-                    onOpenTheme = {},
                     onOpenExit = {},
                     onQuickUsbConnect = {}
                 )
@@ -235,7 +233,6 @@ class OykUiGalleryTest {
                 onOpenSettings = {},
                 onOpenTerminate = {},
                 onOpenBan = {},
-                onOpenTheme = {},
                 onOpenExit = {},
                 onQuickUsbConnect = {}
             )
@@ -256,7 +253,6 @@ class OykUiGalleryTest {
                 onOpenSettings = {},
                 onOpenTerminate = {},
                 onOpenBan = {},
-                onOpenTheme = {},
                 onOpenExit = {},
                 onQuickUsbConnect = {}
             )
@@ -272,7 +268,6 @@ class OykUiGalleryTest {
                     onUpdateCfg = {},
                     onImportFromSd = {},
                     onExportToSd = {},
-                    onOpenTheme = {},
                     onAddIface = {},
                     onEditIface = {},
                     onAddPeer = {},
@@ -335,11 +330,7 @@ class OykUiGalleryTest {
                 ExitCard(autoLearnedCount = 1, onDismiss = {}, onSaveAndExit = {}, onDiscardAndExit = {}, onReviewPeers = {})
             }
         }
-        captureComposableToPng("theme") {
-            ModalOverlayFrame {
-                ThemeSettingsCard(cfg = sampleCfg, systemDark = true, onDismiss = {}, onSave = { _, _ -> })
-            }
-        }
+        captureSettingsTab("settings_theme", SettingsTab.THEME, StoragePermissionState.GRANTED, "")
         val termSampleLines = listOf(
             "*** Local Packet Terminal (YAPP ready)",
             "*** Connected to KR4OYK-1 BBS",
@@ -409,7 +400,6 @@ class OykUiGalleryTest {
                 onOpenSettings = {},
                 onOpenTerminate = {},
                 onOpenBan = {},
-                onOpenTheme = {},
                 onOpenExit = {},
                 onQuickUsbConnect = {}
             )
@@ -489,7 +479,6 @@ class OykUiGalleryTest {
                     onOpenSettings = {},
                     onOpenTerminate = {},
                     onOpenBan = {},
-                    onOpenTheme = {},
                     onOpenExit = {},
                     onQuickUsbConnect = {}
                 )
@@ -520,5 +509,82 @@ class OykUiGalleryTest {
             }
         }
         composeRule.onNodeWithTag("terminal_fullscreen").assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsHasEightTabsIncludingThemeAndNoMenuDuplicates() {
+        assertEquals(8, SettingsTab.entries.size)
+        assertEquals("Theme", SettingsTab.THEME.title)
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                NodeMenuDrawerContent(acceptIncoming = true, onAction = {})
+            }
+        }
+        assertEquals(0, composeRule.onAllNodesWithText("Peers...").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Theme...").fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun modalOpenPreemptsNodeMenuToggle() {
+        val toggled = mutableStateOf(false)
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                ConsoleScreen(
+                    cfg = sampleCfg,
+                    sessions = sampleSessions,
+                    newHeard = sampleNewHeard,
+                    bans = sampleBans,
+                    usbStatus = "USB PPP ready",
+                    nodeRunning = true,
+                    acceptIncoming = true,
+                    modalOpen = true,
+                    menuOpen = false,
+                    onToggleMenu = { toggled.value = true },
+                    onToggleIncoming = {},
+                    onOpenSettings = {},
+                    onOpenTerminate = {},
+                    onOpenBan = {},
+                    onOpenExit = {},
+                    onQuickUsbConnect = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("node_menu_toggle").performClick()
+        composeRule.waitForIdle()
+        assertTrue(!toggled.value)
+        composeRule.onNodeWithTag("node_menu_drawer").assertDoesNotExist()
+    }
+
+    @Test
+    fun themeSettingsTabCancelRevertsPreview() {
+        val reverted = mutableStateOf(false)
+        val previewed = mutableStateOf("")
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                SettingsScreen(
+                    cfg = sampleCfg,
+                    initialTab = SettingsTab.THEME,
+                    storagePermissionState = StoragePermissionState.GRANTED,
+                    missingPermissionHint = "",
+                    sdStatusMessage = "",
+                    onUpdateCfg = {},
+                    onImportFromSd = {},
+                    onExportToSd = {},
+                    onAddIface = {},
+                    onEditIface = {},
+                    onAddPeer = {},
+                    onEditPeer = {},
+                    onPreviewTheme = { name, _ -> previewed.value = name },
+                    onRevertTheme = { reverted.value = true },
+                    onBack = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText("dark").performClick()
+        composeRule.waitForIdle()
+        assertEquals("dark", previewed.value)
+        composeRule.onNodeWithText("Cancel").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertTrue(reverted.value)
     }
 }

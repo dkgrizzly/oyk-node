@@ -16,8 +16,6 @@
 #define IDM_FILES           207
 #define IDM_SETTINGS        208
 #define IDM_RIG_CONTROL     209
-#define IDM_PEERS           210
-#define IDM_THEME           211
 #define IDM_ABOUT           212
 #define IDM_ADD_IFACE       213
 
@@ -48,6 +46,7 @@
 #define IDC_APP_FIL_LIST    446
 #define IDC_APP_APPROVE     448
 
+/* Settings Dialog (8 Tabs, including Peers and Theme) */
 #define IDD_SETTINGS        450
 #define IDC_SET_CALLSIGN    451
 #define IDC_SET_ALIAS       452
@@ -56,16 +55,14 @@
 #define IDC_SET_CHAT_EN     455
 #define IDC_SET_RIG_EN      456
 #define IDC_SET_PRN_EN      457
+#define IDC_THM_SELECT      471
+#define IDC_THM_PREVIEW     472
 
 #define IDD_ADD_IFACE       460
 #define IDC_WIZ_DRV_AXUDP   461
 #define IDC_WIZ_DRV_KISS    462
 #define IDC_WIZ_ALLOW_SAME  463
 #define IDC_WIZ_POLICY      464
-
-#define IDD_THEME           470
-#define IDC_THM_SELECT      471
-#define IDC_THM_PREVIEW     472
 
 #define IDD_EXIT_PEERS      480
 #define IDD_ABOUT           490

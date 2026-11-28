@@ -102,6 +102,11 @@ int main() {
     CHECK(locked == 0 && strcmp(eff.name, "dark") == 0);
 
     oyk_run_shared_port_parity_tests(NULL, stdout, &g_fail);
+    CHECK(oyk_gui_settings_tab_count() == 8);
+    CHECK(oyk_gui_node_menu_count() == 11);
+    CHECK(oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) == 1);
+    CHECK(oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0);
+    CHECK(oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1);
     printf("oyk_amiga_tests: failures=%d\n", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -278,6 +278,8 @@ int                    oyk_gsos_settings_tab_count(void);
 const char            *oyk_gsos_settings_tab_title(int tab_idx);
 int                    oyk_gsos_table_column_count(int table_id);
 const char            *oyk_gsos_table_column(int table_id, int col_idx);
+int                    oyk_gsos_is_modal_screen(int screen_id);
+int                    oyk_gsos_global_hotkey_allowed(int screen_id, int menu_open);
 
 /* Callsign & formatting */
 int  oyk_gsos_parse_callsign(const char *text, OykGsosCallsign *out);

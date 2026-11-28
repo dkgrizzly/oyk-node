@@ -18,6 +18,31 @@ static OykPortableNode* g_pm_node = NULL;
 static OykConfig*       g_pm_cfg  = NULL;
 static OykGuiThemeCtrl  g_pm_theme;
 static HPOINTER         g_pm_icon = NULLHANDLE;
+static int              g_pm_modal_depth = 0;
+
+static ULONG pm_run_modal_dlg(HWND hwnd, PFNWP pfnwp, ULONG idDlg) {
+    ++g_pm_modal_depth;
+    ULONG rc = WinDlgBox(HWND_DESKTOP, hwnd, pfnwp, NULLHANDLE, idDlg, NULL);
+    if (g_pm_modal_depth > 0) --g_pm_modal_depth;
+    return rc;
+}
+
+static MRESULT EXPENTRY OykPmModalDlgProc(HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2) {
+    if (msg == WM_CHAR) {
+        USHORT fs = SHORT1FROMMP(mp1);
+        USHORT ch = SHORT1FROMMP(mp2);
+        if (!(fs & KC_KEYUP) && (ch & 0xFF) == 0x1B) {
+            oyk_gui_theme_init(&g_pm_theme, g_pm_cfg, 1, 0);
+            WinDismissDlg(hwnd, DID_CANCEL);
+            return (MRESULT)TRUE;
+        }
+    } else if (msg == WM_COMMAND && SHORT1FROMMP(mp1) == DID_CANCEL) {
+        oyk_gui_theme_init(&g_pm_theme, g_pm_cfg, 1, 0);
+        WinDismissDlg(hwnd, DID_CANCEL);
+        return (MRESULT)TRUE;
+    }
+    return WinDefDlgProc(hwnd, msg, mp1, mp2);
+}
 
 static MRESULT EXPENTRY AboutDlgProc(HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2) {
     if (msg == WM_PAINT) {
@@ -50,24 +75,27 @@ static MRESULT EXPENTRY MainWndProc(HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2
         }
         return (MRESULT)0;
     case WM_COMMAND:
+        if (g_pm_modal_depth > 0) {
+            return (MRESULT)0;
+        }
         switch (SHORT1FROMMP(mp1)) {
         case IDM_ABOUT:
-            WinDlgBox(HWND_DESKTOP, hwnd, AboutDlgProc, NULLHANDLE, IDD_ABOUT, NULL);
+            pm_run_modal_dlg(hwnd, AboutDlgProc, IDD_ABOUT);
             return (MRESULT)0;
         case IDM_SETTINGS:
-            WinDlgBox(HWND_DESKTOP, hwnd, WinDefDlgProc, NULLHANDLE, IDD_SETTINGS, NULL);
+            pm_run_modal_dlg(hwnd, OykPmModalDlgProc, IDD_SETTINGS);
             return (MRESULT)0;
         case IDM_ADD_IFACE:
-            WinDlgBox(HWND_DESKTOP, hwnd, WinDefDlgProc, NULLHANDLE, IDD_ADD_IFACE, NULL);
+            pm_run_modal_dlg(hwnd, OykPmModalDlgProc, IDD_ADD_IFACE);
             return (MRESULT)0;
         case IDM_TERMINAL:
-            WinDlgBox(HWND_DESKTOP, hwnd, WinDefDlgProc, NULLHANDLE, IDD_TERMINAL, NULL);
+            pm_run_modal_dlg(hwnd, OykPmModalDlgProc, IDD_TERMINAL);
             return (MRESULT)0;
         case IDM_TERMINATE:
-            WinDlgBox(HWND_DESKTOP, hwnd, WinDefDlgProc, NULLHANDLE, IDD_TERMINATE, NULL);
+            pm_run_modal_dlg(hwnd, OykPmModalDlgProc, IDD_TERMINATE);
             return (MRESULT)0;
         case IDM_BAN:
-            WinDlgBox(HWND_DESKTOP, hwnd, WinDefDlgProc, NULLHANDLE, IDD_BAN, NULL);
+            pm_run_modal_dlg(hwnd, OykPmModalDlgProc, IDD_BAN);
             return (MRESULT)0;
         case IDM_EXIT:
             WinPostMsg(hwnd, WM_CLOSE, 0, 0);

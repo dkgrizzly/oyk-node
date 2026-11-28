@@ -15,6 +15,12 @@
 #include <OS/MiscTool.h>
 #include <OS/QuickDraw.h>
 #include <OS/Event.h>
+#ifndef __QUICKDRAW__
+#define __QUICKDRAW__
+#endif
+#include <OS/Window.h>
+#include <OS/Control.h>
+#include <OS/Menu.h>
 #endif
 
 typedef struct {
@@ -47,6 +53,7 @@ typedef struct {
     gsos_u32           last_console_bg;
     gsos_u32           last_modal_bg;
     int                qd_ready;
+    int                menu_ready;
 #ifdef __VBCC__
     Word               uid;
     Handle             dp_handle;
@@ -70,7 +77,7 @@ static unsigned short gs_rgb24_to_0rgb(gsos_u32 rgb) {
 }
 #endif
 
-static void gs_apply_theme_palette(const OykGsosThemeConfig *pal, int active_screen) {
+static void gs_apply_theme_palette(const OykGsosThemeConfig *pal, int show_swatches) {
 #ifdef __VBCC__
     volatile unsigned char *pals = (volatile unsigned char *)0xE19E00UL;
     volatile unsigned char *scbs = (volatile unsigned char *)0xE19D00UL;
@@ -86,8 +93,8 @@ static void gs_apply_theme_palette(const OykGsosThemeConfig *pal, int active_scr
         volatile unsigned char *tp = pals + (unsigned long)t * 32UL;
         for (i = 0; i < 16; ++i) {
             unsigned short w = c[i & 3];
-            /* If on Theme Settings screen, palette t (t>=2) carries role swatch color in slot 2! */
-            if (active_screen == OYK_GSOS_SCR_THEME && t >= 2 && (i & 3) == 2) {
+            /* If on Settings->Theme tab, palette t (t>=2) carries role swatch color in slot 2! */
+            if (show_swatches && t >= 2 && (i & 3) == 2) {
                 int role = (t - 2);
                 if (role < OYK_GSOS_THEME_COLOR_COUNT) {
                     w = gs_rgb24_to_0rgb(pal->colors[role]);
@@ -100,19 +107,19 @@ static void gs_apply_theme_palette(const OykGsosThemeConfig *pal, int active_scr
     for (y = 0; y < 200; ++y) {
         scbs[y] = 0x80;
     }
-    if (active_screen == OYK_GSOS_SCR_THEME) {
-        /* Assign palette 2..10 to the Theme role swatch rows (y=58..154). */
+    if (show_swatches) {
+        /* Assign palette 2..10 to the Theme role swatch rows (y=71..159). */
         for (i = 0; i < 9; ++i) {
-            int sy0 = 58 + i * 11;
+            int sy0 = 71 + i * 10;
             int sy;
-            for (sy = sy0; sy < sy0 + 9 && sy < 199; ++sy) {
+            for (sy = sy0; sy < sy0 + 9 && sy < 161; ++sy) {
                 scbs[sy] = (unsigned char)(0x80 | (2 + i));
             }
         }
     }
 #else
     (void)pal;
-    (void)active_screen;
+    (void)show_swatches;
 #endif
 }
 
@@ -126,7 +133,7 @@ static int gs_qd_init(OykGsosUiState *ui) {
         ui->uid = MMStartUp();
         if (!ui->uid) ui->uid = 0x1000;
         MTStartUp();
-        ui->dp_handle = NewHandle(0x400UL, ui->uid, 0xC005, (Ptr)0L);
+        ui->dp_handle = NewHandle(0x600UL, ui->uid, 0xC005, (Ptr)0L);
         if (ui->dp_handle) {
             dp = (Word)(*(LongWord *)ui->dp_handle);
         }
@@ -461,8 +468,6 @@ static void gs_draw_console(OykGsosUiState *ui) {
     gs_draw_button(10,  180, 84, 13, "Terminal", 1); gs_add_hit(ui, 10,  180, 84, 13, OYK_GSOS_SCR_TERMINAL);
     gs_draw_button(100, 180, 84, 13, "Files",    0); gs_add_hit(ui, 100, 180, 84, 13, OYK_GSOS_SCR_FILES);
     gs_draw_button(190, 180, 84, 13, "Settings", 0); gs_add_hit(ui, 190, 180, 84, 13, OYK_GSOS_SCR_SETTINGS);
-    gs_draw_button(280, 180, 84, 13, "Theme",    0); gs_add_hit(ui, 280, 180, 84, 13, OYK_GSOS_SCR_THEME);
-    gs_draw_button(370, 180, 84, 13, "Peers",    0); gs_add_hit(ui, 370, 180, 84, 13, OYK_GSOS_SCR_PEERS);
     gs_draw_text(464, 182, "SCC .A/.B | GS/OS", GS_CLR_FG, GS_CLR_BG, 22);
 }
 
@@ -477,7 +482,9 @@ static void gs_draw_modal(OykGsosUiState *ui) {
     char cs[16], al[16], buf[128];
     int i;
 
-    if (scr == OYK_GSOS_SCR_PEERS) title = oyk_gsos_screen_title(OYK_GSOS_SCR_SETTINGS);
+    if (scr == OYK_GSOS_SCR_PEERS || scr == OYK_GSOS_SCR_THEME) {
+        title = oyk_gsos_screen_title(OYK_GSOS_SCR_SETTINGS);
+    }
 
     ++ui->modal_draw_count;
     ui->last_modal_bg = ui->active_theme.colors[OYK_GSOS_TR_BG];
@@ -526,10 +533,12 @@ static void gs_draw_modal(OykGsosUiState *ui) {
     gs_add_hit(ui, mx + 4, my + 2, 12, 10, 999);
     gs_draw_text(mx + 20, my + 2, title, GS_CLR_BG, GS_CLR_ACCENT, 64);
 
-    if (scr == OYK_GSOS_SCR_SETTINGS || scr == OYK_GSOS_SCR_PEERS) {
-        int active_tab = (scr == OYK_GSOS_SCR_PEERS) ? 4 : ui->settings_tab;
+    if (scr == OYK_GSOS_SCR_SETTINGS || scr == OYK_GSOS_SCR_PEERS ||
+        scr == OYK_GSOS_SCR_THEME) {
+        int active_tab = (scr == OYK_GSOS_SCR_PEERS) ? 4
+                         : ((scr == OYK_GSOS_SCR_THEME) ? 7 : ui->settings_tab);
         int tx = lx;
-        int tw = 74;
+        int tw = 66;
         char nbuf[32];
         for (i = 0; i < oyk_gsos_settings_tab_count(); ++i) {
             const char *tt = oyk_gsos_settings_tab_title(i);
@@ -537,15 +546,16 @@ static void gs_draw_modal(OykGsosUiState *ui) {
             int sel = (i == active_tab);
             if (strcmp(tt, "Interfaces") == 0) tt = "Ifaces";
             else if (strcmp(tt, "Printer") == 0) tt = "Prn";
+            else if (strcmp(tt, "Theme") == 0) tt = "Thm";
             sprintf(lbl, "%d:%s", i + 1, tt);
             gs_fill_rect(tx, ty, tw - 2, 11, sel ? GS_CLR_ACCENT : GS_CLR_PANEL);
             gs_frame_rect(tx, ty, tw - 2, 11, GS_CLR_FG);
-            gs_draw_text(tx + 3, ty + 1, lbl, sel ? GS_CLR_BG : GS_CLR_FG,
-                         sel ? GS_CLR_ACCENT : GS_CLR_PANEL, 9);
+            gs_draw_text(tx + 2, ty + 1, lbl, sel ? GS_CLR_BG : GS_CLR_FG,
+                         sel ? GS_CLR_ACCENT : GS_CLR_PANEL, 8);
             gs_add_hit(ui, tx, ty, tw - 2, 11, 100 + i);
             tx += tw;
         }
-        gs_hline(lx, mx + mw - 12, ty + 13, GS_CLR_FG);
+        gs_hline(lx, mx + mw - 12, ty + 12, GS_CLR_FG);
 
         if (active_tab == 0) {
             oyk_gsos_format_callsign(&cfg->callsign, cs, sizeof(cs));
@@ -646,7 +656,7 @@ static void gs_draw_modal(OykGsosUiState *ui) {
             gs_draw_field_row(lx, ty + 47, "Port:", nbuf, 84, 80);
             sprintf(nbuf, "%d s", cfg->rig_poll_sec);
             gs_draw_field_row(lx + 226, ty + 47, "Poll:", nbuf, 50, 70);
-        } else {
+        } else if (active_tab == 6) {
             gs_draw_checkbox(lx, ty + 17, cfg->printer_enabled,
                              "Enable Line Printer Packet Log", 40);
             gs_draw_field_row(lx, ty + 32, "Device:", cfg->printer_device, 84, 120);
@@ -655,11 +665,31 @@ static void gs_draw_modal(OykGsosUiState *ui) {
             gs_draw_field_row(lx, ty + 47, "Baud:", nbuf, 84, 90);
             gs_draw_checkbox(lx + 226, ty + 48, cfg->printer_condensed,
                              "Condensed 132-col", 24);
+        } else {
+            gs_draw_button(lx, ty + 13, 24, 10, "<", 0);
+            gs_add_hit(ui, lx, ty + 13, 24, 10, 401);
+            gs_draw_button(lx + 28, ty + 13, 24, 10, ">", 0);
+            gs_add_hit(ui, lx + 28, ty + 13, 24, 10, 402);
+            sprintf(buf, "Theme: %s   (Whole-Screen Live Preview)",
+                    ui->theme_ctrl.active_name);
+            gs_draw_text(lx + 58, ty + 13, buf, GS_CLR_FG, GS_CLR_BG, 60);
+            gs_draw_text(lx, ty + 25, "Role             Key         Color      Preview",
+                         GS_CLR_FG, GS_CLR_BG, 68);
+            for (i = 0; i < 9; ++i) {
+                int row_y = 71 + i * 10;
+                sprintf(buf, "%-16s %-11s #%06lX",
+                        oyk_gsos_theme_role_name(i),
+                        oyk_gsos_theme_role_key(i),
+                        (unsigned long)(ui->active_theme.colors[i] & 0xFFFFFFUL));
+                gs_draw_text(lx, row_y, buf, GS_CLR_FG, GS_CLR_BG, 48);
+                gs_fill_rect(lx + 340, row_y + 1, 72, 7, GS_CLR_ACCENT);
+                gs_frame_rect(lx + 340, row_y + 1, 72, 7, GS_CLR_FG);
+            }
         }
         gs_draw_button(mx + mw - 184, by, 82, 13, "Cancel", 0);
         gs_add_hit(ui, mx + mw - 184, by, 82, 13, 999);
         gs_draw_button(mx + mw - 96, by, 82, 13, "Save", 1);
-        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
+        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 998);
     } else if (scr == OYK_GSOS_SCR_ADD_IFACE) {
         char nbuf[32];
         int st = ui->wiz.step;
@@ -830,30 +860,6 @@ static void gs_draw_modal(OykGsosUiState *ui) {
         gs_add_hit(ui, lx + 192, by, 110, 13, OYK_GSOS_SCR_PEERS);
         gs_draw_button(mx + mw - 90, by, 76, 13, "Cancel", 0);
         gs_add_hit(ui, mx + mw - 90, by, 76, 13, 999);
-    } else if (scr == OYK_GSOS_SCR_THEME) {
-        gs_draw_button(lx, ty, 24, 11, "<", 0);
-        gs_add_hit(ui, lx, ty, 24, 11, 401);
-        gs_draw_button(lx + 28, ty, 24, 11, ">", 0);
-        gs_add_hit(ui, lx + 28, ty, 24, 11, 402);
-        sprintf(buf, "Theme: %s   (Whole-Screen Live Preview)",
-                ui->theme_ctrl.active_name);
-        gs_draw_text(lx + 58, ty + 1, buf, GS_CLR_FG, GS_CLR_BG, 60);
-        gs_draw_text(lx, ty + 12, "Role             Key         Color      Preview",
-                     GS_CLR_FG, GS_CLR_BG, 68);
-        for (i = 0; i < 9; ++i) {
-            int row_y = 58 + i * 11;
-            sprintf(buf, "%-16s %-11s #%06lX",
-                    oyk_gsos_theme_role_name(i),
-                    oyk_gsos_theme_role_key(i),
-                    (unsigned long)(ui->active_theme.colors[i] & 0xFFFFFFUL));
-            gs_draw_text(lx, row_y, buf, GS_CLR_FG, GS_CLR_BG, 48);
-            gs_fill_rect(lx + 340, row_y + 1, 72, 8, GS_CLR_ACCENT);
-            gs_frame_rect(lx + 340, row_y + 1, 72, 8, GS_CLR_FG);
-        }
-        gs_draw_button(mx + mw - 184, by, 82, 13, "Cancel", 0);
-        gs_add_hit(ui, mx + mw - 184, by, 82, 13, 999);
-        gs_draw_button(mx + mw - 96, by, 82, 13, "Apply", 1);
-        gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
     } else if (scr == OYK_GSOS_SCR_TERMINAL) {
         gs_draw_text(lx, ty + 2, "KR4OYK-11 BBS | EOL: CR | Wrap: ON",
                      GS_CLR_FG, GS_CLR_BG, 70);
@@ -951,7 +957,7 @@ static void gs_draw_modal(OykGsosUiState *ui) {
                      GS_CLR_FG, GS_CLR_BG, tc);
         gs_draw_text(tx, ty + 32, "Platform: Apple IIGS GS/OS (65C816 QuickDraw II)",
                      GS_CLR_FG, GS_CLR_BG, tc);
-        gs_draw_text(tx, ty + 46, "Hotkeys: 1..7 Settings Tabs | Esc/Q Close Modal",
+        gs_draw_text(tx, ty + 46, "Hotkeys: 1..8 Settings Tabs | Esc Close Modal",
                      GS_CLR_FG, GS_CLR_BG, tc);
         gs_draw_button(mx + mw - 96, by, 82, 13, "OK", 1);
         gs_add_hit(ui, mx + mw - 96, by, 82, 13, 999);
@@ -964,9 +970,12 @@ static void gs_draw_modal(OykGsosUiState *ui) {
 }
 
 static void gs_redraw(OykGsosUiState *ui) {
+    int show_swatches;
     if (!ui || !ui->node) return;
     oyk_gsos_theme_resolve(&ui->theme_ctrl, &ui->active_theme);
-    gs_apply_theme_palette(&ui->active_theme, ui->active_screen);
+    show_swatches = (ui->active_screen == OYK_GSOS_SCR_THEME ||
+                     (ui->active_screen == OYK_GSOS_SCR_SETTINGS && ui->settings_tab == 7)) ? 1 : 0;
+    gs_apply_theme_palette(&ui->active_theme, show_swatches);
     gs_draw_console(ui);
     if (ui->active_screen != OYK_GSOS_SCR_MAIN) {
         gs_draw_modal(ui);
@@ -1011,7 +1020,7 @@ static const GsosGalleryStep kGallerySteps[23] = {
     { OYK_GSOS_SCR_TERMINATE,  0, 0, "/OYKOUT/GTERM.BMP" },
     { OYK_GSOS_SCR_BAN,        0, 0, "/OYKOUT/GBAN.BMP"  },
     { OYK_GSOS_SCR_EXIT_PEERS, 0, 0, "/OYKOUT/GEXIT.BMP" },
-    { OYK_GSOS_SCR_THEME,      0, 0, "/OYKOUT/GTHME.BMP" },
+    { OYK_GSOS_SCR_SETTINGS,   7, 0, "/OYKOUT/GTHME.BMP" },
     { OYK_GSOS_SCR_TERMINAL,   0, 0, "/OYKOUT/GTML.BMP"  },
     { OYK_GSOS_SCR_TERM_HELP,  0, 0, "/OYKOUT/GTMLH.BMP" },
     { OYK_GSOS_SCR_FILES,      0, 0, "/OYKOUT/GFILE.BMP" },
@@ -1019,6 +1028,76 @@ static const GsosGalleryStep kGallerySteps[23] = {
 };
 
 #ifdef __VBCC__
+static void gs_apply_menu_action(OykGsosUiState *ui, int action) {
+    if (!ui || !ui->node) return;
+    if (action == OYK_GSOS_ACT_ALLOW_INCOMING) {
+        ui->node->cfg.accept_incoming = 1;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_DENY_INCOMING) {
+        ui->node->cfg.accept_incoming = 0;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_LOCAL_TERM) {
+        ui->active_screen = OYK_GSOS_SCR_TERMINAL;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_FILES) {
+        ui->active_screen = OYK_GSOS_SCR_FILES;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_RIG) {
+        ui->active_screen = OYK_GSOS_SCR_SETTINGS;
+        ui->settings_tab = 5;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_SETTINGS) {
+        ui->active_screen = OYK_GSOS_SCR_SETTINGS;
+        ui->settings_tab = 0;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_TERMINATE) {
+        ui->active_screen = OYK_GSOS_SCR_TERMINATE;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_BAN) {
+        ui->active_screen = OYK_GSOS_SCR_BAN;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_EXIT) {
+        ui->active_screen = OYK_GSOS_SCR_EXIT_PEERS;
+        gs_redraw(ui);
+    } else if (action == OYK_GSOS_ACT_ABOUT) {
+        ui->active_screen = OYK_GSOS_SCR_ABOUT;
+        gs_redraw(ui);
+    }
+}
+
+static void gs_init_native_menus(OykGsosUiState *ui, Word dp) {
+    static char menu_desc[512];
+    int pos = 0;
+    int i, n;
+    MenuRecHndl mh;
+    if (!ui || ui->menu_ready) return;
+    WindBootInit();
+    WindStartUp(ui->uid);
+    CtlBootInit();
+    CtlStartUp(ui->uid, (Word)(dp + 0x400U));
+    MenuBootInit();
+    MenuStartUp(ui->uid, (Word)(dp + 0x500U));
+    pos += sprintf(menu_desc + pos, ">> Node \\N10\r");
+    n = oyk_gsos_node_menu_count();
+    for (i = 0; i < n && pos < 440; ++i) {
+        const OykGsosMenuItem *mi = oyk_gsos_node_menu_item(i);
+        if (!mi) continue;
+        if (mi->is_separator) {
+            pos += sprintf(menu_desc + pos, "---\r");
+        } else {
+            pos += sprintf(menu_desc + pos, "--%s\\N%d\r", mi->label, 200 + i);
+        }
+    }
+    sprintf(menu_desc + pos, ".\r");
+    mh = NewMenu((Pointer)menu_desc);
+    if (mh) {
+        InsertMenu(mh, (Word)0U);
+        FixMenuBar();
+        DrawMenuBar();
+        ui->menu_ready = 1;
+    }
+}
+
 static void gs_dispatch_hit(OykGsosUiState *ui, int mx, int my) {
     int hi, act = -1;
     if (!ui) return;
@@ -1030,9 +1109,13 @@ static void gs_dispatch_hit(OykGsosUiState *ui, int mx, int my) {
         }
     }
     if (act == 999) {
+        oyk_gsos_theme_revert(&ui->theme_ctrl);
         ui->active_screen = OYK_GSOS_SCR_MAIN;
         gs_redraw(ui);
-    } else if (act >= 100 && act < 107) {
+    } else if (act == 998) {
+        ui->active_screen = OYK_GSOS_SCR_MAIN;
+        gs_redraw(ui);
+    } else if (act >= 100 && act < 108) {
         ui->active_screen = OYK_GSOS_SCR_SETTINGS;
         ui->settings_tab = act - 100;
         gs_redraw(ui);
@@ -1067,6 +1150,7 @@ static void gs_dispatch_hit(OykGsosUiState *ui, int mx, int my) {
     } else if (act >= 0 && act < 100) {
         ui->active_screen = act;
         if (act == OYK_GSOS_SCR_PEERS) ui->settings_tab = 4;
+        if (act == OYK_GSOS_SCR_THEME) ui->settings_tab = 7;
         gs_redraw(ui);
     }
 }
@@ -1110,6 +1194,7 @@ int oyk_gsos_ui_run(OykGsosNode *node, OykGsosNetState *net, int ui_test_mode) {
     if (ui->dp_handle && !EMStatus()) {
         Word dp = (Word)(*(LongWord *)ui->dp_handle);
         EMStartUp((Word)(dp + 0x300U), 20, 0, 640, 0, 200, ui->uid);
+        gs_init_native_menus(ui, dp);
     }
 #endif
     gs_redraw(ui);
@@ -1119,19 +1204,39 @@ int oyk_gsos_ui_run(OykGsosNode *node, OykGsosNetState *net, int ui_test_mode) {
         EventRecord ev;
         if (GetNextEvent((Word)(mDownMask | keyDownMask | autoKeyMask), &ev)) {
             if (ev.what == mouseDownEvt) {
-                gs_dispatch_hit(ui, (int)ev.where.h, (int)ev.where.v);
+                if ((int)ev.where.v < 13) {
+                    if (oyk_gsos_global_hotkey_allowed(ui->active_screen, 0) &&
+                        ui->menu_ready && MenuStatus()) {
+                        Word mid, iid;
+                        MenuSelect((Pointer)&ev, (MenuBarRecHndl)0L);
+                        mid = (Word)(ev.wmTaskData >> 16);
+                        iid = (Word)(ev.wmTaskData & 0xFFFFUL);
+                        HiliteMenu((Boolean)0, mid);
+                        if (mid == 10 && iid >= 200U && iid < (Word)(200 + oyk_gsos_node_menu_count())) {
+                            const OykGsosMenuItem *mi = oyk_gsos_node_menu_item((int)(iid - 200U));
+                            if (mi) gs_apply_menu_action(ui, mi->action);
+                        }
+                    }
+                } else {
+                    gs_dispatch_hit(ui, (int)ev.where.h, (int)ev.where.v);
+                }
             } else if (ev.what == keyDownEvt || ev.what == autoKeyEvt) {
                 int ch = (int)(ev.message & 0xFFUL);
-                if (ch == 'q' || ch == 'Q' || ch == 27) {
+                if (ch == 27) {
                     if (ui->active_screen != OYK_GSOS_SCR_MAIN) {
+                        oyk_gsos_theme_revert(&ui->theme_ctrl);
                         ui->active_screen = OYK_GSOS_SCR_MAIN;
                         gs_redraw(ui);
-                    } else {
+                    }
+                } else if (ch == 'q' || ch == 'Q') {
+                    if (oyk_gsos_global_hotkey_allowed(
+                            ui->active_screen, ui->active_screen == OYK_GSOS_SCR_MENU)) {
                         ui->running = 0;
                     }
                 } else if ((ui->active_screen == OYK_GSOS_SCR_SETTINGS ||
-                            ui->active_screen == OYK_GSOS_SCR_PEERS) &&
-                           ch >= '1' && ch <= '7') {
+                            ui->active_screen == OYK_GSOS_SCR_PEERS ||
+                            ui->active_screen == OYK_GSOS_SCR_THEME) &&
+                           ch >= '1' && ch <= '8') {
                     ui->active_screen = OYK_GSOS_SCR_SETTINGS;
                     ui->settings_tab = ch - '1';
                     gs_redraw(ui);

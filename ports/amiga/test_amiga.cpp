@@ -96,9 +96,17 @@ int main() {
     if (cfg) delete cfg;
     if (node) delete node;
 
-    /* 4. Shared GUI / Term / Rig / Printer */
-    AM_CHECK(oyk_gui_settings_tab_count() == 7, "gui_tabs_7");
-    AM_CHECK(oyk_gui_node_menu_count() == 13, "gui_menu_13");
+    /* 4. Shared GUI / Term / Rig / Printer / Modal Preemption */
+    AM_CHECK(oyk_gui_settings_tab_count() == 8, "gui_tabs_8");
+    AM_CHECK(oyk_gui_node_menu_count() == 11, "gui_menu_11");
+    AM_CHECK(oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) == 1 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0 &&
+             oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1, "amiga_modal_preemption");
+    for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+        const OykGuiMenuItem* mitem = oyk_gui_node_menu_item(mi);
+        AM_CHECK(!mitem || (mitem->action != OYK_ACT_PEERS && mitem->action != OYK_ACT_THEME),
+                 "amiga_menu_no_dup_peers_theme");
+    }
     AM_CHECK(oyk_term_decode_ctrl_a_cmd('?') == OYK_TCMD_HELP, "term_ctrl_a_help");
     OykTermWrapSpan spans[4];
     AM_CHECK(oyk_term_wrap_line("HELLO AMIGA WORKBENCH WORLD", 27, 15, spans, 4) >= 2, "term_word_wrap");

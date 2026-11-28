@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -97,6 +98,7 @@ fun ConsoleScreen(
     usbStatus: String,
     nodeRunning: Boolean,
     acceptIncoming: Boolean,
+    modalOpen: Boolean = false,
     menuOpen: Boolean = false,
     onToggleMenu: () -> Unit = {},
     onMenuAction: (String) -> Unit = {},
@@ -104,7 +106,6 @@ fun ConsoleScreen(
     onOpenSettings: (SettingsTab) -> Unit,
     onOpenTerminate: () -> Unit,
     onOpenBan: () -> Unit,
-    onOpenTheme: () -> Unit,
     onOpenExit: () -> Unit,
     onQuickUsbConnect: () -> Unit
 ) {
@@ -115,7 +116,7 @@ fun ConsoleScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(
-                        onClick = onToggleMenu,
+                        onClick = { if (!modalOpen) onToggleMenu() },
                         modifier = Modifier.testTag("node_menu_toggle")
                     ) {
                         Icon(Icons.Default.Menu, contentDescription = "Node Menu")
@@ -157,11 +158,6 @@ fun ConsoleScreen(
                             if (acceptIncoming) Icons.Default.Wifi else Icons.Default.WifiOff,
                             contentDescription = "Toggle Incoming"
                         )
-                    }
-                    if (isLandscape) {
-                        IconButton(onClick = onOpenTheme) {
-                            Icon(Icons.Default.Palette, contentDescription = "Theme")
-                        }
                     }
                     IconButton(onClick = { onOpenSettings(SettingsTab.NODE) }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -236,7 +232,7 @@ fun ConsoleScreen(
                 }
             }
 
-            if (menuOpen) {
+            if (menuOpen && !modalOpen) {
                 BackHandler(enabled = true) { onToggleMenu() }
                 Box(
                     modifier = Modifier
@@ -641,30 +637,38 @@ fun SettingsScreen(
     storagePermissionState: StoragePermissionState,
     missingPermissionHint: String,
     sdStatusMessage: String,
+    systemDark: Boolean = isSystemInDarkTheme(),
     onUpdateCfg: (NodeConfigState) -> Unit,
     onImportFromSd: () -> Unit,
     onExportToSd: () -> Unit,
-    onOpenTheme: () -> Unit,
     onAddIface: () -> Unit,
     onEditIface: (InterfaceConfigState) -> Unit,
     onAddPeer: () -> Unit,
     onEditPeer: (PeerConfigState) -> Unit,
+    onSaveTheme: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit = { _, _ -> },
+    onPreviewTheme: (selectedTheme: String, updatedCustomThemes: List<ThemeConfigState>) -> Unit = { _, _ -> },
+    onRevertTheme: () -> Unit = {},
     onBack: () -> Unit
 ) {
     var tab by remember(initialTab) { mutableStateOf(initialTab) }
     val sdControlsEnabled = storagePermissionState != StoragePermissionState.DECLINED
+
+    BackHandler(enabled = true) {
+        onRevertTheme()
+        onBack()
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Settings — ${tab.title}") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        onRevertTheme()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    TextButton(onClick = onOpenTheme) { Text("Theme...") }
                 }
             )
         }
@@ -867,6 +871,21 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                    }
+                    SettingsTab.THEME -> {
+                        ThemeSettingsCard(
+                            cfg = cfg,
+                            systemDark = systemDark,
+                            onDismiss = {
+                                onRevertTheme()
+                                onBack()
+                            },
+                            onPreview = onPreviewTheme,
+                            onSave = { chosenName, customList ->
+                                onSaveTheme(chosenName, customList)
+                                onBack()
+                            }
+                        )
                     }
                 }
             }
