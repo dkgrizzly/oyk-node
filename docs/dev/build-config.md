@@ -62,7 +62,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | **Raspberry Pi Pico** | `cmake -S ports/pico -B build-pico -DPICO_BOARD=<board>` | `PICO_BOARD` (`pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_pico2_w`, `picocalc_pico_w`, `picocalc_pico2`, `picocalc_pico`) ([README](../../ports/pico/README.md)) |
 | **Luckfox Lyra** | `cmake -S . -B build-lyra -DBUILD_LYRA_PORT=ON` | `oyk_lyra_arm_verify` (Cortex-A7) & `oyk_lyra_rtthread` (`scons`, `RK3506_BSP_ROOT`, `Kconfig` profiles `lyra*` / `picocalc_lyra*`) ([README](../../ports/lyra/README.md)) |
 | **ESP32-C6 Unit C6L** | `(cd ports/esp32c6 && idf.py set-target esp32c6 && idf.py build)` | Requires ESP-IDF v5.x (`IDF_PATH` / `IDF_TOOLS_PATH`) ([README](../../ports/esp32c6/README.md)) |
-| **Android** | `(cd ports/android && ./gradlew testDebugUnitTest)` | `ANDROID_SDK_ROOT` / `ANDROID_HOME` |
+| **Android** | `(cd ports/android && ./gradlew :app:assembleSideloadDebug :app:testPlayStoreDebugUnitTest)` | `ANDROID_SDK_ROOT` / `ANDROID_HOME` ([README](../../ports/android/README.md)) |
 | **Classic Macintosh** | `make -C ports/macclassic` | `RETRO68_PREFIX` (68k + PPC Fat binary + Mini vMac runner) ([README](../../ports/macclassic/README.md)) |
 | **Apple IIGS GS/OS** | `make -C ports/gsos` | `VBCC` (`vc +iigs`, `-maxsegsize=16384` OMF v2 S16) ([README](../../ports/gsos/README.md)) |
 | **Amiga Workbench** | `make -C ports/amiga` | `AMIGA_GCC` (`m68k-amigaos-g++ -noixemul`) ([README](../../ports/amiga/README.md)) |

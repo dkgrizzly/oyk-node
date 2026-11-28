@@ -8,6 +8,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 
@@ -60,7 +61,35 @@ class OykNodeService : Service() {
         if (!cfgFile.exists()) {
             repo.saveInternal(NodeConfigState())
         }
-        startForeground(NOTIF_ID, buildNotification())
+        val notif = buildNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    startForeground(
+                        NOTIF_ID,
+                        notif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    )
+                } catch (_: SecurityException) {
+                    startForeground(
+                        NOTIF_ID,
+                        notif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    )
+                }
+            } else {
+                startForeground(NOTIF_ID, notif)
+            }
+        } catch (e: RuntimeException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                e is android.app.ForegroundServiceStartNotAllowedException
+            ) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            throw e
+        }
         if (NativeNodeBridge.isNativeLoaded() && !NativeNodeBridge.nativeIsRunning()) {
             NativeNodeBridge.nativeStart(cfgFile.absolutePath)
         }

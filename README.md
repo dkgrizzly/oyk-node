@@ -21,7 +21,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Embedded** | ClockworkPi PicoCalc (`Pico`/`Pico 2`) | 320x320 SPI1 IPS (`oyk-vt100` 4x8 80x40 / 6x10 53x32), I2C KBD, 8 MB PSRAM, `ser0` | [ports/pico/README.md](ports/pico/README.md) |
 | **Embedded** | Luckfox Lyra (`RK3506` + `PicoCalc`) | RT-Thread SMP + `rk-hal`, 7 profiles (`lyra*` / `picocalc_lyra*`), `oyk-vt100` 320x320 LCD, RMII/Wi-Fi 6/RNDIS, DFS SD/NAND | [ports/lyra/README.md](ports/lyra/README.md) |
 | **Embedded** | ESP32-C6 (`M5Stack Unit C6L`) | SX1262 LoRa KISS, 64x48 SPI OLED, Wi-Fi 6 + BLE 5, VT340 USB JTAG | [ports/esp32c6/README.md](ports/esp32c6/README.md) |
-| **Mobile** | Android | Jetpack Compose + Material 3 + C++20 NDK `NodeEngine` | [ports/android/](ports/android/) |
+| **Mobile** | Android | Jetpack Compose + Material 3 + C++20 NDK `NodeEngine` | [ports/android/README.md](ports/android/README.md) |
 | **Retro** | MS-DOS Text (8088/V20 640 KB) | Direct MDA/CGA/EGA/VGA video RAM (`INT 33h`, optional mTCP/PPP) | [ports/dos/README.md](ports/dos/README.md) |
 | **Retro** | MS-DOS Graphical (386+ XMS/EMS4) | EGA / VGA / VBE 80x30–128x48 smooth-scrolling desktop (`oyknodeg.exe`) | [ports/dos/README.md](ports/dos/README.md) |
 | **Retro** | Classic Macintosh (System 6.0.8–OS 9.2.2) | 68k + PPC Fat, QuickDraw B&W/Color, `MacTCP`/`OpenTransport` | [ports/macclassic/README.md](ports/macclassic/README.md) |

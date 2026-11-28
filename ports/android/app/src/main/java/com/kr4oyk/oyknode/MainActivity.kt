@@ -10,19 +10,25 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import java.io.File
@@ -30,6 +36,12 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && Build.VERSION.SDK_INT < 35) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+            }
+        }
         val repo = OykConfigRepository(this)
         val usbPpp = OykUsbPppTransport(this)
 
@@ -51,11 +63,15 @@ class MainActivity : ComponentActivity() {
             var showAbout by remember { mutableStateOf(false) }
             var showTermHelp by remember { mutableStateOf(false) }
             var termInput by remember { mutableStateOf("") }
+            var termHistory by remember { mutableStateOf<List<String>>(emptyList()) }
+            var termHistoryIdx by remember { mutableIntStateOf(-1) }
+            var termEol by remember { mutableStateOf("CR") }
+            var termWrap by remember { mutableStateOf(true) }
             var termLines by remember {
                 mutableStateOf(
                     listOf(
                         "*** Local Packet Terminal (YAPP / YAPP-C ready)",
-                        "*** Tap Help or press Ctrl-A Z for hotkeys."
+                        "*** Tap Help or Ctrl + A -> Z for hotkeys."
                     )
                 )
             }
@@ -187,6 +203,13 @@ class MainActivity : ComponentActivity() {
                 val sysDark = isSystemInDarkTheme()
                 val anyModalOpen = showAddIface || editingIface != null || editingPeer != null ||
                     showTerminate || showBan || showExit || showAbout || showTermHelp
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .windowInsetsPadding(WindowInsets.displayCutout)
+                        .testTag("safe_cutout_root")
+                ) {
                 when {
                     showOnboarding -> OnboardingPermissionScreen(
                         onContinue = {
@@ -236,11 +259,48 @@ class MainActivity : ComponentActivity() {
                         remoteLabel = "${cfg.callsign} (${cfg.alias})",
                         lines = termLines,
                         inputText = termInput,
+                        eolLabel = termEol,
+                        wrapEnabled = termWrap,
                         onInputChange = { termInput = it },
                         onSend = {
                             if (termInput.isNotEmpty()) {
-                                termLines = termLines + "> $termInput"
+                                val cmd = termInput
+                                termLines = termLines + "> $cmd"
+                                termHistory = termHistory + cmd
+                                termHistoryIdx = -1
                                 termInput = ""
+                            }
+                        },
+                        onSpecialKey = { keyCode ->
+                            when (keyCode) {
+                                "UP" -> if (termHistory.isNotEmpty()) {
+                                    val nextIdx = if (termHistoryIdx < 0) termHistory.lastIndex else (termHistoryIdx - 1).coerceAtLeast(0)
+                                    termHistoryIdx = nextIdx
+                                    termInput = termHistory[nextIdx]
+                                }
+                                "DOWN" -> if (termHistory.isNotEmpty() && termHistoryIdx >= 0) {
+                                    if (termHistoryIdx < termHistory.lastIndex) {
+                                        termHistoryIdx += 1
+                                        termInput = termHistory[termHistoryIdx]
+                                    } else {
+                                        termHistoryIdx = -1
+                                        termInput = ""
+                                    }
+                                }
+                                "CTRL_A_E" -> {
+                                    termEol = when (termEol) {
+                                        "CR" -> "LF"
+                                        "LF" -> "CRLF"
+                                        else -> "CR"
+                                    }
+                                    termLines = termLines + "[EOL set to $termEol]"
+                                }
+                                "CTRL_A_W" -> {
+                                    termWrap = !termWrap
+                                    termLines = termLines + "[Wrap ${if (termWrap) "ON" else "OFF"}]"
+                                }
+                                "TAB" -> termInput += "    "
+                                else -> termLines = termLines + "[KEY $keyCode]"
                             }
                         },
                         onOpenHelp = { showTermHelp = true },
@@ -398,6 +458,7 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { showAbout = false }
                         )
                     }
+                }
                 }
             }
         }

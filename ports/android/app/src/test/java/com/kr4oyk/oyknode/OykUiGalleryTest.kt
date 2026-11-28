@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -586,5 +587,67 @@ class OykUiGalleryTest {
         composeRule.onNodeWithText("Cancel").performScrollTo().performClick()
         composeRule.waitForIdle()
         assertTrue(reverted.value)
+    }
+
+    @Test
+    fun consoleCombinesCircularAppIconWithMenuToggle() {
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                ConsoleScreen(
+                    cfg = sampleCfg,
+                    sessions = sampleSessions,
+                    newHeard = sampleNewHeard,
+                    bans = sampleBans,
+                    usbStatus = "USB PPP ready",
+                    nodeRunning = true,
+                    acceptIncoming = true,
+                    onToggleIncoming = {},
+                    onOpenSettings = {},
+                    onOpenTerminate = {},
+                    onOpenBan = {},
+                    onOpenExit = {},
+                    onQuickUsbConnect = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("node_menu_toggle").assertIsDisplayed()
+        composeRule.onNodeWithTag("node_menu_icon_badge", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun terminalToolbarExposesCtrlAltEscTabArrowsAndF1ToF12() {
+        val typed = mutableStateOf("")
+        val lastSpecial = mutableStateOf("")
+        val helpOpened = mutableStateOf(false)
+        composeRule.setContent {
+            OykAndroidTheme(cfg = sampleCfg) {
+                TerminalScreen(
+                    remoteLabel = "KR4OYK-1 BBS (LOCAL)",
+                    lines = listOf("*** Connected"),
+                    inputText = typed.value,
+                    onInputChange = { typed.value = it },
+                    onSend = {},
+                    onSpecialKey = { lastSpecial.value = it },
+                    onOpenHelp = { helpOpened.value = true },
+                    onBack = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("terminal_extra_keys").assertIsDisplayed()
+        for (code in listOf("ctrl", "alt", "esc", "tab", "left", "up", "down", "right")) {
+            composeRule.onNodeWithTag("term_key_$code").assertIsDisplayed()
+        }
+        for (n in 1..12) {
+            composeRule.onNodeWithTag("term_key_f$n").assertExists()
+        }
+        composeRule.onNodeWithTag("term_key_f2").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals("F2", lastSpecial.value)
+
+        composeRule.onNodeWithTag("term_key_ctrl").performClick()
+        composeRule.onNodeWithTag("terminal_input").performTextInput("a")
+        composeRule.onNodeWithTag("terminal_input").performTextInput("z")
+        composeRule.waitForIdle()
+        assertTrue(helpOpened.value)
     }
 }

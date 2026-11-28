@@ -63,5 +63,5 @@ ctest --test-dir build --output-on-failure -V
 - **Atari ST / TT GEM (Hatari + EmuTOS)**: `./ports/atarist/run_hatari_test.sh --unit-tests`
 - **Motorola 88K SVR4 (Telnet + Local FTP)**: `OYK_M88K_HOST=... OYK_M88K_USER=... OYK_M88K_PASS=... ./ports/m88k/run_m88k_remote.sh --build --unit-tests`
 - **AT&T 3B2 SVR3.2 (Telnet + Local FTP)**: `OYK_3B2_HOST=... OYK_3B2_PORT=... OYK_3B2_USER=... ./ports/att3b2/run_3b2_remote.sh --build --unit-tests`
-- **Android (Robolectric)**: `(cd ports/android && ./gradlew testDebugUnitTest)`
+- **Android (Sideload APK & Robolectric)**: `(cd ports/android && ./gradlew :app:assembleSideloadDebug :app:testPlayStoreDebugUnitTest)` ([ports/android/README.md](../../ports/android/README.md))
 - **UI Gallery & Cross-TUI Parity**: `./scripts/generate_ui_gallery.sh`

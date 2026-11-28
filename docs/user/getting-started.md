@@ -81,7 +81,7 @@ Cross-platform targets are opt-in and disabled by default (`BUILD_*_PORT=OFF` in
 - **Raspberry Pi Pico & PicoCalc (`RP2040` / `RP2350`)**: `pico_w`, `pico2_w`, `waveshare_core2350b`, `pimoroni_pga2350`, `picocalc_pico2_w`, `picocalc_pico_w`, `picocalc_pico2`, `picocalc_pico` UF2 firmware — [ports/pico/README.md](../../ports/pico/README.md)
 - **Luckfox Lyra (`RK3506G2` / `RK3506B` RT-Thread SMP + PicoCalc)**: `lyra`, `lyra_b`, `lyra_plus`, `lyra_zero_w`, `picocalc_lyra`, `picocalc_lyra_b`, `picocalc_lyra_plus` (RMII Ethernet, Wi-Fi 6 + BLE, USB RNDIS/PPP, `DFS` SD/NAND, opt-in BEL audio) — [ports/lyra/README.md](../../ports/lyra/README.md)
 - **ESP32-C6 (`M5Stack Unit C6L`)**: SX1262 LoRa KISS, 64x48 SPI OLED, Wi-Fi 6 + BLE 5, 16 MB Flash LittleFS — [ports/esp32c6/README.md](../../ports/esp32c6/README.md)
-- **Android**: Jetpack Compose + Material 3 + NDK C++20 engine (`./gradlew testDebugUnitTest`) — [ports/android/](../../ports/android/)
+- **Android**: Jetpack Compose + Material 3 + NDK C++20 engine (`./gradlew :app:assembleSideloadDebug :app:testPlayStoreDebugUnitTest`) — [ports/android/README.md](../../ports/android/README.md)
 - **MS-DOS Text & Graphical (`oyknode.exe`, `oyknodeg.exe`)**: 8088/V20 640 KB real-mode + 386+ EGA/VGA/VBE graphical builds — [ports/dos/README.md](../../ports/dos/README.md)
 - **Classic Macintosh (System 6.0.8–Mac OS 9.2.2)**: 68k + PPC Fat application (`Retro68`) — [ports/macclassic/README.md](../../ports/macclassic/README.md)
 - **Apple IIGS GS/OS (`65C816` S16)**: QuickDraw II `640x200` Super Hi-Res + Marinetti/SCC — [ports/gsos/README.md](../../ports/gsos/README.md)

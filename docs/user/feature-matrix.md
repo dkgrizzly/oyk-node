@@ -39,7 +39,7 @@ Comparison of features, transports, operator UI workflows, and verification cove
 
 ## 2. Embedded & Mobile Ports
 
-| Feature / Subsystem | [Teensy 4.1 TinyTMUX](../../ports/tinytmux/README.md) | [Raspberry Pi Pico](../../ports/pico/README.md) | [Luckfox Lyra](../../ports/lyra/README.md) | [ESP32-C6 Unit C6L](../../ports/esp32c6/README.md) | [Android Jetpack Compose](../../ports/android/) |
+| Feature / Subsystem | [Teensy 4.1 TinyTMUX](../../ports/tinytmux/README.md) | [Raspberry Pi Pico](../../ports/pico/README.md) | [Luckfox Lyra](../../ports/lyra/README.md) | [ESP32-C6 Unit C6L](../../ports/esp32c6/README.md) | [Android Jetpack Compose](../../ports/android/README.md) |
 | --- | --- | --- | --- | --- | --- |
 | **Target Hardware** | IMXRT1062 (600 MHz, 8 UART) | RP2040 / RP2350 (`pico_w`, `pico2_w`, `2350B`, `PicoCalc`) | RK3506G2/B (`lyra*`, `lyra_zero_w`, `picocalc_lyra*`) | ESP32-C6 + SX1262 + 64x48 OLED | Android NDK + Compose |
 | **Core Engine** | C++98 cooperative | C++98 cooperative | C++98 (`RT-Thread SMP + rk-hal`) | C++98 cooperative (`ESP-IDF 5.4`) | C++20 `NodeEngine` + JNI |

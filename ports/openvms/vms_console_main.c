@@ -113,11 +113,13 @@ int main(int argc, char **argv)
     {
         unsigned long pb = 0;
         unsigned long vd = 0;
-        unsigned long rows = 24;
-        unsigned long cols = 80;
+        long rows = 24;
+        long cols = 80;
+        long p_row = 1;
+        long p_col = 1;
         if (smg$create_pasteboard(&pb, 0, &rows, &cols, 0, 0, 0) & 1) {
             smg$create_virtual_display(&rows, &cols, &vd, 0, 0, 0);
-            smg$paste_virtual_display(&vd, &pb, 1, 1, 0);
+            smg$paste_virtual_display(&vd, &pb, &p_row, &p_col, 0);
         }
         oyk_sysv_tui_render(&cv, &app, (int)rows, (int)cols);
         {
