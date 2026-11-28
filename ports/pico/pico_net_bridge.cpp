@@ -71,6 +71,7 @@ void PicoNetBridge::reconfig() {
             if (strcmp(ic.type, "ppp") == 0) {
                 uart_role_[u_idx] = PICO_ROLE_PPP_RADIO;
                 ucfg.role = PICO_ROLE_PPP_RADIO;
+                pico_uart_init(u_idx, &ucfg);
                 oyk_u32 lip = 0;
                 if (!oyk_parse_ipv4(ic.host, &lip)) lip = 0x01002C0AUL;
                 ppp_[u_idx].init(lip, 0UL, sl.listen_port,
@@ -83,10 +84,10 @@ void PicoNetBridge::reconfig() {
             } else {
                 uart_role_[u_idx] = PICO_ROLE_KISS_TNC;
                 ucfg.role = PICO_ROLE_KISS_TNC;
+                pico_uart_init(u_idx, &ucfg);
                 sprintf(sl.status, "KISS:%s %lu", (u_idx == 0) ? "ser0" : "ser1",
                         static_cast<unsigned long>(ucfg.baudrate));
             }
-            pico_uart_init(u_idx, &ucfg);
             sl.active = 1;
             node_->set_iface_status(i, 1, sl.status);
         } else if (strcmp(ic.type, "kiss-bt") == 0 || strcmp(ic.type, "bluetooth") == 0) {
@@ -223,19 +224,18 @@ int PicoNetBridge::tx_frame(int iface_index, const OykFrame* frame,
         return ppp_[u].send_axudp(frame, peer_ip, peer_port ? peer_port : 10093U);
     }
 
-    oyk_u8 raw[512];
+    static oyk_u8 raw[512];
     size_t rlen = oyk_ax25_encode(frame, raw, sizeof(raw));
     if (rlen == 0) return 0;
 
+    static oyk_u8 kiss[1050];
     if (strcmp(ic.type, "kiss-serial") == 0) {
         int u = (iface_index == uart_iface_[1]) ? 1 : 0;
-        oyk_u8 kiss[1050];
         size_t pos = oyk_kiss_encode(ic.kiss_port, raw, rlen, kiss, sizeof(kiss));
         return (pos > 0 && pico_uart_write(u, kiss, pos) > 0) ? 1 : 0;
     }
 
     if (strcmp(ic.type, "kiss-bt") == 0 || strcmp(ic.type, "bluetooth") == 0) {
-        oyk_u8 kiss[1050];
         size_t pos = oyk_kiss_encode(ic.kiss_port, raw, rlen, kiss, sizeof(kiss));
         return (pos > 0 && pico_radio_bt_send(kiss, pos) > 0) ? 1 : 0;
     }

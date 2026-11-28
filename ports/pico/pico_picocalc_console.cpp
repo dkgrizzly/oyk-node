@@ -7,13 +7,16 @@
 #include <string.h>
 
 PicoCalcConsole::PicoCalcConsole()
-    : console_(NULL), zoomed_6x10_(0), pan_col_(0), last_bat_pct_(-1), last_ms_(0UL) {}
+    : console_(NULL), zoomed_6x10_(0), pan_col_(0), last_bat_pct_(-1), last_ms_(0UL),
+      reply_len_(0U), draining_replies_(0) {}
 
 void PicoCalcConsole::init(PicoConsole* console) {
     console_ = console;
     zoomed_6x10_ = 0;
     pan_col_ = 0;
     last_ms_ = 0UL;
+    reply_len_ = 0U;
+    draining_replies_ = 0;
 
     lcd_.init();
     kbd_.init();
@@ -37,6 +40,7 @@ void PicoCalcConsole::init(PicoConsole* console) {
 void PicoCalcConsole::connect_and_probe() {
     if (!console_) return;
     console_->on_usb_connect();
+    drain_vt_replies();
     /* Explicitly push local terminal capability (VT340 or xterm-256) and 40x80 geometry */
 #if OYK_VT_ENABLE_256COLOR
     static const oyk_u8 kInitReplies[] = "\033[?62;22c\033[>0;1;0c\033[40;80R";
@@ -44,14 +48,33 @@ void PicoCalcConsole::connect_and_probe() {
     static const oyk_u8 kInitReplies[] = "\033[?62;22c\033[40;80R";
 #endif
     console_->feed_input(kInitReplies, sizeof(kInitReplies) - 1U);
+    drain_vt_replies();
     oyk_vt100_flush(&vt_);
 }
 
 void PicoCalcConsole::vt_reply_trampoline(void* ctx, const char* data, size_t len) {
     PicoCalcConsole* self = static_cast<PicoCalcConsole*>(ctx);
-    if (self && self->console_ && data && len > 0) {
-        self->console_->feed_input(reinterpret_cast<const oyk_u8*>(data), len);
+    if (!self || !data || len == 0) return;
+    size_t room = sizeof(self->reply_buf_) - self->reply_len_;
+    size_t n = (len < room) ? len : room;
+    if (n > 0U) {
+        memcpy(self->reply_buf_ + self->reply_len_, data, n);
+        self->reply_len_ += n;
     }
+}
+
+void PicoCalcConsole::drain_vt_replies() {
+    if (draining_replies_ || !console_ || reply_len_ == 0U) return;
+    draining_replies_ = 1;
+    while (reply_len_ > 0U) {
+        oyk_u8 tmp[64];
+        size_t n = reply_len_;
+        if (n > sizeof(tmp)) n = sizeof(tmp);
+        memcpy(tmp, reply_buf_, n);
+        reply_len_ = 0U;
+        console_->feed_input(tmp, n);
+    }
+    draining_replies_ = 0;
 }
 
 void PicoCalcConsole::vt_bel_trampoline(void* ctx) {
@@ -126,6 +149,7 @@ void PicoCalcConsole::poll_tick(oyk_u32 now_ms) {
     if (got > 0 && console_) {
         console_->feed_input(in_buf, got);
     }
+    drain_vt_replies();
 
     int bat = kbd_.battery_percent();
     if (bat != last_bat_pct_ && console_) {

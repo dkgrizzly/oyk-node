@@ -51,6 +51,25 @@ static void lyra_lcd_set_vscroll(struct rt_spi_device* spi, oyk_u16 line) {
     lyra_lcd_write_data(spi, buf, 2U);
 }
 
+static void lyra_lcd_fill_band_rgb666(struct rt_spi_device* spi,
+                                      oyk_u16 x0, oyk_u16 y0, oyk_u16 w, oyk_u16 h,
+                                      oyk_u8 r, oyk_u8 g, oyk_u8 b) {
+    if (!spi || w == 0U || h == 0U) return;
+    oyk_u8 chunk_buf[64U * 3U];
+    for (uint16_t i = 0U; i < 64U; ++i) {
+        chunk_buf[i * 3U + 0U] = r;
+        chunk_buf[i * 3U + 1U] = g;
+        chunk_buf[i * 3U + 2U] = b;
+    }
+    lyra_lcd_set_window(spi, x0, y0, static_cast<oyk_u16>(x0 + w - 1U), static_cast<oyk_u16>(y0 + h - 1U));
+    oyk_u32 rem = static_cast<oyk_u32>(w) * static_cast<oyk_u32>(h);
+    while (rem > 0UL) {
+        oyk_u32 n = (rem > 64UL) ? 64UL : rem;
+        lyra_lcd_write_data(spi, chunk_buf, static_cast<size_t>(n) * 3U);
+        rem -= n;
+    }
+}
+
 LyraPicoCalcLcd::LyraPicoCalcLcd()
     : spi_dev_(NULL), scroll_y_(0U), pixel_writes_(0UL), hw_scrolls_(0UL) {}
 
@@ -62,6 +81,8 @@ int LyraPicoCalcLcd::init() {
     rt_pin_mode(OYK_LYRA_LCD_DC_PIN, PIN_MODE_OUTPUT);
     rt_pin_mode(OYK_LYRA_LCD_RST_PIN, PIN_MODE_OUTPUT);
     rt_pin_write(OYK_LYRA_LCD_DC_PIN, PIN_HIGH);
+    rt_pin_write(OYK_LYRA_LCD_RST_PIN, PIN_HIGH);
+    rt_thread_mdelay(10);
     rt_pin_write(OYK_LYRA_LCD_RST_PIN, PIN_LOW);
     rt_thread_mdelay(20);
     rt_pin_write(OYK_LYRA_LCD_RST_PIN, PIN_HIGH);
@@ -74,26 +95,67 @@ int LyraPicoCalcLcd::init() {
         memset(&scfg, 0, sizeof(scfg));
         scfg.data_width = 8U;
         scfg.mode = RT_SPI_MASTER | RT_SPI_MODE_0 | RT_SPI_MSB;
-        scfg.max_hz = 80000000UL;
+        scfg.max_hz = 25000000UL;
         rt_spi_configure(spi, &scfg);
     }
 
+    lyra_lcd_write_cmd(spi, 0x01U); /* SWRESET */
+    rt_thread_mdelay(120);
+    lyra_lcd_write_cmd(spi, 0xF0U); lyra_lcd_write_u8(spi, 0xC3U);
+    lyra_lcd_write_cmd(spi, 0xF0U); lyra_lcd_write_u8(spi, 0x96U);
+    lyra_lcd_write_cmd(spi, 0x36U); lyra_lcd_write_u8(spi, 0x48U); /* MADCTL */
+    lyra_lcd_write_cmd(spi, 0x3AU); lyra_lcd_write_u8(spi, 0x66U); /* COLMOD: 18-bit RGB666 over SPI */
+    lyra_lcd_write_cmd(spi, 0xB4U); lyra_lcd_write_u8(spi, 0x01U);
+    {
+        static const oyk_u8 dfc[3] = { 0x02U, 0x02U, 0x3BU };
+        lyra_lcd_write_cmd(spi, 0xB6U);
+        lyra_lcd_write_data(spi, dfc, sizeof(dfc));
+    }
+    lyra_lcd_write_cmd(spi, 0xB7U); lyra_lcd_write_u8(spi, 0xC6U);
+    {
+        static const oyk_u8 p1[2] = { 0x80U, 0x45U };
+        lyra_lcd_write_cmd(spi, 0xC0U);
+        lyra_lcd_write_data(spi, p1, sizeof(p1));
+    }
+    lyra_lcd_write_cmd(spi, 0xC1U); lyra_lcd_write_u8(spi, 0x13U);
+    lyra_lcd_write_cmd(spi, 0xC2U); lyra_lcd_write_u8(spi, 0xA7U);
+    lyra_lcd_write_cmd(spi, 0xC5U); lyra_lcd_write_u8(spi, 0x0AU);
+    {
+        static const oyk_u8 doca[8] = {
+            0x40U, 0x8AU, 0x00U, 0x00U, 0x29U, 0x19U, 0xA5U, 0x33U
+        };
+        lyra_lcd_write_cmd(spi, 0xE8U);
+        lyra_lcd_write_data(spi, doca, sizeof(doca));
+    }
+    {
+        static const oyk_u8 pgamma[14] = {
+            0xD0U, 0x08U, 0x0FU, 0x06U, 0x06U, 0x33U, 0x30U,
+            0x33U, 0x47U, 0x17U, 0x13U, 0x13U, 0x2BU, 0x31U
+        };
+        static const oyk_u8 ngamma[14] = {
+            0xD0U, 0x0AU, 0x11U, 0x0BU, 0x09U, 0x07U, 0x2FU,
+            0x33U, 0x47U, 0x38U, 0x15U, 0x16U, 0x2CU, 0x32U
+        };
+        lyra_lcd_write_cmd(spi, 0xE0U);
+        lyra_lcd_write_data(spi, pgamma, sizeof(pgamma));
+        lyra_lcd_write_cmd(spi, 0xE1U);
+        lyra_lcd_write_data(spi, ngamma, sizeof(ngamma));
+    }
+    lyra_lcd_write_cmd(spi, 0xF0U); lyra_lcd_write_u8(spi, 0x3CU);
+    lyra_lcd_write_cmd(spi, 0xF0U); lyra_lcd_write_u8(spi, 0x69U);
+    lyra_lcd_write_cmd(spi, 0x21U); /* INVON (IPS) */
     lyra_lcd_write_cmd(spi, 0x11U); /* SLPOUT */
     rt_thread_mdelay(120);
-    lyra_lcd_write_cmd(spi, 0x3AU); /* COLMOD: 16-bit RGB565 */
-    lyra_lcd_write_u8(spi, 0x55U);
-    lyra_lcd_write_cmd(spi, 0x36U); /* MADCTL */
-    lyra_lcd_write_u8(spi, 0x48U);
-    lyra_lcd_write_cmd(spi, 0x21U); /* INVON (IPS) */
 
     {
-        oyk_u8 vs[6] = { 0x00U, 0x00U, 0x01U, 0x40U, 0x00U, 0x00U };
+        oyk_u8 vs[6] = { 0x00U, 0x00U, 0x01U, 0x40U, 0x00U, 0xA0U };
         lyra_lcd_write_cmd(spi, 0x33U); /* VSCRDEF */
         lyra_lcd_write_data(spi, vs, 6U);
     }
     lyra_lcd_set_vscroll(spi, 0U);
+    lyra_lcd_fill_band_rgb666(spi, 0U, 0U, OYK_LYRA_LCD_WIDTH, 480U, 0U, 0U, 0U);
     lyra_lcd_write_cmd(spi, 0x29U); /* DISPON */
-    clear(0x000000UL);
+    rt_thread_mdelay(50);
     return spi ? 1 : 0;
 }
 
@@ -104,24 +166,18 @@ void LyraPicoCalcLcd::fill_rect_cb(void* ctx, uint16_t px, uint16_t py, uint16_t
     if (py + ph > OYK_LYRA_LCD_HEIGHT) ph = static_cast<uint16_t>(OYK_LYRA_LCD_HEIGHT - py);
 
     struct rt_spi_device* spi = reinterpret_cast<struct rt_spi_device*>(self->spi_dev_);
-    const oyk_u16 c565 = oyk_vt_rgb24_to_565(bg_rgb24);
-    const oyk_u8 hi = static_cast<oyk_u8>(c565 >> 8);
-    const oyk_u8 lo = static_cast<oyk_u8>(c565 & 0xFFU);
-    oyk_u8 row_buf[128];
+    const oyk_u8 r = static_cast<oyk_u8>((bg_rgb24 >> 16) & 0xFCU);
+    const oyk_u8 g = static_cast<oyk_u8>((bg_rgb24 >> 8) & 0xFCU);
+    const oyk_u8 b = static_cast<oyk_u8>(bg_rgb24 & 0xFCU);
 
-    for (uint16_t dy = 0; dy < ph; ++dy) {
-        oyk_u16 phys_y = static_cast<oyk_u16>((self->scroll_y_ + py + dy) % OYK_LYRA_LCD_HEIGHT);
-        lyra_lcd_set_window(spi, px, phys_y, static_cast<uint16_t>(px + pw - 1U), phys_y);
-        uint16_t rem = pw;
-        while (rem > 0U) {
-            uint16_t chunk = (rem > 64U) ? 64U : rem;
-            for (uint16_t i = 0; i < chunk; ++i) {
-                row_buf[i * 2U + 0U] = hi;
-                row_buf[i * 2U + 1U] = lo;
-            }
-            lyra_lcd_write_data(spi, row_buf, static_cast<size_t>(chunk) * 2U);
-            rem = static_cast<uint16_t>(rem - chunk);
-        }
+    oyk_u16 py0 = static_cast<oyk_u16>((self->scroll_y_ + py) % OYK_LYRA_LCD_HEIGHT);
+    if (py0 + ph <= OYK_LYRA_LCD_HEIGHT) {
+        lyra_lcd_fill_band_rgb666(spi, px, py0, pw, ph, r, g, b);
+    } else {
+        oyk_u16 h1 = static_cast<oyk_u16>(OYK_LYRA_LCD_HEIGHT - py0);
+        oyk_u16 h2 = static_cast<oyk_u16>(ph - h1);
+        lyra_lcd_fill_band_rgb666(spi, px, py0, pw, h1, r, g, b);
+        lyra_lcd_fill_band_rgb666(spi, px, 0U, pw, h2, r, g, b);
     }
     self->pixel_writes_ += static_cast<oyk_u32>(pw) * static_cast<oyk_u32>(ph);
 }
@@ -130,31 +186,45 @@ void LyraPicoCalcLcd::blit_glyph_cb(void* ctx, uint16_t px, uint16_t py, uint16_
                                     const uint8_t* rows, uint8_t w, uint8_t h,
                                     uint32_t fg_rgb24, uint32_t bg_rgb24, uint8_t attr) {
     LyraPicoCalcLcd* self = static_cast<LyraPicoCalcLcd*>(ctx);
-    if (!self || !rows || w == 0U || h == 0U || px + w > OYK_LYRA_LCD_WIDTH || py + h > OYK_LYRA_LCD_HEIGHT) {
+    if (!self || !rows || w == 0U || h == 0U || w > 16U ||
+        px + w > OYK_LYRA_LCD_WIDTH || py + h > OYK_LYRA_LCD_HEIGHT) {
         return;
     }
     struct rt_spi_device* spi = reinterpret_cast<struct rt_spi_device*>(self->spi_dev_);
-    const oyk_u16 fg565 = oyk_vt_rgb24_to_565(fg_rgb24);
-    const oyk_u16 bg565 = oyk_vt_rgb24_to_565(bg_rgb24);
-    oyk_u8 span[16 * 8 * 2];
-    for (uint8_t y = 0; y < h; ++y) {
-        const uint8_t bits = rows[y];
-        const int ul = ((attr & OYK_VT_ATTR_UNDERLINE) && (y == static_cast<uint8_t>(h - 1U)));
-        for (uint8_t x = 0; x < w; ++x) {
-            const oyk_u16 c = (ul || ((bits & (0x80U >> x)) != 0U)) ? fg565 : bg565;
-            span[(y * w + x) * 2U + 0U] = static_cast<oyk_u8>(c >> 8);
-            span[(y * w + x) * 2U + 1U] = static_cast<oyk_u8>(c & 0xFFU);
-        }
-    }
+    const oyk_u8 fg_r = static_cast<oyk_u8>((fg_rgb24 >> 16) & 0xFCU);
+    const oyk_u8 fg_g = static_cast<oyk_u8>((fg_rgb24 >> 8) & 0xFCU);
+    const oyk_u8 fg_b = static_cast<oyk_u8>(fg_rgb24 & 0xFCU);
+    const oyk_u8 bg_r = static_cast<oyk_u8>((bg_rgb24 >> 16) & 0xFCU);
+    const oyk_u8 bg_g = static_cast<oyk_u8>((bg_rgb24 >> 8) & 0xFCU);
+    const oyk_u8 bg_b = static_cast<oyk_u8>(bg_rgb24 & 0xFCU);
+    oyk_u8 row_buf[16U * 3U];
     oyk_u16 py0 = static_cast<oyk_u16>((self->scroll_y_ + py) % OYK_LYRA_LCD_HEIGHT);
     if (py0 + h <= OYK_LYRA_LCD_HEIGHT) {
-        lyra_lcd_set_window(spi, px, py0, static_cast<uint16_t>(px + w - 1U), static_cast<uint16_t>(py0 + h - 1U));
-        lyra_lcd_write_data(spi, span, static_cast<size_t>(w) * static_cast<size_t>(h) * 2U);
+        lyra_lcd_set_window(spi, px, py0, static_cast<oyk_u16>(px + w - 1U), static_cast<oyk_u16>(py0 + h - 1U));
+        for (uint8_t y = 0; y < h; ++y) {
+            const uint8_t bits = rows[y];
+            const int ul = ((attr & OYK_VT_ATTR_UNDERLINE) && (y == static_cast<uint8_t>(h - 1U)));
+            for (uint8_t x = 0; x < w; ++x) {
+                const int on = (ul || ((bits & (0x80U >> x)) != 0U));
+                row_buf[x * 3U + 0U] = on ? fg_r : bg_r;
+                row_buf[x * 3U + 1U] = on ? fg_g : bg_g;
+                row_buf[x * 3U + 2U] = on ? fg_b : bg_b;
+            }
+            lyra_lcd_write_data(spi, row_buf, static_cast<size_t>(w) * 3U);
+        }
     } else {
         for (uint8_t y = 0; y < h; ++y) {
             oyk_u16 ry = static_cast<oyk_u16>((self->scroll_y_ + py + y) % OYK_LYRA_LCD_HEIGHT);
-            lyra_lcd_set_window(spi, px, ry, static_cast<uint16_t>(px + w - 1U), ry);
-            lyra_lcd_write_data(spi, &span[static_cast<size_t>(y) * w * 2U], static_cast<size_t>(w) * 2U);
+            const uint8_t bits = rows[y];
+            const int ul = ((attr & OYK_VT_ATTR_UNDERLINE) && (y == static_cast<uint8_t>(h - 1U)));
+            for (uint8_t x = 0; x < w; ++x) {
+                const int on = (ul || ((bits & (0x80U >> x)) != 0U));
+                row_buf[x * 3U + 0U] = on ? fg_r : bg_r;
+                row_buf[x * 3U + 1U] = on ? fg_g : bg_g;
+                row_buf[x * 3U + 2U] = on ? fg_b : bg_b;
+            }
+            lyra_lcd_set_window(spi, px, ry, static_cast<oyk_u16>(px + w - 1U), ry);
+            lyra_lcd_write_data(spi, row_buf, static_cast<size_t>(w) * 3U);
         }
     }
     self->pixel_writes_ += static_cast<oyk_u32>(w) * static_cast<oyk_u32>(h);
@@ -175,7 +245,12 @@ int LyraPicoCalcLcd::hw_scroll_cb(void* ctx, int16_t delta_rows, uint16_t cell_h
 void LyraPicoCalcLcd::clear(oyk_u32 rgb24) {
     scroll_y_ = 0U;
     lyra_lcd_set_vscroll(reinterpret_cast<struct rt_spi_device*>(spi_dev_), 0U);
-    fill_rect_cb(this, 0U, 0U, OYK_LYRA_LCD_WIDTH, OYK_LYRA_LCD_HEIGHT, rgb24);
+    const oyk_u8 r = static_cast<oyk_u8>((rgb24 >> 16) & 0xFCU);
+    const oyk_u8 g = static_cast<oyk_u8>((rgb24 >> 8) & 0xFCU);
+    const oyk_u8 b = static_cast<oyk_u8>(rgb24 & 0xFCU);
+    lyra_lcd_fill_band_rgb666(reinterpret_cast<struct rt_spi_device*>(spi_dev_),
+                              0U, 0U, OYK_LYRA_LCD_WIDTH, 480U, r, g, b);
+    pixel_writes_ += static_cast<oyk_u32>(OYK_LYRA_LCD_WIDTH) * 480UL;
 }
 
 void LyraPicoCalcLcd::fill_renderer(OykVtRenderer* out_renderer) {

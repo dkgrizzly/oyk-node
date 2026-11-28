@@ -79,6 +79,7 @@ static int alloc_slot(const char* path, int is_dir) {
 #if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
 
 #include "pico/stdlib.h"
+#include "pico/stdio.h"
 #include "pico/flash.h"
 #include "hardware/flash.h"
 #include "hardware/spi.h"
@@ -181,6 +182,9 @@ int _open(const char* path, int flags, int /*mode*/) {
 }
 
 int _read(int fd, char* ptr, int len) {
+    if (fd == 0) {
+        return (ptr && len > 0) ? stdio_get_until(ptr, len, at_the_end_of_time) : 0;
+    }
     int s = fd - PICO_FD_OFFSET;
     if (s < 0 || s >= 8 || !s_fds[s].open || !ptr || len <= 0) return 0;
     PicoMemFile& f = s_files[s_fds[s].file_slot];
@@ -193,6 +197,11 @@ int _read(int fd, char* ptr, int len) {
 }
 
 int _write(int fd, char* ptr, int len) {
+    if (fd == 1 || fd == 2) {
+        if (!ptr || len <= 0) return 0;
+        stdio_put_string(ptr, len, false, true);
+        return len;
+    }
     int s = fd - PICO_FD_OFFSET;
     if (s < 0 || s >= 8 || !s_fds[s].open || !s_fds[s].writable || !ptr || len <= 0) return -1;
     PicoMemFile& f = s_files[s_fds[s].file_slot];
@@ -229,6 +238,11 @@ int _lseek(int fd, int ptr, int dir) {
 }
 
 int _fstat(int fd, struct stat* st) {
+    if ((fd == 0 || fd == 1 || fd == 2) && st) {
+        memset(st, 0, sizeof(*st));
+        st->st_mode = S_IFCHR;
+        return 0;
+    }
     int s = fd - PICO_FD_OFFSET;
     if (s < 0 || s >= 8 || !s_fds[s].open || !st) return -1;
     memset(st, 0, sizeof(*st));

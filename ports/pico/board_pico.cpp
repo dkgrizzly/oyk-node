@@ -177,6 +177,8 @@ void pico_decode_unique_id_mac(const oyk_u8 unique_id[8], oyk_u8 mac_out[6]) {
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 
+static oyk_u8 s_uart_inited[OYK_PICO_UART_COUNT] = {0, 0};
+
 static uart_inst_t* pico_hw_uart(oyk_u8 idx) {
     return (idx == 0) ? uart0 : uart1;
 }
@@ -243,20 +245,32 @@ int pico_uart_init(int logical_port, const PicoUartConfig* cfg) {
     } else {
         uart_set_hw_flow(u, false, false);
     }
+    if (m->hw_uart_index < OYK_PICO_UART_COUNT) {
+        s_uart_inited[m->hw_uart_index] = 1U;
+    }
     return 1;
 }
 
 size_t pico_uart_write(int logical_port, const oyk_u8* data, size_t len) {
     const PicoUartMap* m = pico_uart_info(logical_port);
     if (!m || !data || len == 0) return 0;
+    if (m->hw_uart_index >= OYK_PICO_UART_COUNT || !s_uart_inited[m->hw_uart_index]) return 0;
     uart_inst_t* u = pico_hw_uart(m->hw_uart_index);
-    uart_write_blocking(u, data, len);
+    for (size_t i = 0; i < len; ++i) {
+        absolute_time_t dl = make_timeout_time_us(5000);
+        while (!uart_is_writable(u)) {
+            if (time_reached(dl)) return i;
+            tight_loop_contents();
+        }
+        uart_putc_raw(u, data[i]);
+    }
     return len;
 }
 
 size_t pico_uart_read(int logical_port, oyk_u8* out, size_t max_len) {
     const PicoUartMap* m = pico_uart_info(logical_port);
     if (!m || !out || max_len == 0) return 0;
+    if (m->hw_uart_index >= OYK_PICO_UART_COUNT || !s_uart_inited[m->hw_uart_index]) return 0;
     uart_inst_t* u = pico_hw_uart(m->hw_uart_index);
     size_t got = 0;
     while (got < max_len && uart_is_readable(u)) {

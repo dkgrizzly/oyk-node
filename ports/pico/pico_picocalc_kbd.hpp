@@ -59,6 +59,7 @@ public:
     int init();
     size_t poll_vt100(oyk_u32 now_ms, oyk_u8* out_vt, size_t max_len, int* out_action);
 
+    int stm32_ready() const { return stm32_ready_; }
     int battery_percent() const { return battery_pct_; }
     oyk_u8 lcd_backlight() const { return lcd_bkl_; }
     oyk_u8 kbd_backlight() const { return kbd_bkl_; }
@@ -78,7 +79,9 @@ private:
     int battery_pct_;
     oyk_u8 lcd_bkl_;
     oyk_u8 kbd_bkl_;
+    int stm32_ready_;
     oyk_u32 last_bat_ms_;
+    oyk_u32 last_stm32_retry_ms_;
 
 #if !defined(PICO_ON_DEVICE) || !PICO_ON_DEVICE
     oyk_u8 sim_state_[32];

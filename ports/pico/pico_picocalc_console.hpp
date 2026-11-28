@@ -25,6 +25,8 @@ public:
 
     int zoomed_6x10() const { return zoomed_6x10_; }
     int pan_col() const { return pan_col_; }
+    int stm32_ready() const { return kbd_.stm32_ready(); }
+    int battery_percent() const { return kbd_.battery_percent(); }
     const OykVt100* vt() const { return &vt_; }
     OykVt100* vt() { return &vt_; }
     PicoCalcLcd* lcd() { return &lcd_; }
@@ -38,6 +40,7 @@ public:
 private:
     static void vt_reply_trampoline(void* ctx, const char* data, size_t len);
     static void vt_bel_trampoline(void* ctx);
+    void drain_vt_replies();
 
     PicoConsole* console_;
     OykVt100 vt_;
@@ -48,6 +51,9 @@ private:
     int pan_col_;
     int last_bat_pct_;
     oyk_u32 last_ms_;
+    oyk_u8 reply_buf_[64];
+    size_t reply_len_;
+    int draining_replies_;
 };
 
 #endif /* OYK_PICO_PICOCALC_CONSOLE_HPP */

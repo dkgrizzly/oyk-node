@@ -443,7 +443,7 @@ void PicoConsole::render() {
 }
 
 void PicoConsole::render_console() {
-    char buf[320], call_s[16], psram_s[8], rad_s[8];
+    char buf[320], tmp1[160], tmp2[128], call_s[16], psram_s[8], rad_s[8];
     const PicoBoardProfile* prof = pico_current_board_profile();
     oyk_format_callsign(&node_->config().callsign, call_s, sizeof(call_s));
     pico_psram_format_short(pico_psram_info(), psram_s, sizeof(psram_s));
@@ -465,10 +465,9 @@ void PicoConsole::render_console() {
             term_type_label());
     write_str(buf);
 
-    char hdr_txt[160];
     if (prof->has_picocalc_hw) {
         if (battery_pct_ >= 0) {
-            sprintf(hdr_txt, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-4s BAT:%d%%",
+            sprintf(tmp1, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-4s BAT:%d%%",
                     (prof->mcu == PICO_MCU_RP2040) ? "2040" : "2350",
                     call_s,
                     static_cast<unsigned long>(node_->uptime_seconds()),
@@ -476,7 +475,7 @@ void PicoConsole::render_console() {
                     node_->accept_incoming() ? "ALLOW" : "DENY",
                     psram_s, rad_s, battery_pct_);
         } else {
-            sprintf(hdr_txt, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-5s",
+            sprintf(tmp1, " OYK PC(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PS:%-2s RF:%-5s",
                     (prof->mcu == PICO_MCU_RP2040) ? "2040" : "2350",
                     call_s,
                     static_cast<unsigned long>(node_->uptime_seconds()),
@@ -485,14 +484,14 @@ void PicoConsole::render_console() {
                     psram_s, rad_s);
         }
     } else {
-        sprintf(hdr_txt, " OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s",
+        sprintf(tmp1, " OYK PICO(%s): %-9s Up:%-4lus C:%-2d [IN:%-5s] PSRAM:%-3s RF:%-5s",
                 prof->board_id, call_s,
                 static_cast<unsigned long>(node_->uptime_seconds()),
                 node_->total_active_connections(),
                 node_->accept_incoming() ? "ALLOW" : "DENY",
                 psram_s, rad_s);
     }
-    sprintf(buf, "\033[2;1H%s%-*.*s\033[0m", sgr_header(), ncols, ncols, hdr_txt);
+    sprintf(buf, "\033[2;1H%s%-*.*s\033[0m", sgr_header(), ncols, ncols, tmp1);
     write_str(buf);
 
     if (lay.too_small) {
@@ -515,60 +514,55 @@ void PicoConsole::render_console() {
     const int hl = lay.heard_box.left + 2;
     const int top_hdr_row = lay.iface_box.top + 2;
 
-    char lhdr[128], rhdr[128];
-    sprintf(lhdr, " %-8s %-11s %-2s %-15s", "Port", "Type", "C", "Status");
-    sprintf(rhdr, " %-2s %-9s %-7s %-8s", "#", "Callsign", "Iface", "Time");
+    sprintf(tmp1, " %-8s %-11s %-2s %-15s", "Port", "Type", "C", "Status");
+    sprintf(tmp2, " %-2s %-9s %-7s %-8s", "#", "Callsign", "Iface", "Time");
     sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m\033[%d;%dH%s%-*.*s\033[0m",
-            top_hdr_row, il, sgr_list_hdr(), iw, iw, lhdr,
-            top_hdr_row, hl, sgr_list_hdr(), hw, hw, rhdr);
+            top_hdr_row, il, sgr_list_hdr(), iw, iw, tmp1,
+            top_hdr_row, hl, sgr_list_hdr(), hw, hw, tmp2);
     write_str(buf);
 
     const int top_vis = (lay.iface_vis_rows > lay.heard_vis_rows) ? lay.iface_vis_rows : lay.heard_vis_rows;
     for (int i = 0; i < top_vis; ++i) {
-        char lft[128], rgt[128];
         if (i < lay.iface_vis_rows && i < node_->iface_count()) {
             const OykIfaceRuntime& r = node_->iface(i);
-            sprintf(lft, " %-8.8s %-11.11s %-2d %-15.15s",
+            sprintf(tmp1, " %-8.8s %-11.11s %-2d %-15.15s",
                     r.cfg.id, r.cfg.type, node_->active_connections_on(i), r.status);
-        } else lft[0] = '\0';
+        } else tmp1[0] = '\0';
         if (i < lay.heard_vis_rows && i < node_->new_heard_count()) {
             const OykNewHeard& nh = node_->new_heard(i);
-            sprintf(rgt, " %d %-9.9s %-7.7s %-8.8s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
-        } else rgt[0] = '\0';
+            sprintf(tmp2, " %d %-9.9s %-7.7s %-8.8s", i + 1, nh.callsign, nh.iface_id, nh.time_hms);
+        } else tmp2[0] = '\0';
         sprintf(buf, "\033[%d;%dH%-*.*s\033[%d;%dH%-*.*s",
-                top_hdr_row + 1 + i, il, iw, iw, lft,
-                top_hdr_row + 1 + i, hl, hw, hw, rgt);
+                top_hdr_row + 1 + i, il, iw, iw, tmp1,
+                top_hdr_row + 1 + i, hl, hw, hw, tmp2);
         write_str(buf);
     }
 
-    char ct[48];
-    sprintf(ct, "Active Connections (%d) | Bans: %d",
+    sprintf(tmp1, "Active Connections (%d) | Bans: %d",
             node_->total_active_connections(), node_->ban_count());
     draw_box(lay.conn_box.top + 1, lay.conn_box.left + 1,
-             lay.conn_box.h, lay.conn_box.w, ct, 0, 0);
+             lay.conn_box.h, lay.conn_box.w, tmp1, 0, 0);
     const int cw = lay.conn_box.w - 2;
-    char chdr[140];
-    sprintf(chdr, " %-4s %-10s %-8s %-8s %-43s", "#", "Callsign", "Iface", "Since", "Service / Role");
+    sprintf(tmp1, " %-4s %-10s %-8s %-8s %-43s", "#", "Callsign", "Iface", "Since", "Service / Role");
     sprintf(buf, "\033[%d;%dH%s%-*.*s\033[0m",
-            lay.conn_box.top + 2, lay.conn_box.left + 2, sgr_list_hdr(), cw, cw, chdr);
+            lay.conn_box.top + 2, lay.conn_box.left + 2, sgr_list_hdr(), cw, cw, tmp1);
     write_str(buf);
 
     int shown = 0;
     for (int i = 0; i < node_->max_sessions() && shown < lay.conn_vis_rows; ++i) {
         const OykSession& s = node_->session_slot(i);
         if (s.state == OYK_SESS_CONNECTED) {
-            char cs[12], crow[160];
-            oyk_format_callsign(&s.remote_call, cs, sizeof(cs));
+            oyk_format_callsign(&s.remote_call, tmp2, 16U);
             const char* role = s.restricted_ban ? "BAN NOTICE"
                                                 : (s.in_bbs ? "BBS"
                                                             : (s.in_chat ? "CHAT"
                                                                          : (s.is_local_term ? "LOCAL TERM" : "NODE SHELL")));
-            sprintf(crow, " #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
-                    static_cast<unsigned long>(s.id), cs,
+            sprintf(tmp1, " #%-3lu %-10.10s %-8.8s %-8.8s %-43.43s",
+                    static_cast<unsigned long>(s.id), tmp2,
                     (s.iface_idx >= 0) ? node_->iface(s.iface_idx).cfg.id : "local",
                     s.since_hms, role);
             sprintf(buf, "\033[%d;%dH%-*.*s",
-                    lay.conn_box.top + 3 + shown, lay.conn_box.left + 2, cw, cw, crow);
+                    lay.conn_box.top + 3 + shown, lay.conn_box.left + 2, cw, cw, tmp1);
             write_str(buf);
             ++shown;
         }

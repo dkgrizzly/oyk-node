@@ -9,13 +9,24 @@
 #include "pico_radio.hpp"
 #include "pico_net_bridge.hpp"
 #include "pico_console.hpp"
-#if defined(OYK_PICO_IS_PICOCALC) && OYK_PICO_IS_PICOCALC
-#include "pico_picocalc_console.hpp"
-#endif
-
 #include "pico/stdlib.h"
 #include <stdio.h>
 #include <string.h>
+#if defined(OYK_PICO_IS_PICOCALC) && OYK_PICO_IS_PICOCALC
+#include "pico_picocalc_console.hpp"
+
+static void print_picocalc_status(const PicoCalcConsole& pcalc, const PicoConsole& console, const OykPortableNode& node) {
+    printf("[OYK] PicoCalc ready: board=%s stm32=%s bat=%d%% term=%dx%d lcd_px=%lu up=%lus\r\n",
+           OYK_PICO_BOARD_ID,
+           pcalc.stm32_ready() ? "OK" : "NO_ACK",
+           pcalc.battery_percent(),
+           console.term_cols(),
+           console.term_rows(),
+           static_cast<unsigned long>(pcalc.lcd()->pixel_writes()),
+           static_cast<unsigned long>(node.uptime_seconds()));
+    stdio_flush();
+}
+#endif
 
 static OykPortableNode* g_node = NULL;
 static PicoNetBridge* g_net = NULL;
@@ -136,13 +147,12 @@ int main() {
     pico_board_init();
     pico_fs_init(1, 0);
 
-    OykConfig cfg;
-    build_default_pico_config(&cfg);
+    static OykConfig s_cfg_storage;
+    build_default_pico_config(&s_cfg_storage);
     if (pico_fs_exists("node.cfg")) {
-        char err[96];
-        OykConfig loaded;
-        if (oyk_config_load("node.cfg", &loaded, err, sizeof(err))) {
-            cfg = loaded;
+        char cfg_err[96];
+        if (!oyk_config_load("node.cfg", &s_cfg_storage, cfg_err, sizeof(cfg_err))) {
+            build_default_pico_config(&s_cfg_storage);
         }
     }
 
@@ -154,7 +164,7 @@ int main() {
     g_console = &s_console_storage;
 
     char err[96];
-    g_node->init(&cfg, PicoNetBridge::tx_callback_trampoline, g_net, err, sizeof(err));
+    g_node->init(&s_cfg_storage, PicoNetBridge::tx_callback_trampoline, g_net, err, sizeof(err));
     g_node->set_local_event_callback(local_term_trampoline, NULL);
 
     PicoRadioConfig rcfg;
@@ -166,9 +176,24 @@ int main() {
     g_console->init(g_node, g_net, PicoCalcConsole::tx_trampoline, &s_pcalc_storage);
     s_pcalc_storage.init(g_console);
     s_pcalc_storage.connect_and_probe();
+    print_picocalc_status(s_pcalc_storage, *g_console, *g_node);
 
     while (true) {
         const oyk_u32 now = pico_board_millis();
+        const bool connected = stdio_usb_connected();
+        if (connected && !g_usb_connected) {
+            g_usb_connected = true;
+            print_picocalc_status(s_pcalc_storage, *g_console, *g_node);
+        } else if (!connected && g_usb_connected) {
+            g_usb_connected = false;
+        }
+        bool usb_rx_seen = false;
+        while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {
+            usb_rx_seen = true;
+        }
+        if (usb_rx_seen) {
+            print_picocalc_status(s_pcalc_storage, *g_console, *g_node);
+        }
         g_net->poll(now);
         g_node->tick();
         g_console->tick(now);

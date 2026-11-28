@@ -11,22 +11,24 @@
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 
-static void stm32_write_reg(oyk_u8 reg, oyk_u8 val) {
+static int stm32_write_reg(oyk_u8 reg, oyk_u8 val) {
     oyk_u8 buf[2];
     buf[0] = static_cast<oyk_u8>(reg | PICOCALC_REG_WRITE);
     buf[1] = val;
-    i2c_write_blocking(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, buf, 2, false);
+    return (i2c_write_timeout_us(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, buf, 2, false, 20000U) == 2) ? 1 : 0;
 }
 
 static int stm32_read_reg2(oyk_u8 reg, oyk_u8 out[2]) {
-    if (i2c_write_blocking(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, &reg, 1, true) != 1) return 0;
-    return (i2c_read_blocking(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, out, 2, false) == 2) ? 1 : 0;
+    if (i2c_write_timeout_us(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, &reg, 1, false, 20000U) != 1) return 0;
+    sleep_us(200);
+    return (i2c_read_timeout_us(i2c1, OYK_PICOCALC_KBD_I2C_ADDR, out, 2, false, 20000U) == 2) ? 1 : 0;
 }
 #endif
 
 PicoCalcKbd::PicoCalcKbd()
     : mod_shift_(0), mod_ctrl_(0), mod_alt_(0),
-      battery_pct_(100), lcd_bkl_(180U), kbd_bkl_(64U), last_bat_ms_(0UL)
+      battery_pct_(100), lcd_bkl_(180U), kbd_bkl_(64U),
+      stm32_ready_(0), last_bat_ms_(0UL), last_stm32_retry_ms_(0UL)
 #if !defined(PICO_ON_DEVICE) || !PICO_ON_DEVICE
       , sim_head_(0U), sim_tail_(0U)
 #endif
@@ -36,21 +38,27 @@ int PicoCalcKbd::init() {
     mod_shift_ = 0;
     mod_ctrl_ = 0;
     mod_alt_ = 0;
+    stm32_ready_ = 0;
     last_bat_ms_ = 0UL;
+    last_stm32_retry_ms_ = 0UL;
 #if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
-    i2c_init(i2c1, 100000U);
+    i2c_init(i2c1, 10000U);
     gpio_set_function(OYK_PICOCALC_KBD_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(OYK_PICOCALC_KBD_SCL_PIN, GPIO_FUNC_I2C);
     gpio_pull_up(OYK_PICOCALC_KBD_SDA_PIN);
     gpio_pull_up(OYK_PICOCALC_KBD_SCL_PIN);
-    stm32_write_reg(PICOCALC_REG_ID_BKL, lcd_bkl_);
-    stm32_write_reg(PICOCALC_REG_ID_BK2, kbd_bkl_);
+    sleep_ms(10);
+    if (stm32_write_reg(PICOCALC_REG_ID_BKL, lcd_bkl_)) stm32_ready_ = 1;
+    sleep_ms(2);
+    if (stm32_write_reg(PICOCALC_REG_ID_BK2, kbd_bkl_)) stm32_ready_ = 1;
     oyk_u8 bat[2] = {0U, 100U};
     if (stm32_read_reg2(PICOCALC_REG_ID_BAT, bat)) {
+        stm32_ready_ = 1;
         battery_pct_ = static_cast<int>(bat[1] & 0x7FU);
         if (battery_pct_ > 100) battery_pct_ = 100;
     }
 #else
+    stm32_ready_ = 1;
     sim_head_ = 0U;
     sim_tail_ = 0U;
     battery_pct_ = 88;
@@ -195,6 +203,14 @@ size_t PicoCalcKbd::poll_vt100(oyk_u32 now_ms, oyk_u8* out_vt, size_t max_len, i
 
     size_t produced = 0;
 #if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
+    if (!stm32_ready_) {
+        if ((now_ms - last_stm32_retry_ms_) >= 1000UL || last_stm32_retry_ms_ == 0UL) {
+            last_stm32_retry_ms_ = now_ms;
+            if (stm32_write_reg(PICOCALC_REG_ID_BKL, lcd_bkl_)) stm32_ready_ = 1;
+            if (stm32_write_reg(PICOCALC_REG_ID_BK2, kbd_bkl_)) stm32_ready_ = 1;
+        }
+        return 0;
+    }
     for (int i = 0; i < 16 && produced + 8 <= max_len; ++i) {
         oyk_u8 ev[2] = {0U, 0U};
         if (!stm32_read_reg2(PICOCALC_REG_ID_FIF, ev) || (ev[0] == 0U && ev[1] == 0U)) {
