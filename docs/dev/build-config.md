@@ -30,6 +30,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | `BUILD_GSOS_PORT` | `OFF` | Apple IIGS GS/OS | Enable `$B3` OMF v2 S16 build via `vbcc` `vc +iigs` (and GSplus CTest runner) |
 | `BUILD_AMIGA_PORT` | `OFF` | Amiga Workbench | Enable OS 3.1/2.04/1.3 `m68k` build via `amiga-gcc` (and FS-UAE CTest runner) |
 | `BUILD_ATARIST_PORT` | `OFF` | Atari ST / TT GEM | Enable `OYKNODE.PRG` / `OYKTEST.PRG` via `m68k-atari-mintelf-g++` (and Hatari CTest runner) |
+| `BUILD_M88K_PORT` | `OFF` | Motorola 88K SVR4 | Enable `oyk_m88k_tests` host verification (`curses` + OSF/Motif 1.2 `sysv` core) |
 | `BUILD_ATT3B2_PORT` | `OFF` | AT&T 3B2 SVR3.2 | Enable `oyk_att3b2_tests` host verification (`curses`/VT100 + WIN/TCP `sysv` core) |
 | `BUILD_TI99_PORT` | `OFF` | TI-99/4A | Enable `oyk_ti99_tests` host verification (SAMS 1 MB, TIPI, F18A/40-col, RS-232 KISS) |
 | `BUILD_OPENVMS_PORT` | `OFF` | OpenVMS (`VAX`/`Alpha`/`IA64`/`x86-64`) | Enable `oyk_openvms_console_host`, `oyk_openvms_native_test`, and `oyk_openvms_tests` |
@@ -66,6 +67,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | **Apple IIGS GS/OS** | `make -C ports/gsos` | `VBCC` (`vc +iigs`, `-maxsegsize=16384` OMF v2 S16) ([README](../../ports/gsos/README.md)) |
 | **Amiga Workbench** | `make -C ports/amiga` | `AMIGA_GCC` (`m68k-amigaos-g++ -noixemul`) ([README](../../ports/amiga/README.md)) |
 | **Atari ST GEM** | `make -C ports/atarist` | `MINTELF` (`m68k-atari-mintelf-g++` + GEMlib) ([README](../../ports/atarist/README.md)) |
+| **Motorola 88K SVR4** | `(cd ports/m88k && make)` | Native `/usr/ccs/bin/cc` C89 + `libcurses` / OSF/Motif 1.2 `libXm` + `-lgen` (`ports/m88k/run_m88k_remote.sh`) ([README](../../ports/m88k/README.md)) |
 | **AT&T 3B2 SVR3.2** | `make -C ports/att3b2` | Native `gcc 2.3.3` C89 + `libcurses.a` / `libnet.a` (`ports/att3b2/run_3b2_remote.sh`) ([README](../../ports/att3b2/README.md)) |
 | **TI-99/4A** | `make -C ports/ti99` | Host strict-C99 verification + `tms9900-gcc` / `xdt99` FinalGROM99 cart ([README](../../ports/ti99/README.md)) |
 | **OpenVMS** | `@BUILD_VMS.COM` / `MMS` | Multi-arch `VAX`/`Alpha`/`IA64`/`x86_64` OPTs (`SMG$` console + DECwindows Motif 1.2) ([README](../../ports/openvms/README.md)) |

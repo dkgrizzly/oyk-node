@@ -209,6 +209,7 @@ def check_unit_test_parity(errors):
         "tests/test_esp32c6.cpp",
         "tests/test_lyra.cpp",
         "tests/test_sysv.cpp",
+        "tests/test_m88k.cpp",
         "tests/test_att3b2.cpp",
         "tests/test_ti99.cpp",
         "tests/test_openvms.cpp",

@@ -28,6 +28,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Retro** | Apple IIGS GS/OS (`65C816` S16) | QuickDraw II `640x200` Super Hi-Res, `Marinetti #54` + SCC `.A`/`.B` | [ports/gsos/README.md](ports/gsos/README.md) |
 | **Retro** | Amiga Workbench (`1.3` / `2.04` / `3.1` / AROS) | Intuition GUI, `< 32`-color WB lock / `>= 32`-color themes, `bsdsocket` | [ports/amiga/README.md](ports/amiga/README.md) |
 | **Retro** | Atari ST / STE / TT / Falcon GEM | GEM AES/VDI (`640x400` Mono + `640x480` 16-Color), `MiNTnet`/`STinG` | [ports/atarist/README.md](ports/atarist/README.md) |
+| **Retro** | Motorola 88K SVR4 (`mc88100`) | Strict-C89 `curses` TUI + OSF/Motif 1.2 GUI (`sysv` core) | [ports/m88k/README.md](ports/m88k/README.md) |
 | **Retro** | AT&T 3B2/400 SVR3.2 (`WE32100`) | Strict-C89 `curses`/VT100 TUI + WIN/TCP sockets (`sysv` core) | [ports/att3b2/README.md](ports/att3b2/README.md) |
 | **Retro** | TI-99/4A (`TMS9900`, SAMS 1 MB) | F18A 80-col / 9918 40-col TUI, FinalGROM99, TIPI + RS-232 KISS | [ports/ti99/README.md](ports/ti99/README.md) |
 | **Retro** | OpenVMS (`VAX` / `Alpha` / `IA64` / `x86-64`) | `SMG$` / VT100 Console + DECwindows Motif 1.2 (`UCX`/`TCPIP$`, `sysv`) | [ports/openvms/README.md](ports/openvms/README.md) |
