@@ -136,7 +136,7 @@ case "${MODE}" in
             [gterm.bmp]=gsos_terminate.bmp
             [gban.bmp]=gsos_ban.bmp
             [gexit.bmp]=gsos_exit.bmp
-            [gthme.bmp]=gsos_theme.bmp
+            [gthme.bmp]=gsos_settings_theme.bmp
             [gtml.bmp]=gsos_terminal.bmp
             [gtmlh.bmp]=gsos_terminal_help.bmp
             [gfile.bmp]=gsos_files.bmp
@@ -147,7 +147,7 @@ case "${MODE}" in
                 mv -f "${OUT_DIR}/${src_name}" "${OUT_DIR}/${MAP[${src_name}]}"
             fi
         done
-        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
+        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit settings_theme terminal terminal_help files about)
         copied=0
         for flow in "${FLOWS[@]}"; do
             if [[ -f "${OUT_DIR}/gsos_${flow}.bmp" ]]; then

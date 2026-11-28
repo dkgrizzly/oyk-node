@@ -117,7 +117,7 @@ case "${MODE}" in
             [AM_TERM.BMP]=amiga_terminate.bmp
             [AM_BAN.BMP]=amiga_ban.bmp
             [AM_EXIT.BMP]=amiga_exit.bmp
-            [AM_THME.BMP]=amiga_theme.bmp
+            [AM_THME.BMP]=amiga_settings_theme.bmp
             [AM_TML.BMP]=amiga_terminal.bmp
             [AM_TMLH.BMP]=amiga_terminal_help.bmp
             [AM_FILE.BMP]=amiga_files.bmp

@@ -141,7 +141,7 @@ case "${MODE}" in
             [AT_TERM.BMP]="${OUT_PFX}_terminate.bmp"
             [AT_BAN.BMP]="${OUT_PFX}_ban.bmp"
             [AT_EXIT.BMP]="${OUT_PFX}_exit.bmp"
-            [AT_THME.BMP]="${OUT_PFX}_theme.bmp"
+            [AT_THME.BMP]="${OUT_PFX}_settings_theme.bmp"
             [AT_TML.BMP]="${OUT_PFX}_terminal.bmp"
             [AT_TMLH.BMP]="${OUT_PFX}_terminal_help.bmp"
             [AT_FILE.BMP]="${OUT_PFX}_files.bmp"

@@ -268,7 +268,7 @@ rm -f "${OUT_IMG_DIR}"/*.png
 rm -rf "${OUT_IMG_DIR}/thumbs"
 mkdir -p "${OUT_IMG_DIR}/thumbs"
 
-FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
+FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit settings_theme terminal terminal_help files about)
 PORTS=(ncurses dos dos_gfx tinytmux pico picocalc esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
 
 for f in "${TMP_CAP}"/*.ansi; do
@@ -344,7 +344,7 @@ flow_title() {
         terminate)        echo "16. Terminate Connection Modal" ;;
         ban)              echo "17. Ban / Unban Callsign Dialog" ;;
         exit)             echo "18. Auto-Learned Peers Exit / Bootloader Prompt" ;;
-        theme)            echo "19. Theme Settings Dialog" ;;
+        settings_theme)   echo "19. Settings — Theme Tab" ;;
         terminal)         echo "20. Local Packet Terminal (Ctrl-A Hotkeys & BBS Session)" ;;
         terminal_help)    echo "21. Terminal Hotkey Help Modal" ;;
         files)               echo "22. Dual-Pane File Manager (Incoming | Files)" ;;
@@ -375,7 +375,7 @@ flow_short() {
         terminate)           echo "16. Terminate" ;;
         ban)                 echo "17. Ban/Unban" ;;
         exit)                echo "18. Exit/Boot" ;;
-        theme)               echo "19. Theme" ;;
+        settings_theme)      echo "19. Set: Theme" ;;
         terminal)            echo "20. Terminal" ;;
         terminal_help)       echo "21. Term Help" ;;
         files)               echo "22. Files" ;;

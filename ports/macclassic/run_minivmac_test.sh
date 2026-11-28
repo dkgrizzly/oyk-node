@@ -142,7 +142,7 @@ case "${MODE}" in
         fi
         run_in_minivmac "${APP_BIN}" "${EMU}" "${ROM}" "${ROM_NAME}" "1" "${TMP_WORK}"
         hmount "${TMP_WORK}/disk2.dsk" 0 >/dev/null
-        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit theme terminal terminal_help files about)
+        FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit settings_theme terminal terminal_help files about)
         copied=0
         for flow in "${FLOWS[@]}"; do
             if hcopy -r ":${IN_PFX}_${flow}.bmp" "${OUT_DIR}/${OUT_PFX}_${flow}.bmp" >/dev/null 2>&1; then

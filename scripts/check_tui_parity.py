@@ -141,9 +141,13 @@ def check_flow(port: str, flow: str, lines: list, bg_grid, errors: list) -> None
     if flow in ("settings", "settings_bbs", "settings_chat", "settings_ifaces",
                 "settings_rig", "settings_printer", "add_iface", "add_iface_1",
                 "add_iface_2", "add_iface_3", "add_iface_4", "edit_iface",
-                "peers", "edit_peer", "terminate", "ban", "exit", "theme",
+                "peers", "edit_peer", "terminate", "ban", "exit", "settings_theme",
                 "terminal_help", "files", "about"):
-        need("[X]", "modal close button [X]")
+        if port.startswith("picocalc"):
+            if "[X]" in text:
+                errors.append(f"[{port}/{flow}] forbidden '[X]' close button on mouseless PicoCalc modal")
+        else:
+            need("[X]", "modal close button [X]")
     elif flow in ("main", "terminal"):
         if "[X]" in text:
             errors.append(f"[{port}/{flow}] unexpected '[X]' close button outside modal")
@@ -165,6 +169,8 @@ def check_flow(port: str, flow: str, lines: list, bg_grid, errors: list) -> None
         need("Node Settings")
         for tab in ("1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"):
             need(tab, f"canonical tab {tab}")
+        if "8:Thm" not in text and "8:Theme" not in text:
+            errors.append(f"[{port}/{flow}] missing canonical tab '8:Thm' / '8:Theme'")
         if flow == "settings_bbs":
             need("BBS")
         elif flow == "settings_chat":
@@ -216,8 +222,10 @@ def check_flow(port: str, flow: str, lines: list, bg_grid, errors: list) -> None
         need("Active Bans")
     elif flow == "exit":
         need("Auto-Learned Peers")
-    elif flow == "theme":
-        need("Theme Settings")
+    elif flow == "settings_theme":
+        need("Node Settings")
+        if "8:Thm" not in text and "8:Theme" not in text:
+            errors.append(f"[{port}/{flow}] missing canonical tab '8:Thm' / '8:Theme'")
         need("Preview")
         need("Lt/Rt:Theme")
     elif flow == "terminal":

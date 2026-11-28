@@ -47,7 +47,7 @@ GALLERY_SUFFIXES = (
     "terminate",
     "ban",
     "exit",
-    "theme",
+    "settings_theme",
     "terminal",
     "terminal_help",
     "files",
