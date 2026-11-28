@@ -44,6 +44,7 @@ ctest --test-dir build --output-on-failure -V
 | `oyk_amiga_tests` | Amiga Kickstart `1.3`/`2.04`/`3.1` policy, `< 32`-color native lock, `amiga_private_screen` default off |
 | `oyk_atarist_tests` | Atari ST/TT display tiers, VDI RGB conversion, 4-plane hardware-VDI color mapping |
 | `oyk_att3b2_tests` | AT&T 3B2 SVR3.2 C89 `sysv` core parity, VT100 23-screen check, `OYK_NO_MOTIF` verification |
+| `oyk_ti99_tests` | TI-99/4A C99 big-endian AX.25/KISS, SAMS 1 MB paging, F18A 80-col / 9918 40-col 23-screen parity |
 | `oyk_tinytmux_tests` | Teensy 4.1 8-UART carrier, PSRAM, FS hooks, USB Host RadioFoundry, PPP, Ethernet bridge, VT100 console |
 | `oyk_pico_tests` | RP2040/RP2350 profiles, PSRAM/Flash fallback, RM2 optional radio, 2-UART console |
 | `oyk_esp32c6_tests` | M5Stack Unit C6L pinout, `PI4IO` RF/button, SX1262 LoRa KISS, 64x48 OLED 4 pages, LittleFS, VT340 TUI |
