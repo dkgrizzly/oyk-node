@@ -195,25 +195,35 @@ static void test_pico_console_inquiry_storage_format_and_bootsel() {
     con->feed_input(reinterpret_cast<const oyk_u8*>(da_x256), strlen(da_x256));
     assert(con->term_type() == PICO_TERM_XTERM256);
 
-    /* Drop-down Node menu (M) matches ncurses/DOS + shaded drop shadow + live theme preview */
+    /* Closed-menu single-letter hotkeys must be ignored; Ctrl-N opens Node Menu;
+     * Settings Tab 8 provides live Theme preview & Esc revert. */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+    assert(con->prompt_kind() == PICO_PROMPT_NONE);
+
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     assert(con->view_mode() == PICO_VIEW_MENU);
     assert(strstr(cap->buf, " Node ") != NULL);
     assert(strstr(cap->buf, "Node Menu") != NULL);
     assert(strstr(cap->buf, "\033[0;90;40m") != NULL);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    assert(con->prompt_kind() == PICO_PROMPT_THEME);
+    assert(strstr(cap->buf, "Peers...") == NULL);
+    assert(strstr(cap->buf, "Theme...") == NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s8"), 3);
+    assert(con->view_mode() == PICO_VIEW_SETTINGS && con->settings_tab() == 7);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\033[C"), 3); /* Right -> live preview light */
     assert(strstr(cap->buf, "light") != NULL);
     assert(strstr(cap->buf, "48;5;231m") != NULL || strstr(cap->buf, "38;5;") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); /* Esc reverts */
     con->tick(300UL);
-    assert(con->prompt_kind() == PICO_PROMPT_NONE);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
     assert(strcmp(node->config().theme_name, "light") != 0);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("g"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "g"), 2);
     assert(con->view_mode() == PICO_VIEW_STORAGE);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
@@ -227,7 +237,7 @@ static void test_pico_console_inquiry_storage_format_and_bootsel() {
     con->tick(600UL);
     const int base_bl = pico_board_sim_bootloader_count();
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("uy"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "uy"), 3);
     assert(strstr(cap->buf, "73 de KR4OYK-7") != NULL);
     con->tick(1300UL);
     assert(pico_board_sim_bootloader_count() == base_bl + 1);
@@ -315,41 +325,48 @@ static void test_pico_ui_flows_and_captures() {
     assert(strstr(cap->buf, "Node Activity Log") != NULL);
     pico_save_capture("main", con, cap);
 
-    /* 1b. Drop-down Node Menu */
+    /* 1b. Drop-down Node Menu (Ctrl-N / Esc) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     assert(con->view_mode() == PICO_VIEW_MENU);
     pico_save_capture("menu", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
     assert(con->view_mode() == PICO_VIEW_CONSOLE);
 
-    /* 2. Terminate Connection modal */
+    /* 2. Terminate Connection modal + modal preemption */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
     assert(strstr(cap->buf, "Terminate Active Connection") != NULL);
     assert(strstr(cap->buf, "W3TRM-1") != NULL);
     pico_save_capture("terminate", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2);
+    assert(con->prompt_kind() == PICO_PROMPT_TERM_SID);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
     assert(node->total_active_connections() == 0);
 
-    /* 3. Ban / Unban Callsign modal */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    /* 3. Ban / Unban Callsign modal + modal preemption */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     assert(node->ban_count() >= 1);
     cap->len = 0; cap->buf[0] = '\0';
     con->render();
     assert(strstr(cap->buf, "Ban / Unban Callsign") != NULL);
     assert(strstr(cap->buf, "Active Bans (1):") != NULL);
     pico_save_capture("ban", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2);
+    assert(con->prompt_kind() == PICO_PROMPT_BAN_CALL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(700UL);
+    assert(con->prompt_kind() == PICO_PROMPT_NONE);
 
-    /* 4. Settings (All 7 Canonical Tabs) */
+    /* 4. Settings (All 8 Canonical Tabs) + modal preemption */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
     assert(con->view_mode() == PICO_VIEW_SETTINGS && con->settings_tab() == 0);
     assert(strstr(cap->buf, "Node Settings") != NULL);
     assert(strstr(cap->buf, " Node ") != NULL);
-    assert(strstr(cap->buf, "7:Prn") != NULL);
+    assert(strstr(cap->buf, "8:Thm") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\033[21~\033[20~"), 11);
+    assert(con->view_mode() == PICO_VIEW_SETTINGS);
     pico_save_capture("settings", con, cap);
 
     cap->len = 0; cap->buf[0] = '\0';
@@ -427,11 +444,7 @@ static void test_pico_ui_flows_and_captures() {
     assert(con->settings_tab() == 6);
     pico_save_capture("settings_printer", con, cap);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(1500UL);
-    assert(con->view_mode() == PICO_VIEW_CONSOLE);
-
-    /* 8b. Theme Settings Modal & whole-screen live preview (dark -> light -> Esc revert) */
+    /* 8b. Settings Tab 8 Theme & whole-screen live preview (dark -> light -> Esc revert) */
     OykThemeConfig dt_pal, lt_pal;
     oyk_theme_init_builtin(&dt_pal, 0);
     oyk_theme_init_builtin(&lt_pal, 1);
@@ -446,11 +459,12 @@ static void test_pico_ui_flows_and_captures() {
     sprintf(light_bdr_sgr, "\033[38;5;%dm", oyk_rgb_to_xterm256(lt_pal.colors[OYK_TR_BORDER]));
 
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    assert(strstr(cap->buf, "Theme Settings") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    assert(con->settings_tab() == 7);
+    assert(strstr(cap->buf, "Theme  :") != NULL);
     assert(strstr(cap->buf, dark_menu_sgr) != NULL);
     assert(strstr(cap->buf, dark_bdr_sgr) != NULL);
-    pico_save_capture("theme", con, cap);
+    pico_save_capture("settings_theme", con, cap);
 
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[C"), 3); /* dark -> light */
@@ -462,6 +476,7 @@ static void test_pico_ui_flows_and_captures() {
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
     assert(strstr(cap->buf, dark_menu_sgr) != NULL); /* reverted cleanly to dark */
     assert(strstr(cap->buf, dark_bdr_sgr) != NULL);
 
@@ -481,6 +496,8 @@ static void test_pico_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
     assert(strstr(cap->buf, "Terminal Hotkey Help") != NULL);
     pico_save_capture("terminal_help", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t\033[20~"), 7); /* Preempted by Help overlay */
+    assert(con->view_mode() == PICO_VIEW_LOCAL_TERM);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
     assert(strstr(cap->buf, "[EOL:CR*]") != NULL);
@@ -528,7 +545,7 @@ static void test_pico_ui_flows_and_captures() {
         assert(chdir("/tmp/oyk_pico_fm") == 0);
 #endif
         cap->len = 0; cap->buf[0] = '\0';
-        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
         assert(con->view_mode() == PICO_VIEW_FILES);
         assert(strstr(cap->buf, "W3TRM-1") != NULL);
         assert(strstr(cap->buf, "bulletins") != NULL);
@@ -550,7 +567,7 @@ static void test_pico_ui_flows_and_captures() {
 
     /* 8b2. About OYK-Node modal */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     assert(con->view_mode() == PICO_VIEW_ABOUT);
     pico_save_capture("about", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
@@ -578,7 +595,7 @@ static void test_pico_ui_flows_and_captures() {
 
     /* Open Settings, verify [X] rendered, and close via SGR click on [X] (row 3, col 74 1-based) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
     assert(con->view_mode() == PICO_VIEW_SETTINGS);
     assert(strstr(cap->buf, "[X]") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;74;3M"), 10);
@@ -592,7 +609,7 @@ static void test_pico_ui_flows_and_captures() {
 
     /* 9. Auto-Learned Peers BOOTSEL modal */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
     assert(con->view_mode() == PICO_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "Auto-Learned Peers") != NULL);
     pico_save_capture("exit", con, cap);
@@ -748,22 +765,32 @@ static void test_picocalc_ui_flows_and_captures() {
     /* Framebuffer pixels must be populated across 320x320 screen */
     assert(pc->lcd()->sample_pixel(10U, 10U) != 0U || pc->lcd()->sample_pixel(2U, 2U) != 0U);
 
-    /* 2..23: Drive all remaining canonical screens into 320x320 RGB565 captures */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    /* 2..23: Drive all remaining canonical screens into 320x320 RGB565 captures.
+     * Mouseless PicoCalc hardware MUST omit [X] close boxes on all popup modals. */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    assert(con->view_mode() == PICO_VIEW_CONSOLE);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     picocalc_save_capture("menu", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
     picocalc_save_capture("terminate", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     picocalc_save_capture("ban", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(700UL);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
     picocalc_save_capture("settings", con, pc);
+    for (int r = 0; r < 25; ++r) {
+        char vrow[81];
+        for (int c = 0; c < 80; ++c) vrow[c] = static_cast<char>(oyk_vt100_cell_at(pc->vt(), r, c)->glyph);
+        vrow[80] = '\0';
+        assert(strstr(vrow, "[X]") == NULL);
+    }
     con->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
     picocalc_save_capture("settings_bbs", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("3"), 1);
@@ -798,13 +825,10 @@ static void test_picocalc_ui_flows_and_captures() {
     picocalc_save_capture("settings_rig", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     picocalc_save_capture("settings_printer", con, pc);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    picocalc_save_capture("settings_theme", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1500UL);
-
-    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    picocalc_save_capture("theme", con, pc);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(1700UL);
 
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t\x01" "b"), 3);
     con->feed_input(reinterpret_cast<const oyk_u8*>("?\r"), 2);
@@ -839,7 +863,7 @@ static void test_picocalc_ui_flows_and_captures() {
         }
         assert(chdir("/tmp/oyk_pico_fm") == 0);
 #endif
-        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
         picocalc_save_capture("files", con, pc);
         con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
         con->tick(2100UL);
@@ -849,11 +873,11 @@ static void test_picocalc_ui_flows_and_captures() {
 #endif
     }
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     picocalc_save_capture("about", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
     picocalc_save_capture("exit", con, pc);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
 

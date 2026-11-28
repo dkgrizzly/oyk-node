@@ -164,7 +164,7 @@ static void render_os2_console_screen(const OykTuiBackend* bk, const OykPortable
     OykTuiConsoleLayout cl;
     oyk_tui_compute_console_layout(rows, cols, &cl);
     bk->clear(bk->ctx, OYK_TUI_STYLE_BG);
-    oyk_tui_draw_menu_bar(bk, cols, 0, "F10/M:Menu");
+    oyk_tui_draw_menu_bar(bk, cols, 0, "Tab/F9:Term  Ctrl-N:Menu");
     {
         char hdr[96];
         oyk_gui_format_console_header(call_s, alias_s, node->uptime_seconds(),
@@ -188,7 +188,7 @@ static void render_os2_console_screen(const OykTuiBackend* bk, const OykPortable
                 OYK_TUI_STYLE_BORDER, OYK_TUI_STYLE_BG, 1);
     bk->put_text(bk->ctx, cl.log_box.top, cl.log_box.left + 2, 21, OYK_TUI_STYLE_TITLE,
                  " Node Activity Log ");
-    oyk_tui_draw_status_bar(bk, cl.status_row, cols, "OS/2 2.0+ VIO | S:Settings T:Term Q:Quit");
+    oyk_tui_draw_status_bar(bk, cl.status_row, cols, "OS/2 2.0+ VIO | Ctrl-N:Menu  Tab/F9:Term  Esc:Close");
 
     if (screen_id == OYK_SCR_MENU) {
         OykTuiRect mr = { 1, 1, 12, 30 };
@@ -204,14 +204,22 @@ static void render_os2_console_screen(const OykTuiBackend* bk, const OykPortable
         oyk_tui_draw_dual_pane_modal(bk, rows, cols, &fm, 0, "File Manager", "", 0);
     } else if (screen_id != OYK_SCR_MAIN) {
         OykTuiRect r;
-        oyk_tui_center_modal(rows, cols, 16, 68, &r);
-        oyk_tui_draw_modal(bk, &r, oyk_gui_screen_title(screen_id), 1);
-        if (screen_id == OYK_SCR_SETTINGS || screen_id == OYK_SCR_PEERS || screen_id == OYK_SCR_RIG) {
-            static const char* const tabs[7] = {
-                "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
+        oyk_tui_center_modal(rows, cols, 16, 70, &r);
+        oyk_tui_draw_modal(bk, &r,
+                           (screen_id == OYK_SCR_THEME) ? "Node Settings" : oyk_gui_screen_title(screen_id),
+                           1);
+        if (screen_id == OYK_SCR_SETTINGS || screen_id == OYK_SCR_PEERS ||
+            screen_id == OYK_SCR_RIG || screen_id == OYK_SCR_THEME) {
+            static const char* const tabs[8] = {
+                "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn", "8:Thm"
             };
-            oyk_tui_draw_tabs(bk, r.top + 1, r.left + 2, r.w - 4, tabs, 7, settings_tab);
+            const int active_tab = (screen_id == OYK_SCR_THEME) ? 7 : settings_tab;
+            oyk_tui_draw_tabs(bk, r.top + 1, r.left + 2, r.w - 4, tabs, 8, active_tab);
             bk->put_hdiv(bk->ctx, r.top + 2, r.left, r.w, OYK_TUI_STYLE_DLG_BORDER);
+            if (active_tab == 7) {
+                bk->put_text(bk->ctx, r.top + 4, r.left + 2, r.w - 4, OYK_TUI_STYLE_DLG_FILL,
+                             "Role / Key / Color / Preview");
+            }
         } else if (screen_id == OYK_SCR_ADD_IFACE) {
             char sb[32];
             sprintf(sb, "Step %d: Wizard", wiz_step + 1);
@@ -219,15 +227,55 @@ static void render_os2_console_screen(const OykTuiBackend* bk, const OykPortable
         } else if (screen_id == OYK_SCR_TERMINATE) {
             bk->put_text(bk->ctx, r.top + 2, r.left + 2, r.w - 4, OYK_TUI_STYLE_LIST_HDR,
                          "ID    Callsign    Port       State");
-        } else if (screen_id == OYK_SCR_THEME) {
-            bk->put_text(bk->ctx, r.top + 2, r.left + 2, r.w - 4, OYK_TUI_STYLE_DLG_FILL,
-                         "Role / Key / Color / Preview");
         }
         static const OykTuiButton btns[2] = { { "OK", 1 }, { "Cancel", 1 } };
         oyk_tui_draw_button_row(bk, r.top + r.h - 2, r.left + 2, r.w - 4, btns, 2, 0, NULL);
         oyk_tui_draw_modal_footer(bk, &r, "Ready", "Esc:Close");
     }
     bk->present(bk->ctx);
+}
+
+static int os2_console_handle_key(int key, int* screen_id, int* settings_tab) {
+    if (!screen_id || !settings_tab) return -1;
+    const int cur = *screen_id;
+    const int ch = (key >= 'A' && key <= 'Z') ? (key + ('a' - 'A')) : key;
+    if (cur == OYK_SCR_MAIN) {
+        if (key == 0x0E || key == 0x10A) { *screen_id = OYK_SCR_MENU; return 0; }
+        if (key == '\t' || key == 0x109) { *screen_id = OYK_SCR_TERMINAL; return 0; }
+        return -1;
+    }
+    if (cur == OYK_SCR_MENU) {
+        if (key == 27 || key == 0x0E || key == 0x10A) { *screen_id = OYK_SCR_MAIN; return 0; }
+        if (ch == 's') { *screen_id = OYK_SCR_SETTINGS; *settings_tab = 0; return 0; }
+        if (ch == 't') { *screen_id = OYK_SCR_TERMINAL; return 0; }
+        if (ch == 'f') { *screen_id = OYK_SCR_FILES; return 0; }
+        if (ch == '?') { *screen_id = OYK_SCR_ABOUT; return 0; }
+        if (ch == 'q' || ch == 'x') { *screen_id = OYK_SCR_EXIT_PEERS; return 0; }
+        return -1;
+    }
+    if (cur == OYK_SCR_TERMINAL) {
+        if (key == '\t' || key == 0x109 || key == 27) { *screen_id = OYK_SCR_MAIN; return 0; }
+        return -1;
+    }
+    if (cur == OYK_SCR_TERM_HELP) {
+        if (key == 27) { *screen_id = OYK_SCR_TERMINAL; return 0; }
+        return -1;
+    }
+    if (key == 27) { *screen_id = OYK_SCR_MAIN; return 0; }
+    if (key == 0x0E || key == 0x10A || key == 0x109) return -1;
+    if (cur == OYK_SCR_SETTINGS || cur == OYK_SCR_PEERS || cur == OYK_SCR_RIG || cur == OYK_SCR_THEME) {
+        if (key == '\t') {
+            *settings_tab = (*settings_tab + 1) % 8;
+            *screen_id = (*settings_tab == 7) ? OYK_SCR_THEME : OYK_SCR_SETTINGS;
+            return 0;
+        }
+        if (key >= '1' && key <= '8') {
+            *settings_tab = key - '1';
+            *screen_id = (*settings_tab == 7) ? OYK_SCR_THEME : OYK_SCR_SETTINGS;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 static int run_os2_console_selftest() {
@@ -274,6 +322,23 @@ static int run_os2_console_selftest() {
             if (screens[i] == OYK_SCR_ABOUT && !buf_contains(buf, "O Y K")) ++fail;
             if (screens[i] == OYK_SCR_TERMINAL && !buf_contains(buf, "Ctrl-A Z:Help")) ++fail;
             if (screens[i] == OYK_SCR_TERMINATE && !buf_contains(buf, "Callsign")) ++fail;
+        }
+        /* Hotkey & modal preemption checks */
+        {
+            int sid = OYK_SCR_MAIN;
+            int stab = 0;
+            if (os2_console_handle_key('s', &sid, &stab) == 0 ||
+                os2_console_handle_key('m', &sid, &stab) == 0 ||
+                os2_console_handle_key('q', &sid, &stab) == 0 ||
+                sid != OYK_SCR_MAIN) ++fail;
+            if (os2_console_handle_key(0x0E, &sid, &stab) != 0 || sid != OYK_SCR_MENU) ++fail;
+            if (os2_console_handle_key('s', &sid, &stab) != 0 || sid != OYK_SCR_SETTINGS) ++fail;
+            if (os2_console_handle_key(0x0E, &sid, &stab) == 0 ||
+                os2_console_handle_key(0x10A, &sid, &stab) == 0 ||
+                os2_console_handle_key(0x109, &sid, &stab) == 0 ||
+                sid != OYK_SCR_SETTINGS) ++fail;
+            if (os2_console_handle_key('8', &sid, &stab) != 0 || sid != OYK_SCR_THEME || stab != 7) ++fail;
+            if (os2_console_handle_key(27, &sid, &stab) != 0 || sid != OYK_SCR_MAIN) ++fail;
         }
         node->shutdown();
     }

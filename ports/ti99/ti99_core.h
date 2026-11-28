@@ -38,6 +38,12 @@ extern "C" {
 #define TI99_ACT_EXIT           9
 #define TI99_ACT_TOGGLE_IN      10
 
+#define TI99_KEY_TAB            0x09
+#define TI99_KEY_CTRL_N         0x0E
+#define TI99_KEY_ESC            0x1B
+#define TI99_KEY_F9             0x109
+#define TI99_KEY_F10            0x10A
+
 typedef enum Ti99ScreenId {
     TI99_SCR_MAIN = 0,
     TI99_SCR_MENU,
@@ -232,6 +238,7 @@ void ti99_node_send_chat_banner(Ti99Node *node, const char *call, char *out, siz
 
 void ti99_app_init(Ti99App *app, int seed_demo);
 int ti99_app_exec_action(Ti99App *app, int action);
+int ti99_app_handle_key(Ti99App *app, int key);
 int ti99_app_set_screen_by_name(Ti99App *app, const char *name);
 const char *ti99_app_screen_title(Ti99ScreenId scr);
 uint8_t ti99_app_list_files(const Ti99App *app, uint8_t pane,

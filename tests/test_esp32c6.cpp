@@ -234,34 +234,47 @@ static void test_esp32c6_ui_flows_and_captures() {
     assert(strstr(cap->buf, "Node Activity Log") != NULL);
     c6l_save_capture("main", con, cap);
 
-    /* 2. Drop-down Node Menu */
+    /* 2. Closed-menu hotkey rejection + Drop-down Node Menu (Ctrl-N / Esc) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    assert(con->view_mode() == C6L_VIEW_CONSOLE);
+    assert(con->prompt_kind() == C6L_PROMPT_NONE);
+
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     assert(con->view_mode() == C6L_VIEW_MENU);
+    assert(strstr(cap->buf, "Theme...") == NULL);
+    assert(strstr(cap->buf, "Peers...") == NULL);
     c6l_save_capture("menu", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
     assert(con->view_mode() == C6L_VIEW_CONSOLE);
 
     /* 3. Terminate */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
     assert(strstr(cap->buf, "Terminate Active Connection") != NULL);
     c6l_save_capture("terminate", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2); /* Preempted by Terminate modal */
+    assert(con->prompt_kind() == C6L_PROMPT_TERM_SID);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
 
     /* 4. Ban */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     cap->len = 0; cap->buf[0] = '\0';
     con->render();
     assert(strstr(cap->buf, "Ban / Unban Callsign") != NULL);
     c6l_save_capture("ban", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2); /* Preempted by Ban modal */
+    assert(con->prompt_kind() == C6L_PROMPT_BAN_CALL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(300UL);
+    assert(con->prompt_kind() == C6L_PROMPT_NONE);
 
-    /* 5. Settings (All 7 Tabs + Wizard 1..4 + Edit Iface + Edit Peer) */
+    /* 5. Settings (All 8 Tabs + Wizard 1..4 + Edit Iface + Edit Peer) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
     assert(con->view_mode() == C6L_VIEW_SETTINGS && con->settings_tab() == 0);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\033[21~\033[20~"), 11); /* Preempted by Settings */
+    assert(con->view_mode() == C6L_VIEW_SETTINGS);
     c6l_save_capture("settings", con, cap);
 
     cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
@@ -300,14 +313,17 @@ static void test_esp32c6_ui_flows_and_captures() {
     c6l_save_capture("settings_rig", con, cap);
     cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     c6l_save_capture("settings_printer", con, cap);
+
+    /* 6. Settings Tab 8 Theme + live preview + Esc revert */
+    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    assert(con->settings_tab() == 7);
+    assert(strstr(cap->buf, "Active Theme:") != NULL);
+    c6l_save_capture("settings_theme", con, cap);
+    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\033[C"), 3);
+    assert(strstr(cap->buf, "light") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(1500UL);
     assert(con->view_mode() == C6L_VIEW_CONSOLE);
-
-    /* 6. Theme live preview */
-    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    assert(strstr(cap->buf, "Theme Settings") != NULL);
-    c6l_save_capture("theme", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(1800UL);
+    assert(strcmp(node->config().theme_name, "light") != 0);
 
     /* 7. Local Terminal */
     cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
@@ -321,6 +337,8 @@ static void test_esp32c6_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x01" "z"), 2);
     assert(strstr(cap->buf, "Terminal Hotkey Help") != NULL);
     c6l_save_capture("terminal_help", con, cap);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t\033[20~"), 7); /* Preempted by Help overlay */
+    assert(con->view_mode() == C6L_VIEW_LOCAL_TERM);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); con->tick(1950UL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->view_mode() == C6L_VIEW_CONSOLE);
@@ -351,7 +369,7 @@ static void test_esp32c6_ui_flows_and_captures() {
         }
         assert(chdir("/tmp/oyk_c6l_fm") == 0);
 #endif
-        cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
         assert(strstr(cap->buf, "Manage BBS Files Area") != NULL);
         assert(strstr(cap->buf, "W3TRM-1") != NULL);
         assert(strstr(cap->buf, "bulletins") != NULL);
@@ -371,7 +389,7 @@ static void test_esp32c6_ui_flows_and_captures() {
     }
 
     /* 9. About */
-    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     assert(con->view_mode() == C6L_VIEW_ABOUT);
     c6l_save_capture("about", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
@@ -384,7 +402,7 @@ static void test_esp32c6_ui_flows_and_captures() {
     assert(con->term_rows() == 25 && con->term_cols() == 80);
 
     /* 11. Bootloader / Auto-Learned Peers exit */
-    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    cap->len = 0; cap->buf[0] = '\0'; con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
     assert(strstr(cap->buf, "Auto-Learned Peers") != NULL);
     c6l_save_capture("exit", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("n"), 1);

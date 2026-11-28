@@ -24,6 +24,7 @@ enum PicoKeyCode {
     PK_PGDN,
     PK_BACKTAB,
     PK_F2,
+    PK_F9,
     PK_F10,
     PK_ESC = 27,
     PK_ENTER = 13,
@@ -98,6 +99,7 @@ PicoConsole::PicoConsole()
     : node_(NULL), bridge_(NULL), tx_fn_(NULL), tx_ctx_(NULL),
       term_type_(PICO_TERM_VT100), term_rows_(25), term_cols_(80), view_(PICO_VIEW_CONSOLE),
       prompt_kind_(PICO_PROMPT_NONE), menu_sel_(0), settings_tab_(0),
+      theme_scroll_(0), theme_preview_dirty_(0),
       files_focus_btn_(0), fm_preview_active_(0),
       storage_sel_(0), bootloader_pending_(0), bootloader_ms_(0),
       prompt_len_(0), wiz_edit_idx_(0), wiz_step_(0), wiz_drv_(0),
@@ -164,8 +166,13 @@ void PicoConsole::write_str(const char* s) {
 }
 
 const OykConfig* PicoConsole::active_theme_cfg() const {
-    if (prompt_kind_ == PICO_PROMPT_THEME) return &draft_;
+    if (view_ == PICO_VIEW_SETTINGS && settings_tab_ == 7 && theme_preview_dirty_) return &draft_;
     return node_ ? &node_->config() : NULL;
+}
+
+int PicoConsole::modal_close_btn() const {
+    const PicoBoardProfile* prof = pico_current_board_profile();
+    return (prof && prof->has_picocalc_hw) ? 0 : 1;
 }
 
 const char* PicoConsole::sgr_border() const {
@@ -431,7 +438,6 @@ void PicoConsole::render() {
     else if (prompt_kind_ == PICO_PROMPT_EDIT_PEER) render_edit_peer_modal();
     else if (prompt_kind_ == PICO_PROMPT_TERM_SID) render_terminate_modal();
     else if (prompt_kind_ == PICO_PROMPT_BAN_CALL) render_ban_modal();
-    else if (prompt_kind_ == PICO_PROMPT_THEME) render_theme_modal();
     else if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) render_confirm_format_modal();
     else if (prompt_kind_ == PICO_PROMPT_SET_TEXT ||
              prompt_kind_ == PICO_PROMPT_SET_BOOL ||
@@ -455,13 +461,13 @@ void PicoConsole::render_console() {
     const int ncols = lay.cols;
 
     write_str("\033[H\033[2J");
-    int hint_col = ncols - 32;
+    int hint_col = ncols - 34;
     if (hint_col < 9) hint_col = 9;
-    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-19s  [%9s]\033[0m",
+    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-21s  [%9s]\033[0m",
             sgr_menubar(), ncols, "",
             sgr_menusel(),
             hint_col, sgr_menubar(),
-            lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | F10/M",
+            lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | Ctrl-N",
             term_type_label());
     write_str(buf);
 
@@ -587,34 +593,33 @@ void PicoConsole::render_console() {
     }
     sprintf(buf, "\033[%d;1H%s %-*.*s \033[0m",
             lay.status_row + 1, sgr_warn(), ncols - 2, ncols - 2,
-            status_fb_[0] ? status_fb_ : "M:Menu  Tab:Term  S:Settings  T:TermConn  B:Ban  H:Theme  G:Storage");
+            status_fb_[0] ? status_fb_ : "Ctrl-N:Menu  Tab/F9:Term");
     write_str(buf);
 }
 
 void PicoConsole::render_menu() {
-    static const char* const kItems[14] = {
+    static const char* const kItems[13] = {
         " [A] Allow Incoming Connections   ",
         " [D] Deny Incoming Connections    ",
         " [L] Local Terminal...            ",
         " [F] Manage Files Area...         ",
         " [R] Radio Control...             ",
         " [S] Settings...                  ",
-        " [E] Peers...                     ",
-        " [H] Theme...                     ",
         " [T] Terminate Connection...      ",
         " [B] Ban / Unban Callsign...      ",
+        " [?] About OYK-Node...            ",
         " [P] PSRAM Diagnostics...         ",
         " [G] Storage Manager...           ",
         " [U] Enter BOOTSEL (UF2)...       ",
         " [X] Close Menu                   "
     };
-    static const int kItemRows[14] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18 };
-    draw_box(2, 2, 18, 36, "Node Menu", 1);
-    draw_shadow(2, 2, 18, 36);
+    static const int kItemRows[13] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 };
+    draw_box(2, 2, 17, 36, "Node Menu", 1);
+    draw_shadow(2, 2, 17, 36);
     draw_hdiv(5, 2, 36);
-    draw_hdiv(17, 2, 36);
+    draw_hdiv(16, 2, 36);
     char buf[96];
-    for (int i = 0; i < 14; ++i) {
+    for (int i = 0; i < 13; ++i) {
         sprintf(buf, "\033[%d;3H%s%.34s\033[0m",
                 kItemRows[i], (i == menu_sel_) ? sgr_menusel() : "", kItems[i]);
         write_str(buf);
@@ -627,12 +632,13 @@ int PicoConsole::settings_tab_item_count(int tab) const {
     if (tab == 2) return 6;
     if (tab == 3) return draft_.iface_count;
     if (tab == 4) return draft_.peer_count;
+    if (tab == 7) return OYK_THEME_COLOR_COUNT;
     return 6;
 }
 
 void PicoConsole::render_settings() {
-    static const char* const kTabs[7] = {
-        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
+    static const char* const kTabs[8] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn", "8:Thm"
     };
     static const char* const kNodeLabels[11] = {
         "Node Callsign", "Node Alias", "Welcome Message", "Info Message",
@@ -662,17 +668,72 @@ void PicoConsole::render_settings() {
     const int top = mr.top + 1;
     const int left = mr.left + 1;
     char buf[192];
-    draw_box(top, left, mr.h, mr.w, "Node Settings", 1, 1);
+    draw_box(top, left, mr.h, mr.w, "Node Settings", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     sprintf(buf, "\033[%d;%dH", top + 1, left + 2);
     write_str(buf);
-    for (int t = 0; t < 7; ++t) {
-        sprintf(buf, "%s %s \033[0m ", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(), kTabs[t]);
+    for (int t = 0; t < 8; ++t) {
+        sprintf(buf, "%s %s \033[0m%s", (t == settings_tab_) ? sgr_menusel() : sgr_menubar(),
+                kTabs[t], (t < 7) ? " " : "");
         write_str(buf);
     }
     draw_hdiv(top + 2, left, mr.w);
 
     int cnt = settings_tab_item_count(settings_tab_);
+    if (settings_tab_ == 7) {
+        const char* active = draft_.theme_name[0] ? draft_.theme_name : "dark";
+        OykThemeConfig pal;
+        oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
+        sprintf(buf, "\033[%d;%dHTheme  : < %-18.18s > (%s)",
+                top + 3, left + 2, active,
+                oyk_theme_is_builtin(active) ? "Built-in" : "Custom");
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s %-16s %-13s %-8s Preview \033[0m",
+                top + 4, left + 2, sgr_list_hdr(), "Role", "Key", "Color");
+        write_str(buf);
+        const int vis_rows = 10;
+        int sel = settings_sel_[7];
+        if (sel < theme_scroll_) theme_scroll_ = sel;
+        if (sel >= theme_scroll_ + vis_rows) theme_scroll_ = sel - vis_rows + 1;
+        for (int r = 0; r < vis_rows && (theme_scroll_ + r) < OYK_THEME_COLOR_COUNT; ++r) {
+            int idx = theme_scroll_ + r;
+            char hx[12];
+            oyk_theme_format_hex(pal.colors[idx], hx, sizeof(hx));
+            sprintf(buf, "\033[%d;%dH%s %-16.16s %-13.13s %-8.8s\033[0m ",
+                    top + 5 + r, left + 2,
+                    (idx == sel) ? sgr_sel() : "",
+                    oyk_theme_role_label(idx), oyk_theme_role_key(idx), hx);
+            write_str(buf);
+            if (term_type_ >= PICO_TERM_VT220) {
+                write_str(pico_format_sgr(6, pal.colors[idx], pal.colors[idx], 1, 0, term_type_));
+                write_str("    \033[0m");
+            } else {
+                write_str("[##]");
+            }
+        }
+        sprintf(buf, "\033[%d;%dHEditing built-in dark/light clones custom-dark or custom-light.",
+                top + 15, left + 2);
+        write_str(buf);
+        if (wiz_btn_) {
+            sprintf(buf, "\033[%d;%dH%s (#RRGGBB): %s %-12.12s \033[0m",
+                    top + 17, left + 2, oyk_theme_role_key(sel), sgr_sel(), wiz_id_);
+            write_str(buf);
+            draw_hdiv(top + 18, left, mr.w);
+            sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                    top + 19, left + 1, sgr_menubar(), "Enter:Apply Hex  Esc:Cancel Edit");
+            write_str(buf);
+            return;
+        }
+        sprintf(buf, "\033[%d;%dH%s%-70.70s\033[0m",
+                top + 17, left + 2, sgr_warn(),
+                dialog_fb_[0] ? dialog_fb_ : "Live preview active (unsaved). Press S/F2 to save or Esc to revert.");
+        write_str(buf);
+        draw_hdiv(top + 18, left, mr.w);
+        sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
+                top + 19, left + 1, sgr_menubar(), "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save  Esc:Cancel");
+        write_str(buf);
+        return;
+    }
     if (settings_tab_ != 3 && settings_tab_ != 4) {
         const char* const* labels = (settings_tab_ == 0) ? kNodeLabels
                                   : ((settings_tab_ == 1) ? kBbsLabels
@@ -729,7 +790,7 @@ void PicoConsole::render_settings() {
             write_str(buf);
         }
         sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
-                top + 19, left + 1, sgr_menubar(), "Tab/1-7:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
+                top + 19, left + 1, sgr_menubar(), "Tab/1-8:Tabs  Up/Dn:Select  Enter/E:Edit  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else if (settings_tab_ == 3) {
         sprintf(buf, "\033[%d;%dH%s %-8s %-13s %-21s %-23s\033[0m",
@@ -751,7 +812,7 @@ void PicoConsole::render_settings() {
             }
         }
         sprintf(buf, "\033[%d;%dH%s %-70.70s \033[0m",
-                top + 19, left + 1, sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  H:Theme  S/F2:Save  Esc:Cancel");
+                top + 19, left + 1, sgr_menubar(), "N/A:New  Enter/E:Edit  D:Del  S/F2:Save  Esc:Cancel");
         write_str(buf);
     } else {
         sprintf(buf, "\033[%d;%dH%s %-9s %-9s %-7s %-20s %-7s %-11s\033[0m",
@@ -797,9 +858,10 @@ void PicoConsole::refresh_files_lists() {
 
 void PicoConsole::render_files() {
     OykTuiBackend b = make_tui_backend();
-    oyk_tui_draw_dual_pane_modal(&b, term_rows_, term_cols_, &file_mgr_,
-                                 files_focus_btn_, "Files Area Manager",
-                                 fm_preview_buf_, fm_preview_active_);
+    oyk_tui_draw_dual_pane_modal_ex(&b, term_rows_, term_cols_, &file_mgr_,
+                                    files_focus_btn_, "Files Area Manager",
+                                    fm_preview_buf_, fm_preview_active_,
+                                    modal_close_btn());
 }
 
 void PicoConsole::render_rig() {
@@ -807,7 +869,7 @@ void PicoConsole::render_rig() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 15, 68, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Radio Control (Hamlib / RadioFoundry)", 1, 1);
+    draw_box(top, left, mr.h, mr.w, "Radio Control (Hamlib / RadioFoundry)", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     const OykConfig& cfg = node_->config();
     if (!cfg.rig_enabled) {
@@ -838,7 +900,7 @@ void PicoConsole::render_storage() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 18, 70, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Storage Manager (SD / QSPI Flash)", 1, 1);
+    draw_box(top, left, mr.h, mr.w, "Storage Manager (SD / QSPI Flash)", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     sprintf(buf, "\033[%d;%dHActive Medium : %s", top + 2, left + 2, fs->medium_label);
     write_str(buf);
@@ -872,7 +934,7 @@ void PicoConsole::render_psram() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 17, 70, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "PSRAM & Hardware Diagnostics", 1, 1);
+    draw_box(top, left, mr.h, mr.w, "PSRAM & Hardware Diagnostics", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     sprintf(buf, "\033[%d;%dHBoard Profile : %s (%s)", top + 2, left + 2, prof->board_id, prof->board_label);
     write_str(buf);
@@ -910,7 +972,7 @@ void PicoConsole::render_bootloader() {
     if (bootloader_pending_) {
         oyk_tui_center_modal(term_rows_, term_cols_, 7, 56, &mr);
         const int top = mr.top + 1, left = mr.left + 1;
-        draw_box(top, left, mr.h, mr.w, "BOOTSEL UF2 Reboot", 1, 1);
+        draw_box(top, left, mr.h, mr.w, "BOOTSEL UF2 Reboot", 1, modal_close_btn());
         draw_shadow(top, left, mr.h, mr.w);
         sprintf(buf, "\033[%d;%dHEntering RP2xxx USB BOOTSEL mode...", top + 2, left + 2);
         write_str(buf);
@@ -921,7 +983,7 @@ void PicoConsole::render_bootloader() {
     if (auto_cnt > 0) {
         oyk_tui_center_modal(term_rows_, term_cols_, 13, 72, &mr);
         const int top = mr.top + 1, left = mr.left + 1;
-        draw_box(top, left, mr.h, mr.w, "Auto-Learned Peers - BOOTSEL", 1, 1);
+        draw_box(top, left, mr.h, mr.w, "Auto-Learned Peers - BOOTSEL", 1, modal_close_btn());
         draw_shadow(top, left, mr.h, mr.w);
         sprintf(buf, "\033[%d;%dH%d auto-learned peer(s) added during this session.", top + 2, left + 2, auto_cnt);
         write_str(buf);
@@ -941,7 +1003,7 @@ void PicoConsole::render_bootloader() {
     } else {
         oyk_tui_center_modal(term_rows_, term_cols_, 10, 60, &mr);
         const int top = mr.top + 1, left = mr.left + 1;
-        draw_box(top, left, mr.h, mr.w, "Enter BOOTSEL Mode (UF2 Flash)", 1, 1);
+        draw_box(top, left, mr.h, mr.w, "Enter BOOTSEL Mode (UF2 Flash)", 1, modal_close_btn());
         draw_shadow(top, left, mr.h, mr.w);
         sprintf(buf, "\033[%d;%dHPress Y or Enter to reboot into RP2xxx BOOTSEL mode.", top + 2, left + 2);
         write_str(buf);
@@ -959,7 +1021,9 @@ void PicoConsole::render_bootloader() {
 
 void PicoConsole::render_about() {
     OykTuiBackend b = make_tui_backend();
-    oyk_tui_draw_about_modal(&b, term_rows_, term_cols_, "Platform: Raspberry Pi Pico (RP2040/RP2350)");
+    oyk_tui_draw_about_modal_ex(&b, term_rows_, term_cols_,
+                                "Platform: Raspberry Pi Pico (RP2040/RP2350)",
+                                modal_close_btn());
 }
 
 void PicoConsole::render_local_term() {
@@ -1035,7 +1099,7 @@ void PicoConsole::render_local_term() {
 
 void PicoConsole::render_local_term_help_modal() {
     OykTuiBackend b = make_tui_backend();
-    oyk_tui_draw_term_help_modal(&b, term_rows_, term_cols_);
+    oyk_tui_draw_term_help_modal_ex(&b, term_rows_, term_cols_, modal_close_btn());
 }
 
 void PicoConsole::wizard_apply_driver_defaults() {
@@ -1177,7 +1241,7 @@ void PicoConsole::render_wizard_modal() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
     const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Add Interface", 1, 1);
+    draw_box(top, left, h, w, "Add Interface", 1, modal_close_btn());
     draw_shadow(top, left, h, w);
     int fill = (wiz_step_ + 1) * 2;
     for (int i = 0; i < 8; ++i) prog[i] = (i < fill) ? '#' : '.';
@@ -1293,7 +1357,7 @@ void PicoConsole::render_edit_iface_modal() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 19, 68, &mr);
     const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Edit Interface", 1, 1);
+    draw_box(top, left, h, w, "Edit Interface", 1, modal_close_btn());
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m",
             top + 1, left + 2, sgr_title(), "Edit interface settings and select Save to update draft:");
@@ -1430,7 +1494,7 @@ void PicoConsole::render_edit_peer_modal() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 18, 64, &mr);
     const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1, 1);
+    draw_box(top, left, h, w, (wiz_edit_idx_ >= 0) ? "Edit Peer" : "Add Peer", 1, modal_close_btn());
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-58.58s \033[0m",
             top + 1, left + 2, sgr_title(), "Configure peer mapping and inbound/outbound permissions:");
@@ -1491,7 +1555,7 @@ void PicoConsole::render_terminate_modal() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 16, 64, &mr);
     const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Terminate Active Connection", 1, 1);
+    draw_box(top, left, h, w, "Terminate Active Connection", 1, modal_close_btn());
     draw_shadow(top, left, h, w);
     sprintf(buf, "\033[%d;%dH%s %-5s %-11s %-10s %-30s \033[0m",
             top + 2, left + 2, sgr_list_hdr(), "ID", "Callsign", "Port", "State");
@@ -1541,7 +1605,7 @@ void PicoConsole::render_ban_modal() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
     const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1, 1);
+    draw_box(top, left, h, w, "Ban / Unban Callsign (banlist.cfg)", 1, modal_close_btn());
     draw_shadow(top, left, h, w);
 
     sprintf(buf, "\033[%d;%dHCallsign: %s %-12.12s \033[0m",
@@ -1595,7 +1659,7 @@ void PicoConsole::render_ban_modal() {
     if (wiz_btn_ && bcnt > 0 && wiz_edit_idx_ >= 0 && wiz_edit_idx_ < bcnt) {
         OykTuiRect cmr;
         oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &cmr);
-        draw_box(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w, "Confirm Unban", 1, 1);
+        draw_box(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w, "Confirm Unban", 1, modal_close_btn());
         draw_shadow(cmr.top + 1, cmr.left + 1, cmr.h, cmr.w);
         sprintf(buf, "\033[%d;%dHUnban callsign %-24.24s",
                 cmr.top + 3, cmr.left + 3, node_->ban_entry(wiz_edit_idx_).key);
@@ -1605,90 +1669,12 @@ void PicoConsole::render_ban_modal() {
     }
 }
 
-void PicoConsole::open_theme_dialog() {
-    if (!node_) return;
-    draft_ = node_->config();
-    prompt_kind_ = PICO_PROMPT_THEME;
-    wiz_edit_idx_ = 0;
-    wiz_focus_ = 0;
-    wiz_btn_ = 0;
-    wiz_id_[0] = '\0';
-    wiz_err_[0] = '\0';
-    pico_str_copy(wiz_desc_, sizeof(wiz_desc_),
-                  draft_.theme_name[0] ? draft_.theme_name : "dark");
-    pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-    render();
-}
-
-void PicoConsole::render_theme_modal() {
-    char buf[192];
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
-    const int top = mr.top + 1, left = mr.left + 1, h = mr.h, w = mr.w;
-    draw_box(top, left, h, w, "Theme Settings", 1, 1);
-    draw_shadow(top, left, h, w);
-
-    const char* active = wiz_desc_[0] ? wiz_desc_ : "dark";
-    OykThemeConfig pal;
-    pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), active);
-    oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
-
-    sprintf(buf, "\033[%d;%dHTheme  : < %-18.18s > (%s)",
-            top + 1, left + 2, active,
-            oyk_theme_is_builtin(active) ? "Built-in (not saved)" : "Custom");
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dHEditing built-in dark/light clones custom-dark or custom-light.",
-            top + 2, left + 2);
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dH%s %-16s %-13s %-8s Preview \033[0m",
-            top + 4, left + 2, sgr_list_hdr(), "Role", "Key", "Color");
-    write_str(buf);
-
-    const int vis_rows = 10;
-    if (wiz_edit_idx_ < wiz_focus_) wiz_focus_ = wiz_edit_idx_;
-    if (wiz_edit_idx_ >= wiz_focus_ + vis_rows) wiz_focus_ = wiz_edit_idx_ - vis_rows + 1;
-
-    for (int r = 0; r < vis_rows && (wiz_focus_ + r) < OYK_THEME_COLOR_COUNT; ++r) {
-        int idx = wiz_focus_ + r;
-        char hx[12];
-        oyk_theme_format_hex(pal.colors[idx], hx, sizeof(hx));
-        sprintf(buf, "\033[%d;%dH%s %-16.16s %-13.13s %-8.8s\033[0m ",
-                top + 5 + r, left + 2,
-                (idx == wiz_edit_idx_) ? sgr_sel() : "",
-                oyk_theme_role_label(idx), oyk_theme_role_key(idx), hx);
-        write_str(buf);
-        if (term_type_ >= PICO_TERM_VT220) {
-            write_str(pico_format_sgr(6, pal.colors[idx], pal.colors[idx], 1, 0, term_type_));
-            write_str("    \033[0m");
-        } else {
-            write_str("[##]");
-        }
-    }
-
-    draw_hdiv(top + 16, left, w);
-    if (wiz_btn_) {
-        sprintf(buf, "\033[%d;%dH%s (#RRGGBB): %s %-12.12s \033[0m",
-                top + 17, left + 2, oyk_theme_role_key(wiz_edit_idx_), sgr_sel(), wiz_id_);
-        write_str(buf);
-        sprintf(buf, "\033[%d;%dH%s Enter:Apply Hex | Esc:Back \033[0m",
-                top + 18, left + 2, sgr_menubar());
-        write_str(buf);
-    } else {
-        sprintf(buf, "\033[%d;%dH%-68.68s", top + 17, left + 2,
-                wiz_err_[0] ? wiz_err_ : "Live preview active (unsaved). Press S/F2 to save or Esc to revert.");
-        write_str(buf);
-        sprintf(buf, "\033[%d;%dH%s Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel \033[0m",
-                top + 18, left + 2, sgr_menubar());
-        write_str(buf);
-    }
-}
-
 void PicoConsole::render_confirm_format_modal() {
     char buf[192];
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 9, 60, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Confirm Storage Format", 1, 1);
+    draw_box(top, left, mr.h, mr.w, "Confirm Storage Format", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     sprintf(buf, "\033[%d;%dHType FORMAT to erase active storage and press Enter:", top + 2, left + 2);
     write_str(buf);
@@ -1704,7 +1690,7 @@ void PicoConsole::render_text_prompt() {
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 7, 56, &mr);
     const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, prompt_label_[0] ? prompt_label_ : "Edit Setting", 1, 1);
+    draw_box(top, left, mr.h, mr.w, prompt_label_[0] ? prompt_label_ : "Edit Setting", 1, modal_close_btn());
     draw_shadow(top, left, mr.h, mr.w);
     sprintf(buf, "\033[%d;%dH%s> %-48.48s\033[0m", top + 2, left + 2, sgr_sel(), prompt_buf_);
     write_str(buf);
@@ -1716,8 +1702,12 @@ void PicoConsole::render_text_prompt() {
 void PicoConsole::open_settings(int tab) {
     if (node_) draft_ = node_->config();
     view_ = PICO_VIEW_SETTINGS;
-    settings_tab_ = (tab >= 0 && tab < 7) ? tab : 0;
+    settings_tab_ = (tab >= 0 && tab < 8) ? tab : 0;
     memset(settings_sel_, 0, sizeof(settings_sel_));
+    theme_scroll_ = 0;
+    theme_preview_dirty_ = 0;
+    wiz_btn_ = 0;
+    wiz_id_[0] = '\0';
     dialog_fb_[0] = '\0';
     render();
 }
@@ -1953,24 +1943,13 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
         else if (kind == 2) handle_key_code(PK_ESC);
         else if (kind == 0) {
             OykTuiRect mr;
-            if (prompt_kind_ == PICO_PROMPT_THEME) {
-                oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
-                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
-                const int mleft1 = mr.left + 1;
-                if (r0 == mr.top + 1 && c0 >= mr.left + 10 && c0 <= mr.left + 36) {
-                    handle_key_code((c0 < mr.left + 22) ? PK_LEFT : PK_RIGHT);
-                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 33 && col1 <= mleft1 + 51) {
-                    handle_key_code('s');
-                } else if (r0 == mr.top + 18 && col1 >= mleft1 + 52) {
-                    handle_key_code(PK_ESC);
-                }
-            } else if (prompt_kind_ == PICO_PROMPT_BAN_CALL) {
+            if (prompt_kind_ == PICO_PROMPT_BAN_CALL) {
                 if (wiz_btn_) {
                     oyk_tui_center_modal(term_rows_, term_cols_, 6, 46, &mr);
-                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                    if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
                 } else {
                     oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
-                    if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                    if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
                 }
             } else {
                 int ph = 7, pw = 56;
@@ -1980,7 +1959,7 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
                 else if (prompt_kind_ == PICO_PROMPT_EDIT_PEER) { ph = 18; pw = 64; }
                 else if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) { ph = 9; pw = 60; }
                 oyk_tui_center_modal(term_rows_, term_cols_, ph, pw, &mr);
-                if (oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
+                if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) { handle_key_code(PK_ESC); return; }
             }
         }
         return;
@@ -2037,17 +2016,17 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
     if (view_ == PICO_VIEW_CONSOLE) {
         if (row1 == 1) {
             if (col1 <= 9 || col1 >= term_cols_ - 11) handle_key_code(PK_F10);
-            else if (col1 >= term_cols_ - 31) handle_key_code(PK_TAB);
+            else if (col1 >= term_cols_ - 33) handle_key_code(PK_TAB);
         } else if (row1 == 2 && col1 >= 40) {
-            handle_key_code(node_->accept_incoming() ? 'd' : 'a');
+            exec_menu_hotkey(node_->accept_incoming() ? 'd' : 'a');
         }
     } else if (view_ == PICO_VIEW_MENU) {
-        static const int kItemRows[14] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18 };
-        if (row1 < 2 || row1 > 19 || col1 < 2 || col1 > 37) {
+        static const int kItemRows[13] = { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 };
+        if (row1 < 2 || row1 > 18 || col1 < 2 || col1 > 37) {
             handle_key_code(PK_ESC);
             return;
         }
-        for (int i = 0; i < 14; ++i) {
+        for (int i = 0; i < 13; ++i) {
             if (row1 == kItemRows[i]) {
                 menu_sel_ = i;
                 handle_key_code(PK_ENTER);
@@ -2055,10 +2034,10 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
             }
         }
     } else if (view_ == PICO_VIEW_SETTINGS) {
-        static const int kTabLens[7] = { 8, 7, 8, 10, 9, 7, 7 };
+        static const int kTabLens[8] = { 8, 7, 8, 10, 9, 7, 7, 7 };
         OykTuiRect mr;
         oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
-        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+        if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) {
             handle_key_code(PK_ESC);
             return;
         }
@@ -2066,27 +2045,32 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
         const int left1 = mr.left + 1;
         if (row1 == top1 + 1) {
             int tx = left1 + 2;
-            for (int t = 0; t < 7; ++t) {
+            for (int t = 0; t < 8; ++t) {
                 if (col1 >= tx && col1 < tx + kTabLens[t]) {
                     settings_tab_ = t;
+                    wiz_btn_ = 0;
                     render();
                     break;
                 }
                 tx += kTabLens[t] + 1;
             }
+        } else if (settings_tab_ == 7 && row1 == top1 + 3 && c0 >= mr.left + 10 && c0 <= mr.left + 36) {
+            handle_key_code((c0 < mr.left + 22) ? PK_LEFT : PK_RIGHT);
         } else if (row1 == top1 + 19) {
             if (col1 >= left1 + 49) handle_key_code(PK_ESC);
             else if (col1 >= left1 + 35) handle_key_code('s');
         } else {
-            int row_base = top1 + ((settings_tab_ == 3 || settings_tab_ == 4) ? 4 : 3);
+            int row_base = top1 + ((settings_tab_ == 7) ? 5 : ((settings_tab_ == 3 || settings_tab_ == 4) ? 4 : 3));
             int cnt = settings_tab_item_count(settings_tab_);
             if (row1 >= row_base && row1 < row_base + cnt && row1 < top1 + 16) {
-                int idx = row1 - row_base;
-                if (idx == settings_sel_[settings_tab_]) {
-                    handle_key_code(PK_ENTER);
-                } else {
-                    settings_sel_[settings_tab_] = idx;
-                    render();
+                int idx = (settings_tab_ == 7 ? theme_scroll_ : 0) + (row1 - row_base);
+                if (idx >= 0 && idx < cnt) {
+                    if (idx == settings_sel_[settings_tab_]) {
+                        handle_key_code(PK_ENTER);
+                    } else {
+                        settings_sel_[settings_tab_] = idx;
+                        render();
+                    }
                 }
             }
         }
@@ -2096,7 +2080,7 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
         int ph = (view_ == PICO_VIEW_FILES) ? 19 : ((view_ == PICO_VIEW_RIG) ? 15 : ((view_ == PICO_VIEW_STORAGE) ? 18 : 17));
         int pw = (view_ == PICO_VIEW_FILES) ? 72 : ((view_ == PICO_VIEW_RIG) ? 68 : 70);
         oyk_tui_center_modal(term_rows_, term_cols_, ph, pw, &mr);
-        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+        if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) {
             handle_key_code(PK_ESC);
             return;
         }
@@ -2104,7 +2088,7 @@ void PicoConsole::handle_mouse_event(int row1, int col1, int kind) {
         OykTuiRect mr;
         int auto_cnt = node_ ? node_->auto_learned_peer_count() : 0;
         oyk_tui_center_modal(term_rows_, term_cols_, auto_cnt > 0 ? 13 : 10, auto_cnt > 0 ? 72 : 60, &mr);
-        if (oyk_tui_hit_close_btn(&mr, r0, c0)) {
+        if (modal_close_btn() && oyk_tui_hit_close_btn(&mr, r0, c0)) {
             handle_key_code(PK_ESC);
             return;
         }
@@ -2248,7 +2232,8 @@ void PicoConsole::handle_char(oyk_u8 ch, oyk_u32 now_ms) {
         else if (ch == '~' && strcmp(esc_buf_, "5~") == 0) handle_key_code(PK_PGUP);
         else if (ch == '~' && strcmp(esc_buf_, "6~") == 0) handle_key_code(PK_PGDN);
         else if (ch == '~' && strcmp(esc_buf_, "12~") == 0) handle_key_code(PK_F2);
-        else if (ch == '~' && strcmp(esc_buf_, "21~") == 0) handle_key_code(PK_F10);
+        else if (ch == '~' && strcmp(esc_buf_, "20~") == 0) handle_key_code(PK_F9);
+    else if (ch == '~' && strcmp(esc_buf_, "21~") == 0) handle_key_code(PK_F10);
     }
 }
 
@@ -2274,10 +2259,8 @@ void PicoConsole::handle_key_code(int key) {
     }
 }
 
-void PicoConsole::handle_console_key(int key) {
-    if (key == 'm' || key == 'M' || key == PK_F10) {
-        view_ = PICO_VIEW_MENU; menu_sel_ = 0; render();
-    } else if (key == 'a' || key == 'A') {
+void PicoConsole::exec_menu_hotkey(int key) {
+    if (key == 'a' || key == 'A') {
         if (node_) node_->set_accept_incoming(1);
         strcpy(status_fb_, "New incoming connections are now ALLOWED.");
         render();
@@ -2285,7 +2268,7 @@ void PicoConsole::handle_console_key(int key) {
         if (node_) node_->set_accept_incoming(0);
         strcpy(status_fb_, "New incoming connections are now DENIED.");
         render();
-    } else if (key == 'l' || key == 'L' || key == PK_TAB) {
+    } else if (key == 'l' || key == 'L') {
         lterm_ctrl_a_ = 0;
         lterm_help_open_ = 0;
         view_ = PICO_VIEW_LOCAL_TERM; render();
@@ -2296,10 +2279,6 @@ void PicoConsole::handle_console_key(int key) {
         dialog_fb_[0] = '\0'; view_ = PICO_VIEW_RIG; render();
     } else if (key == 's' || key == 'S') {
         open_settings(0);
-    } else if (key == 'e' || key == 'E') {
-        open_settings(4);
-    } else if (key == 'h' || key == 'H') {
-        open_theme_dialog();
     } else if (key == 't' || key == 'T') {
         open_terminate_dialog();
     } else if (key == 'b' || key == 'B') {
@@ -2312,6 +2291,16 @@ void PicoConsole::handle_console_key(int key) {
         bootloader_pending_ = 0; view_ = PICO_VIEW_BOOTLOADER; render();
     } else if (key == '?') {
         view_ = PICO_VIEW_ABOUT; render();
+    }
+}
+
+void PicoConsole::handle_console_key(int key) {
+    if (key == 0x0E || key == PK_F10) {
+        view_ = PICO_VIEW_MENU; menu_sel_ = 0; render();
+    } else if (key == PK_TAB || key == PK_F9) {
+        lterm_ctrl_a_ = 0;
+        lterm_help_open_ = 0;
+        view_ = PICO_VIEW_LOCAL_TERM; render();
     } else if (key == 0x0C) {
         send_size_probe();
         render();
@@ -2319,38 +2308,111 @@ void PicoConsole::handle_console_key(int key) {
 }
 
 void PicoConsole::handle_menu_key(int key) {
-    if (key == PK_ESC || key == PK_F10 || key == 'x' || key == 'X') {
+    if (key == PK_ESC || key == PK_F10 || key == 0x0E || key == 'x' || key == 'X') {
         view_ = PICO_VIEW_CONSOLE; render(); return;
     }
-    if (key == PK_UP) { menu_sel_ = (menu_sel_ + 13) % 14; render(); return; }
-    if (key == PK_DOWN) { menu_sel_ = (menu_sel_ + 1) % 14; render(); return; }
+    if (key == PK_UP) { menu_sel_ = (menu_sel_ + 12) % 13; render(); return; }
+    if (key == PK_DOWN) { menu_sel_ = (menu_sel_ + 1) % 13; render(); return; }
     if (key == PK_HOME) { menu_sel_ = 0; render(); return; }
-    if (key == PK_END) { menu_sel_ = 13; render(); return; }
-    static const int kKeys[14] = { 'a', 'd', 'l', 'f', 'r', 's', 'e', 'h', 't', 'b', 'p', 'g', 'u', 'x' };
+    if (key == PK_END) { menu_sel_ = 12; render(); return; }
+    static const int kKeys[13] = { 'a', 'd', 'l', 'f', 'r', 's', 't', 'b', '?', 'p', 'g', 'u', 'x' };
     int chosen = 0;
     if (key == PK_ENTER) chosen = kKeys[menu_sel_];
     else {
-        for (int i = 0; i < 13; ++i) {
-            if (key == kKeys[i] || key == (kKeys[i] - 32)) { chosen = kKeys[i]; break; }
+        for (int i = 0; i < 12; ++i) {
+            if (key == kKeys[i] || (kKeys[i] >= 'a' && kKeys[i] <= 'z' && key == (kKeys[i] - 32))) {
+                chosen = kKeys[i];
+                break;
+            }
         }
     }
     if (!chosen) return;
     view_ = PICO_VIEW_CONSOLE;
     if (chosen == 'x') render();
-    else handle_console_key(chosen);
+    else exec_menu_hotkey(chosen);
 }
 
 void PicoConsole::handle_settings_key(int key) {
+    if (settings_tab_ == 7 && wiz_btn_) {
+        if (key == PK_ESC) { wiz_btn_ = 0; render(); return; }
+        if (key == PK_ENTER) {
+            oyk_u32 new_rgb = 0;
+            if (!oyk_theme_parse_hex(wiz_id_, &new_rgb)) {
+                strcpy(dialog_fb_, "Invalid #RRGGBB hex color."); wiz_btn_ = 0; render(); return;
+            }
+            const char* active = draft_.theme_name[0] ? draft_.theme_name : "dark";
+            char tname[24];
+            pico_str_copy(tname, sizeof(tname), active);
+            if (oyk_theme_is_builtin(tname)) {
+                if (draft_.theme_count >= OYK_MAX_THEMES) {
+                    strcpy(dialog_fb_, "Maximum custom themes reached."); wiz_btn_ = 0; render(); return;
+                }
+                OykThemeConfig base_pal;
+                oyk_theme_resolve_effective(&draft_, 0, 1, &base_pal);
+                int dark_b = (strcmp(tname, "light") == 0) ? 0 : 1;
+                char cname[24];
+                oyk_theme_make_clone_name(&draft_, dark_b, cname, sizeof(cname));
+                OykThemeConfig* nt = &draft_.themes[draft_.theme_count++];
+                *nt = base_pal;
+                nt->is_dark_base = dark_b ? 1 : 0;
+                pico_str_copy(nt->name, sizeof(nt->name), cname);
+                pico_str_copy(tname, sizeof(tname), nt->name);
+            }
+            int sel = settings_sel_[7];
+            for (int ti = 0; ti < draft_.theme_count; ++ti) {
+                if (strcmp(draft_.themes[ti].name, tname) == 0) {
+                    draft_.themes[ti].colors[sel] = new_rgb;
+                    break;
+                }
+            }
+            pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), tname);
+            theme_preview_dirty_ = 1;
+            sprintf(dialog_fb_, "Updated %s (%s).", tname, oyk_theme_role_key(sel));
+            wiz_btn_ = 0; render(); return;
+        }
+        if (key == PK_BS) { size_t n = strlen(wiz_id_); if (n > 0) wiz_id_[n - 1] = '\0'; render(); }
+        else if (key >= 32 && key < 127) {
+            size_t n = strlen(wiz_id_);
+            if (n + 1 < sizeof(wiz_id_)) { wiz_id_[n] = static_cast<char>(key); wiz_id_[n + 1] = '\0'; }
+            render();
+        }
+        return;
+    }
     if (key == PK_ESC) {
+        theme_preview_dirty_ = 0;
         view_ = PICO_VIEW_CONSOLE;
         strcpy(status_fb_, "Settings cancelled (no changes applied).");
         render();
         return;
     }
-    if (key >= '1' && key <= '7') {
+    if (key >= '1' && key <= '8') {
         settings_tab_ = key - '1'; render(); return;
     }
-    if (key == PK_TAB) { settings_tab_ = (settings_tab_ + 1) % 7; render(); return; }
+    if (key == PK_TAB) { settings_tab_ = (settings_tab_ + 1) % 8; render(); return; }
+    if (key == PK_BACKTAB) { settings_tab_ = (settings_tab_ + 7) % 8; render(); return; }
+    if (key == PK_LEFT || key == PK_RIGHT) {
+        if (settings_tab_ != 7) {
+            settings_tab_ = (key == PK_RIGHT) ? ((settings_tab_ + 1) % 8) : ((settings_tab_ + 7) % 8);
+            render();
+            return;
+        }
+        const char* names[OYK_MAX_THEMES + 2];
+        int n_names = 0;
+        names[n_names++] = "dark";
+        names[n_names++] = "light";
+        for (int ti = 0; ti < draft_.theme_count && ti < OYK_MAX_THEMES; ++ti) {
+            if (!oyk_theme_is_builtin(draft_.themes[ti].name)) names[n_names++] = draft_.themes[ti].name;
+        }
+        const char* cur = draft_.theme_name[0] ? draft_.theme_name : "dark";
+        int ci = 0;
+        for (int i = 0; i < n_names; ++i) { if (strcmp(names[i], cur) == 0) { ci = i; break; } }
+        ci = (key == PK_RIGHT) ? ((ci + 1) % n_names) : ((ci + n_names - 1) % n_names);
+        pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), names[ci]);
+        theme_preview_dirty_ = 1;
+        sprintf(dialog_fb_, "Previewing '%.14s' (S/F2:Save  Esc:Revert).", draft_.theme_name);
+        render();
+        return;
+    }
     int cnt = settings_tab_item_count(settings_tab_);
     if (key == PK_UP && cnt > 0) {
         settings_sel_[settings_tab_] = (settings_sel_[settings_tab_] + cnt - 1) % cnt;
@@ -2360,11 +2422,35 @@ void PicoConsole::handle_settings_key(int key) {
         settings_sel_[settings_tab_] = (settings_sel_[settings_tab_] + 1) % cnt;
         render(); return;
     }
-    if (key == 'h' || key == 'H') { open_theme_dialog(); return; }
     if (key == 's' || key == 'S' || key == PK_F2) {
         commit_settings();
+        theme_preview_dirty_ = 0;
         view_ = PICO_VIEW_CONSOLE;
         render();
+        return;
+    }
+    if (settings_tab_ == 7) {
+        if (key == 'x' || key == 'X' || key == 'd' || key == 'D') {
+            if (draft_.theme_name[0] && !oyk_theme_is_builtin(draft_.theme_name)) {
+                for (int ti = 0; ti < draft_.theme_count; ++ti) {
+                    if (strcmp(draft_.themes[ti].name, draft_.theme_name) == 0) {
+                        for (int k = ti; k + 1 < draft_.theme_count; ++k) draft_.themes[k] = draft_.themes[k + 1];
+                        --draft_.theme_count;
+                        break;
+                    }
+                }
+                pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), "dark");
+                theme_preview_dirty_ = 1;
+            }
+            render(); return;
+        }
+        if (key == 'e' || key == 'E' || key == PK_ENTER) {
+            OykThemeConfig pal;
+            oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
+            oyk_theme_format_hex(pal.colors[settings_sel_[7]], wiz_id_, sizeof(wiz_id_));
+            wiz_btn_ = 1;
+            render();
+        }
         return;
     }
     if (settings_tab_ == 3) {
@@ -2665,7 +2751,7 @@ void PicoConsole::handle_local_term_key(int key) {
         render();
         return;
     }
-    if (key == PK_ESC || key == PK_TAB) {
+    if (key == PK_ESC || key == PK_TAB || key == PK_F9) {
         exec_local_term_cmd(OYK_TCMD_CONSOLE);
         return;
     }
@@ -3072,107 +3158,12 @@ void PicoConsole::handle_ban_key(int key) {
     }
 }
 
-void PicoConsole::handle_theme_key(int key) {
-    const char* names[OYK_MAX_THEMES + 2];
-    int n_names = 0;
-    names[n_names++] = "dark";
-    names[n_names++] = "light";
-    for (int ti = 0; ti < draft_.theme_count && ti < OYK_MAX_THEMES; ++ti) {
-        if (!oyk_theme_is_builtin(draft_.themes[ti].name)) names[n_names++] = draft_.themes[ti].name;
-    }
-    if (wiz_btn_) {
-        if (key == PK_ESC) { wiz_btn_ = 0; render(); return; }
-        if (key == PK_ENTER) {
-            oyk_u32 new_rgb = 0;
-            if (!oyk_theme_parse_hex(wiz_id_, &new_rgb)) {
-                strcpy(wiz_err_, "Invalid #RRGGBB hex color."); wiz_btn_ = 0; render(); return;
-            }
-            if (oyk_theme_is_builtin(wiz_desc_)) {
-                if (draft_.theme_count >= OYK_MAX_THEMES) {
-                    strcpy(wiz_err_, "Maximum custom themes reached."); wiz_btn_ = 0; render(); return;
-                }
-                OykThemeConfig base_pal;
-                pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-                oyk_theme_resolve_effective(&draft_, 0, 1, &base_pal);
-                int dark_b = (strcmp(wiz_desc_, "light") == 0) ? 0 : 1;
-                char cname[24];
-                oyk_theme_make_clone_name(&draft_, dark_b, cname, sizeof(cname));
-                OykThemeConfig* nt = &draft_.themes[draft_.theme_count++];
-                *nt = base_pal;
-                nt->is_dark_base = dark_b ? 1 : 0;
-                pico_str_copy(nt->name, sizeof(nt->name), cname);
-                pico_str_copy(wiz_desc_, sizeof(wiz_desc_), nt->name);
-            }
-            for (int ti = 0; ti < draft_.theme_count; ++ti) {
-                if (strcmp(draft_.themes[ti].name, wiz_desc_) == 0) {
-                    draft_.themes[ti].colors[wiz_edit_idx_] = new_rgb;
-                    break;
-                }
-            }
-            pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-            sprintf(wiz_err_, "Updated %s (%s).", wiz_desc_, oyk_theme_role_key(wiz_edit_idx_));
-            wiz_btn_ = 0; render(); return;
-        }
-        if (key == PK_BS) { size_t n = strlen(wiz_id_); if (n > 0) wiz_id_[n - 1] = '\0'; render(); }
-        else if (key >= 32 && key < 127) {
-            size_t n = strlen(wiz_id_);
-            if (n + 1 < sizeof(wiz_id_)) { wiz_id_[n] = static_cast<char>(key); wiz_id_[n + 1] = '\0'; }
-            render();
-        }
-        return;
-    }
-    if (key == PK_ESC) {
-        prompt_kind_ = PICO_PROMPT_NONE;
-        render();
-        return;
-    }
-    if (key == PK_UP) { wiz_edit_idx_ = (wiz_edit_idx_ + OYK_THEME_COLOR_COUNT - 1) % OYK_THEME_COLOR_COUNT; render(); return; }
-    if (key == PK_DOWN) { wiz_edit_idx_ = (wiz_edit_idx_ + 1) % OYK_THEME_COLOR_COUNT; render(); return; }
-    if (key == PK_LEFT || key == PK_RIGHT) {
-        int ci = 0;
-        for (int i = 0; i < n_names; ++i) { if (strcmp(names[i], wiz_desc_) == 0) { ci = i; break; } }
-        ci = (key == PK_RIGHT) ? ((ci + 1) % n_names) : ((ci + n_names - 1) % n_names);
-        pico_str_copy(wiz_desc_, sizeof(wiz_desc_), names[ci]);
-        pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-        sprintf(wiz_err_, "Previewing '%.14s' (S/F2:Save  Esc:Revert).", wiz_desc_);
-        render(); return;
-    }
-    if (key == 'x' || key == 'X') {
-        if (!oyk_theme_is_builtin(wiz_desc_)) {
-            for (int ti = 0; ti < draft_.theme_count; ++ti) {
-                if (strcmp(draft_.themes[ti].name, wiz_desc_) == 0) {
-                    for (int k = ti; k + 1 < draft_.theme_count; ++k) draft_.themes[k] = draft_.themes[k + 1];
-                    --draft_.theme_count;
-                    break;
-                }
-            }
-            strcpy(wiz_desc_, "dark");
-            pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), "dark");
-        }
-        render(); return;
-    }
-    if (key == PK_ENTER) {
-        OykThemeConfig pal;
-        pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-        oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
-        oyk_theme_format_hex(pal.colors[wiz_edit_idx_], wiz_id_, sizeof(wiz_id_));
-        wiz_btn_ = 1; render(); return;
-    }
-    if (key == 's' || key == 'S' || key == PK_F2) {
-        pico_str_copy(draft_.theme_name, sizeof(draft_.theme_name), wiz_desc_);
-        commit_settings();
-        prompt_kind_ = PICO_PROMPT_NONE;
-        render();
-    }
-}
-
 void PicoConsole::handle_modal_key(int key) {
     if (prompt_kind_ == PICO_PROMPT_ADD_WIZARD) { handle_wizard_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_EDIT_IFACE) { handle_edit_iface_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_EDIT_PEER) { handle_edit_peer_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_TERM_SID) { handle_terminate_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_BAN_CALL) { handle_ban_key(key); return; }
-    if (prompt_kind_ == PICO_PROMPT_THEME) { handle_theme_key(key); return; }
     if (prompt_kind_ == PICO_PROMPT_CONFIRM_FORMAT) {
         if (key == PK_ESC) {
         prompt_kind_ = PICO_PROMPT_NONE;

@@ -45,7 +45,6 @@ enum Esp32C6PromptKind {
     C6L_PROMPT_ADD_WIZARD,
     C6L_PROMPT_EDIT_IFACE,
     C6L_PROMPT_EDIT_PEER,
-    C6L_PROMPT_THEME,
     C6L_PROMPT_CONFIRM_FORMAT,
     C6L_PROMPT_SET_TEXT,
     C6L_PROMPT_SET_BOOL,
@@ -123,7 +122,6 @@ private:
     void render_edit_peer_modal();
     void render_terminate_modal();
     void render_ban_modal();
-    void render_theme_modal();
     void render_confirm_format_modal();
     void render_text_prompt();
 
@@ -134,6 +132,7 @@ private:
     void handle_mouse_event(int row1, int col1, int kind);
     void handle_console_key(int key);
     void handle_menu_key(int key);
+    void exec_menu_hotkey(int key);
     void handle_settings_key(int key);
     void handle_files_key(int key);
     void handle_rig_key(int key);
@@ -149,7 +148,6 @@ private:
     void open_edit_peer(int idx);
     void open_terminate_dialog();
     void open_ban_dialog();
-    void open_theme_dialog();
     void refresh_files_lists();
     void append_lterm_line(const char* line);
 
@@ -208,6 +206,7 @@ private:
 
     int theme_sel_;
     int theme_role_sel_;
+    int theme_preview_dirty_;
     char prompt_label_[48];
     char prompt_buf_[96];
     int prompt_cursor_;

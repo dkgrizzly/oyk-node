@@ -66,10 +66,10 @@ static void render_main_console(Ti99VdpState *vdp, const Ti99App *app)
 
     ti99_vdp_clear(vdp, 0xF4U);
     if (wide) {
-        snprintf(line, sizeof(line), " Node   Tab/F9:Term   F10/M:Menu   TI-99/4A [%s]",
+        snprintf(line, sizeof(line), " Node   Tab/F9:Term   Ctrl-N:Menu   TI-99/4A [%s]",
                  vdp->is_f18a ? "F18A 80c" : "9918 40c");
     } else {
-        snprintf(line, sizeof(line), " Node  Tab:Term  M:Menu");
+        snprintf(line, sizeof(line), " Node Tab:Term ^N:Menu");
     }
     ti99_vdp_puts(vdp, 0, 0, line, 0x1FU);
 
@@ -169,16 +169,15 @@ static void render_modal(Ti99VdpState *vdp, const Ti99App *app)
     int i;
 
     if (app->screen == TI99_SCR_MENU) {
-        draw_box(vdp, 1, 1, 12, wide ? 30 : 28, NULL, 0xF1U, 0);
+        draw_box(vdp, 1, 1, 11, wide ? 30 : 28, NULL, 0xF1U, 0);
         ti99_vdp_puts(vdp, 2, 3, "[S] Node Settings", 0xF1U);
         ti99_vdp_puts(vdp, 3, 3, "[A] Add Interface", 0xF1U);
         ti99_vdp_puts(vdp, 4, 3, "[B] Ban Callsign", 0xF1U);
         ti99_vdp_puts(vdp, 5, 3, "[T] Local Terminal", 0xF1U);
         ti99_vdp_puts(vdp, 6, 3, "[K] Terminate Conn", 0xF1U);
         ti99_vdp_puts(vdp, 7, 3, "[F] File Manager", 0xF1U);
-        ti99_vdp_puts(vdp, 8, 3, "[C] Theme Settings", 0xF1U);
-        ti99_vdp_puts(vdp, 9, 3, "[?] About OYK Node", 0xF1U);
-        ti99_vdp_puts(vdp, 10, 3, "[Q] Exit Node", 0xF1U);
+        ti99_vdp_puts(vdp, 8, 3, "[?] About OYK Node", 0xF1U);
+        ti99_vdp_puts(vdp, 9, 3, "[Q] Exit Node", 0xF1U);
         return;
     }
 
@@ -192,9 +191,10 @@ static void render_modal(Ti99VdpState *vdp, const Ti99App *app)
     case TI99_SCR_PEERS:
     case TI99_SCR_SETTINGS_RIG:
     case TI99_SCR_SETTINGS_PRINTER:
+    case TI99_SCR_THEME:
         ti99_vdp_puts(vdp, mr + 1, mc + 2,
-                      wide ? "1:Node 2:BBS 3:CHAT 4:Ifaces 5:Peers 6:Rig 7:Prn"
-                           : "1:Node 2:BBS 3:CHAT 4:If 5:Pr 6:Rg 7:Pn",
+                      wide ? "1:Node 2:BBS 3:CHAT 4:Ifaces 5:Peers 6:Rig 7:Prn 8:Thm"
+                           : "1:N 2:B 3:C 4:I 5:P 6:R 7:P 8:Th",
                       0xF1U);
         draw_hsep(vdp, mr + 2, mc, mw, 0xF1U);
         if (app->screen == TI99_SCR_SETTINGS) {
@@ -226,10 +226,15 @@ static void render_modal(Ti99VdpState *vdp, const Ti99App *app)
             snprintf(buf, sizeof(buf), "rigctld Host: %s:%u",
                      app->node.cfg.rig_host, (unsigned)app->node.cfg.rig_port);
             ti99_vdp_puts(vdp, mr + 4, mc + 2, buf, 0xF1U);
-        } else {
+        } else if (app->screen == TI99_SCR_SETTINGS_PRINTER) {
             snprintf(buf, sizeof(buf), "Printer: %s (%s)",
                      app->node.cfg.printer_driver, app->node.cfg.printer_dev);
             ti99_vdp_puts(vdp, mr + 4, mc + 2, buf, 0xF1U);
+        } else {
+            snprintf(buf, sizeof(buf), "Theme: < %s >", app->node.cfg.theme_name);
+            ti99_vdp_puts(vdp, mr + 4, mc + 2, buf, 0xF1U);
+            ti99_vdp_puts(vdp, mr + 6, mc + 2, "Role / Key / Color / Preview", 0xF1U);
+            ti99_vdp_puts(vdp, mr + 7, mc + 2, "Desktop / Bg / VDP Blue / [####]", 0xF1U);
         }
         draw_hsep(vdp, mr + mh - 3, mc, mw, 0xF1U);
         ti99_vdp_puts(vdp, mr + mh - 2, mc + 2, "[ Save ]  [ Cancel ]", 0xF1U);
@@ -300,15 +305,6 @@ static void render_modal(Ti99VdpState *vdp, const Ti99App *app)
                       wide ? "[ Save & Exit ] [ Discard ] [ Review Peers ] [ Cancel ]"
                            : "[Save&Exit] [Discard] [Review]",
                       0xF1U);
-        break;
-
-    case TI99_SCR_THEME:
-        snprintf(buf, sizeof(buf), "Theme: < %s >", app->node.cfg.theme_name);
-        ti99_vdp_puts(vdp, mr + 2, mc + 2, buf, 0xF1U);
-        ti99_vdp_puts(vdp, mr + 4, mc + 2, "Role / Key / Color / Preview", 0xF1U);
-        ti99_vdp_puts(vdp, mr + 5, mc + 2, "Desktop / Bg / VDP Blue / [####]", 0xF1U);
-        draw_hsep(vdp, mr + mh - 3, mc, mw, 0xF1U);
-        ti99_vdp_puts(vdp, mr + mh - 2, mc + 2, "[ Apply ]  [ Reset ]  [ Close ]", 0xF1U);
         break;
 
     case TI99_SCR_TERMINAL_HELP:

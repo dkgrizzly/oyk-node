@@ -39,7 +39,6 @@ private:
     void open_node_menu(bool& should_exit);
     void apply_theme_palette(const ThemeConfig& t);
     void apply_theme_colors();
-    void modal_theme();
     void modal_local_terminal();
     bool has_active_terminal() const;
     void close_terminal_session();

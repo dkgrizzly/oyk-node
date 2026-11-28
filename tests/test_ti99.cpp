@@ -136,6 +136,47 @@ int main() {
         }
     }
 
+    /* Check hotkey discipline: closed-menu single-letter suppression, Ctrl-N, modal preemption, Esc */
+    {
+        Ti99App app;
+        ti99_app_init(&app, 0);
+        if (ti99_app_handle_key(&app, 's') == 0 ||
+            ti99_app_handle_key(&app, 'm') == 0 ||
+            ti99_app_handle_key(&app, 'q') == 0 ||
+            app.screen != TI99_SCR_MAIN) {
+            std::printf("FAIL: TI-99 closed-menu single-letter hotkey was not ignored\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, TI99_KEY_CTRL_N) != 0 || app.screen != TI99_SCR_MENU) {
+            std::printf("FAIL: TI-99 Ctrl-N did not open menu\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, 'c') == 0 || app.screen != TI99_SCR_MENU) {
+            std::printf("FAIL: TI-99 stale menu shortcut 'c' was not removed\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, 's') != 0 || app.screen != TI99_SCR_SETTINGS) {
+            std::printf("FAIL: TI-99 menu 's' did not open settings\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, TI99_KEY_CTRL_N) == 0 ||
+            ti99_app_handle_key(&app, TI99_KEY_F10) == 0 ||
+            ti99_app_handle_key(&app, TI99_KEY_F9) == 0 ||
+            app.screen != TI99_SCR_SETTINGS) {
+            std::printf("FAIL: TI-99 modal dialog did not preempt global hotkeys\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, '8') != 0 ||
+            app.screen != TI99_SCR_THEME || app.settings_tab != 7) {
+            std::printf("FAIL: TI-99 settings tab 8 did not activate Theme tab\n");
+            ++failures;
+        }
+        if (ti99_app_handle_key(&app, TI99_KEY_ESC) != 0 || app.screen != TI99_SCR_MAIN) {
+            std::printf("FAIL: TI-99 Esc did not close modal\n");
+            ++failures;
+        }
+    }
+
     if (failures == 0) {
         std::printf("All TI-99/4A parity tests PASSED.\n");
     }

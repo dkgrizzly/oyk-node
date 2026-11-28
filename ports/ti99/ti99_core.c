@@ -727,6 +727,96 @@ int ti99_app_exec_action(Ti99App *app, int action)
     }
 }
 
+int ti99_app_handle_key(Ti99App *app, int key)
+{
+    int ch;
+    if (!app) {
+        return -1;
+    }
+    ch = (key >= 'A' && key <= 'Z') ? (key + ('a' - 'A')) : key;
+
+    /* Main console: only Ctrl-N/F10 opens Node Menu; Tab/F9 switches to Terminal.
+     * Single-letter menu hotkeys are strictly disabled while Node Menu is closed. */
+    if (app->screen == TI99_SCR_MAIN) {
+        if (key == TI99_KEY_CTRL_N || key == TI99_KEY_F10) {
+            app->screen = TI99_SCR_MENU;
+            return 0;
+        }
+        if (key == TI99_KEY_TAB || key == TI99_KEY_F9) {
+            app->screen = TI99_SCR_TERMINAL;
+            return 0;
+        }
+        return -1;
+    }
+
+    /* Dropdown Node Menu */
+    if (app->screen == TI99_SCR_MENU) {
+        if (key == TI99_KEY_ESC || key == TI99_KEY_CTRL_N || key == TI99_KEY_F10) {
+            app->screen = TI99_SCR_MAIN;
+            return 0;
+        }
+        switch (ch) {
+        case 's': return ti99_app_exec_action(app, TI99_ACT_SETTINGS);
+        case 'a': return ti99_app_exec_action(app, TI99_ACT_ADD_IFACE);
+        case 'b': return ti99_app_exec_action(app, TI99_ACT_BAN);
+        case 't': return ti99_app_exec_action(app, TI99_ACT_TERM);
+        case 'k': return ti99_app_exec_action(app, TI99_ACT_TERMINATE);
+        case 'f': return ti99_app_exec_action(app, TI99_ACT_FILES);
+        case '?': return ti99_app_exec_action(app, TI99_ACT_ABOUT);
+        case 'q': return ti99_app_exec_action(app, TI99_ACT_EXIT);
+        default:  return -1;
+        }
+    }
+
+    /* Local Terminal (full-screen non-modal workspace) */
+    if (app->screen == TI99_SCR_TERMINAL) {
+        if (key == TI99_KEY_TAB || key == TI99_KEY_F9 || key == TI99_KEY_ESC) {
+            app->screen = TI99_SCR_MAIN;
+            return 0;
+        }
+        return -1;
+    }
+
+    /* Terminal Hotkey Help modal preempts Ctrl-N/F10/Tab/F9; Esc returns to Terminal */
+    if (app->screen == TI99_SCR_TERMINAL_HELP) {
+        if (key == TI99_KEY_ESC) {
+            app->screen = TI99_SCR_TERMINAL;
+            return 0;
+        }
+        return -1;
+    }
+
+    /* Any open modal dialog strictly preempts Ctrl-N/F10/Tab/F9 global hotkeys */
+    if (key == TI99_KEY_ESC) {
+        app->screen = TI99_SCR_MAIN;
+        return 0;
+    }
+    if (key == TI99_KEY_CTRL_N || key == TI99_KEY_F10 || key == TI99_KEY_F9) {
+        return -1;
+    }
+    if (app->screen == TI99_SCR_SETTINGS || app->screen == TI99_SCR_SETTINGS_BBS ||
+        app->screen == TI99_SCR_SETTINGS_CHAT || app->screen == TI99_SCR_SETTINGS_IFACES ||
+        app->screen == TI99_SCR_PEERS || app->screen == TI99_SCR_SETTINGS_RIG ||
+        app->screen == TI99_SCR_SETTINGS_PRINTER || app->screen == TI99_SCR_THEME) {
+        static const Ti99ScreenId tab_screens[8] = {
+            TI99_SCR_SETTINGS, TI99_SCR_SETTINGS_BBS, TI99_SCR_SETTINGS_CHAT,
+            TI99_SCR_SETTINGS_IFACES, TI99_SCR_PEERS, TI99_SCR_SETTINGS_RIG,
+            TI99_SCR_SETTINGS_PRINTER, TI99_SCR_THEME
+        };
+        if (key == TI99_KEY_TAB) {
+            app->settings_tab = (uint8_t)((app->settings_tab + 1U) % 8U);
+            app->screen = tab_screens[app->settings_tab];
+            return 0;
+        }
+        if (key >= '1' && key <= '8') {
+            app->settings_tab = (uint8_t)(key - '1');
+            app->screen = tab_screens[app->settings_tab];
+            return 0;
+        }
+    }
+    return -1;
+}
+
 int ti99_app_set_screen_by_name(Ti99App *app, const char *name)
 {
     if (!app || !name) {
@@ -741,6 +831,9 @@ int ti99_app_set_screen_by_name(Ti99App *app, const char *name)
     if (strcmp(name, "peers") == 0) { app->screen = TI99_SCR_PEERS; app->settings_tab = 4; return 0; }
     if (strcmp(name, "settings_rig") == 0) { app->screen = TI99_SCR_SETTINGS_RIG; app->settings_tab = 5; return 0; }
     if (strcmp(name, "settings_printer") == 0) { app->screen = TI99_SCR_SETTINGS_PRINTER; app->settings_tab = 6; return 0; }
+    if (strcmp(name, "settings_theme") == 0 || strcmp(name, "theme") == 0) {
+        app->screen = TI99_SCR_THEME; app->settings_tab = 7; return 0;
+    }
     if (strcmp(name, "add_iface_1") == 0) { app->screen = TI99_SCR_ADD_IFACE_1; app->wizard_step = 1; return 0; }
     if (strcmp(name, "add_iface_2") == 0) { app->screen = TI99_SCR_ADD_IFACE_2; app->wizard_step = 2; return 0; }
     if (strcmp(name, "add_iface_3") == 0) { app->screen = TI99_SCR_ADD_IFACE_3; app->wizard_step = 3; return 0; }
@@ -779,7 +872,7 @@ const char *ti99_app_screen_title(Ti99ScreenId scr)
     case TI99_SCR_TERMINATE:        return "Terminate Active Connection";
     case TI99_SCR_BAN:              return "Ban / Unban Callsign";
     case TI99_SCR_EXIT:             return "Auto-Learned Peers";
-    case TI99_SCR_THEME:            return "Theme Settings";
+    case TI99_SCR_THEME:            return "Node Settings";
     case TI99_SCR_TERMINAL:         return "Local Terminal";
     case TI99_SCR_TERMINAL_HELP:    return "Terminal Hotkey Help";
     case TI99_SCR_FILES:            return "File Manager";

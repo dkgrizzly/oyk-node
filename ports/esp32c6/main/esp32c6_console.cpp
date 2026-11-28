@@ -50,6 +50,7 @@ Esp32C6Console::Esp32C6Console()
       wiz_same_iface_(0), wiz_lpol_(0), wiz_field_(0), wiz_btn_(1),
       edit_iface_idx_(0), edit_iface_field_(0), edit_peer_idx_(0), edit_peer_field_(0),
       edit_btn_(0), term_sel_(0), ban_sel_(0), ban_hard_(1), theme_sel_(0), theme_role_sel_(0),
+      theme_preview_dirty_(0),
       prompt_cursor_(0), files_focus_btn_(0), fm_preview_active_(0),
       bootloader_pending_(0), bootloader_start_ms_(0), lterm_sid_(0), lterm_ctrl_a_(0),
       lterm_help_open_(0), lterm_line_count_(0), lterm_input_len_(0) {
@@ -92,7 +93,7 @@ void Esp32C6Console::init(OykPortableNode* node, Esp32C6NetBridge* bridge,
     lterm_input_[0] = '\0';
     oyk_term_eol_init(&lterm_eol_, OYK_TERM_EOL_CR, 1);
     append_lterm_line("*** OYK ESP32-C6 Local Terminal (Ctrl+A Z:Help  Ctrl+A B:BBS  Ctrl+A T:Chat)");
-    strcpy(status_fb_, "Ready. F10/M:Menu | Tab/F9:Term | O:OLED Page | ?:About");
+    strcpy(status_fb_, "Ready. Ctrl-N:Menu | Tab/F9:Term | O:OLED | ?:About");
 }
 
 void Esp32C6Console::write_str(const char* s) {
@@ -111,7 +112,7 @@ void Esp32C6Console::on_usb_connect() {
 }
 
 const OykConfig* Esp32C6Console::active_theme_cfg() const {
-    if (prompt_kind_ == C6L_PROMPT_THEME) return &draft_;
+    if (view_ == C6L_VIEW_SETTINGS && settings_tab_ == 7 && theme_preview_dirty_) return &draft_;
     return node_ ? &node_->config() : NULL;
 }
 
@@ -329,7 +330,6 @@ void Esp32C6Console::render() {
     else if (prompt_kind_ == C6L_PROMPT_EDIT_PEER) render_edit_peer_modal();
     else if (prompt_kind_ == C6L_PROMPT_TERM_SID) render_terminate_modal();
     else if (prompt_kind_ == C6L_PROMPT_BAN_CALL) render_ban_modal();
-    else if (prompt_kind_ == C6L_PROMPT_THEME) render_theme_modal();
     else if (prompt_kind_ == C6L_PROMPT_CONFIRM_FORMAT) render_confirm_format_modal();
     else if (prompt_kind_ == C6L_PROMPT_SET_TEXT ||
              prompt_kind_ == C6L_PROMPT_SET_BOOL ||
@@ -380,9 +380,9 @@ void Esp32C6Console::render_console() {
     write_str("\033[H\033[2J");
     int hint_col = ncols - 32;
     if (hint_col < 9) hint_col = 9;
-    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-19s  [%9s]\033[0m",
+    sprintf(buf, "%s%-*s\033[0m\033[1;2H%s Node \033[0m\033[1;%dH%s %-21s  [%9s]\033[0m",
             sgr_menubar(), ncols, "", sgr_menusel(), hint_col, sgr_menubar(),
-            lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | F10/M",
+            lterm_sid_ ? "Tab/F9:Term(ACTIVE)" : "Tab/F9:Term | Ctrl-N",
             term_type_label());
     write_str(buf);
 
@@ -476,15 +476,13 @@ void Esp32C6Console::render_console() {
 }
 
 void Esp32C6Console::render_menu() {
-    static const char* kItems[15] = {
+    static const char* kItems[13] = {
         " [A] Allow Incoming Connections ",
         " [D] Deny Incoming Connections  ",
         " [L] Local Terminal...          ",
         " [F] Manage Files Area...       ",
         " [R] Radio Control...           ",
         " [S] Settings...                ",
-        " [E] Peers...                   ",
-        " [H] Theme...                   ",
         " [T] Terminate Connection...    ",
         " [B] Ban / Unban Callsign...    ",
         " [K] LoRa SX1262 Radio...       ",
@@ -493,12 +491,12 @@ void Esp32C6Console::render_menu() {
         " [?] About OYK-Node...          ",
         " [U] Exit / Bootloader          "
     };
-    const int mh = 19, mw = 35;
+    const int mh = 17, mw = 35;
     draw_box(2, 1, mh, mw, "", 1, 0);
     draw_shadow(2, 1, mh, mw);
     int r = 3;
-    for (int i = 0; i < 15; ++i) {
-        if (i == 2 || i == 10) draw_hdiv(r++, 1, mw);
+    for (int i = 0; i < 13; ++i) {
+        if (i == 2 || i == 8) draw_hdiv(r++, 1, mw);
         char line[128];
         snprintf(line, sizeof(line), "\033[%d;2H%s%-*.*s\033[0m", r++,
                  (i == menu_sel_) ? sgr_menusel() : "",
@@ -508,8 +506,8 @@ void Esp32C6Console::render_menu() {
 }
 
 void Esp32C6Console::render_settings() {
-    static const char* kTabs[7] = {
-        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
+    static const char* kTabs[8] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn", "8:Thm"
     };
     OykTuiRect mr;
     oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
@@ -517,18 +515,18 @@ void Esp32C6Console::render_settings() {
     draw_box(top, left, mr.h, mr.w, "Node Settings", 1, 1);
     draw_shadow(top, left, mr.h, mr.w);
 
-    char buf[160];
+    char buf[192];
     int col = left + 2;
     sprintf(buf, "\033[%d;%dH%s%-*s\033[0m", top + 1, left + 1, sgr_menubar(), mr.w - 2, "");
     write_str(buf);
-    for (int t = 0; t < 7; ++t) {
+    for (int t = 0; t < 8; ++t) {
         sprintf(buf, "\033[%d;%dH%s%s%s%s\033[0m", top + 1, col,
                 (t == settings_tab_) ? sgr_sel() : sgr_menubar(),
                 (t == settings_tab_) ? "[" : " ",
                 kTabs[t],
                 (t == settings_tab_) ? "]" : " ");
         write_str(buf);
-        col += static_cast<int>(strlen(kTabs[t])) + 3;
+        col += static_cast<int>(strlen(kTabs[t])) + 2;
     }
     draw_hdiv(top + 2, left, mr.w);
 
@@ -595,12 +593,30 @@ void Esp32C6Console::render_settings() {
         sprintf(buf, "\033[%d;%dHRig Protocol/Host  : %s (%s:%u)", top + 4, left + 3,
                 draft_.rig_protocol, draft_.rig_host, static_cast<unsigned int>(draft_.rig_port));
         write_str(buf);
-    } else {
+    } else if (settings_tab_ == 6) {
         sprintf(buf, "\033[%d;%dHEnable Line Printer : %s", top + 3, left + 3, draft_.printer_enabled ? "[ON]" : "[OFF]");
         write_str(buf);
         sprintf(buf, "\033[%d;%dHPrinter Protocol    : %s (%lu baud)", top + 4, left + 3,
                 draft_.printer_protocol, static_cast<unsigned long>(draft_.printer_baud));
         write_str(buf);
+    } else {
+        OykThemeConfig pal;
+        oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
+        sprintf(buf, "\033[%d;%dHActive Theme: < %s >", top + 3, left + 3,
+                draft_.theme_name[0] ? draft_.theme_name : "dark");
+        write_str(buf);
+        sprintf(buf, "\033[%d;%dH%s %-18s %-14s %-10s %-14s\033[0m", top + 4, left + 1, sgr_list_hdr(),
+                "Role", "Key", "Color", "Preview");
+        write_str(buf);
+        for (int i = 0; i < 10 && i < OYK_THEME_COLOR_COUNT; ++i) {
+            char hx[12];
+            oyk_theme_format_hex(pal.colors[i], hx, sizeof(hx));
+            sprintf(buf, "\033[%d;%dH%s %-18s %-14s %-10s \033[48;5;%dm      \033[0m",
+                    top + 5 + i, left + 1, (i == theme_role_sel_) ? sgr_sel() : "",
+                    oyk_theme_role_label(i), oyk_theme_role_key(i), hx,
+                    oyk_rgb_to_xterm256(pal.colors[i]));
+            write_str(buf);
+        }
     }
 
     if (dialog_fb_[0]) {
@@ -608,9 +624,11 @@ void Esp32C6Console::render_settings() {
         write_str(buf);
     }
     draw_hdiv(top + mr.h - 3, left, mr.w);
-    const char* keybar = (settings_tab_ == 3 || settings_tab_ == 4)
-        ? "1-7:Tabs  N/A:Add  E/Enter:Edit  S:Save  Esc:Close"
-        : "1-7/Tab/Lt/Rt:Tabs  Enter/Space:Edit  S:Save & Apply  Esc:Close";
+    const char* keybar = (settings_tab_ == 7)
+        ? "1-8/Tab:Tabs  Lt/Rt:Theme  Up/Dn:Role  S:Save & Apply  Esc:Close"
+        : ((settings_tab_ == 3 || settings_tab_ == 4)
+            ? "1-8:Tabs  N/A:Add  E/Enter:Edit  S:Save  Esc:Close"
+            : "1-8/Tab/Lt/Rt:Tabs  Enter/Space:Edit  S:Save & Apply  Esc:Close");
     sprintf(buf, "\033[%d;%dH%s %-69.69s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(), keybar);
     write_str(buf);
 }
@@ -820,40 +838,6 @@ void Esp32C6Console::render_ban_modal() {
     draw_hdiv(top + mr.h - 3, left, mr.w);
     sprintf(buf, "\033[%d;%dH%s %-62.62s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
             "Type+Enter:Ban  Del:Unban  Esc:Close");
-    write_str(buf);
-}
-
-void Esp32C6Console::render_theme_modal() {
-    OykTuiRect mr;
-    oyk_tui_center_modal(term_rows_, term_cols_, 19, 72, &mr);
-    const int top = mr.top + 1, left = mr.left + 1;
-    draw_box(top, left, mr.h, mr.w, "Theme Settings", 1, 1);
-    draw_shadow(top, left, mr.h, mr.w);
-
-    OykThemeConfig pal;
-    oyk_theme_resolve_effective(&draft_, 0, 1, &pal);
-    char buf[192];
-    sprintf(buf, "\033[%d;%dHActive Theme: < %s >", top + 1, left + 3,
-            draft_.theme_name[0] ? draft_.theme_name : "dark");
-    write_str(buf);
-    sprintf(buf, "\033[%d;%dH%s %-18s %-14s %-10s %-14s\033[0m", top + 3, left + 1, sgr_list_hdr(),
-            "Role", "Key", "Color", "Preview");
-    write_str(buf);
-    for (int i = 0; i < 8 && i < OYK_THEME_COLOR_COUNT; ++i) {
-        char hx[12];
-        oyk_theme_format_hex(pal.colors[i], hx, sizeof(hx));
-        sprintf(buf, "\033[%d;%dH%s %-18s %-14s %-10s \033[48;5;%dm      \033[0m",
-                top + 4 + i, left + 1, (i == theme_role_sel_) ? sgr_sel() : "",
-                oyk_theme_role_label(i), oyk_theme_role_key(i), hx,
-                oyk_rgb_to_xterm256(pal.colors[i]));
-        write_str(buf);
-    }
-    sprintf(buf, "\033[%d;%dH%s%s\033[0m", top + mr.h - 4, left + 2, sgr_title(),
-            dialog_fb_[0] ? dialog_fb_ : "Live preview active (Esc reverts)");
-    write_str(buf);
-    draw_hdiv(top + mr.h - 3, left, mr.w);
-    sprintf(buf, "\033[%d;%dH%s %-68.68s \033[0m", top + mr.h - 2, left + 1, sgr_menubar(),
-            "Lt/Rt:Theme  Up/Dn:Role  S:Save & Apply  Esc:Revert & Close");
     write_str(buf);
 }
 
@@ -1160,8 +1144,8 @@ void Esp32C6Console::handle_mouse_event(int row1, int col1, int kind) {
     }
     if (view_ == C6L_VIEW_MENU) {
         if (kind == 2) { view_ = C6L_VIEW_CONSOLE; render(); return; }
-        if (kind == 4) { menu_sel_ = (menu_sel_ + 1) % 15; render(); return; }
-        if (kind == 3) { menu_sel_ = (menu_sel_ + 14) % 15; render(); return; }
+        if (kind == 4) { menu_sel_ = (menu_sel_ + 1) % 13; render(); return; }
+        if (kind == 3) { menu_sel_ = (menu_sel_ + 12) % 13; render(); return; }
     }
     if (kind == 0 && prompt_kind_ == C6L_PROMPT_NONE && view_ == C6L_VIEW_SETTINGS) {
         OykTuiRect mr; oyk_tui_center_modal(term_rows_, term_cols_, 21, 74, &mr);
@@ -1192,40 +1176,57 @@ void Esp32C6Console::handle_key_code(int key) {
     }
 }
 
-void Esp32C6Console::handle_console_key(int key) {
-    if (key == 'm' || key == 'M' || key == C6L_F10) { view_ = C6L_VIEW_MENU; menu_sel_ = 0; render(); }
-    else if (key == 'a' || key == 'A') { if (node_) node_->set_accept_incoming(1); strcpy(status_fb_, "Incoming ALLOWED."); render(); }
+void Esp32C6Console::exec_menu_hotkey(int key) {
+    if (key == 'a' || key == 'A') { if (node_) node_->set_accept_incoming(1); strcpy(status_fb_, "Incoming ALLOWED."); render(); }
     else if (key == 'd' || key == 'D') { if (node_) node_->set_accept_incoming(0); strcpy(status_fb_, "Incoming DENIED."); render(); }
-    else if (key == 'l' || key == 'L' || key == C6L_TAB || key == C6L_F9) { view_ = C6L_VIEW_LOCAL_TERM; render(); }
+    else if (key == 'l' || key == 'L') { view_ = C6L_VIEW_LOCAL_TERM; render(); }
     else if (key == 'f' || key == 'F') { fm_preview_active_ = 0; files_focus_btn_ = 0; refresh_files_lists(); view_ = C6L_VIEW_FILES; render(); }
     else if (key == 'r' || key == 'R') { view_ = C6L_VIEW_RIG; render(); }
     else if (key == 's' || key == 'S') open_settings(0);
-    else if (key == 'e' || key == 'E') open_settings(4);
-    else if (key == 'h' || key == 'H') open_theme_dialog();
     else if (key == 't' || key == 'T') open_terminate_dialog();
     else if (key == 'b' || key == 'B') open_ban_dialog();
     else if (key == 'k' || key == 'K') { view_ = C6L_VIEW_LORA; render(); }
     else if (key == 'g' || key == 'G') { dialog_fb_[0] = '\0'; view_ = C6L_VIEW_STORAGE; render(); }
     else if (key == 'p' || key == 'P') { view_ = C6L_VIEW_HW; render(); }
-    else if (key == 'o' || key == 'O') { esp32c6_oled_next_page(); render(); }
+    else if (key == '?') { view_ = C6L_VIEW_ABOUT; render(); }
     else if (key == 'u' || key == 'U') { bootloader_pending_ = 0; view_ = C6L_VIEW_BOOTLOADER; render(); }
-    else if (key == '?' || key == C6L_F1) { view_ = C6L_VIEW_ABOUT; render(); }
+}
+
+void Esp32C6Console::handle_console_key(int key) {
+    if (key == 0x0E || key == C6L_F10) { view_ = C6L_VIEW_MENU; menu_sel_ = 0; render(); }
+    else if (key == C6L_TAB || key == C6L_F9) { view_ = C6L_VIEW_LOCAL_TERM; render(); }
     else if (key == 0x0C) { send_probes(); render(); }
 }
 
 void Esp32C6Console::handle_menu_key(int key) {
-    static const int kAct[15] = { 'a','d','l','f','r','s','e','h','t','b','k','g','p','?','u' };
-    if (key == C6L_ESC || key == C6L_F10 || key == 'x' || key == 'X') { view_ = C6L_VIEW_CONSOLE; render(); return; }
-    if (key == C6L_UP) { menu_sel_ = (menu_sel_ + 14) % 15; render(); return; }
-    if (key == C6L_DOWN) { menu_sel_ = (menu_sel_ + 1) % 15; render(); return; }
-    if (key == C6L_ENTER) { view_ = C6L_VIEW_CONSOLE; handle_console_key(kAct[menu_sel_]); return; }
-    view_ = C6L_VIEW_CONSOLE; handle_console_key(key);
+    static const int kAct[13] = { 'a','d','l','f','r','s','t','b','k','g','p','?','u' };
+    if (key == C6L_ESC || key == C6L_F10 || key == 0x0E || key == 'x' || key == 'X') {
+        view_ = C6L_VIEW_CONSOLE; render(); return;
+    }
+    if (key == C6L_UP) { menu_sel_ = (menu_sel_ + 12) % 13; render(); return; }
+    if (key == C6L_DOWN) { menu_sel_ = (menu_sel_ + 1) % 13; render(); return; }
+    int chosen = 0;
+    if (key == C6L_ENTER) chosen = kAct[menu_sel_];
+    else {
+        for (int i = 0; i < 13; ++i) {
+            if (key == kAct[i] || (kAct[i] >= 'a' && kAct[i] <= 'z' && key == (kAct[i] - 32))) {
+                chosen = kAct[i];
+                break;
+            }
+        }
+    }
+    if (!chosen) return;
+    view_ = C6L_VIEW_CONSOLE;
+    exec_menu_hotkey(chosen);
 }
 
 void Esp32C6Console::open_settings(int tab) {
     if (node_) draft_ = node_->config();
-    settings_tab_ = (tab >= 0 && tab < 7) ? tab : 0;
-    settings_sel_ = 0; dialog_fb_[0] = '\0';
+    settings_tab_ = (tab >= 0 && tab < 8) ? tab : 0;
+    settings_sel_ = 0;
+    theme_role_sel_ = 0;
+    theme_preview_dirty_ = 0;
+    dialog_fb_[0] = '\0';
     view_ = C6L_VIEW_SETTINGS; render();
 }
 
@@ -1268,19 +1269,30 @@ void Esp32C6Console::open_ban_dialog() {
     prompt_kind_ = C6L_PROMPT_BAN_CALL; render();
 }
 
-void Esp32C6Console::open_theme_dialog() {
-    if (node_) draft_ = node_->config();
-    theme_role_sel_ = 0; dialog_fb_[0] = '\0';
-    prompt_kind_ = C6L_PROMPT_THEME; render();
-}
-
 void Esp32C6Console::handle_settings_key(int key) {
-    if (key == C6L_ESC) { view_ = C6L_VIEW_CONSOLE; render(); return; }
-    if (key >= '1' && key <= '7') { settings_tab_ = key - '1'; settings_sel_ = 0; render(); return; }
-    if (key == C6L_TAB || key == C6L_RIGHT) { settings_tab_ = (settings_tab_ + 1) % 7; settings_sel_ = 0; render(); return; }
-    if (key == C6L_LEFT) { settings_tab_ = (settings_tab_ + 6) % 7; settings_sel_ = 0; render(); return; }
-    if (key == C6L_UP && settings_sel_ > 0) { --settings_sel_; render(); return; }
-    if (key == C6L_DOWN) { ++settings_sel_; render(); return; }
+    if (key == C6L_ESC) { theme_preview_dirty_ = 0; view_ = C6L_VIEW_CONSOLE; render(); return; }
+    if (key >= '1' && key <= '8') { settings_tab_ = key - '1'; settings_sel_ = 0; render(); return; }
+    if (key == C6L_TAB) { settings_tab_ = (settings_tab_ + 1) % 8; settings_sel_ = 0; render(); return; }
+    if (key == C6L_LEFT || key == C6L_RIGHT) {
+        if (settings_tab_ == 7) {
+            int dark_cur = (strcmp(draft_.theme_name, "light") == 0) ? 0 : 1;
+            strcpy(draft_.theme_name, dark_cur ? "light" : "dark");
+            theme_preview_dirty_ = 1;
+            sprintf(dialog_fb_, "Previewing '%s'", draft_.theme_name);
+        } else {
+            settings_tab_ = (key == C6L_RIGHT) ? ((settings_tab_ + 1) % 8) : ((settings_tab_ + 7) % 8);
+            settings_sel_ = 0;
+        }
+        render();
+        return;
+    }
+    if (settings_tab_ == 7) {
+        if (key == C6L_UP && theme_role_sel_ > 0) { --theme_role_sel_; render(); return; }
+        if (key == C6L_DOWN && theme_role_sel_ + 1 < OYK_THEME_COLOR_COUNT) { ++theme_role_sel_; render(); return; }
+    } else {
+        if (key == C6L_UP && settings_sel_ > 0) { --settings_sel_; render(); return; }
+        if (key == C6L_DOWN) { ++settings_sel_; render(); return; }
+    }
     if (settings_tab_ == 3 && (key == 'n' || key == 'N' || key == 'a' || key == 'A')) { open_wizard(); return; }
     if (settings_tab_ == 3 && (key == 'e' || key == 'E' || key == C6L_ENTER)) { open_edit_iface(settings_sel_); return; }
     if (settings_tab_ == 4 && (key == 'e' || key == 'E' || key == C6L_ENTER)) { open_edit_peer(settings_sel_); return; }
@@ -1290,6 +1302,7 @@ void Esp32C6Console::handle_settings_key(int key) {
             if (bridge_) bridge_->reconfig();
             strcpy(status_fb_, "Settings saved and applied.");
         }
+        theme_preview_dirty_ = 0;
         view_ = C6L_VIEW_CONSOLE; render();
     }
 }
@@ -1395,7 +1408,13 @@ void Esp32C6Console::handle_bootloader_key(int key) {
 }
 
 void Esp32C6Console::handle_local_term_key(int key) {
-    if (lterm_help_open_) { lterm_help_open_ = 0; render(); return; }
+    if (lterm_help_open_) {
+        if (key == C6L_ESC || key == C6L_ENTER || key == ' ') {
+            lterm_help_open_ = 0;
+            render();
+        }
+        return;
+    }
     if (key == C6L_TAB || key == C6L_F9) { view_ = C6L_VIEW_CONSOLE; render(); return; }
     if (lterm_ctrl_a_) {
         lterm_ctrl_a_ = 0;
@@ -1517,16 +1536,6 @@ void Esp32C6Console::handle_prompt_key(int key) {
             size_t l = strlen(ban_call_);
             ban_call_[l] = static_cast<char>(toupper(key));
             ban_call_[l + 1] = '\0'; render();
-        }
-    } else if (prompt_kind_ == C6L_PROMPT_THEME) {
-        if (key == C6L_LEFT || key == C6L_RIGHT) {
-            int dark_cur = (strcmp(draft_.theme_name, "light") == 0) ? 0 : 1;
-            strcpy(draft_.theme_name, dark_cur ? "light" : "dark");
-            sprintf(dialog_fb_, "Previewing '%s'", draft_.theme_name);
-            render();
-        } else if (key == 's' || key == 'S') {
-            OykConfigApplyResult ar; if (node_) node_->apply_config(&draft_, 1, &ar);
-            prompt_kind_ = C6L_PROMPT_NONE; render();
         }
     } else if (prompt_kind_ == C6L_PROMPT_CONFIRM_FORMAT) {
         if (key == C6L_ENTER) {

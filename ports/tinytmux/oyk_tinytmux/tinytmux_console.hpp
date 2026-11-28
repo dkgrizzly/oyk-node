@@ -10,15 +10,16 @@
  *
  * Full cross-port parity layout (AGENTS.md Section 5):
  *   - Top Menu Bar & Header Bar with PSRAM:<16M|8M|NO|ERR> and USBH:<NET|SER|N+S|->
- *   - Node Menu (M/F10):
+ *   - Node Menu (Ctrl-N / F10):
  *       [A] Allow Incoming Connections
  *       [D] Deny Incoming Connections
  *       [L] Local Terminal...
  *       [F] Manage Files Area...        (2 tabs: Pending Incoming / Approved Files)
  *       [R] Radio Control...            (Hamlib rigctl TCP + RadioFoundry UDP 4191)
- *       [S] Settings...                 (5 tabs: Node | BBS | CHAT | Interfaces | Rig)
+ *       [S] Settings...                 (8 tabs: Node | BBS | CHAT | Ifaces | Peers | Rig | Prn | Theme)
  *       [T] Terminate Connection...
  *       [B] Ban / Unban Callsign...
+ *       [?] About OYK-Node...
  *       [P] PSRAM Diagnostics / Re-Test...
  *       [X] Close Menu
  */
@@ -92,7 +93,6 @@ private:
         PROMPT_NONE = 0,
         PROMPT_TERMINATE_SID,
         PROMPT_BAN_CALLSIGN,
-        PROMPT_THEME_SETTINGS,
         PROMPT_SETTINGS_VALUE,
         PROMPT_SETTINGS_ADD_WIZARD,
         PROMPT_SETTINGS_EDIT_IFACE,
@@ -175,9 +175,6 @@ private:
     void open_ban_dialog();
     void render_ban_dialog();
     void handle_ban_key(int key);
-    void open_theme_dialog();
-    void render_theme_dialog();
-    void handle_theme_key(int key);
     void wizard_apply_driver_defaults();
     int wizard_try_advance();
     int edit_iface_try_save();
@@ -187,6 +184,7 @@ private:
     int wizard_step_field_count() const;
     int edit_iface_field_count() const;
 
+    void exec_menu_hotkey(int key);
     void handle_console_key(int key);
     void handle_menu_key(int key);
     void handle_lterm_key(int key);
@@ -229,10 +227,12 @@ private:
     int fm_preview_active_;
     char fm_preview_buf_[512];
 
-    /* Settings draft & navigation (7 tabs: Node, BBS, CHAT, Ifaces, Peers, Rig, Printer) */
+    /* Settings draft & navigation (8 tabs: Node, BBS, CHAT, Ifaces, Peers, Rig, Printer, Theme) */
     OykConfig draft_;
     int settings_tab_;
-    int settings_sel_[7];
+    int settings_sel_[8];
+    int theme_scroll_;
+    int theme_preview_dirty_;
     int settings_iface_field_;
 
     /* Line & modal prompt state */

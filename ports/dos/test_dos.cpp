@@ -15,6 +15,7 @@
  */
 
 #include "../compat/oyk_portable.hpp"
+#include "dos_keymap.hpp"
 #include "ems.hpp"
 
 #include <stdio.h>
@@ -119,12 +120,35 @@ static void test_dos_daily_rotation() {
     printf("[PASS] test_dos_daily_rotation\n");
 }
 
+static void test_dos_keymap_discipline() {
+    /* Closed-menu single-letter hotkeys must be rejected */
+    CHECK(oyk_dos_map_main_key('s', 0, 0) == OYK_DACT_NONE, "Closed menu ignores 's'");
+    CHECK(oyk_dos_map_main_key('m', 0, 0) == OYK_DACT_NONE, "Closed menu ignores 'm'");
+    CHECK(oyk_dos_map_main_key('q', 0, 0) == OYK_DACT_NONE, "Closed menu ignores 'q'");
+    CHECK(oyk_dos_map_main_key('?', 0, 0) == OYK_DACT_NONE, "Closed menu ignores '?'");
+    CHECK(oyk_dos_map_main_key(0x0E, 0, 0) == OYK_DACT_OPEN_MENU, "Ctrl-N opens menu");
+    CHECK(oyk_dos_map_main_key(0, 68, 0) == OYK_DACT_OPEN_MENU, "F10 opens menu");
+    CHECK(oyk_dos_map_main_key('\t', 0, 0) == OYK_DACT_TERM, "Tab opens terminal");
+    /* Modal preemption & Esc dismissal */
+    CHECK(oyk_dos_map_main_key(0x0E, 0, 1) == OYK_DACT_NONE, "Modal preempts Ctrl-N");
+    CHECK(oyk_dos_map_main_key(0, 68, 1) == OYK_DACT_NONE, "Modal preempts F10");
+    CHECK(oyk_dos_map_main_key('\t', 0, 1) == OYK_DACT_NONE, "Modal preempts Tab");
+    CHECK(oyk_dos_map_main_key(0, 67, 1) == OYK_DACT_NONE, "Modal preempts F9");
+    CHECK(oyk_dos_map_main_key(27, 0, 1) == OYK_DACT_CLOSE, "Esc dismisses modal");
+    /* Menu deduplication */
+    CHECK(oyk_dos_map_menu_key('p', 0) == OYK_DACT_NONE, "Menu drops Peers");
+    CHECK(oyk_dos_map_menu_key('h', 0) == OYK_DACT_NONE, "Menu drops Theme");
+    CHECK(oyk_dos_map_menu_key('?', 0) == OYK_DACT_ABOUT, "Menu maps ? to About");
+    printf("[PASS] test_dos_keymap_discipline\n");
+}
+
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("=== OYK DOS TESTS START ===\n");
     test_dos_16bit_types_and_eol();
     test_dos_ems4();
     test_dos_daily_rotation();
+    test_dos_keymap_discipline();
     oyk_run_portable_tests();
 
     if (g_failures == 0) {

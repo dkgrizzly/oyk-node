@@ -404,16 +404,28 @@ def main() -> int:
             drain_quiet(master_fd, scr, 0.25)
             save_cap(cap_dir, "main", scr)
 
-            # 1b. Node Dropdown Menu
-            os.write(master_fd, b"m")
+            # 1a. Closed-menu single-letter hotkeys must be ignored when menu is closed
+            for key in (b"s", b"m", b"q", b"t", b"f", b"?"):
+                os.write(master_fd, key)
+            drain_quiet(master_fd, scr, 0.15)
+            main_txt = scr.text()
+            assert "Node Settings" not in main_txt, f"Closed-menu key opened Settings:\n{main_txt}"
+            assert "[A] Allow Incoming" not in main_txt, f"Closed-menu 'm' opened menu:\n{main_txt}"
+            assert "Auto-Learned Peers" not in main_txt, f"Closed-menu 'q' opened Exit:\n{main_txt}"
+
+            # 1b. Node Dropdown Menu via Ctrl-N
+            os.write(master_fd, b"\x0e")
             drain_and_wait(master_fd, scr, "[A] Allow Incoming")
             drain_quiet(master_fd, scr, 0.1)
+            assert "[P] Peers" not in scr.text() and "[H] Theme" not in scr.text(), (
+                f"Duplicated Peers/Theme shortcuts still in Node menu:\n{scr.text()}"
+            )
             save_cap(cap_dir, "menu", scr)
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Radio Interfaces")
 
-            # 2. Terminate Connection modal
-            os.write(master_fd, b"t")
+            # 2. Terminate Connection modal (via Ctrl-N -> t)
+            os.write(master_fd, b"\x0et")
             drain_and_wait(master_fd, scr, "Terminate Active Connection")
             drain_quiet(master_fd, scr, 0.15)
             term_txt = scr.text()
@@ -423,18 +435,25 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_quiet(master_fd, scr, 0.15)
 
-            # 3. Ban / Unban Callsign modal
-            os.write(master_fd, b"b")
+            # 3. Ban / Unban Callsign modal (via Ctrl-N -> b)
+            os.write(master_fd, b"\x0eb")
             drain_and_wait(master_fd, scr, "Ban / Unban Callsign")
             drain_quiet(master_fd, scr, 0.15)
             save_cap(cap_dir, "ban", scr)
             os.write(master_fd, b"\x1b")
             drain_quiet(master_fd, scr, 0.15)
 
-            # 4. Settings (All 7 Canonical Tabs)
-            os.write(master_fd, b"s")
+            # 4. Settings (All 8 Canonical Tabs) + strict modal preemption
+            os.write(master_fd, b"\x0es")
             drain_and_wait(master_fd, scr, "Node Settings")
             drain_quiet(master_fd, scr, 0.15)
+            # Preemption check: global hotkeys Ctrl-N, F10, F9 must NOT open menu/terminal over Settings
+            for gkey in (b"\x0e", b"\x1b[21~", b"\x1b[20~"):
+                os.write(master_fd, gkey)
+            drain_quiet(master_fd, scr, 0.1)
+            assert "Node Settings" in scr.text() and "LOCAL TERMINAL" not in scr.text(), (
+                f"Global hotkey bypassed open Settings modal:\n{scr.text()}"
+            )
             save_cap(cap_dir, "settings", scr)
 
             os.write(master_fd, b"2")
@@ -508,16 +527,14 @@ def main() -> int:
             drain_quiet(master_fd, scr, 0.1)
             save_cap(cap_dir, "settings_printer", scr)
 
-            os.write(master_fd, b"\x1b")
-            drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
-
-            # 8b. Theme Settings Modal (live preview whole-screen repaint + [X] close)
-            os.write(master_fd, b"h")
-            drain_and_wait(master_fd, scr, "Theme Settings")
+            # 8b. Settings Tab 8 (Theme live preview whole-screen repaint + [X] close)
+            os.write(master_fd, b"8")
+            drain_and_wait(master_fd, scr, "Role")
             drain_quiet(master_fd, scr, 0.15)
             theme_txt = scr.text()
-            assert "[X]" in theme_txt.splitlines()[2], f"Missing [X] close button in Theme modal title bar:\n{theme_txt}"
-            save_cap(cap_dir, "theme", scr)
+            assert "Node Settings" in theme_txt and "8:Thm" in theme_txt, f"Missing 8:Thm tab in Theme settings:\n{theme_txt}"
+            assert "[X]" in theme_txt.splitlines()[2], f"Missing [X] close button in Settings modal title bar:\n{theme_txt}"
+            save_cap(cap_dir, "settings_theme", scr)
 
             # Switch dark -> light and confirm BOTH background console & foreground modal change bg
             dark_bg_cell = scr.grid[10][1][2]
@@ -537,7 +554,7 @@ def main() -> int:
 
             os.write(master_fd, b"\x1b[<0;74;3M\x1b[<0;74;3m")
             drain_and_wait(master_fd, scr, "Radio Interfaces")
-            assert "Theme Settings" not in scr.text(), f"Theme modal did not close on [X] click:\n{scr.text()}"
+            assert "Node Settings" not in scr.text(), f"Settings modal did not close on [X] click:\n{scr.text()}"
 
             # 8d. Local Packet Terminal: Ctrl+A B BBS, Ctrl+A Z Help Overlay, EOL cycle, CHAT / passthrough
             os.write(master_fd, b"\t")
@@ -570,8 +587,8 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
-            # 8e. Manage BBS Files Area dual-pane jailed modal (enter W3TRM-1 so Incoming shows '..' while Files at '/' omits '..')
-            os.write(master_fd, b"f")
+            # 8e. Manage BBS Files Area dual-pane jailed modal (via Ctrl-N -> f)
+            os.write(master_fd, b"\x0ef")
             drain_and_wait(master_fd, scr, "Manage BBS Files Area")
             assert "<UP>" not in scr.text(), f"Parent '..' must not appear at root:\n{scr.text()}"
             os.write(master_fd, b"\r")
@@ -582,8 +599,8 @@ def main() -> int:
             os.write(master_fd, b"\x1b")
             drain_and_wait(master_fd, scr, "Tab/F9: Terminal")
 
-            # 8f. About OYK-Node modal
-            os.write(master_fd, b"?")
+            # 8f. About OYK-Node modal (via Ctrl-N -> ?)
+            os.write(master_fd, b"\x0e?")
             drain_and_wait(master_fd, scr, "About OYK")
             drain_quiet(master_fd, scr, 0.1)
             save_cap(cap_dir, "about", scr)
@@ -599,8 +616,8 @@ def main() -> int:
             drain_and_wait(master_fd, scr, "Radio Interfaces")
             assert "[A] Allow Incoming" not in scr.text(), f"Node menu did not close on right-click:\n{scr.text()}"
 
-            # 9. Auto-Learned Peers Exit Modal + verify 73 de KR4OYK-7 stdout sign-off
-            os.write(master_fd, b"q")
+            # 9. Auto-Learned Peers Exit Modal (via Ctrl-N -> x) + verify 73 de KR4OYK-7 stdout sign-off
+            os.write(master_fd, b"\x0ex")
             drain_and_wait(master_fd, scr, "Auto-Learned Peers")
             drain_quiet(master_fd, scr, 0.15)
             save_cap(cap_dir, "exit", scr)

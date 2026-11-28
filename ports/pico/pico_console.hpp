@@ -43,7 +43,6 @@ enum PicoPromptKind {
     PICO_PROMPT_ADD_WIZARD,
     PICO_PROMPT_EDIT_IFACE,
     PICO_PROMPT_EDIT_PEER,
-    PICO_PROMPT_THEME,
     PICO_PROMPT_CONFIRM_FORMAT,
     PICO_PROMPT_LTERM_CONNECT,
     PICO_PROMPT_FM_UPLOAD,
@@ -118,9 +117,9 @@ private:
     void render_edit_peer_modal();
     void render_terminate_modal();
     void render_ban_modal();
-    void render_theme_modal();
     void render_confirm_format_modal();
     void render_text_prompt();
+    int  modal_close_btn() const;
 
     void handle_char(oyk_u8 ch, oyk_u32 now_ms);
     void handle_key_code(int key);
@@ -128,6 +127,7 @@ private:
     void disable_mouse();
     void handle_console_key(int key);
     void handle_menu_key(int key);
+    void exec_menu_hotkey(int key);
     void handle_settings_key(int key);
     void handle_files_key(int key);
     void handle_rig_key(int key);
@@ -140,7 +140,6 @@ private:
     void handle_edit_peer_key(int key);
     void handle_terminate_key(int key);
     void handle_ban_key(int key);
-    void handle_theme_key(int key);
 
     void open_settings(int tab);
     void commit_settings();
@@ -156,7 +155,6 @@ private:
     void open_edit_peer_dialog(int idx);
     void open_terminate_dialog();
     void open_ban_dialog();
-    void open_theme_dialog();
     void wizard_apply_driver_defaults();
     int wizard_step_field_count() const;
     int edit_iface_field_count() const;
@@ -178,7 +176,9 @@ private:
     PicoPromptKind prompt_kind_;
     int menu_sel_;
     int settings_tab_;
-    int settings_sel_[7];
+    int settings_sel_[8];
+    int theme_scroll_;
+    int theme_preview_dirty_;
     OykGuiFileMgr file_mgr_;
     int files_focus_btn_;
     int fm_preview_active_;

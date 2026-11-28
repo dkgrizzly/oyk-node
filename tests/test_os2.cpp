@@ -59,13 +59,16 @@ int main() {
         oyk_os2_net_shutdown(&net);
     }
 
-    /* 3. Verify shared TUI/GUI 23-screen & 8-tab schema completeness */
+    /* 3. Verify shared TUI/GUI 23-screen, 8-tab schema, and modal preemption */
     {
         if (oyk_gui_settings_tab_count() != 8 ||
             oyk_gui_node_menu_count() != 11 ||
+            oyk_gui_is_modal_screen(OYK_SCR_SETTINGS) != 1 ||
+            oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) != 0 ||
+            oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) != 1 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_EXIT_PEERS), "Auto-Learned Peers") != 0 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_TERM_HELP), "Terminal Hotkey Help") != 0) {
-            std::printf("FAIL: OS/2 shared GUI schema check\n");
+            std::printf("FAIL: OS/2 shared GUI schema/preemption check\n");
             ++failures;
         }
     }

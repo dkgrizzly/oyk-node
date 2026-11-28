@@ -775,9 +775,9 @@ static void test_vt100_console_full_parity() {
     assert(strstr(cap->buf, "PSRAM:16M") != NULL);
     assert(strstr(cap->buf, "USBH:-") != NULL);
 
-    /* Open PSRAM Diagnostics via Node Menu (M -> P), run quick retest (T) & cooperative March C- (M), close (Esc) */
+    /* Open PSRAM Diagnostics via Node Menu (Ctrl-N -> P), run quick retest (T) & cooperative March C- (M), close (Esc) */
     cap->len = 0; cap->buf[0] = '\0';
-    const char* psram_seq = "mp";
+    const char* psram_seq = "\x0ep";
     con->feed_input(reinterpret_cast<const oyk_u8*>(psram_seq), strlen(psram_seq));
     assert(con->view_mode() == TMUX_VIEW_PSRAM);
     assert(strstr(cap->buf, "PSRAM DIAGNOSTICS") != NULL);
@@ -796,9 +796,9 @@ static void test_vt100_console_full_parity() {
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* Open Radio Control (R), poll Hamlib (r), close (Esc) */
+    /* Open Radio Control (Ctrl-N -> R), poll Hamlib (r), close (Esc) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("rr"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0err"), 3);
     assert(con->view_mode() == TMUX_VIEW_RIG);
     assert(strstr(cap->buf, "RADIO CONTROL") != NULL);
     assert(bridge->rig_status()->freq_hz == 145050000UL);
@@ -806,8 +806,8 @@ static void test_vt100_console_full_parity() {
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* Open Files Area (F), toggle between 1:Pending and 2:Approved tabs, close (Esc) */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+    /* Open Files Area (Ctrl-N -> F), toggle between 1:Pending and 2:Approved tabs, close (Esc) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
     assert(con->view_mode() == TMUX_VIEW_FILES);
     assert(con->files_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
@@ -816,8 +816,15 @@ static void test_vt100_console_full_parity() {
     con->tick(t += 50UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
+    /* Closed-menu single-letter hotkeys must be rejected */
+    for (int k = 0; k < 7; ++k) {
+        const char ch = "smtfhb?"[k];
+        con->feed_input(reinterpret_cast<const oyk_u8*>(&ch), 1);
+        assert(con->view_mode() == TMUX_VIEW_CONSOLE);
+    }
+
     /* Verify split-packet CSI, minicom SS3, modified CSI, Home/End, Shift-Tab, unknown CSI, and double-Esc in Settings */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es"), 2);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(con->settings_tab() == 0);
     assert(con->current_settings_sel() == 0);
@@ -858,22 +865,30 @@ static void test_vt100_console_full_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1bOD"), 3);
     assert(con->settings_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[Z"), 3);
-    assert(con->settings_tab() == 6);
+    assert(con->settings_tab() == 7);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\t"), 1);
     assert(con->settings_tab() == 0);
     con->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
     assert(con->settings_tab() == 5);
     con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     assert(con->settings_tab() == 6);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    assert(con->settings_tab() == 7);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[99~"), 5);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS);
+
+    /* Open modal strictly preempts Ctrl-N / F10 / F9 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[21~"), 5);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[20~"), 5);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
 
     /* Double-Esc cancels immediately without waiting for timeout */
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b\x1b"), 2);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* Open 5-tab Settings (S), edit callsign -> K7TMP-7, switch to 4:Interfaces, add usb-cdc-net, save via F2 */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    /* Open 8-tab Settings (Ctrl-N -> S), edit callsign -> K7TMP-7, switch to 4:Interfaces, add usb-cdc-net, save via F2 */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es"), 2);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(con->settings_tab() == 0);
     /* Backspace K7TMP-7 over KR4OYK-7 (10 backspaces clears it) + Enter */
@@ -917,7 +932,7 @@ static void test_vt100_console_full_parity() {
     assert(tinytmux_psram_info()->misplaced_flash_cs0 == 1);
     assert(tinytmux_psram_info()->has_valid_qspi_flash_cs1 == 0);
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("mp"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0ep"), 2);
     assert(strstr(cap->buf, "WRONG PADS (CS0 / Pin 48") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(t += 50UL);
@@ -934,7 +949,7 @@ static void test_vt100_console_full_parity() {
     tinytmux_fs_unmount();
     assert(tinytmux_fs_mount() == 1);
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("mg"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0eg"), 2);
     assert(con->view_mode() == TMUX_VIEW_STORAGE);
     assert(strstr(cap->buf, "STORAGE MANAGER") != NULL);
     assert(strstr(cap->buf, "microSD Card (SDIO)") != NULL);
@@ -966,7 +981,7 @@ static void test_vt100_console_full_parity() {
     /* HalfKay Bootloader workflow: cancel first, then confirm with active connection & verify notice + drain */
     assert(tinytmux_board_sim_bootloader_count() == 0);
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("mu"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0eu"), 2);
     assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "OFFLINE in HalfKay bootloader") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("n"), 1);
@@ -986,7 +1001,7 @@ static void test_vt100_console_full_parity() {
     node->discard_auto_learned_peers();
 
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0eu"), 2);
     assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "firmware upgrade") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("y"), 1);
@@ -1198,7 +1213,7 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(strstr(cap->buf, ";48;5;") != NULL);
 
     /* 5. Add Interface 4-step wizard: corner progress bar, Back navigation, driver switch, and Summary commit */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s4"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es4"), 3);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(con->settings_tab() == 3);
 
@@ -1231,7 +1246,7 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(strcmp(node->iface(3).cfg.id, "usbnet1") == 0);
 
     /* 6. Edit Interface single-view dialog via 'e' on Settings Tab 4 */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s4"), 2);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es4"), 3);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(con->settings_tab() == 3);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[H\x1b[B"), 6); /* Home, Down -> axudp1 */
@@ -1266,16 +1281,16 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(node->iface(1).cfg.port == 10193);
 
     /* Open Edit Interface and cancel with Esc */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s4e"), 3);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es4e"), 4);
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(550UL);
     assert(strstr(cap->buf, "Edit interface cancelled.") != NULL);
 
-    /* 7. Open Peers tab via 'e' shortcut, add peer via Edit Peer modal, and test Bootloader auto-peer Review flow */
+    /* 7. Open Peers tab via Settings Tab 5, add peer via Edit Peer modal, and test Bootloader auto-peer Review flow */
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1); /* back to console */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("e"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es5"), 3);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(con->settings_tab() == 4);
     assert(strstr(cap->buf, "5:Peers") != NULL);
@@ -1298,7 +1313,7 @@ static void test_terminal_inquiry_and_ui_modals() {
     assert(node->auto_learned_peer_count() == 1);
 
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0eu"), 2);
     assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "auto-learned peer") != NULL);
     assert(strstr(cap->buf, "Review Peers") != NULL);
@@ -1397,25 +1412,27 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(strstr(cap->buf, "axudp0") != NULL);
     tmux_save_capture("main", con, cap);
 
-    /* 1b. Drop-down Node Menu */
+    /* 1b. Drop-down Node Menu (via Ctrl-N, deduplicated) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     assert(con->view_mode() == TMUX_VIEW_MENU);
+    assert(strstr(cap->buf, "[E] Peers") == NULL && strstr(cap->buf, "[H] Theme") == NULL);
     tmux_save_capture("menu", con, cap);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
+    con->tick(550UL);
     assert(con->view_mode() == TMUX_VIEW_CONSOLE);
 
-    /* 2. Terminate Connection centered modal */
+    /* 2. Terminate Connection centered modal (via Ctrl-N -> t) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0et"), 2);
     assert(strstr(cap->buf, "Terminate Active Connection") != NULL);
     assert(strstr(cap->buf, "W3TRM-1") != NULL);
     tmux_save_capture("terminate", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
     assert(node->total_active_connections() == 0);
 
-    /* 3. Ban / Unban Callsign centered modal */
-    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    /* 3. Ban / Unban Callsign centered modal (via Ctrl-N -> b) */
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     assert(node->ban_count() >= 1);
     cap->len = 0; cap->buf[0] = '\0';
     con->render();
@@ -1425,9 +1442,9 @@ static void test_tinytmux_ui_flows_and_captures() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(550UL);
 
-    /* 4. Settings (All 7 Canonical Tabs) */
+    /* 4. Settings (All 8 Canonical Tabs via Ctrl-N -> s) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es"), 2);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS && con->settings_tab() == 0);
     assert(strstr(cap->buf, "Node Settings") != NULL);
     assert(strstr(cap->buf, " Node ") != NULL);
@@ -1508,7 +1525,7 @@ static void test_tinytmux_ui_flows_and_captures() {
     assert(con->settings_tab() == 6);
     tmux_save_capture("settings_printer", con, cap);
 
-    /* 8b. Theme Settings Modal (from main console via 'h') & whole-screen live preview */
+    /* 8b. Settings Tab 8 (Theme) & whole-screen live preview */
     OykThemeConfig dt_pal, lt_pal;
     oyk_theme_init_builtin(&dt_pal, 0);
     oyk_theme_init_builtin(&lt_pal, 1);
@@ -1522,15 +1539,14 @@ static void test_tinytmux_ui_flows_and_captures() {
     sprintf(dark_bdr_sgr, "\033[38;5;%dm", oyk_rgb_to_xterm256(dt_pal.colors[OYK_TR_BORDER]));
     sprintf(light_bdr_sgr, "\033[38;5;%dm", oyk_rgb_to_xterm256(lt_pal.colors[OYK_TR_BORDER]));
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(700UL);
-    assert(con->view_mode() == TMUX_VIEW_CONSOLE);
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    assert(strstr(cap->buf, "Theme Settings") != NULL);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    assert(con->view_mode() == TMUX_VIEW_SETTINGS && con->settings_tab() == 7);
+    assert(strstr(cap->buf, "Node Settings") != NULL);
+    assert(strstr(cap->buf, "8:Thm") != NULL);
     assert(strstr(cap->buf, dark_menu_sgr) != NULL);
     assert(strstr(cap->buf, dark_bdr_sgr) != NULL);
-    tmux_save_capture("theme", con, cap);
+    tmux_save_capture("settings_theme", con, cap);
 
     cap->len = 0; cap->buf[0] = '\0';
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b[C"), 3); /* dark -> light */
@@ -1610,7 +1626,7 @@ static void test_tinytmux_ui_flows_and_captures() {
         assert(chdir("/tmp/oyk_tmux_fm") == 0);
 #endif
         cap->len = 0; cap->buf[0] = '\0';
-        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
         assert(con->view_mode() == TMUX_VIEW_FILES);
         assert(strstr(cap->buf, "W3TRM-1") != NULL);
         assert(strstr(cap->buf, "bulletins") != NULL);
@@ -1630,9 +1646,9 @@ static void test_tinytmux_ui_flows_and_captures() {
 #endif
     }
 
-    /* 8c4. About OYK-Node modal */
+    /* 8c4. About OYK-Node modal (via Ctrl-N -> ?) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     assert(con->view_mode() == TMUX_VIEW_ABOUT);
     tmux_save_capture("about", con, cap);
     con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
@@ -1664,7 +1680,7 @@ static void test_tinytmux_ui_flows_and_captures() {
 
     /* Open Settings, verify [X] rendered, and close via SGR click on [X] (row 3, col 74 1-based) */
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0es"), 2);
     assert(con->view_mode() == TMUX_VIEW_SETTINGS);
     assert(strstr(cap->buf, "[X]") != NULL);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\033[<0;74;3M"), 10);
@@ -1678,7 +1694,7 @@ static void test_tinytmux_ui_flows_and_captures() {
 
     const int base_bl = tinytmux_board_sim_bootloader_count();
     cap->len = 0; cap->buf[0] = '\0';
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0eu"), 2);
     assert(con->view_mode() == TMUX_VIEW_BOOTLOADER);
     assert(strstr(cap->buf, "auto-learned peer") != NULL);
     assert(strstr(cap->buf, "before entering HalfKay bootloader?") != NULL);

@@ -448,39 +448,57 @@ static void test_picocalc_cross_port_ui_parity() {
     assert_pixel_box_equal("main_6x10_pan", lpc->lcd(), ppc->lcd(), 0, 20, 319, 319);
     lpc->toggle_font(); ppc->toggle_font();
 
-    /* 2. menu (row 0, borders, shadows, 12 shared items pixel-identical; [P] and [U] verified on Lyra) */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    /* 2. menu (row 0, borders, shadows, deduplicated 13 items; [P] and [U] verified on Lyra) */
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    assert(lcon->view_mode() == LYRA_VIEW_CONSOLE && pcon->view_mode() == PICO_VIEW_CONSOLE);
+
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     lcon->render(); lpc->flush();
     pcon->render(); ppc->flush();
     assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 0, 319, 7);
-    assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 16, 319, 103);
-    assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 128, 319, 319);
+    assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 16, 319, 95);
+    assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 104, 319, 111);
+    assert_pixel_box_equal("menu", lpc->lcd(), ppc->lcd(), 0, 120, 319, 319);
     char mrow[81];
-    read_vt_row(lpc->vt(), 13, mrow); assert(strstr(mrow, "[P] Hardware Diagnostics...") != NULL);
-    read_vt_row(lpc->vt(), 15, mrow); assert(strstr(mrow, "[U] Reboot / Power Off...") != NULL);
+    read_vt_row(lpc->vt(), 12, mrow); assert(strstr(mrow, "[P] Hardware Diagnostics...") != NULL);
+    read_vt_row(lpc->vt(), 14, mrow); assert(strstr(mrow, "[U] Reboot / Power Off...") != NULL);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
 
     /* 3. terminate */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
     check_shared_screen_exact("terminate", lcon, lpc, pcon, ppc);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\t"), 2);
+    assert(lcon->prompt_kind() == LYRA_PROMPT_TERM_SID && pcon->prompt_kind() == PICO_PROMPT_TERM_SID);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
 
     /* 4. ban */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     check_shared_screen_exact("ban", lcon, lpc, pcon, ppc);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     lcon->tick(700UL); pcon->tick(700UL);
 
-    /* 5..8. settings tabs 1..4 */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    /* 5..8. settings tabs 1..4 (mouseless PicoCalc omits [X] close box) */
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
     check_shared_screen_exact("settings", lcon, lpc, pcon, ppc);
+    for (int r = 0; r < 25; ++r) {
+        char lv[81], pv[81];
+        read_vt_row(lpc->vt(), r, lv);
+        read_vt_row(ppc->vt(), r, pv);
+        assert(strstr(lv, "[X]") == NULL);
+        assert(strstr(pv, "[X]") == NULL);
+    }
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\033[21~\033[20~"), 11);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e\033[21~\033[20~"), 11);
+    assert(lcon->view_mode() == LYRA_VIEW_SETTINGS && pcon->view_mode() == PICO_VIEW_SETTINGS);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
     check_shared_screen_exact("settings_bbs", lcon, lpc, pcon, ppc);
@@ -535,21 +553,16 @@ static void test_picocalc_cross_port_ui_parity() {
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     lcon->tick(1300UL); pcon->tick(1300UL);
 
-    /* 16..17. settings_rig & settings_printer */
+    /* 16..18. settings_rig, settings_printer, & settings_theme (Tab 8) */
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("6"), 1);
     check_shared_screen_exact("settings_rig", lcon, lpc, pcon, ppc);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     check_shared_screen_exact("settings_printer", lcon, lpc, pcon, ppc);
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    lcon->tick(1500UL); pcon->tick(1500UL);
-
-    /* 18. theme */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    check_shared_screen_exact("theme", lcon, lpc, pcon, ppc);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    check_shared_screen_exact("settings_theme", lcon, lpc, pcon, ppc);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     lcon->tick(1700UL); pcon->tick(1700UL);
@@ -572,8 +585,8 @@ static void test_picocalc_cross_port_ui_parity() {
 #ifndef _WIN32
     assert(chdir("/tmp/oyk_lyra_fm") == 0);
 #endif
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
     check_shared_screen_exact("files", lcon, lpc, pcon, ppc);
     lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
@@ -582,9 +595,9 @@ static void test_picocalc_cross_port_ui_parity() {
     if (orig_cwd[0]) assert(chdir(orig_cwd) == 0);
 #endif
 
-    /* 22. about (identical frame, [X], and left 15x10 ASCII emblem; Luckfox Lyra in right text column) */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    /* 22. about (identical frame and left 15x10 ASCII emblem; Luckfox Lyra in right text column) */
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     lcon->render(); lpc->flush();
     pcon->render(); ppc->flush();
     assert_pixel_box_equal("about_row0", lpc->lcd(), ppc->lcd(), 0, 0, 319, 7);
@@ -600,8 +613,8 @@ static void test_picocalc_cross_port_ui_parity() {
     pcon->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
 
     /* 23. exit (auto-learned peer modal: identical row 0, borders, divider, 4-button row) */
-    lcon->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
-    pcon->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    lcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
+    pcon->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
     lcon->render(); lpc->flush();
     pcon->render(); ppc->flush();
     assert_pixel_box_equal("exit_row0", lpc->lcd(), ppc->lcd(), 0, 0, 319, 7);
@@ -672,20 +685,24 @@ static void test_lyra_standalone_ui_parity() {
 
     lyra_save_ansi("main", cap, con);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("m"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("sbfht?u"), 7);
+    assert(con->view_mode() == LYRA_VIEW_CONSOLE);
+
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e"), 1);
     lyra_save_ansi("menu", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("x"), 1);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("t"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "t"), 2);
     lyra_save_ansi("terminate", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\r"), 1);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("bB4NTST\r"), 8);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "bB4NTST\r"), 9);
     lyra_save_ansi("ban", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(700UL);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("s"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "s"), 2);
+    assert(strstr(cap->buf, "[X]") != NULL);
     lyra_save_ansi("settings", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("2"), 1);
     lyra_save_ansi("settings_bbs", cap, con);
@@ -721,11 +738,8 @@ static void test_lyra_standalone_ui_parity() {
     lyra_save_ansi("settings_rig", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("7"), 1);
     lyra_save_ansi("settings_printer", cap, con);
-    con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
-    con->tick(1500UL);
-
-    con->feed_input(reinterpret_cast<const oyk_u8*>("h"), 1);
-    lyra_save_ansi("theme", cap, con);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("8"), 1);
+    lyra_save_ansi("settings_theme", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
     con->tick(1700UL);
 
@@ -750,7 +764,7 @@ static void test_lyra_standalone_ui_parity() {
         }
         assert(chdir("/tmp/oyk_lyra_fm") == 0);
 #endif
-        con->feed_input(reinterpret_cast<const oyk_u8*>("f"), 1);
+        con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "f"), 2);
         lyra_save_ansi("files", cap, con);
         con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
         con->tick(2100UL);
@@ -760,7 +774,7 @@ static void test_lyra_standalone_ui_parity() {
 #endif
     }
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("?"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e?"), 2);
     lyra_save_ansi("about", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("q"), 1);
 
@@ -770,7 +784,7 @@ static void test_lyra_standalone_ui_parity() {
     con->feed_input(reinterpret_cast<const oyk_u8*>("\033[25;80R"), 8);
     assert(con->term_rows() == 25 && con->term_cols() == 80);
 
-    con->feed_input(reinterpret_cast<const oyk_u8*>("u"), 1);
+    con->feed_input(reinterpret_cast<const oyk_u8*>("\x0e" "u"), 2);
     lyra_save_ansi("exit", cap, con);
     con->feed_input(reinterpret_cast<const oyk_u8*>("\x1b"), 1);
 

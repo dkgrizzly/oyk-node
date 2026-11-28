@@ -75,6 +75,20 @@ static int run_unit_tests(void)
         }
     }
 
+    /* Check hotkey discipline: closed-menu single-letter suppression, Ctrl-N, modal preemption, Esc */
+    ti99_app_init(&app, 0);
+    if (ti99_app_handle_key(&app, 's') == 0 || ti99_app_handle_key(&app, 'm') == 0 ||
+        ti99_app_handle_key(&app, 'q') == 0 || app.screen != TI99_SCR_MAIN) return 16;
+    if (ti99_app_handle_key(&app, TI99_KEY_CTRL_N) != 0 || app.screen != TI99_SCR_MENU) return 17;
+    if (ti99_app_handle_key(&app, 'c') == 0 || app.screen != TI99_SCR_MENU) return 18;
+    if (ti99_app_handle_key(&app, 's') != 0 || app.screen != TI99_SCR_SETTINGS) return 19;
+    if (ti99_app_handle_key(&app, TI99_KEY_CTRL_N) == 0 ||
+        ti99_app_handle_key(&app, TI99_KEY_F10) == 0 ||
+        ti99_app_handle_key(&app, TI99_KEY_F9) == 0 ||
+        app.screen != TI99_SCR_SETTINGS) return 20;
+    if (ti99_app_handle_key(&app, '8') != 0 || app.screen != TI99_SCR_THEME || app.settings_tab != 7) return 21;
+    if (ti99_app_handle_key(&app, TI99_KEY_ESC) != 0 || app.screen != TI99_SCR_MAIN) return 22;
+
     ti99_sams_shutdown(&sams);
     return 0;
 }

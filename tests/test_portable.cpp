@@ -13,6 +13,7 @@
 #include "../ports/dos/dos_usb.hpp"
 #include "../ports/dos/dos_video.hpp"
 #include "../ports/dos/dos_mouse.hpp"
+#include "../ports/dos/dos_keymap.hpp"
 #if !defined(__DOS__) || defined(OYK_DOS_GFX_BUILD)
   #include "../ports/dos/dos_xms.hpp"
   #include "../ports/dos/dos_font8x16.hpp"
@@ -2040,7 +2041,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
 
     /* 1b. Drop-down Node Menu */
     dos_render_mock_main_pal(v, g, p);
-    mr.top = 1; mr.left = 0; mr.h = 15; mr.w = 34;
+    mr.top = 1; mr.left = 0; mr.h = 14; mr.w = 34;
     dos_modal_frame(v, g, mr, "", bdr, fill);
     dos_vid_puts(v, 2, 1, p.msel, " [A] Allow Incoming Connections ", 32);
     dos_vid_puts(v, 3, 1, fill,   " [D] Deny Incoming Connections  ", 32);
@@ -2049,12 +2050,11 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, 6, 1, fill,   " [F] Manage Files Area...       ", 32);
     dos_vid_puts(v, 7, 1, fill,   " [R] Radio Control...           ", 32);
     dos_vid_puts(v, 8, 1, fill,   " [S] Settings...                ", 32);
-    dos_vid_puts(v, 9, 1, fill,   " [P] Peers...                   ", 32);
-    dos_vid_puts(v, 10, 1, fill,  " [H] Theme...                   ", 32);
-    dos_vid_puts(v, 11, 1, fill,  " [T] Terminate Connection...    ", 32);
-    dos_vid_puts(v, 12, 1, fill,  " [B] Ban / Unban Callsign...    ", 32);
-    dos_vid_hdiv(v, 13, 0, 34, bdr);
-    dos_vid_puts(v, 14, 1, fill,  " [X] Exit                       ", 32);
+    dos_vid_puts(v, 9, 1, fill,   " [T] Terminate Connection...    ", 32);
+    dos_vid_puts(v, 10, 1, fill,  " [B] Ban / Unban Callsign...    ", 32);
+    dos_vid_puts(v, 11, 1, fill,  " [?] About OYK-Node...          ", 32);
+    dos_vid_hdiv(v, 12, 0, 34, bdr);
+    dos_vid_puts(v, 13, 1, fill,  " [X] Exit                       ", 32);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "menu", v, g);
@@ -2063,7 +2063,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " [1:Node]  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " [1:Node] 2:BBS 3:CHAT 4:Ifaces 5:Peers 6:Rig 7:Prn 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Callsign       : ", 17); dos_vid_puts(v, mr.top + 3, mr.left + 20, sel, "KR4OYK-7", 32);
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Alias          : ", 17); dos_vid_puts(v, mr.top + 4, mr.left + 20, inp, "OYKNOD", 32);
@@ -2072,7 +2072,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_vid_puts(v, mr.top + 7, mr.left + 3, fill, "Peers File     : peers.cfg", 40);
     dos_vid_puts(v, mr.top + 8, mr.left + 3, fill, "Themes File    : themes.cfg", 40);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-8:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings", v, g);
@@ -2081,13 +2081,13 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  [2:BBS]  3:CHAT  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node [2:BBS] 3:CHAT 4:Ifaces 5:Peers 6:Rig 7:Prn 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Packet BBS : [ON]", 40);
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "BBS Callsign      : KR4OYK-1 (OYKBBS)", 48);
     dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Files Area Path   : files", 40);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-8:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings_bbs", v, g);
@@ -2095,13 +2095,13 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  [3:CHAT]  4:Ifaces  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node 2:BBS [3:CHAT] 4:Ifaces 5:Peers 6:Rig 7:Prn 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Multi-User CHAT : [ON]", 40);
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "CHAT Callsign          : KR4OYK-2 (OYKCHT)", 50);
     dos_vid_puts(v, mr.top + 5, mr.left + 3, fill, "Default Topic          : Lobby", 40);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-8:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings_chat", v, g);
@@ -2109,7 +2109,7 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  [4:Ifaces]  5:Peers  6:Rig  7:Prn", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node 2:BBS 3:CHAT [4:Ifaces] 5:Peers 6:Rig 7:Prn 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 1, lhdr, "ID        Type     Endpoint          Policy", mr.w - 2);
     dos_vid_puts(v, mr.top + 4, mr.left + 1, sel,  "axudp0    axudp    127.0.0.1:10093   IN/OUT", mr.w - 2);
@@ -2305,13 +2305,14 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "exit", v, g);
 
-    /* 10. Theme Settings Modal */
+    /* 10. Settings Tab 8 (Theme) */
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
-    dos_modal_frame(v, g, mr, "Theme Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 2, mr.left + 2, fill, "Theme  : < dark               > (Built-in (not saved))", mr.w - 4);
-    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Editing built-in clones custom-dark or custom-light.", mr.w - 4);
-    dos_vid_puts(v, mr.top + 5, mr.left + 2, lhdr, "Role              Key            Color     Preview", mr.w - 4);
+    dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node 2:BBS 3:CHAT 4:Ifaces 5:Peers 6:Rig 7:Prn [8:Thm]", mr.w - 2);
+    dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
+    dos_vid_puts(v, mr.top + 3, mr.left + 2, fill, "Theme  : < dark               > (Built-in (not saved))", mr.w - 4);
+    dos_vid_puts(v, mr.top + 4, mr.left + 2, lhdr, "Role              Key            Color     Preview", mr.w - 4);
     {
         OykThemeConfig dt;
         oyk_theme_init_builtin(&dt, 0);
@@ -2320,18 +2321,18 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
             oyk_theme_format_hex(dt.colors[r], hx, sizeof(hx));
             sprintf(row_s, "%-16.16s  %-13.13s  %-8.8s",
                     oyk_theme_role_label(r), oyk_theme_role_key(r), hx);
-            dos_vid_puts(v, mr.top + 6 + r, mr.left + 2, (r == 0) ? sel : fill, row_s, 44);
+            dos_vid_puts(v, mr.top + 5 + r, mr.left + 2, (r == 0) ? sel : fill, row_s, 44);
             oyk_u8 sw = static_cast<oyk_u8>((oyk_rgb_to_vga16(dt.colors[r]) << 4) | oyk_rgb_to_vga16(dt.colors[r]));
-            dos_vid_puts(v, mr.top + 6 + r, mr.left + 47, sw, "    ", 4);
-            if (g) dos_gfx_set_cell_rgb(g, mr.top + 6 + r, mr.left + 47, 4, dt.colors[r], dt.colors[r]);
+            dos_vid_puts(v, mr.top + 5 + r, mr.left + 47, sw, "    ", 4);
+            if (g) dos_gfx_set_cell_rgb(g, mr.top + 5 + r, mr.left + 47, 4, dt.colors[r], dt.colors[r]);
         }
     }
     dos_vid_puts(v, mr.top + mr.h - 4, mr.left + 2, fill, "Live preview active (unsaved). Press S/F2 to save or Esc to revert.", mr.w - 4);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/1-8:Tabs  Lt/Rt:Theme  Enter:Edit  X:Del  S/F2:Save  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
-    dos_save_capture_prefixed(prefix, "theme", v, g);
+    dos_save_capture_prefixed(prefix, "settings_theme", v, g);
 
     /* 11. Local Terminal (Ctrl+A B example session, full display with word-wrap & [EOL:CR]) */
     if (g) {
@@ -2430,12 +2431,12 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  5:Peers  [6:Rig]  7:Prn", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node 2:BBS 3:CHAT 4:Ifaces 5:Peers [6:Rig] 7:Prn 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Rig Control : [OFF]", 40);
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Protocol           : rigctl (127.0.0.1:4532)", 50);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-8:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings_rig", v, g);
@@ -2443,12 +2444,12 @@ static void run_dos_mock_flow_suite(const char* prefix, OykDosGfx* g, const DosM
     dos_render_mock_main_pal(v, g, p);
     oyk_tui_center_modal(rows, cols, 21, 74, &mr);
     dos_modal_frame(v, g, mr, "Node Settings", bdr, fill);
-    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node  2:BBS  3:CHAT  4:Ifaces  5:Peers  6:Rig  [7:Prn]", mr.w - 2);
+    dos_vid_puts(v, mr.top + 1, mr.left + 1, bar, " 1:Node 2:BBS 3:CHAT 4:Ifaces 5:Peers 6:Rig [7:Prn] 8:Thm", mr.w - 2);
     dos_vid_hdiv(v, mr.top + 2, mr.left, mr.w, bdr);
     dos_vid_puts(v, mr.top + 3, mr.left + 3, fill, "Enable Line Printer : [OFF]", 40);
     dos_vid_puts(v, mr.top + 4, mr.left + 3, fill, "Protocol            : generic (9600 baud)", 50);
     dos_vid_hdiv(v, mr.top + mr.h - 3, mr.left, mr.w, bdr);
-    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-7:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
+    dos_vid_puts(v, mr.top + mr.h - 2, mr.left + 2, bar, "Tab/Lt/Rt/1-8:Tabs  Enter/Space:Edit  S/F2:Save & Apply  Esc:Cancel", mr.w - 4);
     assert(dos_vid_flush(v) > 0);
     if (g) dos_gfx_present(g, sim_vram, 1);
     dos_save_capture_prefixed(prefix, "settings_printer", v, g);
@@ -2529,7 +2530,30 @@ static void test_win_service_cmdline_builder() {
 }
 #endif
 
+static void test_dos_keymap_discipline() {
+    assert(oyk_dos_map_main_key('s', 0, 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key('m', 0, 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key('q', 0, 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key('?', 0, 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key(0x0E, 0, 0) == OYK_DACT_OPEN_MENU);
+    assert(oyk_dos_map_main_key(0, 68, 0) == OYK_DACT_OPEN_MENU);
+    assert(oyk_dos_map_main_key('\t', 0, 0) == OYK_DACT_TERM);
+    assert(oyk_dos_map_main_key(0, 67, 0) == OYK_DACT_TERM);
+    /* Open modal strictly preempts global hotkeys and dismisses on Esc */
+    assert(oyk_dos_map_main_key(0x0E, 0, 1) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key(0, 68, 1) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key('\t', 0, 1) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key(0, 67, 1) == OYK_DACT_NONE);
+    assert(oyk_dos_map_main_key(27, 0, 1) == OYK_DACT_CLOSE);
+    /* Menu deduplication */
+    assert(oyk_dos_map_menu_key('p', 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_menu_key('h', 0) == OYK_DACT_NONE);
+    assert(oyk_dos_map_menu_key('?', 0) == OYK_DACT_ABOUT);
+    printf("[PASS] test_dos_keymap_discipline\n");
+}
+
 int oyk_run_portable_tests() {
+    test_dos_keymap_discipline();
     test_portable_eol_and_config();
     test_portable_ax25_kiss_and_bans();
     test_portable_yapp_and_local_terminal();
