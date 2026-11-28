@@ -13,6 +13,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <Xm/Xm.h>
 #include <Xm/MainW.h>
 #include <Xm/RowColumn.h>
@@ -241,6 +242,20 @@ static void on_close_modal_cb(Widget w, XtPointer client, XtPointer call) {
     ((MotifUiCtx *)client)->app->screen = OYK_SYSV_SCR_MAIN;
 }
 
+static void on_modal_key_ev(Widget w, XtPointer client, XEvent *ev, Boolean *cont) {
+    MotifUiCtx *ctx;
+    KeySym ks;
+    (void)w; (void)cont;
+    ctx = (MotifUiCtx *)client;
+    if (!ev || ev->type != KeyPress) return;
+    ks = XLookupKeysym(&ev->xkey, 0);
+    if (ks == XK_Escape) {
+        close_modal_dialog(ctx);
+        ctx->app->screen = OYK_SYSV_SCR_MAIN;
+        *cont = False;
+    }
+}
+
 static void on_about_expose(Widget w, XtPointer client, XtPointer call) {
     MotifUiCtx *ctx;
     Window win;
@@ -325,7 +340,10 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
 
     dlg = XmCreateForm(ctx->modal_shell, "dlg_form", NULL, 0);
     XtVaSetValues(dlg, XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg,
+                  XmNdialogStyle, XmDIALOG_FULL_APPLICATION_MODAL,
                   XmNmarginWidth, 12, XmNmarginHeight, 10, NULL);
+    XtAddEventHandler(ctx->modal_shell, KeyPressMask, False, on_modal_key_ev, ctx);
+    XtAddEventHandler(dlg, KeyPressMask, False, on_modal_key_ev, ctx);
 
     box = XmCreateRowColumn(dlg, "dlg_body", NULL, 0);
     XtVaSetValues(box, XmNorientation, XmVERTICAL, XmNspacing, 6,
@@ -340,7 +358,7 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
         char alias_s[16];
         tabs = XmCreateRowColumn(box, "tabs", NULL, 0);
         XtVaSetValues(tabs, XmNorientation, XmHORIZONTAL, XmNbackground, ctx->px_bg, NULL);
-        for (i = 0; i < 7; ++i) {
+        for (i = 0; i < 8; ++i) {
             Widget tb;
             tb = XmCreatePushButton(tabs, "tab", NULL, 0);
             XtVaSetValues(tb,
@@ -420,7 +438,7 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
             add_labeled_field(box, "Rig Host:", app->node.cfg.rig_host);
             sprintf(buf, "%u", (unsigned int)app->node.cfg.rig_port);
             add_labeled_field(box, "Rig Port:", buf);
-        } else {
+        } else if (app->settings_tab == 6) {
             Widget cb;
             cb = XmCreateToggleButton(box, "Enable Hardcopy Printer Log", NULL, 0);
             XmToggleButtonSetState(cb, app->node.cfg.printer_enabled ? True : False, False);
@@ -428,6 +446,28 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
             XtManageChild(cb);
             add_labeled_field(box, "Printer Device:", app->node.cfg.printer_device);
             add_labeled_field(box, "Printer Protocol:", app->node.cfg.printer_protocol);
+        } else {
+            OykSysvThemeConfig pal;
+            Widget hdr;
+            Widget lst;
+            const char *rows[12];
+            char rb[12][64];
+            oyk_sysv_theme_resolve(&app->theme_ctrl, &pal);
+            sprintf(buf, "Theme: < %s >   (Whole-screen live preview active)", pal.name);
+            hdr = XtVaCreateManagedWidget("thdr", xmLabelWidgetClass, box,
+                                          XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg, NULL);
+            set_label_text(hdr, buf);
+            for (i = 0; i < 8; ++i) {
+                sprintf(rb[i], "%-14s %-12s #%06lX",
+                        oyk_sysv_theme_role_name(i),
+                        oyk_sysv_theme_role_key(i),
+                        (unsigned long)(pal.colors[i] & 0xFFFFFFUL));
+                rows[i] = rb[i];
+            }
+            lst = XmCreateScrolledList(box, "thlst", NULL, 0);
+            XtVaSetValues(lst, XmNvisibleItemCount, 6, XmNbackground, ctx->px_panel_bg, NULL);
+            list_set_rows(lst, rows, 8);
+            XtManageChild(lst);
         }
     } else if (app->screen == OYK_SYSV_SCR_ADD_IFACE) {
         Widget step_lbl;
@@ -674,6 +714,7 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
 static void on_menu_item_cb(Widget w, XtPointer client, XtPointer call) {
     int action;
     (void)w; (void)call;
+    if (g_mui.modal_shell != NULL) return;
     action = (int)(long)client;
     oyk_sysv_app_exec_menu_action(g_mui.app, action);
     if (!g_mui.app->running) {
@@ -779,6 +820,7 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
     }
     g_mui.node_cascade = XtVaCreateManagedWidget("Node", xmCascadeButtonWidgetClass,
                                                  g_mui.menu_bar,
+                                                 XmNmnemonic, 'N',
                                                  XmNsubMenuId, g_mui.node_menu, NULL);
     XtManageChild(g_mui.menu_bar);
 
@@ -833,14 +875,13 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
     g_mui.footer_row = XmCreateRowColumn(g_mui.main_form, "footer", NULL, 0);
     XtVaSetValues(g_mui.footer_row, XmNorientation, XmHORIZONTAL, XmNspacing, 6, NULL);
     {
-        static const struct { const char *lbl; int act; } fbtns[5] = {
+        static const struct { const char *lbl; int act; } fbtns[4] = {
             { "Terminal", OYK_SYSV_ACT_LOCAL_TERM },
             { "Files",    OYK_SYSV_ACT_FILES },
             { "Settings", OYK_SYSV_ACT_SETTINGS },
-            { "Theme",    OYK_SYSV_ACT_THEME },
             { "About",    OYK_SYSV_ACT_ABOUT }
         };
-        for (i = 0; i < 5; ++i) {
+        for (i = 0; i < 4; ++i) {
             Widget fb;
             fb = XmCreatePushButton(g_mui.footer_row, "fb", NULL, 0);
             set_label_text(fb, fbtns[i].lbl);

@@ -60,6 +60,18 @@ int main(void) {
     CHECK(app != NULL && cv != NULL && net != NULL);
 
     if (app && cv && net) {
+        oyk_sysv_app_init(app, "AT&T 3B2 SVR3.2 (WE32100)", 0);
+        CHECK(oyk_sysv_node_active_conn_count(&app->node) == 0);
+        CHECK(app->node.heard_count == 0);
+        CHECK(app->term_connected == 0);
+        CHECK(oyk_sysv_tui_handle_key(app, 's') == 0 && app->screen == OYK_SYSV_SCR_MAIN);
+        CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 1 && app->screen == OYK_SYSV_SCR_MENU);
+        CHECK(oyk_sysv_tui_handle_key(app, 's') == 1 && app->screen == OYK_SYSV_SCR_SETTINGS);
+        CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+        CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F10) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+        CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_LEFT) == 1 && app->settings_tab == 7);
+        CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_ESC) == 1 && app->screen == OYK_SYSV_SCR_MAIN);
+
         oyk_sysv_app_init(app, "AT&T 3B2 SVR3.2 (WE32100)", 1);
         oyk_sysv_net_init(net, &app->node.cfg);
 

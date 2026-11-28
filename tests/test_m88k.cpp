@@ -53,8 +53,18 @@ int main() {
     CHECK(file_contains("ports/sysv/sysv_motif_ui.c", "XmCreateToggleButton") == 1);
     CHECK(file_contains("ports/sysv/sysv_motif_ui.c", "XmCreateRadioBox") == 1);
     CHECK(file_contains("ports/sysv/sysv_motif_ui.c", "XmNiconPixmap") == 1);
+    CHECK(file_contains("ports/sysv/sysv_motif_ui.c", "XmNmnemonic") == 1);
     CHECK(file_contains("ports/sysv/sysv_motif_ui.c", "OYK_UI_TEST_MODE") == 1);
     CHECK(file_contains("ports/m88k/Makefile", "-lXm -lXt -lX11") == 1);
+
+    /* Modal preemption & closed-menu hotkey test */
+    oyk_sysv_app_init(app, "Motorola 88K SVR4 (mc88100)", 0);
+    CHECK(oyk_sysv_tui_handle_key(app, 's') == 0 && app->screen == OYK_SYSV_SCR_MAIN);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 1 && app->screen == OYK_SYSV_SCR_MENU);
+    CHECK(oyk_sysv_tui_handle_key(app, 's') == 1 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F10) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_ESC) == 1 && app->screen == OYK_SYSV_SCR_MAIN);
 
     OykPortableNode* pnode = new OykPortableNode();
     OykConfig* pcfg = new OykConfig();

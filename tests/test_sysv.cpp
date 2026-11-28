@@ -106,11 +106,14 @@ static void test_23_tui_screens() {
             CHECK(oyk_sysv_canvas_find_text(cv, "Node Activity Log") == 1);
         } else if (strcmp(screens[i], "menu") == 0) {
             CHECK(oyk_sysv_canvas_find_text(cv, "Allow Incoming") == 1);
+            CHECK(oyk_sysv_canvas_find_text(cv, "Peers...") == 0);
+            CHECK(oyk_sysv_canvas_find_text(cv, "Theme...") == 0);
             CHECK(oyk_sysv_canvas_find_text(cv, "[X]") == 0); /* dropdown has NO [X] */
         } else if (strncmp(screens[i], "settings", 8) == 0 || strcmp(screens[i], "peers") == 0) {
             CHECK(oyk_sysv_canvas_find_text(cv, "Node Settings") == 1);
             CHECK(oyk_sysv_canvas_find_text(cv, "1:Node") == 1);
             CHECK(oyk_sysv_canvas_find_text(cv, "7:Prn") == 1);
+            CHECK(oyk_sysv_canvas_find_text(cv, "8:Theme") == 1);
         } else if (strcmp(screens[i], "terminate") == 0) {
             CHECK(oyk_sysv_canvas_find_text(cv, "Terminate Active Connection") == 1);
             CHECK(oyk_sysv_canvas_find_text(cv, "ID    Callsign    Port       State") == 1);
@@ -143,10 +146,84 @@ static void test_23_tui_screens() {
     delete app;
 }
 
+static void test_clean_startup_and_hotkey_preemption() {
+    CHECK(oyk_sysv_settings_tab_count() == 8);
+    CHECK(strcmp(oyk_sysv_settings_tab_title(7), "8:Theme") == 0);
+    CHECK(oyk_sysv_node_menu_count() == 11);
+    for (int i = 0; i < oyk_sysv_node_menu_count(); ++i) {
+        const OykSysvMenuItem* it = oyk_sysv_node_menu_item(i);
+        CHECK(it != NULL);
+        CHECK(it->action != OYK_SYSV_ACT_PEERS && it->action != OYK_SYSV_ACT_THEME);
+    }
+
+    OykSysvApp* app = new OykSysvApp;
+    OykSysvCanvas* cv = new OykSysvCanvas;
+    oyk_sysv_app_init(app, "Motorola 88K SVR4", 0);
+
+    /* Clean production startup has zero demo data & disconnected terminal */
+    CHECK(oyk_sysv_node_active_conn_count(&app->node) == 0);
+    CHECK(app->node.heard_count == 0);
+    CHECK(app->node.ban_count == 0);
+    CHECK(app->node.cfg.peer_count == 0);
+    CHECK(app->term_connected == 0);
+    CHECK(strcmp(app->term_status, "Disconnected") == 0);
+    CHECK(app->fm.inc.count == 0 && app->fm.files.count == 0);
+
+    /* Closed-menu single-letter hotkeys MUST NOT fire */
+    static const char closed_letters[] = "msabtkfcprqx?";
+    for (size_t i = 0; closed_letters[i]; ++i) {
+        CHECK(oyk_sysv_tui_handle_key(app, closed_letters[i]) == 0);
+        CHECK(app->screen == OYK_SYSV_SCR_MAIN);
+        CHECK(app->running == 1);
+    }
+
+    /* Ctrl-N opens Node Menu, arrow keys navigate, 's' works inside open menu */
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 1);
+    CHECK(app->screen == OYK_SYSV_SCR_MENU);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_DOWN) == 1);
+    CHECK(app->menu_sel == 1);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_UP) == 1);
+    CHECK(app->menu_sel == 0);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_ESC) == 1);
+    CHECK(app->screen == OYK_SYSV_SCR_MAIN);
+
+    /* F10 alias also opens Node Menu when on Main Console */
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F10) == 1);
+    CHECK(app->screen == OYK_SYSV_SCR_MENU);
+    CHECK(oyk_sysv_tui_handle_key(app, 's') == 1);
+    CHECK(app->screen == OYK_SYSV_SCR_SETTINGS);
+
+    /* Open modal strictly preempts global hotkeys Ctrl-N, F10, F9 */
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F10) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F9) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_TAB) == 0 && app->screen == OYK_SYSV_SCR_SETTINGS);
+
+    /* Left/Right switches Settings tabs including Tab 8 Theme, Space cycles preset */
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_LEFT) == 1 && app->settings_tab == 7);
+    CHECK(oyk_sysv_tui_handle_key(app, ' ') == 1);
+    CHECK(strcmp(app->node.cfg.active_theme, "dark") == 0);
+    oyk_sysv_tui_render(cv, app, 25, 80);
+    CHECK(oyk_sysv_canvas_find_text(cv, "Active Theme: < dark >") == 1);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_ESC) == 1 && app->screen == OYK_SYSV_SCR_MAIN);
+
+    /* Terminal toggle + Term Help modal preemption + Esc return to Terminal */
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_TAB) == 1 && app->screen == OYK_SYSV_SCR_TERMINAL);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_A) == 1);
+    CHECK(oyk_sysv_tui_handle_key(app, 'z') == 1 && app->screen == OYK_SYSV_SCR_TERM_HELP);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_CTRL_N) == 0 && app->screen == OYK_SYSV_SCR_TERM_HELP);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_ESC) == 1 && app->screen == OYK_SYSV_SCR_TERMINAL);
+    CHECK(oyk_sysv_tui_handle_key(app, OYK_SYSV_KEY_F9) == 1 && app->screen == OYK_SYSV_SCR_MAIN);
+
+    delete cv;
+    delete app;
+}
+
 int main() {
     test_endian_and_protocol();
     test_config_and_file_jail();
     test_23_tui_screens();
+    test_clean_startup_and_hotkey_preemption();
 
     OykPortableNode* pnode = new OykPortableNode();
     OykConfig* pcfg = new OykConfig();

@@ -7,6 +7,21 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef OYK_SYSV_SVR32
+static const char *s_svr32_strstr(const char *hay, const char *needle) {
+    size_t nlen;
+    if (!hay || !needle) return NULL;
+    if (!needle[0]) return hay;
+    nlen = strlen(needle);
+    while (*hay) {
+        if (*hay == *needle && strncmp(hay, needle, nlen) == 0) return hay;
+        ++hay;
+    }
+    return NULL;
+}
+#define strstr s_svr32_strstr
+#endif
+
 typedef struct {
     const char *label;
     int         enabled;
@@ -236,7 +251,7 @@ static void draw_main_console(OykSysvCanvas *cv, const OykSysvApp *app) {
     /* Row 0: Menu bar */
     oyk_sysv_canvas_put_text(cv, 0, 0, cv->cols, OYK_SYSV_ST_MENU_BAR, "");
     oyk_sysv_canvas_put_text(cv, 0, 1, 6, OYK_SYSV_ST_MENU_SEL, " Node ");
-    oyk_sysv_canvas_put_text(cv, 0, cv->cols - 26, 25, OYK_SYSV_ST_MENU_BAR, "Tab/F9:Term  F10/M:Menu ");
+    oyk_sysv_canvas_put_text(cv, 0, cv->cols - 27, 26, OYK_SYSV_ST_MENU_BAR, "Tab/F9:Term  Ctrl-N:Menu ");
 
     /* Row 1: Status banner + [INCOMING: ALLOW/DENY] */
     oyk_sysv_format_callsign(&n->cfg.callsign, call_s, sizeof(call_s));
@@ -319,7 +334,7 @@ static void draw_main_console(OykSysvCanvas *cv, const OykSysvApp *app) {
 
     /* Bottom status bar */
     oyk_sysv_canvas_put_text(cv, cv->rows - 1, 0, cv->cols, OYK_SYSV_ST_STATUS,
-                             "F10/M:Menu  Tab/F9:Term  F:Files  S:Settings  T:Theme  X:Exit");
+                             "Ctrl-N/F10:Node Menu   Tab/F9:Local Terminal   Esc:Close Dialog");
 }
 
 static void draw_dropdown_menu(OykSysvCanvas *cv, const OykSysvApp *app) {
@@ -328,7 +343,7 @@ static void draw_dropdown_menu(OykSysvCanvas *cv, const OykSysvApp *app) {
     int row;
     r.top = 1;
     r.left = 1;
-    r.h = 15;
+    r.h = 13;
     r.w = 34;
     /* Dropdown Node Menu has NO [X] close button */
     draw_modal(cv, &r, NULL, 0);
@@ -358,13 +373,13 @@ static void draw_settings_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
     char buf[96];
     int c;
     int i;
-    center_modal(cv->rows, cv->cols, 20, 72, &r);
+    center_modal(cv->rows, cv->cols, 20, 76, &r);
     draw_modal(cv, &r, "Node Settings", 1);
     cfg = &app->node.cfg;
 
-    /* 7 canonical tabs inside row r.top + 1 */
+    /* 8 canonical tabs inside row r.top + 1 */
     c = r.left + 2;
-    for (i = 0; i < 7; ++i) {
+    for (i = 0; i < 8; ++i) {
         const char *tl;
         char tok[16];
         int st;
@@ -381,21 +396,26 @@ static void draw_settings_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
         oyk_sysv_format_callsign(&cfg->callsign, call_s, sizeof(call_s));
         oyk_sysv_format_callsign(&cfg->alias, alias_s, sizeof(alias_s));
         sprintf(buf, "Callsign: %-12s  Alias: %s", call_s, alias_s);
-        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6,
+                                 (app->settings_row == 0) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
         sprintf(buf, "Accept Incoming: [%c]    Platform: %s",
                 cfg->accept_incoming ? 'X' : ' ', app->node.platform_label);
-        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6,
+                                 (app->settings_row == 1) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
     } else if (app->settings_tab == 1) {
         sprintf(buf, "BBS Enabled: [%c]  SSID: %u  Files Area: [%c]",
                 cfg->bbs_enabled ? 'X' : ' ', (unsigned int)cfg->bbs_ssid,
                 cfg->bbs_files_enabled ? 'X' : ' ');
-        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
-        sprintf(buf, "Mail Path: %.30s  Files Path: %.30s", cfg->bbs_mail_path, cfg->bbs_files_path);
-        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6,
+                                 (app->settings_row == 0) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
+        sprintf(buf, "Mail Path: %.28s  Files Path: %.28s", cfg->bbs_mail_path, cfg->bbs_files_path);
+        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6,
+                                 (app->settings_row == 1) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
     } else if (app->settings_tab == 2) {
         sprintf(buf, "CHAT Enabled: [%c]  SSID: %u  Topic: %s",
                 cfg->chat_enabled ? 'X' : ' ', (unsigned int)cfg->chat_ssid, cfg->chat_topic);
-        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6,
+                                 (app->settings_row == 0) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
     } else if (app->settings_tab == 3) {
         oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_LIST_HDR,
                                  "ID       Type         Endpoint              In/Out");
@@ -424,24 +444,44 @@ static void draw_settings_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
     } else if (app->settings_tab == 5) {
         sprintf(buf, "Rig Control: [%c]  Protocol: %s",
                 cfg->rig_enabled ? 'X' : ' ', cfg->rig_protocol);
-        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6,
+                                 (app->settings_row == 0) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
         sprintf(buf, "Host: %s:%u  Poll: %ds", cfg->rig_host,
                 (unsigned int)cfg->rig_port, cfg->rig_poll_sec);
         oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
-    } else {
+    } else if (app->settings_tab == 6) {
         sprintf(buf, "Printer Log: [%c]  Device: %s",
                 cfg->printer_enabled ? 'X' : ' ', cfg->printer_device);
-        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6,
+                                 (app->settings_row == 0) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
         sprintf(buf, "Protocol: %s  Baud: %lu  Condensed: [%c]",
                 cfg->printer_protocol, (unsigned long)cfg->printer_baud,
                 cfg->printer_condensed ? 'X' : ' ');
-        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6,
+                                 (app->settings_row == 1) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL, buf);
+    } else {
+        OykSysvThemeConfig pal;
+        oyk_sysv_theme_resolve(&app->theme_ctrl, &pal);
+        sprintf(buf, "Active Theme: < %s >   (Space/Enter to cycle preset)", pal.name);
+        oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_SEL, buf);
+        oyk_sysv_canvas_put_text(cv, r.top + 6, r.left + 3, r.w - 6, OYK_SYSV_ST_LIST_HDR,
+                                 "Role          Key         Color    Preview");
+        for (i = 0; i < 8 && i < OYK_SYSV_THEME_COLOR_COUNT; ++i) {
+            sprintf(buf, "%-13s %-11s #%06lX",
+                    oyk_sysv_theme_role_name(i),
+                    oyk_sysv_theme_role_key(i),
+                    (unsigned long)(pal.colors[i] & 0xFFFFFFUL));
+            oyk_sysv_canvas_put_text(cv, r.top + 7 + i, r.left + 3, r.w - 14, OYK_SYSV_ST_DLG_FILL, buf);
+            oyk_sysv_canvas_put_text(cv, r.top + 7 + i, r.left + r.w - 11, 6,
+                                     (i == 0) ? OYK_SYSV_ST_BG : ((i % 2) ? OYK_SYSV_ST_HEADER : OYK_SYSV_ST_ALLOW),
+                                     " #### ");
+        }
     }
 
     oyk_sysv_canvas_put_text(cv, r.top + r.h - 4, r.left + 3, r.w - 6, OYK_SYSV_ST_WARN, app->feedback);
     oyk_sysv_canvas_put_hdiv(cv, r.top + r.h - 3, r.left, r.w, OYK_SYSV_ST_DLG_BORDER);
     oyk_sysv_canvas_put_text(cv, r.top + r.h - 2, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_BAR,
-                             "1-7:Tabs  A:Add  E:Edit  Enter:Apply  Esc:Cancel");
+                             "1-8:Tabs  Lt/Rt:Tab  Up/Dn:Row  Spc/Ent:Act  Esc:Close");
 }
 
 static void draw_wizard_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
@@ -487,39 +527,7 @@ static void draw_wizard_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
     btns[0].label = "Back"; btns[0].enabled = (w->step > 0);
     btns[1].label = (w->step < 3) ? "Next" : "Save"; btns[1].enabled = 1;
     btns[2].label = "Cancel"; btns[2].enabled = 1;
-    draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 3, 1);
-}
-
-static void draw_theme_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
-    OykSysvRect r;
-    OykSysvThemeConfig pal;
-    char buf[96];
-    int i;
-    TuiBtn btns[3];
-    center_modal(cv->rows, cv->cols, 20, 70, &r);
-    draw_modal(cv, &r, "Theme Settings", 1);
-    oyk_sysv_theme_resolve(&app->theme_ctrl, &pal);
-    sprintf(buf, "Active Theme: < %s >", pal.name);
-    oyk_sysv_canvas_put_text(cv, r.top + 2, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_SEL, buf);
-    oyk_sysv_canvas_put_text(cv, r.top + 4, r.left + 3, r.w - 6, OYK_SYSV_ST_LIST_HDR,
-                             "Role          Key         Color    Preview");
-    for (i = 0; i < 9 && i < OYK_SYSV_THEME_COLOR_COUNT; ++i) {
-        sprintf(buf, "%-13s %-11s #%06lX",
-                oyk_sysv_theme_role_name(i),
-                oyk_sysv_theme_role_key(i),
-                (unsigned long)(pal.colors[i] & 0xFFFFFFUL));
-        oyk_sysv_canvas_put_text(cv, r.top + 5 + i, r.left + 3, r.w - 14, OYK_SYSV_ST_DLG_FILL, buf);
-        oyk_sysv_canvas_put_text(cv, r.top + 5 + i, r.left + r.w - 11, 6,
-                                 (i == 0) ? OYK_SYSV_ST_BG : ((i % 2) ? OYK_SYSV_ST_HEADER : OYK_SYSV_ST_ALLOW),
-                                 " #### ");
-    }
-    oyk_sysv_canvas_put_text(cv, r.top + r.h - 4, r.left + 3, r.w - 6, OYK_SYSV_ST_OK,
-                             "Live preview active across entire screen");
-    oyk_sysv_canvas_put_hdiv(cv, r.top + r.h - 3, r.left, r.w, OYK_SYSV_ST_DLG_BORDER);
-    btns[0].label = "Prev"; btns[0].enabled = 1;
-    btns[1].label = "Next"; btns[1].enabled = 1;
-    btns[2].label = "Done"; btns[2].enabled = 1;
-    draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 3, 2);
+    draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 3, app->wiz_btn);
 }
 
 static void draw_terminal_view(OykSysvCanvas *cv, const OykSysvApp *app) {
@@ -602,7 +610,7 @@ static void draw_files_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
     btns[1].label = "Mkdir";   btns[1].enabled = 1;
     btns[2].label = "Delete";  btns[2].enabled = 1;
     btns[3].label = "Close";   btns[3].enabled = 1;
-    draw_btn_row(cv, r.top + r.h - 2, r.left + 2, r.w - 4, btns, 4, 0);
+    draw_btn_row(cv, r.top + r.h - 2, r.left + 2, r.w - 4, btns, 4, app->fm.active_btn);
 }
 
 static void draw_about_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
@@ -683,7 +691,7 @@ static void draw_simple_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
         oyk_sysv_canvas_put_hdiv(cv, r.top + r.h - 3, r.left, r.w, OYK_SYSV_ST_DLG_BORDER);
         btns[0].label = "Terminate"; btns[0].enabled = 1;
         btns[1].label = "Cancel"; btns[1].enabled = 1;
-        draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 2, 0);
+        draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 2, app->modal_btn);
     } else if (app->screen == OYK_SYSV_SCR_BAN) {
         TuiBtn btns[3];
         center_modal(cv->rows, cv->cols, 13, 64, &r);
@@ -693,13 +701,15 @@ static void draw_simple_modal(OykSysvCanvas *cv, const OykSysvApp *app) {
         for (i = 0; i < app->node.ban_count && i < 4; ++i) {
             sprintf(buf, "%-10s %-11s %s", app->node.bans[i].key,
                     app->node.bans[i].lift_at, app->node.bans[i].reason);
-            oyk_sysv_canvas_put_text(cv, r.top + 3 + i, r.left + 3, r.w - 6, OYK_SYSV_ST_DLG_FILL, buf);
+            oyk_sysv_canvas_put_text(cv, r.top + 3 + i, r.left + 3, r.w - 6,
+                                     (i == app->ban_sel) ? OYK_SYSV_ST_DLG_SEL : OYK_SYSV_ST_DLG_FILL,
+                                     buf);
         }
         oyk_sysv_canvas_put_hdiv(cv, r.top + r.h - 3, r.left, r.w, OYK_SYSV_ST_DLG_BORDER);
         btns[0].label = "Ban"; btns[0].enabled = 1;
         btns[1].label = "Unban"; btns[1].enabled = 1;
         btns[2].label = "Close"; btns[2].enabled = 1;
-        draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 3, 0);
+        draw_btn_row(cv, r.top + r.h - 2, r.left + 3, r.w - 6, btns, 3, app->modal_btn);
     } else if (app->screen == OYK_SYSV_SCR_EXIT_PEERS) {
         TuiBtn btns[4];
         center_modal(cv->rows, cv->cols, 11, 70, &r);
@@ -732,16 +742,465 @@ void oyk_sysv_tui_render(OykSysvCanvas *cv, const OykSysvApp *app, int rows, int
     if (app->screen == OYK_SYSV_SCR_MENU) draw_dropdown_menu(cv, app);
     else if (app->screen == OYK_SYSV_SCR_SETTINGS) draw_settings_modal(cv, app);
     else if (app->screen == OYK_SYSV_SCR_ADD_IFACE) draw_wizard_modal(cv, app);
-    else if (app->screen == OYK_SYSV_SCR_THEME) draw_theme_modal(cv, app);
+    else if (app->screen == OYK_SYSV_SCR_THEME) {
+        OykSysvApp tmp;
+        tmp = *app;
+        tmp.settings_tab = 7;
+        draw_settings_modal(cv, &tmp);
+    }
     else if (app->screen == OYK_SYSV_SCR_FILES) draw_files_modal(cv, app);
     else if (app->screen == OYK_SYSV_SCR_ABOUT) draw_about_modal(cv, app);
     else if (app->screen != OYK_SYSV_SCR_MAIN) draw_simple_modal(cv, app);
+}
+
+int oyk_sysv_is_modal_screen(int screen_id) {
+    switch (screen_id) {
+        case OYK_SYSV_SCR_SETTINGS:
+        case OYK_SYSV_SCR_ADD_IFACE:
+        case OYK_SYSV_SCR_EDIT_IFACE:
+        case OYK_SYSV_SCR_PEERS:
+        case OYK_SYSV_SCR_EDIT_PEER:
+        case OYK_SYSV_SCR_TERMINATE:
+        case OYK_SYSV_SCR_BAN:
+        case OYK_SYSV_SCR_EXIT_PEERS:
+        case OYK_SYSV_SCR_THEME:
+        case OYK_SYSV_SCR_TERM_HELP:
+        case OYK_SYSV_SCR_FILES:
+        case OYK_SYSV_SCR_RIG:
+        case OYK_SYSV_SCR_ABOUT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static int s_toupper_ascii(int ch) {
+    if (ch >= 'a' && ch <= 'z') return ch - ('a' - 'A');
+    return ch;
+}
+
+static void s_move_menu_sel(OykSysvApp *app, int delta) {
+    int count;
+    int cur;
+    int step;
+    count = oyk_sysv_node_menu_count();
+    if (count <= 0) return;
+    cur = app->menu_sel;
+    for (step = 0; step < count; ++step) {
+        const OykSysvMenuItem *it;
+        cur = (cur + delta) % count;
+        if (cur < 0) cur += count;
+        it = oyk_sysv_node_menu_item(cur);
+        if (it && !it->is_separator) {
+            app->menu_sel = cur;
+            return;
+        }
+    }
+}
+
+static void s_close_modal(OykSysvApp *app) {
+    if (app->screen == OYK_SYSV_SCR_TERM_HELP && app->term_help_from_term) {
+        app->term_help_from_term = 0;
+        app->screen = OYK_SYSV_SCR_TERMINAL;
+        return;
+    }
+    if (app->screen == OYK_SYSV_SCR_SETTINGS && app->settings_tab == 7 &&
+        app->theme_ctrl.preview_active) {
+        oyk_sysv_theme_revert(&app->theme_ctrl);
+    }
+    app->screen = OYK_SYSV_SCR_MAIN;
+}
+
+static int s_handle_settings_key(OykSysvApp *app, int key) {
+    int n_tabs;
+    int max_row;
+    n_tabs = oyk_sysv_settings_tab_count();
+    if (key >= '1' && key <= '8') {
+        app->settings_tab = key - '1';
+        app->settings_row = 0;
+        return 1;
+    }
+    if (key == OYK_SYSV_KEY_LEFT) {
+        app->settings_tab = (app->settings_tab + n_tabs - 1) % n_tabs;
+        app->settings_row = 0;
+        return 1;
+    }
+    if (key == OYK_SYSV_KEY_RIGHT) {
+        app->settings_tab = (app->settings_tab + 1) % n_tabs;
+        app->settings_row = 0;
+        return 1;
+    }
+    if (app->settings_tab == 3) {
+        max_row = (app->node.cfg.iface_count > 0) ? (app->node.cfg.iface_count - 1) : 0;
+        if (key == OYK_SYSV_KEY_UP && app->iface_sel > 0) { --app->iface_sel; return 1; }
+        if (key == OYK_SYSV_KEY_DOWN && app->iface_sel < max_row) { ++app->iface_sel; return 1; }
+        if (key == 'a' || key == 'A') {
+            oyk_sysv_wiz_init(&app->wiz, &app->node.cfg);
+            app->wiz_btn = 1;
+            app->screen = OYK_SYSV_SCR_ADD_IFACE;
+            return 1;
+        }
+        if ((key == 'e' || key == 'E' || key == OYK_SYSV_KEY_ENTER || key == '\n') &&
+            app->node.cfg.iface_count > 0) {
+            app->modal_btn = 0;
+            app->screen = OYK_SYSV_SCR_EDIT_IFACE;
+            return 1;
+        }
+        return 0;
+    }
+    if (app->settings_tab == 4) {
+        max_row = (app->node.cfg.peer_count > 0) ? (app->node.cfg.peer_count - 1) : 0;
+        if (key == OYK_SYSV_KEY_UP && app->peer_sel > 0) { --app->peer_sel; return 1; }
+        if (key == OYK_SYSV_KEY_DOWN && app->peer_sel < max_row) { ++app->peer_sel; return 1; }
+        if ((key == 'e' || key == 'E' || key == OYK_SYSV_KEY_ENTER || key == '\n') &&
+            app->node.cfg.peer_count > 0) {
+            app->modal_btn = 0;
+            app->screen = OYK_SYSV_SCR_EDIT_PEER;
+            return 1;
+        }
+        return 0;
+    }
+    if (app->settings_tab == 7) {
+        if (key == ' ' || key == OYK_SYSV_KEY_ENTER || key == '\n' ||
+            key == '>' || key == ']' || key == 'n' || key == 'N') {
+            oyk_sysv_theme_cycle(&app->theme_ctrl, 1);
+            oyk_sysv_copy_str(app->theme_ctrl.saved_name, sizeof(app->theme_ctrl.saved_name),
+                              app->theme_ctrl.active_name);
+            app->theme_ctrl.preview_active = 0;
+            oyk_sysv_copy_str(app->feedback, sizeof(app->feedback), "Theme preset updated.");
+            return 1;
+        }
+        if (key == '<' || key == '[' || key == 'p' || key == 'P') {
+            oyk_sysv_theme_cycle(&app->theme_ctrl, -1);
+            oyk_sysv_copy_str(app->theme_ctrl.saved_name, sizeof(app->theme_ctrl.saved_name),
+                              app->theme_ctrl.active_name);
+            app->theme_ctrl.preview_active = 0;
+            oyk_sysv_copy_str(app->feedback, sizeof(app->feedback), "Theme preset updated.");
+            return 1;
+        }
+        return 0;
+    }
+    if (key == OYK_SYSV_KEY_UP && app->settings_row > 0) {
+        --app->settings_row;
+        return 1;
+    }
+    if (key == OYK_SYSV_KEY_DOWN && app->settings_row < 1) {
+        ++app->settings_row;
+        return 1;
+    }
+    if (key == ' ') {
+        if (app->settings_tab == 0 && app->settings_row == 1) {
+            app->node.cfg.accept_incoming = !app->node.cfg.accept_incoming;
+            return 1;
+        }
+        if (app->settings_tab == 1 && app->settings_row == 0) {
+            app->node.cfg.bbs_enabled = !app->node.cfg.bbs_enabled;
+            return 1;
+        }
+        if (app->settings_tab == 2) {
+            app->node.cfg.chat_enabled = !app->node.cfg.chat_enabled;
+            return 1;
+        }
+        if (app->settings_tab == 5) {
+            app->node.cfg.rig_enabled = !app->node.cfg.rig_enabled;
+            return 1;
+        }
+        if (app->settings_tab == 6) {
+            if (app->settings_row == 0) app->node.cfg.printer_enabled = !app->node.cfg.printer_enabled;
+            else app->node.cfg.printer_condensed = !app->node.cfg.printer_condensed;
+            return 1;
+        }
+        return 0;
+    }
+    if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+        oyk_sysv_copy_str(app->feedback, sizeof(app->feedback), "Settings applied.");
+        app->screen = OYK_SYSV_SCR_MAIN;
+        return 1;
+    }
+    return 0;
+}
+
+int oyk_sysv_tui_handle_key(OykSysvApp *app, int key) {
+    if (!app || key == OYK_SYSV_KEY_NONE) return 0;
+
+    /* Modal dialogs strictly preempt ALL global hotkeys (Ctrl-N, F10, Tab switch, F9). */
+    if (oyk_sysv_is_modal_screen(app->screen)) {
+        if (key == OYK_SYSV_KEY_CTRL_N || key == OYK_SYSV_KEY_F10 || key == OYK_SYSV_KEY_F9) {
+            return 0;
+        }
+        if (key == OYK_SYSV_KEY_ESC) {
+            s_close_modal(app);
+            return 1;
+        }
+        if (app->screen == OYK_SYSV_SCR_SETTINGS) {
+            return s_handle_settings_key(app, key);
+        }
+        if (app->screen == OYK_SYSV_SCR_ADD_IFACE) {
+            if (app->wiz.step == 0 && (key == OYK_SYSV_KEY_UP || key == OYK_SYSV_KEY_DOWN)) {
+                int ndrv;
+                int next;
+                ndrv = oyk_sysv_wiz_driver_count();
+                next = app->wiz.selected_driver_idx + ((key == OYK_SYSV_KEY_DOWN) ? 1 : (ndrv - 1));
+                next %= ndrv;
+                oyk_sysv_wiz_select_driver(&app->wiz, &app->node.cfg, next);
+                return 1;
+            }
+            if (app->wiz.step == 2 && key == ' ') {
+                app->wiz.draft.allow_same_interface = !app->wiz.draft.allow_same_interface;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_LEFT) {
+                if (app->wiz_btn > 0) --app->wiz_btn;
+                if (app->wiz_btn == 0 && app->wiz.step == 0) app->wiz_btn = 1;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_RIGHT || key == OYK_SYSV_KEY_TAB) {
+                if (app->wiz_btn < 2) ++app->wiz_btn;
+                else app->wiz_btn = (app->wiz.step > 0) ? 0 : 1;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+                if (app->wiz_btn == 0 && app->wiz.step > 0) {
+                    oyk_sysv_wiz_back(&app->wiz);
+                    if (app->wiz.step == 0 && app->wiz_btn == 0) app->wiz_btn = 1;
+                } else if (app->wiz_btn == 2) {
+                    app->screen = OYK_SYSV_SCR_MAIN;
+                } else if (app->wiz.step < 3) {
+                    oyk_sysv_wiz_advance(&app->wiz, &app->node.cfg);
+                } else {
+                    if (app->node.cfg.iface_count < OYK_SYSV_MAX_IFACES) {
+                        int idx;
+                        idx = app->node.cfg.iface_count++;
+                        app->node.cfg.ifaces[idx] = app->wiz.draft;
+                        app->node.iface_rt[idx].running = 1;
+                        oyk_sysv_copy_str(app->node.iface_rt[idx].status_text,
+                                          sizeof(app->node.iface_rt[idx].status_text), "UP");
+                    }
+                    app->screen = OYK_SYSV_SCR_MAIN;
+                }
+                return 1;
+            }
+            return 0;
+        }
+        if (app->screen == OYK_SYSV_SCR_FILES) {
+            OykSysvFilePane *pane;
+            pane = (app->fm.active_pane == 0) ? &app->fm.inc : &app->fm.files;
+            if (key == OYK_SYSV_KEY_TAB || key == OYK_SYSV_KEY_LEFT || key == OYK_SYSV_KEY_RIGHT) {
+                app->fm.active_pane = !app->fm.active_pane;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_UP && pane->sel > 0) {
+                --pane->sel;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_DOWN && pane->sel + 1 < pane->count) {
+                ++pane->sel;
+                return 1;
+            }
+            if ((key == OYK_SYSV_KEY_ENTER || key == '\n') &&
+                pane->sel >= 0 && pane->sel < pane->count &&
+                pane->entries[pane->sel].is_dir) {
+                oyk_sysv_filemgr_enter_dir(&app->fm, app->fm.active_pane,
+                                           pane->entries[pane->sel].name);
+                return 1;
+            }
+            return 0;
+        }
+        if (app->screen == OYK_SYSV_SCR_TERMINATE) {
+            if (key == OYK_SYSV_KEY_UP && app->term_sess_sel > 0) { --app->term_sess_sel; return 1; }
+            if (key == OYK_SYSV_KEY_DOWN && app->term_sess_sel + 1 < OYK_SYSV_MAX_SESSIONS) {
+                ++app->term_sess_sel;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_LEFT || key == OYK_SYSV_KEY_RIGHT || key == OYK_SYSV_KEY_TAB) {
+                app->modal_btn = !app->modal_btn;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+                if (app->modal_btn == 0 && app->term_sess_sel >= 0 &&
+                    app->term_sess_sel < OYK_SYSV_MAX_SESSIONS &&
+                    app->node.sessions[app->term_sess_sel].state == 2) {
+                    oyk_sysv_node_terminate_session(&app->node,
+                                                    app->node.sessions[app->term_sess_sel].id);
+                }
+                app->screen = OYK_SYSV_SCR_MAIN;
+                return 1;
+            }
+            return 0;
+        }
+        if (app->screen == OYK_SYSV_SCR_BAN) {
+            if (key == OYK_SYSV_KEY_UP && app->ban_sel > 0) { --app->ban_sel; return 1; }
+            if (key == OYK_SYSV_KEY_DOWN && app->ban_sel + 1 < app->node.ban_count) {
+                ++app->ban_sel;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_LEFT) { app->modal_btn = (app->modal_btn + 2) % 3; return 1; }
+            if (key == OYK_SYSV_KEY_RIGHT || key == OYK_SYSV_KEY_TAB) {
+                app->modal_btn = (app->modal_btn + 1) % 3;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+                if (app->modal_btn == 2) app->screen = OYK_SYSV_SCR_MAIN;
+                return 1;
+            }
+            return 0;
+        }
+        if (app->screen == OYK_SYSV_SCR_EXIT_PEERS) {
+            if (key == OYK_SYSV_KEY_LEFT) { app->exit_btn_sel = (app->exit_btn_sel + 3) % 4; return 1; }
+            if (key == OYK_SYSV_KEY_RIGHT || key == OYK_SYSV_KEY_TAB) {
+                app->exit_btn_sel = (app->exit_btn_sel + 1) % 4;
+                return 1;
+            }
+            if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+                if (app->exit_btn_sel == 0 || app->exit_btn_sel == 1) {
+                    app->running = 0;
+                    app->screen = OYK_SYSV_SCR_MAIN;
+                } else if (app->exit_btn_sel == 2) {
+                    app->screen = OYK_SYSV_SCR_SETTINGS;
+                    app->settings_tab = 4;
+                } else {
+                    app->screen = OYK_SYSV_SCR_MAIN;
+                }
+                return 1;
+            }
+            return 0;
+        }
+        if (key == OYK_SYSV_KEY_LEFT || key == OYK_SYSV_KEY_RIGHT || key == OYK_SYSV_KEY_TAB) {
+            app->modal_btn = !app->modal_btn;
+            return 1;
+        }
+        if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+            s_close_modal(app);
+            return 1;
+        }
+        return 0;
+    }
+
+    /* Dropdown Node Menu */
+    if (app->screen == OYK_SYSV_SCR_MENU) {
+        int i;
+        if (key == OYK_SYSV_KEY_ESC || key == OYK_SYSV_KEY_CTRL_N || key == OYK_SYSV_KEY_F10) {
+            app->screen = OYK_SYSV_SCR_MAIN;
+            return 1;
+        }
+        if (key == OYK_SYSV_KEY_UP) { s_move_menu_sel(app, -1); return 1; }
+        if (key == OYK_SYSV_KEY_DOWN) { s_move_menu_sel(app, 1); return 1; }
+        if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+            const OykSysvMenuItem *it;
+            it = oyk_sysv_node_menu_item(app->menu_sel);
+            if (it && !it->is_separator) {
+                oyk_sysv_app_exec_menu_action(app, it->action);
+                return 1;
+            }
+            return 0;
+        }
+        for (i = 0; i < oyk_sysv_node_menu_count(); ++i) {
+            const OykSysvMenuItem *it;
+            it = oyk_sysv_node_menu_item(i);
+            if (it && !it->is_separator && it->shortcut_key &&
+                s_toupper_ascii(key) == s_toupper_ascii((unsigned char)it->shortcut_key)) {
+                oyk_sysv_app_exec_menu_action(app, it->action);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    /* Local Terminal view */
+    if (app->screen == OYK_SYSV_SCR_TERMINAL) {
+        if (app->term_ctrl_a_pending) {
+            int cmd;
+            app->term_ctrl_a_pending = 0;
+            cmd = oyk_sysv_term_decode_ctrl_a(key);
+            if (cmd == OYK_SYSV_TCMD_HELP) {
+                app->term_help_from_term = 1;
+                app->screen = OYK_SYSV_SCR_TERM_HELP;
+                return 1;
+            }
+            if (cmd == OYK_SYSV_TCMD_CLOSE) {
+                app->screen = OYK_SYSV_SCR_MAIN;
+                return 1;
+            }
+            if (cmd == OYK_SYSV_TCMD_CLEAR) {
+                app->term_line_count = 0;
+                return 1;
+            }
+            if (cmd == OYK_SYSV_TCMD_WRAP) {
+                app->term_eol.word_wrap = !app->term_eol.word_wrap;
+                return 1;
+            }
+            if (cmd == OYK_SYSV_TCMD_EOL) {
+                app->term_eol.eol = (OykSysvLineEnding)(((int)app->term_eol.eol + 1) % 3);
+                return 1;
+            }
+            if (cmd == OYK_SYSV_TCMD_ECHO) {
+                app->term_eol.echo = !app->term_eol.echo;
+                return 1;
+            }
+            return 1;
+        }
+        if (key == OYK_SYSV_KEY_CTRL_A) {
+            app->term_ctrl_a_pending = 1;
+            return 1;
+        }
+        if (key == OYK_SYSV_KEY_TAB || key == OYK_SYSV_KEY_F9) {
+            app->screen = OYK_SYSV_SCR_MAIN;
+            return 1;
+        }
+        if (key == OYK_SYSV_KEY_BS || key == 8) {
+            size_t len;
+            len = strlen(app->term_input);
+            if (len > 0U) {
+                app->term_input[len - 1U] = '\0';
+                return 1;
+            }
+            return 0;
+        }
+        if (key == OYK_SYSV_KEY_ENTER || key == '\n') {
+            if (app->term_input[0]) {
+                char echo_buf[96];
+                sprintf(echo_buf, "> %s", app->term_input);
+                oyk_sysv_app_term_append(app, echo_buf);
+                if (!app->term_connected) {
+                    oyk_sysv_app_term_append(app, "*** Not connected (use C <callsign> once link is active).");
+                }
+                app->term_input[0] = '\0';
+                return 1;
+            }
+            return 0;
+        }
+        if (key >= 32 && key <= 126) {
+            size_t len;
+            len = strlen(app->term_input);
+            if (len + 1U < sizeof(app->term_input)) {
+                app->term_input[len] = (char)key;
+                app->term_input[len + 1U] = '\0';
+                return 1;
+            }
+            return 0;
+        }
+        return 0;
+    }
+
+    /* Main Console (menu closed, no modal): ONLY Ctrl-N / F10 and Tab / F9!
+     * Single-letter menu hotkeys are strictly disabled while menu is closed. */
+    if (key == OYK_SYSV_KEY_CTRL_N || key == OYK_SYSV_KEY_F10) {
+        app->menu_sel = 0;
+        app->screen = OYK_SYSV_SCR_MENU;
+        return 1;
+    }
+    if (key == OYK_SYSV_KEY_TAB || key == OYK_SYSV_KEY_F9) {
+        app->screen = OYK_SYSV_SCR_TERMINAL;
+        return 1;
+    }
+    return 0;
 }
 
 int oyk_sysv_tui_setup_screen(OykSysvApp *app, const char *screen_name) {
     if (!app || !screen_name) return 0;
     app->screen = OYK_SYSV_SCR_MAIN;
     app->settings_tab = 0;
+    app->settings_row = 0;
     app->wiz.step = 0;
     if (strcmp(screen_name, "main") == 0) app->screen = OYK_SYSV_SCR_MAIN;
     else if (strcmp(screen_name, "menu") == 0) app->screen = OYK_SYSV_SCR_MENU;
@@ -752,6 +1211,10 @@ int oyk_sysv_tui_setup_screen(OykSysvApp *app, const char *screen_name) {
     else if (strcmp(screen_name, "peers") == 0) { app->screen = OYK_SYSV_SCR_SETTINGS; app->settings_tab = 4; }
     else if (strcmp(screen_name, "settings_rig") == 0) { app->screen = OYK_SYSV_SCR_SETTINGS; app->settings_tab = 5; }
     else if (strcmp(screen_name, "settings_printer") == 0) { app->screen = OYK_SYSV_SCR_SETTINGS; app->settings_tab = 6; }
+    else if (strcmp(screen_name, "settings_theme") == 0 || strcmp(screen_name, "theme") == 0) {
+        app->screen = OYK_SYSV_SCR_SETTINGS;
+        app->settings_tab = 7;
+    }
     else if (strcmp(screen_name, "add_iface_1") == 0) { app->screen = OYK_SYSV_SCR_ADD_IFACE; app->wiz.step = 0; }
     else if (strcmp(screen_name, "add_iface_2") == 0) { app->screen = OYK_SYSV_SCR_ADD_IFACE; app->wiz.step = 1; }
     else if (strcmp(screen_name, "add_iface_3") == 0) { app->screen = OYK_SYSV_SCR_ADD_IFACE; app->wiz.step = 2; }
@@ -761,7 +1224,6 @@ int oyk_sysv_tui_setup_screen(OykSysvApp *app, const char *screen_name) {
     else if (strcmp(screen_name, "terminate") == 0) app->screen = OYK_SYSV_SCR_TERMINATE;
     else if (strcmp(screen_name, "ban") == 0) app->screen = OYK_SYSV_SCR_BAN;
     else if (strcmp(screen_name, "exit") == 0) app->screen = OYK_SYSV_SCR_EXIT_PEERS;
-    else if (strcmp(screen_name, "theme") == 0) app->screen = OYK_SYSV_SCR_THEME;
     else if (strcmp(screen_name, "terminal") == 0) app->screen = OYK_SYSV_SCR_TERMINAL;
     else if (strcmp(screen_name, "terminal_help") == 0) app->screen = OYK_SYSV_SCR_TERM_HELP;
     else if (strcmp(screen_name, "files") == 0) app->screen = OYK_SYSV_SCR_FILES;

@@ -36,6 +36,26 @@ static int run_vms_console_selftest(void)
             return 3;
         }
     }
+    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 0);
+    if (oyk_sysv_node_active_conn_count(&app.node) != 0 ||
+        app.term_connected != 0 ||
+        oyk_sysv_tui_handle_key(&app, 's') != 0 ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 1 ||
+        app.screen != OYK_SYSV_SCR_MENU) {
+        return 4;
+    }
+    oyk_sysv_tui_handle_key(&app, 's');
+    if (app.screen != OYK_SYSV_SCR_SETTINGS ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 0 ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_F10) != 0 ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_LEFT) != 1 ||
+        app.settings_tab != 7) {
+        return 5;
+    }
+    oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_ESC);
+    if (app.screen != OYK_SYSV_SCR_MAIN) {
+        return 6;
+    }
     return 0;
 }
 
@@ -72,9 +92,11 @@ int main(int argc, char **argv)
         return rc;
     }
 
-    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 1);
+    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 0);
     if (cfg_path) {
         oyk_sysv_config_load_file(cfg_path, &app.node.cfg);
+    } else {
+        (void)oyk_sysv_config_load_file("node.cfg", &app.node.cfg);
     }
     oyk_sysv_net_init(&net, &app.node.cfg);
 

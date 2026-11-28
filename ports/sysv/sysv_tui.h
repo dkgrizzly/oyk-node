@@ -69,9 +69,31 @@ void oyk_sysv_canvas_put_shadow(OykSysvCanvas *cv, int top, int left, int h, int
 void oyk_sysv_canvas_row_text(const OykSysvCanvas *cv, int row, char *out, size_t cap);
 int  oyk_sysv_canvas_find_text(const OykSysvCanvas *cv, const char *needle);
 
+enum OykSysvKey {
+    OYK_SYSV_KEY_NONE   = 0,
+    OYK_SYSV_KEY_CTRL_A = 1,
+    OYK_SYSV_KEY_TAB    = 9,
+    OYK_SYSV_KEY_ENTER  = 13,
+    OYK_SYSV_KEY_CTRL_N = 14,
+    OYK_SYSV_KEY_ESC    = 27,
+    OYK_SYSV_KEY_BS     = 127,
+    OYK_SYSV_KEY_UP     = 1001,
+    OYK_SYSV_KEY_DOWN,
+    OYK_SYSV_KEY_LEFT,
+    OYK_SYSV_KEY_RIGHT,
+    OYK_SYSV_KEY_HOME,
+    OYK_SYSV_KEY_END,
+    OYK_SYSV_KEY_PGUP,
+    OYK_SYSV_KEY_PGDN,
+    OYK_SYSV_KEY_F9,
+    OYK_SYSV_KEY_F10
+};
+
 /* Canonical button & modal helpers */
 int  oyk_sysv_tui_close_btn_col(const OykSysvRect *r);
 void oyk_sysv_tui_render(OykSysvCanvas *cv, const OykSysvApp *app, int rows, int cols);
+int  oyk_sysv_is_modal_screen(int screen_id);
+int  oyk_sysv_tui_handle_key(OykSysvApp *app, int key);
 
 /* Maps all 23 canonical gallery screen names to OykSysvApp state */
 int  oyk_sysv_tui_setup_screen(OykSysvApp *app, const char *screen_name);

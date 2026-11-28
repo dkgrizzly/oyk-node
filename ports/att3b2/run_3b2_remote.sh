@@ -32,7 +32,7 @@ tar -czf "${TMP_WORK}/oyk_src.tar.gz" -C "${ROOT_DIR}" \
     ports/sysv/sysv_tui.h ports/sysv/sysv_tui.c \
     ports/sysv/sysv_net.h ports/sysv/sysv_net.c \
     ports/sysv/sysv_logo_data.h \
-    ports/att3b2/att3b2_tui_main.c ports/att3b2/test_3b2_native.c ports/att3b2/Makefile
+    ports/att3b2/b2_tui_main.c ports/att3b2/b2_test.c ports/att3b2/Makefile
 
 python3 - "${OYK_3B2_HOST}" "${OYK_3B2_PORT}" "${OYK_3B2_USER}" \
     "${REMOTE_DIR}" "${TMP_WORK}" "${DO_BUILD}" "${DO_TESTS}" <<'PYEOF'

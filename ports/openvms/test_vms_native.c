@@ -38,6 +38,25 @@ int main(void)
         return 1;
     }
 
+    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 0);
+    if (oyk_sysv_node_active_conn_count(&app.node) != 0 ||
+        app.term_connected != 0 ||
+        oyk_sysv_tui_handle_key(&app, 's') != 0 ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 1 ||
+        app.screen != OYK_SYSV_SCR_MENU) {
+        return 6;
+    }
+    oyk_sysv_tui_handle_key(&app, 's');
+    if (app.screen != OYK_SYSV_SCR_SETTINGS ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 0 ||
+        oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_F10) != 0) {
+        return 7;
+    }
+    oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_ESC);
+    if (app.screen != OYK_SYSV_SCR_MAIN) {
+        return 8;
+    }
+
     oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 1);
     memset(&frm, 0, sizeof(frm));
     oyk_sysv_parse_callsign("KR4OYK-7", &frm.src);

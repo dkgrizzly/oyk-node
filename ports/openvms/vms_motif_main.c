@@ -22,7 +22,7 @@ int main(int argc, char **argv)
         }
     }
 
-    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 1);
+    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, headless ? 1 : 0);
     oyk_sysv_net_init(&net, &app.node.cfg);
 
     if (headless) {

@@ -316,12 +316,14 @@ typedef struct {
     OykSysvFileEntry entries[OYK_SYSV_MAX_DIR_ENTS];
     int              count;
     int              sel;
+    int              seed_demo;
 } OykSysvFilePane;
 
 typedef struct {
     OykSysvFilePane inc;
     OykSysvFilePane files;
     int             active_pane; /* 0 = Incoming, 1 = Files */
+    int             active_btn;
     char            feedback[96];
     int             preview_active;
     char            preview_text[256];
@@ -331,13 +333,17 @@ typedef struct {
     OykSysvNode          node;
     int                  screen;
     int                  settings_tab;
+    int                  settings_row;
     int                  menu_sel;
     int                  iface_sel;
     int                  peer_sel;
     int                  term_sess_sel;
     int                  ban_sel;
+    int                  modal_btn;
+    int                  wiz_btn;
     int                  exit_btn_sel;
     int                  term_help_from_term;
+    int                  term_connected;
     OykSysvAddIfaceWiz   wiz;
     OykSysvThemeCtrl     theme_ctrl;
     OykSysvFileMgr       fm;
@@ -452,6 +458,9 @@ int  oyk_sysv_resolve_safe_path(const char *root, const char *cur_rel,
                                 char *rel_out, size_t rel_sz,
                                 char *err_out, size_t err_sz);
 void oyk_sysv_filemgr_init(OykSysvFileMgr *fm, const char *inc_root, const char *files_root);
+void oyk_sysv_filemgr_init_ex(OykSysvFileMgr *fm, const char *inc_root,
+                              const char *files_root, int seed_demo);
+void oyk_sysv_filemgr_refresh(OykSysvFileMgr *fm, int pane_idx);
 void oyk_sysv_filemgr_pane_title(const OykSysvFilePane *p, const char *label,
                                  char *out, size_t cap);
 int  oyk_sysv_filemgr_enter_dir(OykSysvFileMgr *fm, int pane_idx, const char *child);

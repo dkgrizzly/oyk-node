@@ -12,6 +12,28 @@ extern int   atoi(const char *);
 #include <stdlib.h>
 #endif
 #include <string.h>
+#if !defined(__VMS) && !defined(_WIN32)
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#endif
+
+#ifdef OYK_SYSV_SVR32
+static void s_svr32_memmove(void *dst, const void *src, size_t n) {
+    unsigned char *d;
+    const unsigned char *s;
+    size_t i;
+    d = (unsigned char *)dst;
+    s = (const unsigned char *)src;
+    if (d == s || n == 0U) return;
+    if (d < s) {
+        for (i = 0U; i < n; ++i) d[i] = s[i];
+    } else {
+        for (i = n; i > 0U; --i) d[i - 1U] = s[i - 1U];
+    }
+}
+#define memmove s_svr32_memmove
+#endif
 
 static int s_tolower(int ch) {
     if (ch >= 'A' && ch <= 'Z') return ch + ('a' - 'A');
@@ -97,11 +119,11 @@ static void s_trim_inplace(char *s) {
 }
 
 int oyk_sysv_node_menu_count(void) {
-    return 13;
+    return 11;
 }
 
 const OykSysvMenuItem *oyk_sysv_node_menu_item(int idx) {
-    static const OykSysvMenuItem items[13] = {
+    static const OykSysvMenuItem items[11] = {
         { OYK_SYSV_ACT_ALLOW_INCOMING, "Allow Incoming Connections", "Allow Incoming Connections", 'A', 0 },
         { OYK_SYSV_ACT_DENY_INCOMING,  "Deny Incoming Connections",  "Deny Incoming Connections",  'D', 0 },
         { OYK_SYSV_ACT_NONE,           "-",                          "-",                          0,   1 },
@@ -109,14 +131,12 @@ const OykSysvMenuItem *oyk_sysv_node_menu_item(int idx) {
         { OYK_SYSV_ACT_FILES,          "Manage Files Area...",       "Manage Files Area...",       'F', 0 },
         { OYK_SYSV_ACT_RIG,            "Radio Control...",           "Radio Control...",           'R', 0 },
         { OYK_SYSV_ACT_SETTINGS,       "Settings...",                "Settings...",                'S', 0 },
-        { OYK_SYSV_ACT_PEERS,          "Peers...",                   "Peers...",                   'P', 0 },
-        { OYK_SYSV_ACT_THEME,          "Theme...",                   "Theme...",                   'H', 0 },
         { OYK_SYSV_ACT_TERMINATE,      "Terminate Connection...",    "Terminate Connection...",    'K', 0 },
         { OYK_SYSV_ACT_BAN,            "Ban / Unban Callsign...",    "Ban / Unban Callsign...",    'B', 0 },
         { OYK_SYSV_ACT_NONE,           "-",                          "-",                          0,   1 },
         { OYK_SYSV_ACT_EXIT,           "Exit",                       "Exit",                       'Q', 0 }
     };
-    if (idx < 0 || idx >= 13) return NULL;
+    if (idx < 0 || idx >= 11) return NULL;
     return &items[idx];
 }
 
@@ -143,14 +163,14 @@ const char *oyk_sysv_screen_title(int screen_id) {
 }
 
 int oyk_sysv_settings_tab_count(void) {
-    return 7;
+    return 8;
 }
 
 const char *oyk_sysv_settings_tab_title(int tab_idx) {
-    static const char * const titles[7] = {
-        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn"
+    static const char * const titles[8] = {
+        "1:Node", "2:BBS", "3:CHAT", "4:Ifaces", "5:Peers", "6:Rig", "7:Prn", "8:Theme"
     };
-    if (tab_idx < 0 || tab_idx >= 7) return "";
+    if (tab_idx < 0 || tab_idx >= 8) return "";
     return titles[tab_idx];
 }
 
@@ -1393,7 +1413,69 @@ int oyk_sysv_resolve_safe_path(const char *root, const char *cur_rel,
     return 1;
 }
 
+static void s_scan_real_pane_entries(OykSysvFilePane *p) {
+#if !defined(__VMS) && !defined(_WIN32)
+    char dir_path[192];
+    DIR *d;
+    struct dirent *de;
+#endif
+    memset(p->entries, 0, sizeof(p->entries));
+    p->count = 0;
+    p->sel = 0;
+    if (p->rel[0]) {
+        oyk_sysv_copy_str(p->entries[p->count].name, 48U, "..");
+        p->entries[p->count].is_dir = 1;
+        p->entries[p->count].is_parent = 1;
+        p->count++;
+    }
+#if !defined(__VMS) && !defined(_WIN32)
+    {
+        char nrel[64];
+        char err[64];
+        if (!oyk_sysv_resolve_safe_path(p->root, p->rel, ".", 1,
+                                        dir_path, sizeof(dir_path),
+                                        nrel, sizeof(nrel), err, sizeof(err))) {
+            return;
+        }
+        d = opendir(dir_path);
+        if (!d) return;
+        while ((de = readdir(d)) != NULL && p->count < OYK_SYSV_MAX_DIR_ENTS) {
+            char full[512];
+            struct stat st;
+            if (!oyk_sysv_is_safe_filename(de->d_name)) continue;
+            oyk_sysv_copy_str(p->entries[p->count].name, 48U, de->d_name);
+            p->entries[p->count].is_dir = 0;
+            p->entries[p->count].is_parent = 0;
+            p->entries[p->count].size = 0UL;
+            if (strlen(dir_path) + 1U + strlen(de->d_name) + 1U < sizeof(full)) {
+                sprintf(full, "%s/%s", dir_path, de->d_name);
+                if (stat(full, &st) == 0) {
+                    int is_d;
+                    is_d = 0;
+#ifdef S_ISDIR
+                    is_d = S_ISDIR(st.st_mode) ? 1 : 0;
+#elif defined(S_IFMT) && defined(S_IFDIR)
+                    is_d = ((st.st_mode & S_IFMT) == S_IFDIR) ? 1 : 0;
+#endif
+                    if (is_d) {
+                        p->entries[p->count].is_dir = 1;
+                    } else {
+                        p->entries[p->count].size = (unsigned long)st.st_size;
+                    }
+                }
+            }
+            p->count++;
+        }
+        closedir(d);
+    }
+#endif
+}
+
 static void s_seed_pane_entries(OykSysvFilePane *p, int is_inc) {
+    if (!p->seed_demo) {
+        s_scan_real_pane_entries(p);
+        return;
+    }
     memset(p->entries, 0, sizeof(p->entries));
     p->count = 0;
     p->sel = 0;
@@ -1423,13 +1505,26 @@ static void s_seed_pane_entries(OykSysvFilePane *p, int is_inc) {
     }
 }
 
-void oyk_sysv_filemgr_init(OykSysvFileMgr *fm, const char *inc_root, const char *files_root) {
+void oyk_sysv_filemgr_init_ex(OykSysvFileMgr *fm, const char *inc_root,
+                              const char *files_root, int seed_demo) {
     if (!fm) return;
     memset(fm, 0, sizeof(*fm));
+    fm->inc.seed_demo = seed_demo ? 1 : 0;
+    fm->files.seed_demo = seed_demo ? 1 : 0;
     oyk_sysv_copy_str(fm->inc.root, sizeof(fm->inc.root), inc_root ? inc_root : "incoming");
     oyk_sysv_copy_str(fm->files.root, sizeof(fm->files.root), files_root ? files_root : "files");
     s_seed_pane_entries(&fm->inc, 1);
     s_seed_pane_entries(&fm->files, 0);
+}
+
+void oyk_sysv_filemgr_init(OykSysvFileMgr *fm, const char *inc_root, const char *files_root) {
+    oyk_sysv_filemgr_init_ex(fm, inc_root, files_root, 1);
+}
+
+void oyk_sysv_filemgr_refresh(OykSysvFileMgr *fm, int pane_idx) {
+    if (!fm) return;
+    if (pane_idx == 0) s_seed_pane_entries(&fm->inc, 1);
+    else s_seed_pane_entries(&fm->files, 0);
 }
 
 void oyk_sysv_filemgr_pane_title(const OykSysvFilePane *p, const char *label,
@@ -1475,13 +1570,22 @@ void oyk_sysv_app_init(OykSysvApp *app, const char *platform_label, int seed_dem
     }
     oyk_sysv_wiz_init(&app->wiz, &app->node.cfg);
     oyk_sysv_theme_init(&app->theme_ctrl, &app->node.cfg, 1, 0);
-    oyk_sysv_filemgr_init(&app->fm, app->node.cfg.incoming_path, app->node.cfg.bbs_files_path);
+    oyk_sysv_filemgr_init_ex(&app->fm, app->node.cfg.incoming_path,
+                             app->node.cfg.bbs_files_path, seed_demo);
     app->term_eol.eol = OYK_SYSV_EOL_CRLF;
     app->term_eol.echo = 1;
     app->term_eol.word_wrap = 1;
-    oyk_sysv_copy_str(app->term_status, sizeof(app->term_status), "Connected to KR4OYK-1 (BBS)");
-    oyk_sysv_app_term_append(app, "*** Connected to KR4OYK-1 Packet BBS");
-    oyk_sysv_app_term_append(app, "Type H for BBS commands, Ctrl-A Z for Help.");
+    if (seed_demo) {
+        app->term_connected = 1;
+        oyk_sysv_copy_str(app->term_status, sizeof(app->term_status), "Connected to KR4OYK-1 (BBS)");
+        oyk_sysv_app_term_append(app, "*** Connected to KR4OYK-1 Packet BBS");
+        oyk_sysv_app_term_append(app, "Type H for BBS commands, Ctrl-A Z for Help.");
+    } else {
+        app->term_connected = 0;
+        oyk_sysv_copy_str(app->term_status, sizeof(app->term_status), "Disconnected");
+        oyk_sysv_app_term_append(app, "*** OYK Local Packet Terminal (Disconnected)");
+        oyk_sysv_app_term_append(app, "Ctrl-A Z:Help | Tab/F9:Console");
+    }
     app->running = 1;
 }
 
@@ -1502,34 +1606,49 @@ void oyk_sysv_app_exec_menu_action(OykSysvApp *app, int action) {
             app->screen = OYK_SYSV_SCR_TERMINAL;
             break;
         case OYK_SYSV_ACT_FILES:
+            oyk_sysv_filemgr_refresh(&app->fm, 0);
+            oyk_sysv_filemgr_refresh(&app->fm, 1);
             app->screen = OYK_SYSV_SCR_FILES;
             break;
         case OYK_SYSV_ACT_RIG:
             app->screen = OYK_SYSV_SCR_SETTINGS;
             app->settings_tab = 5;
+            app->settings_row = 0;
+            app->modal_btn = 0;
             break;
         case OYK_SYSV_ACT_SETTINGS:
             app->screen = OYK_SYSV_SCR_SETTINGS;
             app->settings_tab = 0;
+            app->settings_row = 0;
+            app->modal_btn = 0;
             break;
         case OYK_SYSV_ACT_PEERS:
             app->screen = OYK_SYSV_SCR_SETTINGS;
             app->settings_tab = 4;
+            app->settings_row = 0;
+            app->modal_btn = 0;
             break;
         case OYK_SYSV_ACT_THEME:
-            app->screen = OYK_SYSV_SCR_THEME;
+            app->screen = OYK_SYSV_SCR_SETTINGS;
+            app->settings_tab = 7;
+            app->settings_row = 0;
+            app->modal_btn = 0;
             break;
         case OYK_SYSV_ACT_TERMINATE:
+            app->modal_btn = 0;
             app->screen = OYK_SYSV_SCR_TERMINATE;
             break;
         case OYK_SYSV_ACT_BAN:
+            app->modal_btn = 0;
             app->screen = OYK_SYSV_SCR_BAN;
             break;
         case OYK_SYSV_ACT_ABOUT:
+            app->modal_btn = 0;
             app->screen = OYK_SYSV_SCR_ABOUT;
             break;
         case OYK_SYSV_ACT_EXIT:
             if (oyk_sysv_node_auto_peer_count(&app->node) > 0) {
+                app->exit_btn_sel = 0;
                 app->screen = OYK_SYSV_SCR_EXIT_PEERS;
             } else {
                 app->running = 0;

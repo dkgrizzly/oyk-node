@@ -52,6 +52,21 @@ int main() {
                 ++failures;
             }
         }
+
+        oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, 0);
+        if (oyk_sysv_tui_handle_key(&app, 's') != 0 ||
+            oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 1 ||
+            app.screen != OYK_SYSV_SCR_MENU ||
+            oyk_sysv_tui_handle_key(&app, 's') != 1 ||
+            app.screen != OYK_SYSV_SCR_SETTINGS ||
+            oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_CTRL_N) != 0 ||
+            oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_F10) != 0 ||
+            app.screen != OYK_SYSV_SCR_SETTINGS ||
+            oyk_sysv_tui_handle_key(&app, OYK_SYSV_KEY_ESC) != 1 ||
+            app.screen != OYK_SYSV_SCR_MAIN) {
+            std::printf("FAIL: OpenVMS modal preemption / closed-menu hotkey test\n");
+            ++failures;
+        }
     }
 
     if (failures == 0) {
