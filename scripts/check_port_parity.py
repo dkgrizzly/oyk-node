@@ -165,6 +165,14 @@ def check_native_and_android_parity(errors):
         if req_xm not in motif_src:
             errors.append(f"ports/sysv/sysv_motif_ui.c: missing native Motif widget '{req_xm}'")
 
+    os2_rc = read_text("ports/os2/oyk_os2.rc")
+    os2_pm = read_text("ports/os2/os2_pm_main.cpp")
+    for req_rc in ("AUTOCHECKBOX", "AUTORADIOBUTTON", "IDD_TERM_HELP", "IDI_OYK_NODE"):
+        if req_rc not in os2_rc:
+            errors.append(f"ports/os2/oyk_os2.rc: missing native PM resource '{req_rc}'")
+    if "WM_SETICON" not in os2_pm or "FCF_TITLEBAR" not in os2_pm:
+        errors.append("ports/os2/os2_pm_main.cpp: missing PM WM_SETICON / FCF_TITLEBAR window wiring")
+
     android_screens = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykScreens.kt"
     )
@@ -204,6 +212,7 @@ def check_unit_test_parity(errors):
         "tests/test_att3b2.cpp",
         "tests/test_ti99.cpp",
         "tests/test_openvms.cpp",
+        "tests/test_os2.cpp",
     )
     for rel_path in cpp_test_files:
         src = read_text(rel_path)

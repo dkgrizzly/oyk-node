@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KR4OYK - David Kuder
+# OpenWatcom C++98 Makefile for OS/2 2.0, Warp 3.0, and Warp 4.0 (32-bit).
+
+CC = wpp386
+RC = wrc
+CFLAGS = -bt=os2 -wx -zq -I..\compat -I.
+
+COMPAT_SRCS = ..\compat\oyk_portable.cpp ..\compat\oyk_yapp.cpp ..\compat\oyk_rig.cpp &
+              ..\compat\oyk_printer.cpp ..\compat\oyk_tui.cpp ..\compat\oyk_term.cpp &
+              ..\compat\oyk_gui.cpp ..\compat\oyk_gui_theme.cpp
+
+all: oykos2.exe oykos2pm.exe
+
+oykos2.exe: os2_console_main.cpp os2_net.cpp $(COMPAT_SRCS)
+	$(CC) $(CFLAGS) -D__OS2__ os2_console_main.cpp os2_net.cpp $(COMPAT_SRCS)
+	wlink system os2v2 name oykos2 file os2_console_main,os2_net,oyk_portable,oyk_yapp,oyk_rig,oyk_printer,oyk_tui,oyk_term,oyk_gui,oyk_gui_theme
+
+oykos2pm.exe: os2_pm_main.cpp os2_net.cpp oyk_os2.rc $(COMPAT_SRCS)
+	$(CC) $(CFLAGS) -D__OS2__ os2_pm_main.cpp os2_net.cpp $(COMPAT_SRCS)
+	wlink system os2v2_pm name oykos2pm file os2_pm_main,os2_net,oyk_portable,oyk_yapp,oyk_rig,oyk_printer,oyk_tui,oyk_term,oyk_gui,oyk_gui_theme
+	$(RC) oyk_os2.rc oykos2pm.exe
+
+clean: .SYMBOLIC
+	rm -f *.obj *.res oykos2.exe oykos2pm.exe

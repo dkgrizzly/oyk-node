@@ -583,6 +583,13 @@ def main():
                 (32, 32, 4, build_ico_4bpp_entry(32, 32, solid32)),
             ],
         )
+        write_ico(
+            os.path.join(ROOT, "ports", "os2", "oyk_node.ico"),
+            [
+                (16, 16, 4, build_ico_4bpp_entry(16, 16, solid16)),
+                (32, 32, 4, build_ico_4bpp_entry(32, 32, solid32)),
+            ],
+        )
 
         # macOS ICNS
         icns_chunks = []

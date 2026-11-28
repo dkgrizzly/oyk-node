@@ -46,6 +46,7 @@ ctest --test-dir build --output-on-failure -V
 | `oyk_att3b2_tests` | AT&T 3B2 SVR3.2 C89 `sysv` core parity, VT100 23-screen check, `OYK_NO_MOTIF` verification |
 | `oyk_ti99_tests` | TI-99/4A C99 big-endian AX.25/KISS, SAMS 1 MB paging, F18A 80-col / 9918 40-col 23-screen parity |
 | `oyk_openvms_tests` | OpenVMS `SMG$` / VT100 23-screen parity & VAX/Alpha/IA64/x86-64 C89 `sysv` core verification |
+| `oyk_os2_tests` | OS/2 2.0+ `SO32DLL` fallback, `COM1`–`COM4` KISS validation, and 23-screen VIO/PM schema parity |
 | `oyk_tinytmux_tests` | Teensy 4.1 8-UART carrier, PSRAM, FS hooks, USB Host RadioFoundry, PPP, Ethernet bridge, VT100 console |
 | `oyk_pico_tests` | RP2040/RP2350 profiles, PSRAM/Flash fallback, RM2 optional radio, 2-UART console |
 | `oyk_esp32c6_tests` | M5Stack Unit C6L pinout, `PI4IO` RF/button, SX1262 LoRa KISS, 64x48 OLED 4 pages, LittleFS, VT340 TUI |

@@ -1,0 +1,110 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 KR4OYK - David Kuder */
+
+#include <os2.h>
+#include "resource.h"
+
+ICON IDI_OYK_NODE "oyk_node.ico"
+
+MENU IDR_MAINMENU
+BEGIN
+    SUBMENU "~Node", 10
+    BEGIN
+        MENUITEM "~Allow Incoming Connections",  IDM_ALLOW_INCOMING
+        MENUITEM "~Deny Incoming Connections",   IDM_DENY_INCOMING
+        MENUITEM SEPARATOR
+        MENUITEM "~Local Terminal...",           IDM_TERMINAL
+        MENUITEM "Manage ~Files Area...",        IDM_FILES
+        MENUITEM "~Radio Control...",            IDM_RIG_CONTROL
+        MENUITEM "~Settings...",                 IDM_SETTINGS
+        MENUITEM "~Add Interface...",            IDM_ADD_IFACE
+        MENUITEM "~Peers...",                    IDM_PEERS
+        MENUITEM "T~heme...",                    IDM_THEME
+        MENUITEM "~Terminate Connection...",     IDM_TERMINATE
+        MENUITEM "~Ban / Unban Callsign...",     IDM_BAN
+        MENUITEM SEPARATOR
+        MENUITEM "E~xit",                        IDM_EXIT
+    END
+    SUBMENU "~Help", 20
+    BEGIN
+        MENUITEM "~About OYK-Node...",           IDM_ABOUT
+    END
+END
+
+DLGTEMPLATE IDD_SETTINGS
+BEGIN
+    DIALOG "Node Settings", IDD_SETTINGS, 20, 20, 260, 170, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        LTEXT "Node Callsign:", -1, 10, 140, 80, 10
+        ENTRYFIELD "", IDC_SET_CALLSIGN, 96, 140, 80, 10, ES_MARGIN
+        LTEXT "Node Alias:", -1, 10, 122, 80, 10
+        ENTRYFIELD "", IDC_SET_ALIAS, 96, 122, 80, 10, ES_MARGIN
+        AUTOCHECKBOX "Accept Incoming Connections", IDC_SET_INCOMING, 10, 102, 180, 12
+        AUTOCHECKBOX "Enable Internal BBS (-11)", IDC_SET_BBS_EN, 10, 86, 180, 12
+        AUTOCHECKBOX "Enable Multi-User CHAT (-12)", IDC_SET_CHAT_EN, 10, 70, 180, 12
+        AUTOCHECKBOX "Enable Rig Control (rigctld)", IDC_SET_RIG_EN, 10, 54, 180, 12
+        AUTOCHECKBOX "Enable Direct Printer Log", IDC_SET_PRN_EN, 10, 38, 180, 12
+        DEFPUSHBUTTON "Save", DID_OK, 130, 10, 52, 14
+        PUSHBUTTON "Cancel", DID_CANCEL, 190, 10, 52, 14
+    END
+END
+
+DLGTEMPLATE IDD_ADD_IFACE
+BEGIN
+    DIALOG "Add Interface", IDD_ADD_IFACE, 24, 24, 250, 150, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        AUTORADIOBUTTON "AXUDP (IPv4 UDP)", IDC_WIZ_DRV_AXUDP, 12, 118, 160, 12
+        AUTORADIOBUTTON "KISS Serial (COM1-COM4)", IDC_WIZ_DRV_KISS, 12, 102, 160, 12
+        AUTOCHECKBOX "Allow Same-Interface Forwarding", IDC_WIZ_ALLOW_SAME, 12, 80, 190, 12
+        COMBOBOX "", IDC_WIZ_POLICY, 12, 32, 140, 44, CBS_DROPDOWNLIST
+        DEFPUSHBUTTON "Finish", DID_OK, 120, 10, 54, 14
+        PUSHBUTTON "Cancel", DID_CANCEL, 182, 10, 54, 14
+    END
+END
+
+DLGTEMPLATE IDD_TERMINAL
+BEGIN
+    DIALOG "Local Terminal", IDD_TERMINAL, 12, 12, 300, 180, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        COMBOBOX "", IDC_LTERM_PORT, 8, 130, 80, 40, CBS_DROPDOWNLIST
+        ENTRYFIELD "", IDC_LTERM_TARGET, 96, 156, 100, 10, ES_MARGIN
+        MLE "", IDC_LTERM_OUTPUT, 8, 42, 284, 106, MLS_READONLY | MLS_VSCROLL
+        LTEXT "Ctrl-A Z:Help", IDC_LTERM_STATUS, 8, 28, 220, 10
+        ENTRYFIELD "", IDC_LTERM_INPUT, 8, 10, 210, 10, ES_MARGIN
+        DEFPUSHBUTTON "Send", IDC_LTERM_SEND, 224, 8, 68, 14
+    END
+END
+
+DLGTEMPLATE IDD_TERM_HELP
+BEGIN
+    DIALOG "Terminal Hotkey Help", IDD_TERM_HELP, 30, 30, 220, 120, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        LTEXT "Ctrl-A Z : Show Terminal Hotkey Help", -1, 10, 92, 200, 10
+        LTEXT "Ctrl-A X : Close Local Terminal", -1, 10, 76, 200, 10
+        LTEXT "Ctrl-A E : Toggle Local Echo", -1, 10, 60, 200, 10
+        LTEXT "Ctrl-A L : Cycle Line Ending (LF/CRLF/CR)", -1, 10, 44, 200, 10
+        DEFPUSHBUTTON "Close", DID_OK, 84, 10, 52, 14
+    END
+END
+
+DLGTEMPLATE IDD_TERMINATE
+BEGIN
+    DIALOG "Terminate Active Connection", IDD_TERMINATE, 24, 24, 240, 130, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        LISTBOX IDC_TERM_LIST, 10, 34, 220, 80
+        DEFPUSHBUTTON "Terminate", DID_OK, 110, 10, 56, 14
+        PUSHBUTTON "Cancel", DID_CANCEL, 174, 10, 56, 14
+    END
+END
+
+DLGTEMPLATE IDD_BAN
+BEGIN
+    DIALOG "Ban / Unban Callsign", IDD_BAN, 24, 24, 260, 160, WS_VISIBLE, FCF_SYSMENU | FCF_TITLEBAR
+    BEGIN
+        ENTRYFIELD "", IDC_BAN_CALL, 10, 132, 90, 10, ES_MARGIN
+        AUTOCHECKBOX "Hard Ban", IDC_BAN_HARD, 110, 130, 70, 12
+        AUTOCHECKBOX "Allow Appeal", IDC_BAN_APPEAL, 184, 130, 70, 12
+        LISTBOX IDC_BAN_LIST, 10, 34, 240, 86
+        DEFPUSHBUTTON "Close", DID_OK, 194, 10, 56, 14
+    END
+END

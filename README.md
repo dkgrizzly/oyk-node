@@ -14,6 +14,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Desktop** | Linux / POSIX Console | `ncurses` TUI + `--headless` daemon (`C++20`) | [Getting Started](docs/user/getting-started.md) |
 | **Desktop** | Linux X11 GUI | `GTK+ 2.0` (`C++20`) | [Getting Started](docs/user/getting-started.md) |
 | **Desktop** | Windows 32/64-bit & Win 3.1 16-bit | Native WinAPI (`Winsock 1.1`, Win32 Service) | [ports/windows/README.md](ports/windows/README.md) |
+| **Desktop** | OS/2 2.0 / Warp 3.0 / Warp 4.0 (32-bit) | VIO/KBD/MOU Console + Presentation Manager (`SO32DLL` / `COM1`-`COM4`) | [ports/os2/README.md](ports/os2/README.md) |
 | **Desktop** | macOS (`arm64` / `x86_64` / `ppc`) | Cocoa AppKit (`C++20` + OS X 10.4–10.6 `ppc` `C++98`) | [ports/macos/README.md](ports/macos/README.md) |
 | **Embedded** | Teensy 4.1 (`IMXRT1062` / TinyTMUX) | VT100/VT220 USB Serial, 8 UARTs, `QNEthernet`, USBHost RadioFoundry PPP | [ports/tinytmux/README.md](ports/tinytmux/README.md) |
 | **Embedded** | Raspberry Pi Pico (`RP2040` / `RP2350`) | VT100/VT220 USB CDC, 2 UARTs, `CYW43439`/`RM2` Wi-Fi + BTstack | [ports/pico/README.md](ports/pico/README.md) |
