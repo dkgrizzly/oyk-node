@@ -57,8 +57,8 @@ int main() {
     MB_CHECK(eng->close_local_terminal(sid) == 1, "close_local_term");
 
     /* Verify shared oyk_gui schema access */
-    MB_CHECK(oyk_gui_settings_tab_count() == 7, "gui_tabs_7");
-    MB_CHECK(oyk_gui_node_menu_count() == 13, "gui_menu_13");
+    MB_CHECK(oyk_gui_settings_tab_count() == 8, "gui_tabs_8");
+    MB_CHECK(oyk_gui_node_menu_count() == 11, "gui_menu_11");
 
     /* Verify macOS OS-native default theme + whole-screen live preview across all themes */
     OykConfig tcfg = eng->portable_config();

@@ -154,7 +154,7 @@ static const char* gui_format_learned_policy(oyk_u8 policy) {
     }
 }
 
-static const OykGuiMenuItem kNodeMenuItems[13] = {
+static const OykGuiMenuItem kNodeMenuItems[11] = {
     { OYK_ACT_ALLOW_INCOMING, "Allow Incoming Connections",  "_Allow Incoming Connections",  "Allow Incoming Connections",  'A', 0 },
     { OYK_ACT_DENY_INCOMING,  "Deny Incoming Connections",   "_Deny Incoming Connections",   "Deny Incoming Connections",   'D', 0 },
     { OYK_ACT_NONE,           "-",                           "-",                            "-",                           0,   1 },
@@ -162,8 +162,6 @@ static const OykGuiMenuItem kNodeMenuItems[13] = {
     { OYK_ACT_FILES,          "Manage Files Area...",        "Manage _Files Area...",        "Manage Files Area...",        0,   0 },
     { OYK_ACT_RIG,            "Radio Control...",            "_Radio Control...",            "Radio Control...",            0,   0 },
     { OYK_ACT_SETTINGS,       "Settings...",                 "_Settings...",                 "Settings...",                 ',', 0 },
-    { OYK_ACT_PEERS,          "Peers...",                    "_Peers...",                    "Peers...",                    0,   0 },
-    { OYK_ACT_THEME,          "Theme...",                    "T_heme...",                    "Theme...",                    0,   0 },
     { OYK_ACT_TERMINATE,      "Terminate Connection...",     "_Terminate Connection...",     "Terminate Connection...",     0,   0 },
     { OYK_ACT_BAN,            "Ban / Unban Callsign...",     "_Ban / Unban Callsign...",     "Ban / Unban Callsign...",     0,   0 },
     { OYK_ACT_NONE,           "-",                           "-",                            "-",                           0,   1 },
@@ -171,12 +169,38 @@ static const OykGuiMenuItem kNodeMenuItems[13] = {
 };
 
 int oyk_gui_node_menu_count() {
-    return 13;
+    return 11;
 }
 
 const OykGuiMenuItem* oyk_gui_node_menu_item(int idx) {
-    if (idx < 0 || idx >= 13) return NULL;
+    if (idx < 0 || idx >= 11) return NULL;
     return &kNodeMenuItems[idx];
+}
+
+int oyk_gui_is_modal_screen(int screen_id) {
+    switch (screen_id) {
+        case OYK_SCR_SETTINGS:
+        case OYK_SCR_ADD_IFACE:
+        case OYK_SCR_EDIT_IFACE:
+        case OYK_SCR_PEERS:
+        case OYK_SCR_EDIT_PEER:
+        case OYK_SCR_TERMINATE:
+        case OYK_SCR_BAN:
+        case OYK_SCR_EXIT_PEERS:
+        case OYK_SCR_THEME:
+        case OYK_SCR_FILES:
+        case OYK_SCR_RIG:
+        case OYK_SCR_ABOUT:
+        case OYK_SCR_TERM_HELP:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+int oyk_gui_global_hotkey_allowed(int screen_id, int menu_open) {
+    if (menu_open) return 0;
+    return oyk_gui_is_modal_screen(screen_id) ? 0 : 1;
 }
 
 const char* oyk_gui_screen_title(int screen_id) {
@@ -201,16 +225,16 @@ const char* oyk_gui_screen_title(int screen_id) {
     }
 }
 
-static const char* const kSettingsTabTitles[7] = {
-    "Node", "BBS", "CHAT", "Interfaces", "Peers", "Rig", "Printer"
+static const char* const kSettingsTabTitles[8] = {
+    "Node", "BBS", "CHAT", "Interfaces", "Peers", "Rig", "Printer", "Theme"
 };
 
 int oyk_gui_settings_tab_count() {
-    return 7;
+    return 8;
 }
 
 const char* oyk_gui_settings_tab_title(int tab_idx) {
-    if (tab_idx < 0 || tab_idx >= 7) return "";
+    if (tab_idx < 0 || tab_idx >= 8) return "";
     return kSettingsTabTitles[tab_idx];
 }
 
@@ -296,7 +320,7 @@ int oyk_gui_cycle_learned_policy(int policy, int delta) {
 const char* oyk_gui_about_summary() {
     return "OYK Amateur Radio Packet Node (GPL-3.0-or-later)\n"
            "AX.25 / KISS / AXUDP / AXIP / BBS / CHAT / YAPP / Rig CAT\n"
-           "Hotkeys: M/F10 Node Menu | Tab/F9 Terminal | 1..7 Tabs | Esc Close";
+           "Hotkeys: Ctrl-N/Alt-N Menu | Tab/F9 Terminal | 1..8 Tabs | Esc Close";
 }
 
 void oyk_gui_format_duration(oyk_u32 secs, char* dst, size_t cap) {

@@ -140,7 +140,7 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_menu_bar(const OykTuiBackend* b, int cols,
     b->put_text(b->ctx, 0, 1, 6, OYK_TUI_STYLE_MENU_SEL, " Node ");
     const char* hint = right_hint;
     if (!hint || !hint[0]) {
-        hint = term_active ? "Tab/F9:Term(ACTIVE)  F10/M:Menu " : "Tab/F9:Term  F10/M:Menu ";
+        hint = term_active ? "Tab/F9:Term(ACTIVE)  Ctrl-N:Menu " : "Tab/F9:Term  Ctrl-N:Menu ";
     }
     int hlen = static_cast<int>(strlen(hint));
     int start_col = cols - hlen - 1;
@@ -363,12 +363,13 @@ OYK_TUI_FLASHMEM void oyk_tui_compute_dual_pane_layout(int screen_rows, int scre
     out->right_pane.w    = right_w;
 }
 
-OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal(const OykTuiBackend* b,
-                                                   int screen_rows, int screen_cols) {
+OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal_ex(const OykTuiBackend* b,
+                                                      int screen_rows, int screen_cols,
+                                                      int with_close_btn) {
     if (!b || !b->put_text) return;
     OykTuiRect mr;
     oyk_tui_center_modal(screen_rows, screen_cols, 19, 68, &mr);
-    oyk_tui_draw_modal(b, &mr, "Terminal Hotkey Help", 1);
+    oyk_tui_draw_modal(b, &mr, "Terminal Hotkey Help", with_close_btn);
     int inner_w = mr.w - 4;
     b->put_text(b->ctx, mr.top + 1, mr.left + 2, inner_w, OYK_TUI_STYLE_TITLE,
                 "Command prefix: Ctrl-A (press Ctrl-A, then hotkey)");
@@ -384,7 +385,14 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal(const OykTuiBackend* b,
         b->put_text(b->ctx, mr.top + 3 + i, mr.left + 2, inner_w, OYK_TUI_STYLE_DLG_FILL, row);
     }
     oyk_tui_draw_modal_footer(b, &mr, "",
-                              "Press hotkey to run, or Esc / Enter / [X] to close");
+                              with_close_btn
+                                  ? "Press hotkey to run, or Esc / Enter / [X] to close"
+                                  : "Press hotkey to run, or Esc / Enter to close");
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_term_help_modal(const OykTuiBackend* b,
+                                                   int screen_rows, int screen_cols) {
+    oyk_tui_draw_term_help_modal_ex(b, screen_rows, screen_cols, 1);
 }
 
 OYK_TUI_FLASHMEM void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykTuiRect* rect,
@@ -408,7 +416,7 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykT
         (platform_line && platform_line[0]) ? platform_line : "Platform: Portable Node",
         "",
         "AX.25 v2.2 / KISS / AXUDP / AXIP / Telnet / YAPP",
-        "Hotkeys: F10/M Menu | Tab/F9 Term | S Settings"
+        "Hotkeys: Ctrl-N Menu | Tab/F9 Term | Esc Close"
     };
     const int body_rows = rect->h - 5;
     for (int i = 0; i < 8 && i < body_rows; ++i) {
@@ -419,12 +427,12 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykT
     }
 }
 
-OYK_TUI_FLASHMEM void oyk_tui_draw_about_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
-                                               const char* platform_line) {
+OYK_TUI_FLASHMEM void oyk_tui_draw_about_modal_ex(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                                  const char* platform_line, int with_close_btn) {
     if (!b || !b->put_text) return;
     OykTuiRect mr;
     oyk_tui_center_modal(screen_rows, screen_cols, 16, 72, &mr);
-    oyk_tui_draw_modal(b, &mr, "About OYK Amateur Radio Packet Node", 1);
+    oyk_tui_draw_modal(b, &mr, "About OYK Amateur Radio Packet Node", with_close_btn);
     oyk_tui_draw_about_body(b, &mr, platform_line);
     if (b->put_hdiv) {
         b->put_hdiv(b->ctx, mr.top + mr.h - 3, mr.left, mr.w, OYK_TUI_STYLE_DLG_BORDER);
@@ -433,7 +441,12 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_about_modal(const OykTuiBackend* b, int scree
     abtns[0].label = "Close";
     abtns[0].enabled = 1;
     oyk_tui_draw_button_row(b, mr.top + mr.h - 2, mr.left + 2, mr.w - 4,
-                            abtns, 1, 0, "Enter / Esc / Q: Close");
+                            abtns, 1, 0, "Enter / Esc: Close");
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_about_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                               const char* platform_line) {
+    oyk_tui_draw_about_modal_ex(b, screen_rows, screen_cols, platform_line, 1);
 }
 
 static void tui_format_fm_entry_row(const OykBbsDirEntry* e, int width,
@@ -489,15 +502,15 @@ static void tui_draw_fm_pane(const OykTuiBackend* b, const OykGuiFilePane* p,
     }
 }
 
-OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b,
-                                                   int screen_rows, int screen_cols,
-                                                   const OykGuiFileMgr* fm, int focused_btn,
-                                                   const char* title, const char* preview_text,
-                                                   int preview_active) {
+OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal_ex(const OykTuiBackend* b,
+                                                      int screen_rows, int screen_cols,
+                                                      const OykGuiFileMgr* fm, int focused_btn,
+                                                      const char* title, const char* preview_text,
+                                                      int preview_active, int with_close_btn) {
     if (!b || !b->put_text || !fm) return;
     OykTuiDualPaneLayout lay;
     oyk_tui_compute_dual_pane_layout(screen_rows, screen_cols, &lay);
-    oyk_tui_draw_modal(b, &lay.modal, title ? title : "Files Area Manager", 1);
+    oyk_tui_draw_modal(b, &lay.modal, title ? title : "Files Area Manager", with_close_btn);
 
     tui_draw_fm_pane(b, &fm->inc, "Incoming", fm->active_pane == 0,
                      lay.left_pane.left, lay.left_pane.w,
@@ -527,7 +540,7 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b,
     if (preview_active && preview_text) {
         OykTuiRect pm;
         oyk_tui_center_modal(screen_rows, screen_cols, 15, 68, &pm);
-        oyk_tui_draw_modal(b, &pm, "File Preview", 1);
+        oyk_tui_draw_modal(b, &pm, "File Preview", with_close_btn);
         const char* p = preview_text;
         for (int r = 0; r < pm.h - 4 && *p; ++r) {
             char line[66];
@@ -542,6 +555,17 @@ OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b,
             b->put_text(b->ctx, pm.top + 1 + r, pm.left + 2, pm.w - 4,
                         OYK_TUI_STYLE_DLG_FILL, line);
         }
-        oyk_tui_draw_modal_footer(b, &pm, "", "Esc / Enter / [X]: Close Preview");
+        oyk_tui_draw_modal_footer(b, &pm, "",
+                                  with_close_btn ? "Esc / Enter / [X]: Close Preview"
+                                                 : "Esc / Enter: Close Preview");
     }
+}
+
+OYK_TUI_FLASHMEM void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b,
+                                                   int screen_rows, int screen_cols,
+                                                   const OykGuiFileMgr* fm, int focused_btn,
+                                                   const char* title, const char* preview_text,
+                                                   int preview_active) {
+    oyk_tui_draw_dual_pane_modal_ex(b, screen_rows, screen_cols, fm, focused_btn,
+                                    title, preview_text, preview_active, 1);
 }

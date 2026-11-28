@@ -11,7 +11,7 @@
  *   - Classic Macintosh System 6.0.8 - Mac OS 9.2.2 (68k + PPC Fat)
  *   - Mac OS X / modern macOS (PowerPC, Intel, Apple Silicon)
  *
- * Centralizes canonical menu definitions, window/dialog titles, the 7 Settings
+ * Centralizes canonical menu definitions, window/dialog titles, the 8 Settings
  * tabs, table column schemas, validation rules, Add Interface wizard transitions,
  * Theme cloning/preview logic, console header formatting, and exit prompts.
  */
@@ -130,6 +130,8 @@ const char*          oyk_gui_settings_tab_title(int tab_idx);
 int                  oyk_gui_table_column_count(int table_id);
 const char*          oyk_gui_table_column(int table_id, int col_idx);
 int                  oyk_gui_terminate_columns(const char** out_cols, int max_cols);
+int                  oyk_gui_is_modal_screen(int screen_id);
+int                  oyk_gui_global_hotkey_allowed(int screen_id, int menu_open);
 
 enum OykGuiControlKind {
     OYK_CTRL_CHECKBOX = 0,

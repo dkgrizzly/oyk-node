@@ -132,13 +132,38 @@ static inline int oyk_run_shared_port_parity_tests(OykPortableNode* node,
                       oyk_yapp_is_safe_filename("notes.txt") == 1,
                       "parity_yapp_traversal_guard");
 
-    /* 7. Shared oyk_gui schemas, rich control metrics & 5-driver wizard */
-    oyk_parity_record(logf, &fails,
-                      oyk_gui_settings_tab_count() == 7 &&
-                      oyk_gui_node_menu_count() == 13 &&
-                      oyk_gui_control_box_size(12) >= 10 &&
-                      oyk_gui_control_label_offset(12) > oyk_gui_control_box_size(12),
-                      "parity_gui_schema_and_controls");
+    /* 7. Shared oyk_gui schemas, modal preemption, rich control metrics & 5-driver wizard */
+    {
+        int no_dups = 1;
+        for (int mi = 0; mi < oyk_gui_node_menu_count(); ++mi) {
+            const OykGuiMenuItem* m = oyk_gui_node_menu_item(mi);
+            if (!m || m->action == OYK_ACT_PEERS || m->action == OYK_ACT_THEME) {
+                no_dups = 0;
+            }
+        }
+        int modal_preempt_ok = (oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 1) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_ADD_IFACE, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_EDIT_IFACE, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_EDIT_PEER, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_TERMINATE, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_BAN, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_EXIT_PEERS, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_FILES, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_RIG, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_ABOUT, 0) == 0 &&
+                                oyk_gui_global_hotkey_allowed(OYK_SCR_TERM_HELP, 0) == 0) ? 1 : 0;
+        oyk_parity_record(logf, &fails,
+                          oyk_gui_settings_tab_count() == 8 &&
+                          strcmp(oyk_gui_settings_tab_title(7), "Theme") == 0 &&
+                          oyk_gui_node_menu_count() == 11 &&
+                          no_dups == 1 &&
+                          modal_preempt_ok == 1 &&
+                          oyk_gui_control_box_size(12) >= 10 &&
+                          oyk_gui_control_label_offset(12) > oyk_gui_control_box_size(12),
+                          "parity_gui_schema_and_modal_preemption");
+    }
     {
         OykGuiAddIfaceWizard* wiz = new OykGuiAddIfaceWizard();
         oyk_gui_wiz_init(wiz, NULL, OYK_DRV_ALL);

@@ -59,10 +59,10 @@ int main() {
         oyk_os2_net_shutdown(&net);
     }
 
-    /* 3. Verify shared TUI/GUI 23-screen & 7-tab schema completeness */
+    /* 3. Verify shared TUI/GUI 23-screen & 8-tab schema completeness */
     {
-        if (oyk_gui_settings_tab_count() != 7 ||
-            oyk_gui_node_menu_count() < 10 ||
+        if (oyk_gui_settings_tab_count() != 8 ||
+            oyk_gui_node_menu_count() != 11 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_EXIT_PEERS), "Auto-Learned Peers") != 0 ||
             std::strcmp(oyk_gui_screen_title(OYK_SCR_TERM_HELP), "Terminal Hotkey Help") != 0) {
             std::printf("FAIL: OS/2 shared GUI schema check\n");

@@ -15,14 +15,24 @@
 
 static void test_menus_titles_tabs_and_tables() {
     int mc = oyk_gui_node_menu_count();
-    assert(mc == 13);
+    assert(mc == 11);
     assert(oyk_gui_node_menu_item(0)->action == OYK_ACT_ALLOW_INCOMING);
     assert(oyk_gui_node_menu_item(1)->action == OYK_ACT_DENY_INCOMING);
     assert(oyk_gui_node_menu_item(2)->is_separator == 1);
     assert(oyk_gui_node_menu_item(3)->action == OYK_ACT_LOCAL_TERM);
     assert(oyk_gui_node_menu_item(6)->action == OYK_ACT_SETTINGS);
-    assert(oyk_gui_node_menu_item(12)->action == OYK_ACT_EXIT);
-    assert(oyk_gui_node_menu_item(13) == NULL);
+    assert(oyk_gui_node_menu_item(10)->action == OYK_ACT_EXIT);
+    assert(oyk_gui_node_menu_item(11) == NULL);
+    for (int i = 0; i < mc; ++i) {
+        assert(oyk_gui_node_menu_item(i)->action != OYK_ACT_PEERS);
+        assert(oyk_gui_node_menu_item(i)->action != OYK_ACT_THEME);
+    }
+
+    assert(oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 0) == 1);
+    assert(oyk_gui_global_hotkey_allowed(OYK_SCR_MAIN, 1) == 0);
+    assert(oyk_gui_global_hotkey_allowed(OYK_SCR_SETTINGS, 0) == 0);
+    assert(oyk_gui_global_hotkey_allowed(OYK_SCR_FILES, 0) == 0);
+    assert(oyk_gui_global_hotkey_allowed(OYK_SCR_TERM_HELP, 0) == 0);
 
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_SETTINGS), "Node Settings") == 0);
     assert(strcmp(oyk_gui_screen_title(OYK_SCR_TERMINATE), "Terminate Active Connection") == 0);
@@ -38,7 +48,7 @@ static void test_menus_titles_tabs_and_tables() {
     assert(oyk_gui_cycle_learned_policy(OYK_LEARN_INHERIT, -1) == OYK_LEARN_BOTH);
     assert(strstr(oyk_gui_about_summary(), "AX.25") != NULL);
 
-    assert(oyk_gui_settings_tab_count() == 7);
+    assert(oyk_gui_settings_tab_count() == 8);
     assert(strcmp(oyk_gui_settings_tab_title(0), "Node") == 0);
     assert(strcmp(oyk_gui_settings_tab_title(1), "BBS") == 0);
     assert(strcmp(oyk_gui_settings_tab_title(2), "CHAT") == 0);
@@ -46,6 +56,7 @@ static void test_menus_titles_tabs_and_tables() {
     assert(strcmp(oyk_gui_settings_tab_title(4), "Peers") == 0);
     assert(strcmp(oyk_gui_settings_tab_title(5), "Rig") == 0);
     assert(strcmp(oyk_gui_settings_tab_title(6), "Printer") == 0);
+    assert(strcmp(oyk_gui_settings_tab_title(7), "Theme") == 0);
 
     const char* tcols[4];
     assert(oyk_gui_terminate_columns(tcols, 4) == 4);

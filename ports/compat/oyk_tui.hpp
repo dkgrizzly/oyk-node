@@ -141,15 +141,23 @@ void oyk_tui_draw_dropdown_menu(const OykTuiBackend* b, const OykTuiRect* rect,
                                 const char* const* items, const int* item_rows, int item_count,
                                 const int* sep_rows, int sep_count, int sel_idx);
 void oyk_tui_draw_term_help_modal(const OykTuiBackend* b, int screen_rows, int screen_cols);
+void oyk_tui_draw_term_help_modal_ex(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                     int with_close_btn);
 void oyk_tui_draw_about_body(const OykTuiBackend* b, const OykTuiRect* rect,
                              const char* platform_line);
 void oyk_tui_draw_about_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
                               const char* platform_line);
+void oyk_tui_draw_about_modal_ex(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                 const char* platform_line, int with_close_btn);
 
 struct OykGuiFileMgr;
 void oyk_tui_draw_dual_pane_modal(const OykTuiBackend* b, int screen_rows, int screen_cols,
                                   const struct OykGuiFileMgr* fm, int focused_btn,
                                   const char* title, const char* preview_text,
                                   int preview_active);
+void oyk_tui_draw_dual_pane_modal_ex(const OykTuiBackend* b, int screen_rows, int screen_cols,
+                                     const struct OykGuiFileMgr* fm, int focused_btn,
+                                     const char* title, const char* preview_text,
+                                     int preview_active, int with_close_btn);
 
 #endif /* OYK_TUI_HPP */
