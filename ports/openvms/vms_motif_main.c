@@ -7,6 +7,7 @@
 #include "sysv_motif_ui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(int argc, char **argv)
@@ -15,14 +16,22 @@ int main(int argc, char **argv)
     OykSysvNet net;
     int i;
     int headless = 0;
+    int ui_test = 0;
+    const char *env_test;
 
     for (i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--headless") == 0 || strcmp(argv[i], "--unit-test") == 0) {
             headless = 1;
+        } else if (strcmp(argv[i], "--ui-test") == 0) {
+            ui_test = 1;
         }
     }
+    env_test = getenv("OYK_UI_TEST_MODE");
+    if (env_test && strcmp(env_test, "1") == 0) {
+        ui_test = 1;
+    }
 
-    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, headless ? 1 : 0);
+    oyk_sysv_app_init(&app, OYK_VMS_ARCH_NAME, (headless || ui_test) ? 1 : 0);
     oyk_sysv_net_init(&net, &app.node.cfg);
 
     if (headless) {

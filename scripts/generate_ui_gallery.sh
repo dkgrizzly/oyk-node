@@ -228,6 +228,22 @@ else
     done
 fi
 
+echo "[8b/11] Capturing OpenVMS DECwindows Motif 1.2 screens..."
+OPENVMS_RUNNER="${ROOT_DIR}/ports/openvms/run_vms_motif_gallery.sh"
+if [[ -n "${OYK_VMS_HOST:-}" && -n "${OYK_VMS_USER:-}" && -n "${OYK_VMS_PASS:-}" && -x "${OPENVMS_RUNNER}" ]]; then
+    "${OPENVMS_RUNNER}" "${TMP_CAP}" || echo "Warning: OpenVMS Motif capture failed." >&2
+elif [[ -n "${OYK_OPENVMS_CAPTURE_DIR:-}" && -d "${OYK_OPENVMS_CAPTURE_DIR}" ]]; then
+    for vf in "${OYK_OPENVMS_CAPTURE_DIR}"/openvms_motif_*.png; do
+        [[ -e "${vf}" ]] || continue
+        cp -f "${vf}" "${TMP_CAP}/"
+    done
+else
+    for vf in "${OUT_IMG_DIR}"/openvms_motif_*.png; do
+        [[ -e "${vf}" ]] || continue
+        cp -f "${vf}" "${TMP_CAP}/"
+    done
+fi
+
 echo "[9/9] Capturing Apple IIGS GS/OS Super Hi-Res screens under GSplus..."
 VBCC_DIR="${VBCC:-${HOME}/opt/vbcc}"
 GSOS_DIR="${OYK_GSPLUS_DIR:-${HOME}/gsplus}"
@@ -269,7 +285,7 @@ rm -rf "${OUT_IMG_DIR}/thumbs"
 mkdir -p "${OUT_IMG_DIR}/thumbs"
 
 FLOWS=(main menu settings settings_bbs settings_chat settings_ifaces peers settings_rig settings_printer add_iface_1 add_iface_2 add_iface_3 add_iface_4 edit_iface edit_peer terminate ban exit settings_theme terminal terminal_help files about)
-PORTS=(ncurses dos dos_gfx tinytmux pico picocalc esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color)
+PORTS=(ncurses dos dos_gfx tinytmux pico picocalc esp32c6 gtk win android macclassic_bw macclassic_color macos gsos amiga atarist_mono atarist_color openvms_motif)
 
 for f in "${TMP_CAP}"/*.ansi; do
     [[ -e "$f" ]] || continue
@@ -289,7 +305,7 @@ for f in "${TMP_CAP}"/*.bmp; do
     PYTHONDONTWRITEBYTECODE=1 python3 "${RENDERER}" --bmp "$f" "${OUT_IMG_DIR}/${base}.png"
 done
 
-for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png "${TMP_CAP}"/macos_*.png; do
+for f in "${TMP_CAP}"/gtk_*.png "${TMP_CAP}"/android_*.png "${TMP_CAP}"/macos_*.png "${TMP_CAP}"/openvms_motif_*.png; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
     [[ "${base}" == *_contact_sheet.png ]] && continue
@@ -321,6 +337,7 @@ port_label() {
         amiga)            echo "Amiga Workbench (Intuition/GadTools OS 3.1/2.04/1.3 + AROS)" ;;
         atarist_mono)     echo "Atari ST GEM (ST High 640x400 Monochrome + EmuTOS)" ;;
         atarist_color)    echo "Atari TT / VDI GEM (640x480 16-Color + EmuTOS)" ;;
+        openvms_motif)    echo "OpenVMS DECwindows Motif 1.2" ;;
     esac
 }
 

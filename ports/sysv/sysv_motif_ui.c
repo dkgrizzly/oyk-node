@@ -49,6 +49,9 @@ typedef struct {
     Widget        log_list;
     Widget        footer_row;
     Widget        modal_shell;
+    Widget        modal_dlg;
+    Widget        menu_popup;
+    Widget        menu_pop_rc;
     Pixmap        icon_pixmap;
     Pixmap        icon_mask;
     Pixel         px_bg;
@@ -230,10 +233,17 @@ static void close_modal_dialog(MotifUiCtx *ctx) {
     if (ctx->node_menu && XtIsManaged(ctx->node_menu)) {
         XtUnmanageChild(ctx->node_menu);
     }
+    if (ctx->menu_popup) {
+        XtPopdown(ctx->menu_popup);
+        XtDestroyWidget(ctx->menu_popup);
+        ctx->menu_popup = NULL;
+        ctx->menu_pop_rc = NULL;
+    }
     if (ctx->modal_shell) {
         XtDestroyWidget(ctx->modal_shell);
         ctx->modal_shell = NULL;
     }
+    ctx->modal_dlg = NULL;
 }
 
 static void on_close_modal_cb(Widget w, XtPointer client, XtPointer call) {
@@ -306,6 +316,69 @@ static void add_labeled_field(Widget parent, const char *label, const char *val)
     XtManageChild(row);
 }
 
+static void add_theme_preview_rows(Widget parent, MotifUiCtx *ctx,
+                                   const OykSysvThemeConfig *pal) {
+    Widget hdr;
+    char buf[160];
+    int i;
+    sprintf(buf, "Theme: < %s >   (Whole-Screen Live Preview active)", pal->name);
+    hdr = XtVaCreateManagedWidget("thdr", xmLabelWidgetClass, parent,
+                                  XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg, NULL);
+    set_label_text(hdr, buf);
+    for (i = 0; i < 8; ++i) {
+        Widget row;
+        Widget lbl;
+        Widget sw;
+        char line[64];
+        row = XmCreateRowColumn(parent, "trow", NULL, 0);
+        XtVaSetValues(row, XmNorientation, XmHORIZONTAL, XmNspacing, 8,
+                      XmNbackground, ctx->px_bg, NULL);
+        sprintf(line, "%-14s %-12s #%06lX",
+                oyk_sysv_theme_role_name(i),
+                oyk_sysv_theme_role_key(i),
+                (unsigned long)(pal->colors[i] & 0xFFFFFFUL));
+        lbl = XtVaCreateManagedWidget("tlbl", xmLabelWidgetClass, row,
+                                      XmNbackground, ctx->px_bg,
+                                      XmNforeground, ctx->px_fg,
+                                      XmNwidth, 310, XmNrecomputeSize, False,
+                                      XmNalignment, XmALIGNMENT_BEGINNING, NULL);
+        set_label_text(lbl, line);
+        sw = XtVaCreateManagedWidget("tswatch", xmLabelWidgetClass, row,
+                                     XmNbackground, alloc_rgb_pixel(ctx->dpy, pal->colors[i]),
+                                     XmNforeground, ctx->px_fg,
+                                     XmNborderWidth, 1,
+                                     XmNborderColor, ctx->px_fg,
+                                     XmNwidth, 44, XmNheight, 14,
+                                     XmNrecomputeSize, False, NULL);
+        set_label_text(sw, "      ");
+        XtManageChild(row);
+    }
+}
+
+static void on_menu_item_cb(Widget w, XtPointer client, XtPointer call);
+
+static void populate_node_menu(Widget menu_rc, const MotifUiCtx *ctx, int styled) {
+    int i;
+    for (i = 0; i < oyk_sysv_node_menu_count(); ++i) {
+        const OykSysvMenuItem *it;
+        it = oyk_sysv_node_menu_item(i);
+        if (it->is_separator) {
+            XtManageChild(XmCreateSeparator(menu_rc, "msep", NULL, 0));
+        } else {
+            Widget mi;
+            mi = XmCreatePushButton(menu_rc, "mi", NULL, 0);
+            if (styled && ctx) {
+                XtVaSetValues(mi, XmNalignment, XmALIGNMENT_BEGINNING,
+                              XmNbackground, ctx->px_bg,
+                              XmNforeground, ctx->px_fg, NULL);
+            }
+            set_label_text(mi, it->label);
+            XtAddCallback(mi, XmNactivateCallback, on_menu_item_cb, (XtPointer)(long)it->action);
+            XtManageChild(mi);
+        }
+    }
+}
+
 static void open_modal_for_screen(MotifUiCtx *ctx) {
     Widget dlg;
     Widget box;
@@ -321,13 +394,27 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
     app = ctx->app;
     if (app->screen == OYK_SYSV_SCR_MAIN) return;
     if (app->screen == OYK_SYSV_SCR_MENU) {
-        XtVaGetValues(ctx->node_cascade, XmNx, &mx, XmNy, &my, XmNheight, &mh, NULL);
-        {
-            Position rx, ry;
-            XtTranslateCoords(ctx->node_cascade, 0, (Position)mh, &rx, &ry);
-            XtVaSetValues(ctx->node_menu, XmNx, rx, XmNy, ry, NULL);
-        }
-        XtManageChild(ctx->node_menu);
+        Position rx, ry;
+        Widget frame;
+        XtVaGetValues(ctx->node_cascade, XmNheight, &mh, NULL);
+        XtTranslateCoords(ctx->node_cascade, 0, (Position)mh, &rx, &ry);
+        ctx->menu_popup = XtVaCreatePopupShell(
+            "node_menu_pop", xmDialogShellWidgetClass, ctx->top_shell,
+            XmNoverrideRedirect, True,
+            XmNallowShellResize, True, XmNx, rx, XmNy, ry, NULL);
+        frame = XmCreateFrame(ctx->menu_popup, "mpop_frame", NULL, 0);
+        XtVaSetValues(frame, XmNshadowType, XmSHADOW_OUT, XmNshadowThickness, 2,
+                      XmNbackground, ctx->px_bg, NULL);
+        ctx->menu_pop_rc = XmCreateRowColumn(frame, "mpop_rc", NULL, 0);
+        XtVaSetValues(ctx->menu_pop_rc, XmNorientation, XmVERTICAL, XmNspacing, 1,
+                      XmNmarginWidth, 4, XmNmarginHeight, 4,
+                      XmNbackground, ctx->px_bg, NULL);
+        populate_node_menu(ctx->menu_pop_rc, ctx, 1);
+        XtManageChild(ctx->menu_pop_rc);
+        XtManageChild(frame);
+        XtRealizeWidget(ctx->menu_popup);
+        XtVaSetValues(ctx->menu_popup, XmNx, rx, XmNy, ry, NULL);
+        XtPopup(ctx->menu_popup, XtGrabNone);
         return;
     }
 
@@ -339,6 +426,7 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
                   NULL);
 
     dlg = XmCreateForm(ctx->modal_shell, "dlg_form", NULL, 0);
+    ctx->modal_dlg = dlg;
     XtVaSetValues(dlg, XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg,
                   XmNdialogStyle, XmDIALOG_FULL_APPLICATION_MODAL,
                   XmNmarginWidth, 12, XmNmarginHeight, 10, NULL);
@@ -448,26 +536,8 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
             add_labeled_field(box, "Printer Protocol:", app->node.cfg.printer_protocol);
         } else {
             OykSysvThemeConfig pal;
-            Widget hdr;
-            Widget lst;
-            const char *rows[12];
-            char rb[12][64];
             oyk_sysv_theme_resolve(&app->theme_ctrl, &pal);
-            sprintf(buf, "Theme: < %s >   (Whole-screen live preview active)", pal.name);
-            hdr = XtVaCreateManagedWidget("thdr", xmLabelWidgetClass, box,
-                                          XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg, NULL);
-            set_label_text(hdr, buf);
-            for (i = 0; i < 8; ++i) {
-                sprintf(rb[i], "%-14s %-12s #%06lX",
-                        oyk_sysv_theme_role_name(i),
-                        oyk_sysv_theme_role_key(i),
-                        (unsigned long)(pal.colors[i] & 0xFFFFFFUL));
-                rows[i] = rb[i];
-            }
-            lst = XmCreateScrolledList(box, "thlst", NULL, 0);
-            XtVaSetValues(lst, XmNvisibleItemCount, 6, XmNbackground, ctx->px_panel_bg, NULL);
-            list_set_rows(lst, rows, 8);
-            XtManageChild(lst);
+            add_theme_preview_rows(box, ctx, &pal);
         }
     } else if (app->screen == OYK_SYSV_SCR_ADD_IFACE) {
         Widget step_lbl;
@@ -562,26 +632,8 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
         set_label_text(lbl, buf);
     } else if (app->screen == OYK_SYSV_SCR_THEME) {
         OykSysvThemeConfig pal;
-        Widget hdr;
-        Widget lst;
-        const char *rows[12];
-        char rb[12][64];
         oyk_sysv_theme_resolve(&app->theme_ctrl, &pal);
-        sprintf(buf, "Theme: < %s >   (Whole-screen live preview active)", pal.name);
-        hdr = XtVaCreateManagedWidget("thdr", xmLabelWidgetClass, box,
-                                      XmNbackground, ctx->px_bg, XmNforeground, ctx->px_fg, NULL);
-        set_label_text(hdr, buf);
-        for (i = 0; i < 8; ++i) {
-            sprintf(rb[i], "%-14s %-12s #%06lX",
-                    oyk_sysv_theme_role_name(i),
-                    oyk_sysv_theme_role_key(i),
-                    (unsigned long)(pal.colors[i] & 0xFFFFFFUL));
-            rows[i] = rb[i];
-        }
-        lst = XmCreateScrolledList(box, "thlst", NULL, 0);
-        XtVaSetValues(lst, XmNvisibleItemCount, 6, XmNbackground, ctx->px_panel_bg, NULL);
-        list_set_rows(lst, rows, 8);
-        XtManageChild(lst);
+        add_theme_preview_rows(box, ctx, &pal);
     } else if (app->screen == OYK_SYSV_SCR_TERMINAL) {
         Widget txt;
         Widget bar;
@@ -656,18 +708,19 @@ static void open_modal_for_screen(MotifUiCtx *ctx) {
         Widget row;
         Widget logo_da;
         Widget info_lbl;
+        char about_buf[512];
         row = XmCreateRowColumn(box, "abrow", NULL, 0);
         XtVaSetValues(row, XmNorientation, XmHORIZONTAL, XmNspacing, 16, XmNbackground, ctx->px_bg, NULL);
         logo_da = XtVaCreateManagedWidget("logo", xmDrawingAreaWidgetClass, row,
                                           XmNwidth, 76, XmNheight, 76,
                                           XmNbackground, ctx->px_bg, NULL);
         XtAddCallback(logo_da, XmNexposeCallback, on_about_expose, ctx);
-        sprintf(buf, "%s\n\n%s", oyk_sysv_about_summary(), app->node.platform_label);
+        sprintf(about_buf, "%.380s\n\n%.100s", oyk_sysv_about_summary(), app->node.platform_label);
         info_lbl = XtVaCreateManagedWidget("abtxt", xmLabelWidgetClass, row,
                                            XmNalignment, XmALIGNMENT_BEGINNING,
                                            XmNbackground, ctx->px_bg,
                                            XmNforeground, ctx->px_fg, NULL);
-        set_label_text(info_lbl, buf);
+        set_label_text(info_lbl, about_buf);
         XtManageChild(row);
     }
 
@@ -725,71 +778,82 @@ static void on_menu_item_cb(Widget w, XtPointer client, XtPointer call) {
     open_modal_for_screen(&g_mui);
 }
 
-static void flush_events_and_wait_ack(MotifUiCtx *ctx, const char *screen_name) {
+static void drain_x_events(MotifUiCtx *ctx, int rounds) {
     XEvent ev;
     int loops;
-    for (loops = 0; loops < 40; ++loops) {
-        while (XtAppPending(ctx->xt_app)) {
+    for (loops = 0; loops < rounds; ++loops) {
+        XSync(ctx->dpy, False);
+        while (XtAppPending(ctx->xt_app) & XtIMXEvent) {
             XtAppNextEvent(ctx->xt_app, &ev);
             XtDispatchEvent(&ev);
-        }
-        XSync(ctx->dpy, False);
-    }
-    printf("OYK_CAPTURE_READY %s\n", screen_name);
-    fflush(stdout);
-    {
-        char ack[32];
-        if (!fgets(ack, sizeof(ack), stdin)) {
-            /* Ignore EOF if non-interactive */
         }
     }
 }
 
-static void on_test_timer(XtPointer client, XtIntervalId *id) {
+static void flush_events_and_wait_ack(MotifUiCtx *ctx, const char *screen_name) {
+    char ack[32];
+    drain_x_events(ctx, 10);
+    printf("OYK_CAPTURE_PAINT %s\n", screen_name);
+    fflush(stdout);
+    if (!fgets(ack, sizeof(ack), stdin)) {
+        /* Ignore EOF if non-interactive */
+    }
+    drain_x_events(ctx, 15);
+    printf("OYK_CAPTURE_READY %s\n", screen_name);
+    fflush(stdout);
+    if (!fgets(ack, sizeof(ack), stdin)) {
+        /* Ignore EOF if non-interactive */
+    }
+}
+
+static void run_motif_test_sequence(MotifUiCtx *ctx) {
     static const char * const screens[23] = {
         "main", "menu", "settings", "settings_bbs", "settings_chat",
         "settings_ifaces", "peers", "settings_rig", "settings_printer",
         "add_iface_1", "add_iface_2", "add_iface_3", "add_iface_4",
         "edit_iface", "edit_peer", "terminate", "ban", "exit",
-        "theme", "terminal", "terminal_help", "files", "about"
+        "settings_theme", "terminal", "terminal_help", "files", "about"
     };
-    MotifUiCtx *ctx;
-    (void)id;
-    ctx = (MotifUiCtx *)client;
-    if (ctx->test_step >= 23) {
-        close_modal_dialog(ctx);
-        ctx->quit = 1;
-        return;
+    int step;
+    for (step = 0; step < 23; ++step) {
+        ctx->test_step = step;
+        oyk_sysv_tui_setup_screen(ctx->app, screens[step]);
+        if (strcmp(screens[step], "settings_theme") == 0) {
+            oyk_sysv_theme_select(&ctx->app->theme_ctrl, "dark");
+        } else {
+            oyk_sysv_theme_select(&ctx->app->theme_ctrl, "native");
+        }
+        refresh_main_console(ctx);
+        open_modal_for_screen(ctx);
+        flush_events_and_wait_ack(ctx, screens[step]);
     }
-    oyk_sysv_tui_setup_screen(ctx->app, screens[ctx->test_step]);
-    if (strcmp(screens[ctx->test_step], "theme") == 0) {
-        oyk_sysv_theme_select(&ctx->app->theme_ctrl, "dark");
-    } else {
-        oyk_sysv_theme_select(&ctx->app->theme_ctrl, "native");
-    }
-    refresh_main_console(ctx);
-    open_modal_for_screen(ctx);
-    flush_events_and_wait_ack(ctx, screens[ctx->test_step]);
-    ++ctx->test_step;
-    XtAppAddTimeOut(ctx->xt_app, 100UL, on_test_timer, ctx);
+    close_modal_dialog(ctx);
+    ctx->quit = 1;
 }
 
 int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
     Widget hdr_row;
     Widget top_row;
     const char *env_test;
+    int ui_test;
     int i;
     if (!app) return 1;
+    ui_test = 0;
+    for (i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--ui-test") == 0) {
+            ui_test = 1;
+        }
+    }
     memset(&g_mui, 0, sizeof(g_mui));
     g_mui.app = app;
 
     g_mui.top_shell = XtVaAppInitialize(&g_mui.xt_app, "OykNodeMotif", NULL, 0,
                                         &argc, argv, NULL,
                                         XmNtitle, "OYK Amateur Radio Packet Node",
-                                        XmNwidth, 760,
-                                        XmNheight, 520,
+                                        XmNwidth, 930,
+                                        XmNheight, 580,
                                         XmNx, 32,
-                                        XmNy, 32,
+                                        XmNy, 24,
                                         NULL);
     g_mui.dpy = XtDisplay(g_mui.top_shell);
 
@@ -805,19 +869,7 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
     g_mui.main_win = XmCreateMainWindow(g_mui.top_shell, "main_win", NULL, 0);
     g_mui.menu_bar = XmCreateMenuBar(g_mui.main_win, "menu_bar", NULL, 0);
     g_mui.node_menu = XmCreatePulldownMenu(g_mui.menu_bar, "node_menu", NULL, 0);
-    for (i = 0; i < oyk_sysv_node_menu_count(); ++i) {
-        const OykSysvMenuItem *it;
-        it = oyk_sysv_node_menu_item(i);
-        if (it->is_separator) {
-            XtManageChild(XmCreateSeparator(g_mui.node_menu, "msep", NULL, 0));
-        } else {
-            Widget mi;
-            mi = XmCreatePushButton(g_mui.node_menu, "mi", NULL, 0);
-            set_label_text(mi, it->label);
-            XtAddCallback(mi, XmNactivateCallback, on_menu_item_cb, (XtPointer)(long)it->action);
-            XtManageChild(mi);
-        }
-    }
+    populate_node_menu(g_mui.node_menu, &g_mui, 0);
     g_mui.node_cascade = XtVaCreateManagedWidget("Node", xmCascadeButtonWidgetClass,
                                                  g_mui.menu_bar,
                                                  XmNmnemonic, 'N',
@@ -853,8 +905,8 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
         set_label_text(XtVaCreateManagedWidget("hlbl", xmLabelWidgetClass, rcol, NULL), "Last 5 New Callsigns Heard");
         g_mui.iface_list = XmCreateScrolledList(lcol, "iflist", NULL, 0);
         g_mui.heard_list = XmCreateScrolledList(rcol, "hdlist", NULL, 0);
-        XtVaSetValues(g_mui.iface_list, XmNvisibleItemCount, 5, XmNwidth, 400, NULL);
-        XtVaSetValues(g_mui.heard_list, XmNvisibleItemCount, 5, XmNwidth, 320, NULL);
+        XtVaSetValues(g_mui.iface_list, XmNvisibleItemCount, 4, XmNwidth, 440, NULL);
+        XtVaSetValues(g_mui.heard_list, XmNvisibleItemCount, 4, XmNwidth, 440, NULL);
         XtManageChild(g_mui.iface_list);
         XtManageChild(g_mui.heard_list);
         XtManageChild(lcol);
@@ -864,12 +916,12 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
 
     set_label_text(XtVaCreateManagedWidget("clbl", xmLabelWidgetClass, g_mui.main_form, NULL), "Active Connections");
     g_mui.conn_list = XmCreateScrolledList(g_mui.main_form, "cnlist", NULL, 0);
-    XtVaSetValues(g_mui.conn_list, XmNvisibleItemCount, 4, XmNwidth, 720, NULL);
+    XtVaSetValues(g_mui.conn_list, XmNvisibleItemCount, 3, XmNwidth, 886, NULL);
     XtManageChild(g_mui.conn_list);
 
     set_label_text(XtVaCreateManagedWidget("llbl", xmLabelWidgetClass, g_mui.main_form, NULL), "Node Activity Log");
     g_mui.log_list = XmCreateScrolledList(g_mui.main_form, "lglist", NULL, 0);
-    XtVaSetValues(g_mui.log_list, XmNvisibleItemCount, 5, XmNwidth, 720, NULL);
+    XtVaSetValues(g_mui.log_list, XmNvisibleItemCount, 4, XmNwidth, 886, NULL);
     XtManageChild(g_mui.log_list);
 
     g_mui.footer_row = XmCreateRowColumn(g_mui.main_form, "footer", NULL, 0);
@@ -898,9 +950,9 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
     refresh_main_console(&g_mui);
 
     env_test = getenv("OYK_UI_TEST_MODE");
-    if (env_test && strcmp(env_test, "1") == 0) {
-        g_mui.test_step = 0;
-        XtAppAddTimeOut(g_mui.xt_app, 300UL, on_test_timer, &g_mui);
+    if (ui_test || (env_test && strcmp(env_test, "1") == 0)) {
+        run_motif_test_sequence(&g_mui);
+        return 0;
     }
 
     while (!g_mui.quit) {

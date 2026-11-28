@@ -25,6 +25,7 @@ GALLERY_PREFIXES = (
     "amiga",
     "atarist_color",
     "atarist_mono",
+    "openvms_motif",
     "android",
 )
 
