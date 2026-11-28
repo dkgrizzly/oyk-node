@@ -32,6 +32,7 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | `BUILD_ATARIST_PORT` | `OFF` | Atari ST / TT GEM | Enable `OYKNODE.PRG` / `OYKTEST.PRG` via `m68k-atari-mintelf-g++` (and Hatari CTest runner) |
 | `BUILD_ATT3B2_PORT` | `OFF` | AT&T 3B2 SVR3.2 | Enable `oyk_att3b2_tests` host verification (`curses`/VT100 + WIN/TCP `sysv` core) |
 | `BUILD_TI99_PORT` | `OFF` | TI-99/4A | Enable `oyk_ti99_tests` host verification (SAMS 1 MB, TIPI, F18A/40-col, RS-232 KISS) |
+| `BUILD_OPENVMS_PORT` | `OFF` | OpenVMS (`VAX`/`Alpha`/`IA64`/`x86-64`) | Enable `oyk_openvms_console_host`, `oyk_openvms_native_test`, and `oyk_openvms_tests` |
 | `BUILD_MACOS_PORT` | `ON` on Apple, `OFF` elsewhere | macOS AppKit | Native `.app` bundle (Universal `arm64`/`x86_64`, or C++98 PowerPC) |
 
 ### Additional CMake Variables
@@ -66,4 +67,5 @@ All opt-in retro, embedded, and Windows cross-targets default to `OFF` so standa
 | **Atari ST GEM** | `make -C ports/atarist` | `MINTELF` (`m68k-atari-mintelf-g++` + GEMlib) ([README](../../ports/atarist/README.md)) |
 | **AT&T 3B2 SVR3.2** | `make -C ports/att3b2` | Native `gcc 2.3.3` C89 + `libcurses.a` / `libnet.a` (`ports/att3b2/run_3b2_remote.sh`) ([README](../../ports/att3b2/README.md)) |
 | **TI-99/4A** | `make -C ports/ti99` | Host strict-C99 verification + `tms9900-gcc` / `xdt99` FinalGROM99 cart ([README](../../ports/ti99/README.md)) |
+| **OpenVMS** | `@BUILD_VMS.COM` / `MMS` | Multi-arch `VAX`/`Alpha`/`IA64`/`x86_64` OPTs (`SMG$` console + DECwindows Motif 1.2) ([README](../../ports/openvms/README.md)) |
 | **macOS** | `cmake -B build-mac -DBUILD_MACOS_PORT=ON` | `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` or `OYK_MACOS_PORTABLE_CORE=ON` ([README](../../ports/macos/README.md)) |

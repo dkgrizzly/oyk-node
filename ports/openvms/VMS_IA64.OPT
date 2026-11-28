@@ -1,0 +1,4 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 KR4OYK - David Kuder
+! OpenVMS IA64 Linker Options (HP C + TCPIP$IPC_SHR)
+SYS$SHARE:TCPIP$IPC_SHR/SHARE

@@ -29,6 +29,7 @@ See the full [Feature Matrix](docs/user/feature-matrix.md) (`●` / `◐` / `○
 | **Retro** | Atari ST / STE / TT / Falcon GEM | GEM AES/VDI (`640x400` Mono + `640x480` 16-Color), `MiNTnet`/`STinG` | [ports/atarist/README.md](ports/atarist/README.md) |
 | **Retro** | AT&T 3B2/400 SVR3.2 (`WE32100`) | Strict-C89 `curses`/VT100 TUI + WIN/TCP sockets (`sysv` core) | [ports/att3b2/README.md](ports/att3b2/README.md) |
 | **Retro** | TI-99/4A (`TMS9900`, SAMS 1 MB) | F18A 80-col / 9918 40-col TUI, FinalGROM99, TIPI + RS-232 KISS | [ports/ti99/README.md](ports/ti99/README.md) |
+| **Retro** | OpenVMS (`VAX` / `Alpha` / `IA64` / `x86-64`) | `SMG$` / VT100 Console + DECwindows Motif 1.2 (`UCX`/`TCPIP$`, `sysv`) | [ports/openvms/README.md](ports/openvms/README.md) |
 
 ## Features
 

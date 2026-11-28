@@ -160,6 +160,11 @@ def check_native_and_android_parity(errors):
     if "IDI_OYK_NODE" not in win_rc or "WM_SETICON" not in win_src:
         errors.append("ports/windows: missing native IDI_OYK_NODE / WM_SETICON icon wiring")
 
+    motif_src = read_text("ports/sysv/sysv_motif_ui.c")
+    for req_xm in ("XmCreateToggleButton", "XmCreatePushButton", "XmCreateMainWindow"):
+        if req_xm not in motif_src:
+            errors.append(f"ports/sysv/sysv_motif_ui.c: missing native Motif widget '{req_xm}'")
+
     android_screens = read_text(
         "ports/android/app/src/main/java/com/kr4oyk/oyknode/OykScreens.kt"
     )
@@ -198,6 +203,7 @@ def check_unit_test_parity(errors):
         "tests/test_sysv.cpp",
         "tests/test_att3b2.cpp",
         "tests/test_ti99.cpp",
+        "tests/test_openvms.cpp",
     )
     for rel_path in cpp_test_files:
         src = read_text(rel_path)

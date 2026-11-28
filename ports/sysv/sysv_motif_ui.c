@@ -60,6 +60,7 @@ typedef struct {
     Pixel         px_sel_bg;
     Pixel         px_sel_fg;
     int           test_step;
+    int           quit;
 } MotifUiCtx;
 
 static MotifUiCtx g_mui;
@@ -676,7 +677,7 @@ static void on_menu_item_cb(Widget w, XtPointer client, XtPointer call) {
     action = (int)(long)client;
     oyk_sysv_app_exec_menu_action(g_mui.app, action);
     if (!g_mui.app->running) {
-        XtAppSetExitFlag(g_mui.xt_app);
+        g_mui.quit = 1;
         return;
     }
     refresh_main_console(&g_mui);
@@ -716,7 +717,7 @@ static void on_test_timer(XtPointer client, XtIntervalId *id) {
     ctx = (MotifUiCtx *)client;
     if (ctx->test_step >= 23) {
         close_modal_dialog(ctx);
-        XtAppSetExitFlag(ctx->xt_app);
+        ctx->quit = 1;
         return;
     }
     oyk_sysv_tui_setup_screen(ctx->app, screens[ctx->test_step]);
@@ -861,7 +862,11 @@ int oyk_sysv_motif_run(OykSysvApp *app, int argc, char **argv) {
         XtAppAddTimeOut(g_mui.xt_app, 300UL, on_test_timer, &g_mui);
     }
 
-    XtAppMainLoop(g_mui.xt_app);
+    while (!g_mui.quit) {
+        XEvent ev;
+        XtAppNextEvent(g_mui.xt_app, &ev);
+        XtDispatchEvent(&ev);
+    }
     return 0;
 }
 

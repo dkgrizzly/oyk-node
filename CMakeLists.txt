@@ -39,6 +39,7 @@ option(BUILD_AMIGA_PORT      "Add targets to build Amiga Workbench (m68k OS 3.1/
 option(BUILD_ATARIST_PORT    "Add targets to build Atari ST / TT GEM (m68k PRG) via m68k-atari-mintelf-g++" OFF)
 option(BUILD_ATT3B2_PORT     "Build/verify AT&T 3B2 SVR3.2 (curses/VT100 TUI + WIN/TCP) port" OFF)
 option(BUILD_TI99_PORT       "Build/verify TI-99/4A (SAMS 1MB, TIPI, F18A/40-col, RS-232 KISS) port" OFF)
+option(BUILD_OPENVMS_PORT    "Build/verify OpenVMS (SMG$ console & DECwindows Motif 1.2 for VAX/Alpha/IA64/x86-64) port" OFF)
 if(APPLE)
     option(BUILD_MACOS_PORT "Build native macOS AppKit port (PowerPC, Intel, Apple Silicon)" ON)
 else()
@@ -914,6 +915,9 @@ if(BUILD_TESTS AND NOT WIN32)
 
     # TI-99/4A host C99 + SAMS/TIPI/F18A/40-col parity verification
     add_subdirectory(ports/ti99)
+
+    # OpenVMS (VAX/Alpha/IA64/x86-64) SMG$ console & DECwindows Motif parity verification
+    add_subdirectory(ports/openvms)
 
     # Seeded mutation fuzz harness across AX.25, KISS, config, banlist, YAPP, terminal, and PPP parsers
     add_executable(oyk_fuzz_tests

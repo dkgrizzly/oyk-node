@@ -1,0 +1,5 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 KR4OYK - David Kuder
+! OpenVMS VAX Linker Options (VAX C / DEC C + UCX)
+SYS$SHARE:VAXCRTL/SHARE
+SYS$SHARE:UCX$IPC_SHR/SHARE
